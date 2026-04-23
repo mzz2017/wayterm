@@ -63,6 +63,7 @@ actor SSHClient {
     private var connectionKey: String?
     private var connectedServer: Server?
     private var resolvedRemoteEnvironment: RemoteEnvironment?
+    private var resolvedRemoteTerminalType: RemoteTerminalType?
     private var moshShells: [UUID: MoshShellRuntime] = [:]
     private let cloudflareTransportManager = CloudflareTransportManager()
     private let moshStartupTimeout: Duration = .seconds(8)
@@ -179,6 +180,7 @@ actor SSHClient {
             self._sessionForAbort = session
             self.connectedServer = server
             self.resolvedRemoteEnvironment = nil
+            self.resolvedRemoteTerminalType = nil
             startKeepAlive()
             connectTask = nil
             logger.info("Connected to \(server.host)")
@@ -191,6 +193,7 @@ actor SSHClient {
             self._sessionForAbort = nil
             self.connectedServer = nil
             self.resolvedRemoteEnvironment = nil
+            self.resolvedRemoteTerminalType = nil
             await disconnectCloudflareTransport(reason: "connect failure")
             if server.connectionMode == .cloudflare,
                case SSHError.connectionFailed(let message) = error,
@@ -227,6 +230,7 @@ actor SSHClient {
         _sessionForAbort = nil
         connectedServer = nil
         resolvedRemoteEnvironment = nil
+        resolvedRemoteTerminalType = nil
         activeSession?.abort()
         await disconnectSSHSession(activeSession)
         await disconnectCloudflareTransport(reason: "client disconnect")
@@ -290,16 +294,36 @@ actor SSHClient {
         return environment
     }
 
+    func remoteTerminalType(forceRefresh: Bool = false) async -> RemoteTerminalType {
+        if !forceRefresh, let resolvedRemoteTerminalType {
+            return resolvedRemoteTerminalType
+        }
+
+        let environment = await remoteEnvironment(forceRefresh: forceRefresh)
+        let terminalType = await RemoteTerminalTypeResolver.resolve(
+            environment: environment,
+            execute: { [weak self] command, timeout in
+                guard let self else { throw SSHError.notConnected }
+                return try await self.execute(command, timeout: timeout)
+            }
+        )
+        resolvedRemoteTerminalType = terminalType
+        logger.info("Resolved remote terminal type: \(terminalType.rawValue, privacy: .public)")
+        return terminalType
+    }
+
     func remotePlatform(forceRefresh: Bool = false) async -> RemotePlatform {
         await remoteEnvironment(forceRefresh: forceRefresh).platform
     }
 
     func supportsTmuxRuntime() async -> Bool {
-        await remoteEnvironment().supportsTmuxRuntime
+        let environment = await remoteEnvironment()
+        return environment.platform != .windows && environment.shellProfile.family == .posix
     }
 
     func supportsMoshRuntime() async -> Bool {
-        await remoteEnvironment().supportsMoshRuntime
+        let environment = await remoteEnvironment()
+        return environment.platform != .windows && environment.shellProfile.family == .posix
     }
 
     // MARK: - Remote Files
@@ -411,12 +435,14 @@ actor SSHClient {
 
         let connectionMode = connectedServer?.connectionMode ?? .standard
         let environment = await remoteEnvironment()
+        let terminalType = await remoteTerminalType()
         if connectionMode != .mosh {
             let sshShell = try await session.startShell(
                 cols: cols,
                 rows: rows,
                 startupCommand: startupCommand,
-                environment: environment
+                environment: environment,
+                terminalType: terminalType
             )
             return ShellHandle(
                 id: sshShell.id,
@@ -425,13 +451,14 @@ actor SSHClient {
             )
         }
 
-        guard environment.supportsMoshRuntime else {
+        guard environment.platform != .windows && environment.shellProfile.family == .posix else {
             logger.warning("Mosh requested, but remote environment does not support Mosh runtime. Falling back to SSH.")
             let fallbackShell = try await session.startShell(
                 cols: cols,
                 rows: rows,
                 startupCommand: startupCommand,
-                environment: environment
+                environment: environment,
+                terminalType: terminalType
             )
             return ShellHandle(
                 id: fallbackShell.id,
@@ -456,7 +483,8 @@ actor SSHClient {
                     cols: cols,
                     rows: rows,
                     startupCommand: startupCommand,
-                    environment: environment
+                    environment: environment,
+                    terminalType: terminalType
                 )
                 return ShellHandle(
                     id: fallbackShell.id,
@@ -1672,7 +1700,8 @@ actor SSHSession {
         cols: Int,
         rows: Int,
         startupCommand: String? = nil,
-        environment: RemoteEnvironment = .fallbackPOSIX
+        environment: RemoteEnvironment = .fallbackPOSIX,
+        terminalType: RemoteTerminalType = RemoteTerminalBootstrap.defaultTerminalType
     ) async throws -> ShellHandle {
         guard let session = libssh2Session else {
             throw SSHError.notConnected
@@ -1717,8 +1746,8 @@ actor SSHSession {
         // Request PTY
         let ptyResult = libssh2_channel_request_pty_ex(
             channel,
-            RemoteTerminalBootstrap.terminalType,
-            UInt32(RemoteTerminalBootstrap.terminalType.utf8.count),
+            terminalType.rawValue,
+            UInt32(terminalType.rawValue.utf8.count),
             nil,
             0,
             Int32(cols),

@@ -54,8 +54,8 @@ actor RemoteTmuxManager {
         return []
     }
 
-    func prepareConfig(using client: SSHClient) async {
-        let body = configWriteCommand()
+    func prepareConfig(using client: SSHClient, terminalType: RemoteTerminalType) async {
+        let body = configWriteCommand(terminalType: terminalType)
         let command = "sh -lc \(RemoteTerminalBootstrap.shellQuoted(body))"
         _ = try? await client.execute(command, timeout: configTimeout)
     }
@@ -95,13 +95,17 @@ actor RemoteTmuxManager {
         )
     }
 
-    nonisolated func installAndAttachScript(sessionName: String, workingDirectory: String) -> String {
+    nonisolated func installAndAttachScript(
+        sessionName: String,
+        workingDirectory: String,
+        terminalType: RemoteTerminalType
+    ) -> String {
         let attach = attachCommand(
             sessionName: sessionName,
             workingDirectory: workingDirectory,
             context: .startupExec
         )
-        let configWrite = configWriteCommand()
+        let configWrite = configWriteCommand(terminalType: terminalType)
         let body = """
         \(RemoteTerminalBootstrap.shellPathExport());
         \(configWrite);
@@ -421,7 +425,7 @@ actor RemoteTmuxManager {
         }
     }
 
-    nonisolated private func configWriteCommand() -> String {
+    nonisolated private func configWriteCommand(terminalType: RemoteTerminalType) -> String {
         let themeName = UserDefaults.standard.string(forKey: CloudKitSyncConstants.terminalThemeNameKey) ?? "Aizen Dark"
         let modeStyle = ThemeColorParser.tmuxModeStyle(for: themeName)
         var lines = [
@@ -441,7 +445,7 @@ actor RemoteTmuxManager {
         ))
         lines.append(contentsOf: RemoteTerminalBootstrap.tmuxArrayOptionCommands(
             option: "terminal-overrides",
-            values: ["\(RemoteTerminalBootstrap.terminalType):RGB"]
+            values: ["\(terminalType.rawValue):RGB"]
         ))
         lines.append(contentsOf: [
             "",
@@ -458,7 +462,7 @@ actor RemoteTmuxManager {
             "set -g mouse on",
             "",
             "# Set default terminal with true color support",
-            "set -g default-terminal \"\(RemoteTerminalBootstrap.terminalType)\"",
+            "set -g default-terminal \"\(terminalType.rawValue)\"",
             "",
             "# Selection highlighting in copy-mode (from theme: \(themeName))",
             "set -g mode-style \"\(modeStyle)\"",

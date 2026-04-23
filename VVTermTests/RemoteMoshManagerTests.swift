@@ -70,6 +70,17 @@ struct RemoteMoshManagerTests {
     func moshStartupScriptContainsDefaultShell() {
         let script = RemoteTerminalBootstrap.moshStartupScript(startCommand: nil)
         #expect(script.contains("$SHELL"))
+        #expect(script.contains("TERM='xterm-256color'"))
+    }
+
+    @Test
+    func moshStartupScriptUsesResolvedTerminalTypeWhenProvided() {
+        let script = RemoteTerminalBootstrap.moshStartupScript(
+            startCommand: "echo hi",
+            terminalType: .xtermGhostty
+        )
+        #expect(script.contains("TERM='xterm-ghostty'"))
+        #expect(script.contains("echo hi"))
     }
 
     @Test

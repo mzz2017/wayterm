@@ -81,12 +81,14 @@ struct RemoteTmuxManagerParserTests {
     func installAndAttachScriptIncludesSessionAndConfig() {
         let script = RemoteTmuxManager.shared.installAndAttachScript(
             sessionName: "vvterm_demo",
-            workingDirectory: "/tmp/work dir"
+            workingDirectory: "/tmp/work dir",
+            terminalType: .xtermGhostty
         )
         #expect(script.contains("~/.vvterm/tmux.conf"))
         #expect(script.contains("new-session -A -s"))
         #expect(script.contains("vvterm_demo"))
         #expect(script.contains("/tmp/work dir"))
+        #expect(script.contains("set -g default-terminal \"xterm-ghostty\""))
     }
 
     @Test

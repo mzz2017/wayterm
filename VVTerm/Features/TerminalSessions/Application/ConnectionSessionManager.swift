@@ -1176,7 +1176,8 @@ extension ConnectionSessionManager {
 
     private func prepareActiveTmuxSession(for sessionId: UUID, using client: SSHClient) async {
         updateTmuxStatus(sessionId, status: currentTmuxStatus(for: sessionId))
-        await RemoteTmuxManager.shared.prepareConfig(using: client)
+        let terminalType = await client.remoteTerminalType()
+        await RemoteTmuxManager.shared.prepareConfig(using: client, terminalType: terminalType)
     }
 
     private func immediateTmuxSelection(for sessionId: UUID) -> TmuxAttachSelection {
@@ -1300,9 +1301,11 @@ extension ConnectionSessionManager {
 
         let sessionName = tmuxResolver.sessionName(for: sessionId)
         let workingDirectory = await resolveTmuxWorkingDirectory(for: sessionId, using: registration.client)
+        let terminalType = await registration.client.remoteTerminalType()
         let script = RemoteTmuxManager.shared.installAndAttachScript(
             sessionName: sessionName,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            terminalType: terminalType
         )
         await RemoteTmuxManager.shared.sendScript(script, using: registration.client, shellId: registration.shellId)
 

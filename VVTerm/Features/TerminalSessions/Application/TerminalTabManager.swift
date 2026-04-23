@@ -675,7 +675,8 @@ final class TerminalTabManager: ObservableObject {
         using client: SSHClient
     ) async {
         updatePaneTmuxStatus(paneId, status: currentTmuxStatus(for: paneId, serverId: serverId))
-        await RemoteTmuxManager.shared.prepareConfig(using: client)
+        let terminalType = await client.remoteTerminalType()
+        await RemoteTmuxManager.shared.prepareConfig(using: client, terminalType: terminalType)
     }
 
     private func immediateTmuxSelection(for paneId: UUID) -> TmuxAttachSelection {
@@ -859,9 +860,11 @@ final class TerminalTabManager: ObservableObject {
 
         let sessionName = tmuxResolver.sessionName(for: paneId)
         let workingDirectory = await resolveTmuxWorkingDirectory(for: paneId, using: registration.client)
+        let terminalType = await registration.client.remoteTerminalType()
         let script = RemoteTmuxManager.shared.installAndAttachScript(
             sessionName: sessionName,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            terminalType: terminalType
         )
         await RemoteTmuxManager.shared.sendScript(script, using: registration.client, shellId: registration.shellId)
 

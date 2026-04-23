@@ -1274,7 +1274,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
             guard TerminalTabManager.shared.shouldApplyWorkingDirectory(for: paneId) else { return }
             guard let cwd = TerminalTabManager.shared.workingDirectory(for: paneId) else { return }
             let environment = await sshClient.remoteEnvironment()
-            guard environment.supportsWorkingDirectoryRestore else { return }
+            guard environment.shellProfile.family != .unknown else { return }
             guard let payload = RemoteTerminalBootstrap.directoryChangeCommand(for: cwd, environment: environment).data(using: .utf8) else { return }
             try? await sshClient.write(payload, to: shellId)
         }

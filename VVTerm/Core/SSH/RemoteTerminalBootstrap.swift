@@ -5,17 +5,58 @@ struct RemoteTerminalEnvironmentVariable: Hashable, Sendable {
     let value: String
 }
 
+enum RemoteTerminalType: String, Hashable, Sendable {
+    case xterm256Color = "xterm-256color"
+    case xtermGhostty = "xterm-ghostty"
+}
+
 enum RemoteShellLaunchPlan: Hashable, Sendable {
     case shell
     case exec(String)
 }
 
 enum RemoteTerminalBootstrap {
-    nonisolated static let terminalType = "xterm-256color"
+    nonisolated static let defaultTerminalType: RemoteTerminalType = .xterm256Color
     nonisolated static let termProgram = "vvterm"
 
     nonisolated static func appVersion(bundle: Bundle = .main) -> String {
         (bundle.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "unknown"
+    }
+
+    nonisolated static func ghosttyTerminfoSource(bundle: Bundle = .main) -> String? {
+        let candidates = [
+            bundle.url(forResource: "xterm-ghostty", withExtension: "src"),
+            bundle.url(forResource: "xterm-ghostty", withExtension: "src", subdirectory: "terminfo"),
+            bundle.url(forResource: "xterm-ghostty", withExtension: "src", subdirectory: "Resources/terminfo")
+        ]
+
+        for url in candidates.compactMap({ $0 }) {
+            if let content = try? String(contentsOf: url, encoding: .utf8) {
+                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    return trimmed + "\n"
+                }
+            }
+        }
+
+        guard let resourcePath = bundle.resourcePath else { return nil }
+        let fileManager = FileManager.default
+        let paths = [
+            (resourcePath as NSString).appendingPathComponent("xterm-ghostty.src"),
+            (resourcePath as NSString).appendingPathComponent("terminfo/xterm-ghostty.src"),
+            (resourcePath as NSString).appendingPathComponent("Resources/terminfo/xterm-ghostty.src")
+        ]
+
+        for path in paths where fileManager.fileExists(atPath: path) {
+            if let content = try? String(contentsOfFile: path, encoding: .utf8) {
+                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    return trimmed + "\n"
+                }
+            }
+        }
+
+        return nil
     }
 
     nonisolated static func terminalEnvironment(bundle: Bundle = .main) -> [RemoteTerminalEnvironmentVariable] {
@@ -30,11 +71,17 @@ enum RemoteTerminalBootstrap {
         terminalEnvironment(bundle: bundle).map(\.name)
     }
 
-    nonisolated static func environmentExportScript(bundle: Bundle = .main) -> String {
-        let assignments = terminalEnvironment(bundle: bundle)
+    nonisolated static func environmentExportScript(
+        bundle: Bundle = .main,
+        terminalType: RemoteTerminalType? = nil
+    ) -> String {
+        var assignments = terminalEnvironment(bundle: bundle)
             .map { "\($0.name)=\(shellQuoted($0.value))" }
-            .joined(separator: " ")
-        return "export \(assignments);"
+        if let terminalType {
+            assignments.insert("TERM=\(shellQuoted(terminalType.rawValue))", at: 0)
+        }
+        let command = assignments.joined(separator: " ")
+        return "export \(command);"
     }
 
     nonisolated static func defaultLoginShellCommand() -> String {
@@ -54,11 +101,15 @@ enum RemoteTerminalBootstrap {
         environment.shellProfile.launchPlan(startupCommand: startupCommand, bundle: bundle)
     }
 
-    nonisolated static func moshStartupScript(startCommand: String?, bundle: Bundle = .main) -> String {
+    nonisolated static func moshStartupScript(
+        startCommand: String?,
+        terminalType: RemoteTerminalType = defaultTerminalType,
+        bundle: Bundle = .main
+    ) -> String {
         let command = trimmedStartupCommand(startCommand)
             .flatMap { unwrapPOSIXShellInvocationIfNeeded($0) ?? $0 }
             ?? defaultLoginShellCommand()
-        return prefixedPOSIXScript(for: command, bundle: bundle)
+        return prefixedPOSIXScript(for: command, bundle: bundle, terminalType: terminalType)
     }
 
     nonisolated static func wrapPOSIXShellCommand(_ script: String) -> String {
@@ -141,8 +192,12 @@ enum RemoteTerminalBootstrap {
         }
     }
 
-    nonisolated static func prefixedPOSIXScript(for command: String, bundle: Bundle = .main) -> String {
-        "\(environmentExportScript(bundle: bundle)) \(command)"
+    nonisolated static func prefixedPOSIXScript(
+        for command: String,
+        bundle: Bundle = .main,
+        terminalType: RemoteTerminalType? = nil
+    ) -> String {
+        "\(environmentExportScript(bundle: bundle, terminalType: terminalType)) \(command)"
     }
 
     nonisolated static func prefixedPowerShellScript(for command: String, bundle: Bundle = .main) -> String {

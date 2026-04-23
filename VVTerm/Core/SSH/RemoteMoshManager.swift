@@ -25,7 +25,11 @@ actor RemoteMoshManager {
         startCommand: String?,
         portRange: ClosedRange<Int> = 60001...61000
     ) async throws -> MoshServerConnectInfo {
-        let resolvedStartup = RemoteTerminalBootstrap.moshStartupScript(startCommand: startCommand)
+        let terminalType = await client.remoteTerminalType()
+        let resolvedStartup = RemoteTerminalBootstrap.moshStartupScript(
+            startCommand: startCommand,
+            terminalType: terminalType
+        )
         let quotedStartup = RemoteTerminalBootstrap.shellQuoted(resolvedStartup)
         let body = """
         \(RemoteTerminalBootstrap.shellPathExport());

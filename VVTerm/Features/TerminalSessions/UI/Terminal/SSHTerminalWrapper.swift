@@ -567,7 +567,7 @@ struct SSHTerminalWrapper: NSViewRepresentable {
             guard ConnectionSessionManager.shared.shouldApplyWorkingDirectory(for: sessionId) else { return }
             guard let cwd = ConnectionSessionManager.shared.workingDirectory(for: sessionId) else { return }
             let environment = await sshClient.remoteEnvironment()
-            guard environment.supportsWorkingDirectoryRestore else { return }
+            guard environment.shellProfile.family != .unknown else { return }
             guard let payload = RemoteTerminalBootstrap.directoryChangeCommand(for: cwd, environment: environment).data(using: .utf8) else { return }
             if let shellId {
                 try? await sshClient.write(payload, to: shellId)
@@ -960,7 +960,7 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             guard ConnectionSessionManager.shared.shouldApplyWorkingDirectory(for: sessionId) else { return }
             guard let cwd = ConnectionSessionManager.shared.workingDirectory(for: sessionId) else { return }
             let environment = await sshClient.remoteEnvironment()
-            guard environment.supportsWorkingDirectoryRestore else { return }
+            guard environment.shellProfile.family != .unknown else { return }
             guard let payload = RemoteTerminalBootstrap.directoryChangeCommand(for: cwd, environment: environment).data(using: .utf8) else { return }
             if let shellId {
                 try? await sshClient.write(payload, to: shellId)
