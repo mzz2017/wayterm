@@ -1,27 +1,23 @@
 import SwiftUI
 import StoreKit
 
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
 // MARK: - Pro Upgrade Sheet
 
 struct ProUpgradeSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var storeManager: StoreManager
 
-    @State private var selectedProduct: Product?
+    @State private var selectedPlan: ProPlanKind = .yearly
     @State private var showSuccess = false
     @State private var alertInfo: AlertInfo?
     @State private var showCancelSubscriptionAlert = false
     @State private var showManageSubscription = false
-
-    private var features: [(icon: String, title: String, description: String, color: Color)] {
-        [
-            ("server.rack", String(localized: "Unlimited Servers"), String(localized: "Add as many servers as you need (free: 3)"), .pink),
-            ("folder", String(localized: "Unlimited Workspaces"), String(localized: "Organize servers into multiple workspaces (free: 1)"), .pink),
-            ("square.on.square", String(localized: "Multiple Connections"), String(localized: "Open multiple terminal or file tabs at once (free: 1)"), .orange),
-            ("tag", String(localized: "Custom Environments"), String(localized: "Create custom environment labels beyond Prod/Staging/Dev"), .orange),
-            ("star", String(localized: "All Future Features"), String(localized: "Get access to every new Pro feature"), .yellow)
-        ]
-    }
 
     private struct AlertInfo: Identifiable {
         let id = UUID()
@@ -33,10 +29,20 @@ struct ProUpgradeSheet: View {
     var body: some View {
         #if os(iOS)
         NavigationStack {
-            iosSheetContent
-                .navigationTitle("VVTerm Pro")
+            sheetContent
+                .navigationTitle("")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        VStack(spacing: 1) {
+                            Text("Upgrade to Pro")
+                                .font(.headline)
+                            Text("Connect everywhere, without limits.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
                             dismiss()
@@ -47,57 +53,29 @@ struct ProUpgradeSheet: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-            }
+                }
         }
         #else
         macSheetContent
         #endif
     }
 
-    private var iosSheetContent: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                #if os(macOS)
-                // Header with close button (macOS only)
-                header
+    private var sheetContent: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                contentStack
                     .padding(.horizontal, 20)
-                    .padding(.top, 20)
-                    .padding(.bottom, 16)
-                #else
-                // iOS: Add some top padding since NavigationStack provides the header
-                Spacer().frame(height: 8)
-                #endif
-
-                // Features
-                featuresSection
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 16)
-
-                // Plan Options
-                planOptionsSection
-                .padding(.horizontal, 20)
-                .padding(.bottom, 24)
-
-                subscribeButton
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 20)
-
-                // Restore Purchases
-                restoreButton
-                .padding(.bottom, 16)
-
-                // Legal links
-                legalFooter
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 20)
+                    .padding(.top, 18)
+                    .padding(.bottom, 18)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.bottom, 8)
+            .scrollIndicators(.visible)
+
+            purchaseFooter
         }
-        .scrollIndicators(.visible)
+        .background(sheetBackground.ignoresSafeArea())
         .task {
             await storeManager.loadProducts()
-            selectedProduct = storeManager.yearlyProduct
+            selectedPlan = defaultPlan
         }
         .onChangeCompat(of: storeManager.purchaseState) { newState in
             handlePurchaseStateChange(newState)
@@ -132,13 +110,7 @@ struct ProUpgradeSheet: View {
         }
         .alert(String(localized: "Cancel Subscription?"), isPresented: $showCancelSubscriptionAlert) {
             Button(String(localized: "Manage Subscription")) {
-                #if os(iOS)
-                showManageSubscription = true
-                #else
-                if let url = URL(string: "https://apps.apple.com/account/subscriptions") {
-                    NSWorkspace.shared.open(url)
-                }
-                #endif
+                openSubscriptionManagement()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     dismiss()
                 }
@@ -160,38 +132,42 @@ struct ProUpgradeSheet: View {
     #if os(macOS)
     private var macSheetContent: some View {
         VStack(spacing: 0) {
-            header
-                .padding(.horizontal, 20)
-                .padding(.top, 20)
-                .padding(.bottom, 12)
-
-            HStack(alignment: .top, spacing: 24) {
-                VStack(alignment: .leading, spacing: 12) {
-                    featuresSection
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Upgrade to Pro")
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                    Text("Connect everywhere, without limits.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, 0)
-                .padding(.vertical, 0)
-                .frame(maxWidth: .infinity, alignment: .leading)
 
-                VStack(spacing: 16) {
-                    planOptionsSection
+                Spacer()
 
-                    subscribeButton
-
-                    restoreButton
-
-                    legalFooter
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
                 }
-                .frame(width: 260, alignment: .top)
+                .buttonStyle(.borderless)
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
+            .padding(.horizontal, 24)
+            .padding(.top, 22)
+            .padding(.bottom, 12)
+
+            ScrollView {
+                contentStack
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 18)
+            }
+
+            purchaseFooter
         }
-        .frame(width: 680)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(width: 720, height: 720)
+        .background(sheetBackground)
         .task {
             await storeManager.loadProducts()
-            selectedProduct = storeManager.yearlyProduct
+            selectedPlan = defaultPlan
         }
         .onChangeCompat(of: storeManager.purchaseState) { newState in
             handlePurchaseStateChange(newState)
@@ -226,9 +202,7 @@ struct ProUpgradeSheet: View {
         }
         .alert(String(localized: "Cancel Subscription?"), isPresented: $showCancelSubscriptionAlert) {
             Button(String(localized: "Manage Subscription")) {
-                if let url = URL(string: "https://apps.apple.com/account/subscriptions") {
-                    NSWorkspace.shared.open(url)
-                }
+                openSubscriptionManagement()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     dismiss()
                 }
@@ -242,138 +216,121 @@ struct ProUpgradeSheet: View {
     }
     #endif
 
-    // MARK: - Success Overlay
-
-    private var successOverlay: some View {
-        ZStack {
-            Color.black.opacity(0.6)
-                .ignoresSafeArea()
-
-            VStack(spacing: 16) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 60))
-                    .foregroundStyle(.green)
-
-                Text("Welcome to Pro!")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.white)
-
-                Text("You now have unlimited access")
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.8))
-            }
-            .padding(32)
-            .background(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            )
+    private var contentStack: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            comparisonSection
+            planSection
         }
-        .transition(.opacity)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - Header
+    private var comparisonSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader(title: String(localized: "Compare plans"))
 
-    private var header: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("VVTerm Pro")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                Text("Upgrade for unlimited features")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+            NativeSectionCard(padding: 0) {
+                ComparisonTable(rows: comparisonRows)
             }
-
-            Spacer()
-
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
         }
     }
 
-    // MARK: - Features Section
+    private var planSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader(title: String(localized: "Choose a plan"))
 
-    private var featuresSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(Array(features.enumerated()), id: \.element.title) { index, feature in
-                HStack(spacing: 16) {
-                    Image(systemName: feature.icon)
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundStyle(feature.color)
-                        .frame(width: 32, height: 32)
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(feature.title)
-                            .font(.body)
-                            .fontWeight(.semibold)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(feature.description)
-                            .font(.subheadline)
+            if availablePlans.isEmpty {
+                NativeSectionCard {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Loading plans...")
                             .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
-
-                    Spacer()
+                    .frame(maxWidth: .infinity, minHeight: 82)
                 }
-                .padding(.vertical, 4)
-
-                if index < features.count - 1 {
-                    Divider()
-                        .overlay(Color.primary.opacity(0.08))
+            } else {
+                VStack(spacing: 12) {
+                    ForEach(availablePlans) { plan in
+                        if let product = product(for: plan) {
+                            PlanSelectionCard(
+                                product: product,
+                                plan: plan,
+                                isSelected: selectedPlan == plan
+                            ) {
+                                selectedPlan = plan
+                            }
+                        }
+                    }
                 }
             }
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 6)
     }
 
-    private var planOptionsSection: some View {
-        glassContainer {
-            VStack(spacing: 8) {
-                if let monthly = storeManager.monthlyProduct {
-                    PlanOptionRow(
-                        product: monthly,
-                        title: String(localized: "Monthly"),
-                        subtitle: String(localized: "Billed monthly"),
-                        badge: nil,
-                        isSelected: selectedProduct?.id == monthly.id
-                    ) {
-                        selectedProduct = monthly
-                    }
+    private var purchaseFooter: some View {
+        VStack(spacing: 5) {
+            Button {
+                if let product = selectedProduct {
+                    Task { await storeManager.purchase(product) }
                 }
+            } label: {
+                ZStack {
+                    Text(subscribeButtonTitle)
+                        .fontWeight(.semibold)
+                        .opacity(storeManager.purchaseState == .purchasing ? 0 : 1)
 
-                if let yearly = storeManager.yearlyProduct {
-                    PlanOptionRow(
-                        product: yearly,
-                        title: String(localized: "Yearly"),
-                        subtitle: String(localized: "Best value - billed yearly"),
-                        badge: PlanBadge(title: String(localized: "SAVE 68%"), style: .save),
-                        isSelected: selectedProduct?.id == yearly.id
-                    ) {
-                        selectedProduct = yearly
-                    }
-                }
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .controlSize(.small)
+                            .tint(.white)
 
-                if let lifetime = storeManager.lifetimeProduct {
-                    PlanOptionRow(
-                        product: lifetime,
-                        title: String(localized: "Lifetime"),
-                        subtitle: String(localized: "One-time purchase, forever"),
-                        badge: PlanBadge(title: String(localized: "FOREVER"), style: .forever),
-                        isSelected: selectedProduct?.id == lifetime.id
-                    ) {
-                        selectedProduct = lifetime
+                        Text("Processing...")
+                            .fontWeight(.semibold)
                     }
+                    .opacity(storeManager.purchaseState == .purchasing ? 1 : 0)
                 }
+                .frame(maxWidth: .infinity)
+                .frame(height: 24)
             }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(selectedProduct == nil)
+            .allowsHitTesting(storeManager.purchaseState != .purchasing)
+
+            footerSupportRow
+
+            Text(selectedPlan == .lifetime ? String(localized: "One-time purchase. No subscription renewal.") : String(localized: "Auto-renews until canceled."))
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .background(.bar)
+    }
+
+    private var footerSupportRow: some View {
+        HStack(spacing: 6) {
+            restoreButton
+
+            Text(verbatim: "•")
+                .foregroundStyle(.tertiary)
+
+            legalLink(title: "Terms", url: "https://vvterm.com/terms")
+
+            Text(verbatim: "•")
+                .foregroundStyle(.tertiary)
+
+            legalLink(title: "Privacy", url: "https://vvterm.com/privacy")
+
+            Text(verbatim: "•")
+                .foregroundStyle(.tertiary)
+
+            legalLink(title: "Refund", url: "https://vvterm.com/refund")
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
     }
 
     private var restoreButton: some View {
@@ -384,48 +341,150 @@ struct ProUpgradeSheet: View {
                 if storeManager.restoreState == .restoring {
                     ProgressView()
                         .progressViewStyle(.circular)
-                        .scaleEffect(0.8)
+                        .scaleEffect(0.85)
+                } else {
+                    Image(systemName: "arrow.clockwise.circle")
+                        .imageScale(.small)
                 }
                 Text(storeManager.restoreState == .restoring
                      ? String(localized: "Restoring...")
                      : String(localized: "Restore Purchases"))
             }
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.secondary)
         }
-        .buttonStyle(.bordered)
-        .foregroundStyle(.primary)
+        .buttonStyle(.plain)
         .disabled(storeManager.restoreState == .restoring)
     }
 
-    // MARK: - Legal Footer
+    // MARK: - Success Overlay
 
-    private var legalFooter: some View {
-        VStack(spacing: 8) {
-            Text("Cancel anytime. Subscription auto-renews.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+    private var successOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.45)
+                .ignoresSafeArea()
 
-            HStack(spacing: 10) {
-                legalLink(title: "Terms of Use (EULA)", url: "https://vvterm.com/terms")
-                Text(verbatim: "•")
-                    .foregroundStyle(.tertiary)
-                legalLink(title: "Privacy Policy", url: "https://vvterm.com/privacy")
-                Text(verbatim: "•")
-                    .foregroundStyle(.tertiary)
-                legalLink(title: "Refund Policy", url: "https://vvterm.com/refund")
+            VStack(spacing: 16) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 56))
+                    .foregroundStyle(.green)
+
+                Text("Welcome to Pro")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+
+                Text("You now have unlimited access.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
-            .font(.callout)
-            .foregroundStyle(.secondary)
+            .padding(28)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .padding(24)
         }
+        .transition(.opacity)
     }
 
-    // MARK: - Subscribe Button Title
+    // MARK: - Products
+
+    private var availablePlans: [ProPlanKind] {
+        ProPlanKind.displayOrder.filter { product(for: $0) != nil }
+    }
+
+    private var selectedProduct: Product? {
+        product(for: selectedPlan) ?? product(for: defaultPlan)
+    }
+
+    private var defaultPlan: ProPlanKind {
+        if storeManager.yearlyProduct != nil { return .yearly }
+        if storeManager.monthlyProduct != nil { return .monthly }
+        if storeManager.lifetimeProduct != nil { return .lifetime }
+        return .yearly
+    }
+
+    private func product(for plan: ProPlanKind) -> Product? {
+        switch plan {
+        case .monthly:
+            return storeManager.monthlyProduct
+        case .yearly:
+            return storeManager.yearlyProduct
+        case .lifetime:
+            return storeManager.lifetimeProduct
+        }
+    }
 
     private var subscribeButtonTitle: String {
         guard let product = selectedProduct else { return String(localized: "Select a Plan") }
         if product.id == VVTermProducts.proLifetime {
-            return String(format: String(localized: "Buy - %@"), product.displayPrice)
+            return String(format: String(localized: "Buy %@"), product.displayPrice)
         }
-        return String(format: String(localized: "Subscribe - %@"), product.displayPrice)
+        return String(format: String(localized: "Subscribe for %@"), product.displayPrice)
+    }
+
+    // MARK: - Comparison
+
+    private var comparisonRows: [ComparisonFeature] {
+        [
+            ComparisonFeature(
+                icon: "server.rack",
+                title: String(localized: "Servers"),
+                free: .number(String(FreeTierLimits.maxServers)),
+                pro: .unlimited(accessibilityLabel: String(localized: "Unlimited servers"))
+            ),
+            ComparisonFeature(
+                icon: "square.stack.3d.up",
+                title: String(localized: "Workspaces"),
+                free: .number(String(FreeTierLimits.maxWorkspaces)),
+                pro: .unlimited(accessibilityLabel: String(localized: "Unlimited workspaces"))
+            ),
+            ComparisonFeature(
+                icon: "rectangle.stack",
+                title: String(localized: "Connections"),
+                free: .number(String(FreeTierLimits.maxTabs)),
+                pro: .unlimited(accessibilityLabel: String(localized: "Multiple connections"))
+            ),
+            ComparisonFeature(
+                icon: "doc.on.doc",
+                title: String(localized: "File tabs"),
+                free: .number("1"),
+                pro: .unlimited(accessibilityLabel: String(localized: "Multiple file tabs"))
+            ),
+            ComparisonFeature(
+                icon: "rectangle.split.2x1",
+                title: String(localized: "Split panes"),
+                free: .notIncluded(accessibilityLabel: String(localized: "Split panes not included on Free")),
+                pro: .included(accessibilityLabel: String(localized: "Split panes included on Pro"))
+            ),
+            ComparisonFeature(
+                icon: "terminal",
+                title: String(localized: "SSH terminal"),
+                free: .included(accessibilityLabel: String(localized: "SSH terminal included on Free")),
+                pro: .included(accessibilityLabel: String(localized: "SSH terminal included on Pro"))
+            ),
+            ComparisonFeature(
+                icon: "folder",
+                title: String(localized: "SFTP browser"),
+                free: .included(accessibilityLabel: String(localized: "SFTP browser included on Free")),
+                pro: .included(accessibilityLabel: String(localized: "SFTP browser included on Pro"))
+            ),
+            ComparisonFeature(
+                icon: "icloud",
+                title: String(localized: "iCloud sync"),
+                free: .included(accessibilityLabel: String(localized: "iCloud sync included on Free")),
+                pro: .included(accessibilityLabel: String(localized: "iCloud sync included on Pro"))
+            ),
+            ComparisonFeature(
+                icon: "chart.bar.xaxis",
+                title: String(localized: "Server stats"),
+                free: .included(accessibilityLabel: String(localized: "Server stats included on Free")),
+                pro: .included(accessibilityLabel: String(localized: "Server stats included on Pro"))
+            ),
+            ComparisonFeature(
+                icon: "paintbrush",
+                title: String(localized: "Environments"),
+                free: .text(String(localized: "Built-in"), emphasized: false),
+                pro: .text(String(localized: "Custom"), emphasized: true)
+            )
+        ]
     }
 
     // MARK: - State Change Handlers
@@ -464,8 +523,8 @@ struct ProUpgradeSheet: View {
             alertInfo = AlertInfo(
                 title: String(localized: "Restore Purchases"),
                 message: hasAccess
-                ? String(localized: "Your purchases have been restored.")
-                : String(localized: "No active purchases were found for this Apple ID."),
+                    ? String(localized: "Your purchases have been restored.")
+                    : String(localized: "No active purchases were found for this Apple ID."),
                 isRestore: true
             )
         case .failed(let message):
@@ -478,213 +537,410 @@ struct ProUpgradeSheet: View {
             break
         }
     }
+
+    private func openSubscriptionManagement() {
+        #if os(iOS)
+        showManageSubscription = true
+        #else
+        if let url = URL(string: "https://apps.apple.com/account/subscriptions") {
+            NSWorkspace.shared.open(url)
+        }
+        #endif
+    }
+
+    private func sectionHeader(title: String, subtitle: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.headline)
+            if let subtitle {
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func legalLink(title: String, url: String) -> some View {
+        Link(destination: URL(string: url)!) {
+            Text(title)
+                .underline()
+                .padding(.vertical, 6)
+                .padding(.horizontal, 2)
+                .contentShape(Rectangle())
+        }
+    }
+
+    private var sheetBackground: Color {
+        #if os(iOS)
+        Color(uiColor: .systemGroupedBackground)
+        #else
+        Color(nsColor: .windowBackgroundColor)
+        #endif
+    }
 }
 
-// MARK: - Plan Option Row
+// MARK: - Plans
 
-private struct PlanOptionRow: View {
+private enum ProPlanKind: String, CaseIterable, Identifiable {
+    case monthly
+    case yearly
+    case lifetime
+
+    static let displayOrder: [ProPlanKind] = [.monthly, .yearly, .lifetime]
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .monthly:
+            return String(localized: "Monthly")
+        case .yearly:
+            return String(localized: "Yearly")
+        case .lifetime:
+            return String(localized: "Lifetime")
+        }
+    }
+
+    var billingCaption: String {
+        switch self {
+        case .monthly:
+            return String(localized: "Billed monthly")
+        case .yearly:
+            return String(localized: "Billed yearly")
+        case .lifetime:
+            return String(localized: "One-time purchase")
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .monthly:
+            return String(localized: "Flexible access to every Pro feature.")
+        case .yearly:
+            return String(localized: "Best value for ongoing terminal work.")
+        case .lifetime:
+            return String(localized: "Pay once and keep Pro access forever.")
+        }
+    }
+
+    var badge: String? {
+        switch self {
+        case .monthly:
+            return nil
+        case .yearly:
+            return String(localized: "Best value")
+        case .lifetime:
+            return nil
+        }
+    }
+}
+
+private struct PlanSelectionCard: View {
     let product: Product
-    let title: String
-    let subtitle: String
-    let badge: PlanBadge?
+    let plan: ProPlanKind
     let isSelected: Bool
     let onSelect: () -> Void
 
     var body: some View {
         Button(action: onSelect) {
-            content
-                .padding(12)
-                .modifier(PlanOptionGlassStyle(isSelected: isSelected))
-        }
-        .buttonStyle(.plain)
-    }
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(plan.title)
+                            .font(.headline)
+                            .fontWeight(.semibold)
 
-    private var content: some View {
-        HStack(spacing: 12) {
-            // Radio circle
-            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.title3)
-                .foregroundStyle(isSelected ? Color.pink : .secondary.opacity(0.5))
+                        if let badge = plan.badge {
+                            Text(badge)
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(.quaternary, in: Capsule())
+                        }
+                    }
 
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 8) {
-                    Text(title)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
+                    Text(priceLine)
+                        .font(.body)
                         .foregroundStyle(.primary)
 
-                    if let badge = badge {
-                        Text(badge.title)
-                            .font(.caption2)
-                            .fontWeight(.bold)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(
-                                Capsule()
-                                    .fill(badgeBackground(for: badge.style))
-                            )
-                    }
+                    Text(plan.detail)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Spacer()
+
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary.opacity(0.45))
             }
-
-            Spacer()
-
-            Text(product.displayPrice)
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .foregroundStyle(.primary)
-        }
-    }
-}
-
-private struct PlanBadge {
-    let title: String
-    let style: PlanBadgeStyle
-}
-
-private enum PlanBadgeStyle {
-    case save
-    case forever
-}
-
-private func badgeBackground(for style: PlanBadgeStyle) -> LinearGradient {
-    switch style {
-    case .save:
-        return LinearGradient(
-            colors: [Color.blue, Color.cyan],
-            startPoint: .leading,
-            endPoint: .trailing
-        )
-    case .forever:
-        return LinearGradient(
-            colors: [Color.orange, Color.pink],
-            startPoint: .leading,
-            endPoint: .trailing
-        )
-    }
-}
-
-private struct PlanOptionGlassStyle: ViewModifier {
-    let isSelected: Bool
-
-    func body(content: Content) -> some View {
-        #if swift(>=6.1)
-        if #available(iOS 26, macOS 26, *) {
-            if isSelected {
-                content
-                    .adaptiveGlassTintRect(Color.pink.opacity(0.35), cornerRadius: 10)
-            } else {
-                content
-                    .adaptiveGlassRect(cornerRadius: 10)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(cardFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(isSelected ? Color.accentColor : cardStroke, lineWidth: isSelected ? 3 : 0.5)
             }
-        } else {
-            fallback(content)
-        }
-        #else
-        fallback(content)
-        #endif
-    }
-
-    private func fallback(_ content: Content) -> some View {
-        content
-            .adaptiveGlassRect(cornerRadius: 10)
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(isSelected ? Color.pink : Color.primary.opacity(0.12), lineWidth: isSelected ? 2 : 1)
-            )
-    }
-}
-
-    private extension ProUpgradeSheet {
-        @ViewBuilder
-        var subscribeButton: some View {
-        #if swift(>=6.1)
-        if #available(iOS 26, macOS 26, *) {
-            Button {
-                if let product = selectedProduct {
-                    Task { await storeManager.purchase(product) }
-                }
-            } label: {
-                subscribeButtonLabel
-            }
-            .buttonStyle(.glassProminent)
-            .tint(.pink)
-            .controlSize(.large)
-            .disabled(selectedProduct == nil || storeManager.purchaseState == .purchasing)
-        } else {
-            legacySubscribeButton
-        }
-        #else
-        legacySubscribeButton
-        #endif
-    }
-
-    var subscribeButtonLabel: some View {
-        HStack(spacing: 8) {
-            if storeManager.purchaseState == .purchasing {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .scaleEffect(0.8)
-                    .tint(.white)
-            }
-            Text(storeManager.purchaseState == .purchasing ? String(localized: "Processing...") : subscribeButtonTitle)
-                .fontWeight(.semibold)
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: 44)
-    }
-
-    var legacySubscribeButton: some View {
-        Button {
-            if let product = selectedProduct {
-                Task { await storeManager.purchase(product) }
-            }
-        } label: {
-            subscribeButtonLabel
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(LinearGradient(
-                            colors: [Color.pink, Color.orange.opacity(0.8)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        ))
-                )
-                .foregroundStyle(.white)
         }
         .buttonStyle(.plain)
-        .disabled(selectedProduct == nil || storeManager.purchaseState == .purchasing)
     }
 
-    @ViewBuilder
-    func glassContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        #if swift(>=6.1)
-        if #available(iOS 26, macOS 26, *) {
-            GlassEffectContainer {
-                content()
-            }
-        } else {
-            content()
+    private var priceLine: String {
+        switch plan {
+        case .monthly:
+            return String(format: String(localized: "%@ per month"), product.displayPrice)
+        case .yearly:
+            return String(format: String(localized: "%@ per year"), product.displayPrice)
+        case .lifetime:
+            return String(format: String(localized: "%@ one time"), product.displayPrice)
         }
+    }
+
+    private var cardFill: Color {
+        #if os(iOS)
+        Color(uiColor: .secondarySystemGroupedBackground)
         #else
-        content()
+        Color(nsColor: .controlBackgroundColor)
+        #endif
+    }
+
+    private var cardStroke: Color {
+        #if os(iOS)
+        Color(uiColor: .separator).opacity(0.35)
+        #else
+        Color(nsColor: .separatorColor).opacity(0.35)
         #endif
     }
 }
 
-private extension ProUpgradeSheet {
-    func legalLink(title: String, url: String) -> some View {
-        Link(destination: URL(string: url)!) {
-            Text(title)
-                .underline()
-                .padding(.vertical, 6)
-                .padding(.horizontal, 4)
-                .contentShape(Rectangle())
+// MARK: - Comparison Table
+
+private struct ComparisonFeature: Identifiable {
+    let icon: String
+    let title: String
+    let free: ComparisonValue
+    let pro: ComparisonValue
+
+    var id: String { title }
+}
+
+private enum ComparisonValue {
+    case included(accessibilityLabel: String)
+    case number(String)
+    case notIncluded(accessibilityLabel: String)
+    case text(String, emphasized: Bool)
+    case unlimited(accessibilityLabel: String)
+}
+
+private struct ComparisonTable: View {
+    let rows: [ComparisonFeature]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ComparisonTableRow(isHeader: true) {
+                ComparisonHeaderCell(title: String(localized: "Feature"), alignment: .leading)
+            } free: {
+                ComparisonHeaderCell(title: String(localized: "Free"), alignment: .center)
+            } pro: {
+                ComparisonHeaderCell(title: String(localized: "Pro"), alignment: .center)
+            }
+
+            separator
+
+            ForEach(rows) { row in
+                ComparisonTableRow {
+                    ComparisonFeatureCell(feature: row)
+                } free: {
+                    ComparisonValueCell(value: row.free)
+                } pro: {
+                    ComparisonValueCell(value: row.pro)
+                }
+
+                if row.id != rows.last?.id {
+                    separator
+                }
+            }
         }
+    }
+
+    private var separator: some View {
+        Rectangle()
+            .fill(separatorColor)
+            .frame(height: 0.5)
+    }
+}
+
+private struct ComparisonTableRow<Feature: View, Free: View, Pro: View>: View {
+    var isHeader = false
+    @ViewBuilder let feature: Feature
+    @ViewBuilder let free: Free
+    @ViewBuilder let pro: Pro
+
+    var body: some View {
+        HStack(spacing: 0) {
+            feature
+                .frame(maxWidth: .infinity, minHeight: rowHeight, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, verticalPadding)
+
+            verticalSeparator
+
+            free
+                .frame(minWidth: 74, maxWidth: 74, minHeight: rowHeight, alignment: .center)
+                .padding(.horizontal, 4)
+                .padding(.vertical, verticalPadding)
+
+            verticalSeparator
+
+            pro
+                .frame(minWidth: 74, maxWidth: 74, minHeight: rowHeight, alignment: .center)
+                .padding(.horizontal, 4)
+                .padding(.vertical, verticalPadding)
+        }
+    }
+
+    private var rowHeight: CGFloat {
+        isHeader ? 20 : 20
+    }
+
+    private var verticalPadding: CGFloat {
+        isHeader ? 6 : 4
+    }
+
+    private var verticalSeparator: some View {
+        Rectangle()
+            .fill(separatorColor)
+            .frame(width: 0.5)
+    }
+}
+
+private struct ComparisonFeatureCell: View {
+    let feature: ComparisonFeature
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: feature.icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 15)
+
+            Text(feature.title)
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct ComparisonHeaderCell: View {
+    let title: String
+    let alignment: Alignment
+
+    var body: some View {
+        Text(title)
+            .font(.caption)
+            .fontWeight(.semibold)
+            .foregroundStyle(.secondary)
+            .textCase(.uppercase)
+            .frame(maxWidth: .infinity, alignment: alignment)
+    }
+}
+
+private struct ComparisonValueCell: View {
+    let value: ComparisonValue
+
+    var body: some View {
+        Group {
+            switch value {
+            case .included(let accessibilityLabel):
+                Image(systemName: "checkmark")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tint)
+                    .accessibilityLabel(accessibilityLabel)
+
+            case .number(let text):
+                Text(text)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+
+            case .notIncluded(let accessibilityLabel):
+                Text(verbatim: "-")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.tertiary)
+                    .accessibilityLabel(accessibilityLabel)
+
+            case .text(let text, let emphasized):
+                Text(text)
+                    .font(.caption2)
+                    .fontWeight(emphasized ? .semibold : .regular)
+                    .foregroundStyle(emphasized ? .primary : .secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+
+            case .unlimited(let accessibilityLabel):
+                Image(systemName: "infinity")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tint)
+                    .accessibilityLabel(accessibilityLabel)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+}
+
+private var separatorColor: Color {
+    #if os(iOS)
+    Color(uiColor: .separator).opacity(0.35)
+    #else
+    Color(nsColor: .separatorColor).opacity(0.35)
+    #endif
+}
+
+// MARK: - Native Card
+
+private struct NativeSectionCard<Content: View>: View {
+    var padding: CGFloat = 14
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        content
+            .padding(padding)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(cardFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(cardStroke, lineWidth: 0.5)
+            )
+    }
+
+    private var cardFill: Color {
+        #if os(iOS)
+        Color(uiColor: .secondarySystemGroupedBackground)
+        #else
+        Color(nsColor: .controlBackgroundColor)
+        #endif
+    }
+
+    private var cardStroke: Color {
+        #if os(iOS)
+        Color(uiColor: .separator).opacity(0.35)
+        #else
+        Color(nsColor: .separatorColor).opacity(0.35)
+        #endif
     }
 }
 
