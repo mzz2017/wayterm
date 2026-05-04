@@ -12,6 +12,17 @@ struct TerminalCopySettings {
     var flattenCommands: Bool = false
     var removeBoxDrawing: Bool = false
     var stripAnsiCodes: Bool = true
+
+    static func current(userDefaults: UserDefaults = .standard) -> TerminalCopySettings {
+        TerminalCopySettings(
+            trimTrailingWhitespace: userDefaults.object(forKey: "terminalCopyTrimTrailingWhitespace") as? Bool ?? true,
+            collapseBlankLines: userDefaults.bool(forKey: "terminalCopyCollapseBlankLines"),
+            stripShellPrompts: userDefaults.bool(forKey: "terminalCopyStripShellPrompts"),
+            flattenCommands: userDefaults.bool(forKey: "terminalCopyFlattenCommands"),
+            removeBoxDrawing: userDefaults.bool(forKey: "terminalCopyRemoveBoxDrawing"),
+            stripAnsiCodes: userDefaults.object(forKey: "terminalCopyStripAnsiCodes") as? Bool ?? true
+        )
+    }
 }
 
 nonisolated struct TerminalTextCleaner {

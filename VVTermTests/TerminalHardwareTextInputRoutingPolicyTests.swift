@@ -155,37 +155,48 @@ struct TerminalKeyboardFocusPolicyTests {
     }
 
     @Test
-    func userDismissalDisablesAutomaticFocusUntilExplicitRefocus() {
+    func userDismissalBlocksIncidentalFocusUntilExplicitRefocus() {
         var policy = TerminalKeyboardFocusPolicy()
+        let initialActivationAllowed = policy.requestFocus(for: .initialActivation)
 
-        policy.requestFocus()
+        #expect(initialActivationAllowed)
         policy.dismissForUser()
 
         #expect(policy.allowsAutomaticFocus == false)
         #expect(policy.shouldRestoreOnReconnect == false)
+        let directTouchAllowed = policy.requestFocus(for: .directTouch)
+        let selectionGestureAllowed = policy.requestFocus(for: .selectionGesture)
+        #expect(directTouchAllowed == false)
+        #expect(selectionGestureAllowed == false)
 
-        policy.requestFocus()
+        let explicitUserRequestAllowed = policy.requestFocus(for: .explicitUserRequest)
+        #expect(explicitUserRequestAllowed)
 
         #expect(policy.allowsAutomaticFocus)
         #expect(policy.shouldRestoreOnReconnect)
     }
 
     @Test
-    func reconnectRestoreReEnablesAutomaticFocusAfterManualDismissal() {
+    func reconnectRestoreStaysBlockedAfterManualDismissal() {
         var policy = TerminalKeyboardFocusPolicy()
+        let initialActivationAllowed = policy.requestFocus(for: .initialActivation)
 
+        #expect(initialActivationAllowed)
         policy.dismissForUser()
         policy.markForReconnect()
 
-        #expect(policy.allowsAutomaticFocus)
-        #expect(policy.shouldRestoreOnReconnect)
+        #expect(policy.allowsAutomaticFocus == false)
+        #expect(policy.shouldRestoreOnReconnect == false)
+        let reconnectRestoreAllowed = policy.requestFocus(for: .reconnectRestore)
+        #expect(reconnectRestoreAllowed == false)
     }
 
     @Test
-    func clearingReconnectIntentPreservesFocusMode() {
+    func clearingReconnectIntentPreservesCurrentFocusMode() {
         var policy = TerminalKeyboardFocusPolicy()
+        let initialActivationAllowed = policy.requestFocus(for: .initialActivation)
 
-        policy.requestFocus()
+        #expect(initialActivationAllowed)
         policy.clearReconnect()
 
         #expect(policy.allowsAutomaticFocus)
@@ -196,5 +207,24 @@ struct TerminalKeyboardFocusPolicyTests {
 
         #expect(policy.allowsAutomaticFocus == false)
         #expect(policy.shouldRestoreOnReconnect == false)
+    }
+
+    @Test
+    func reconnectRestoreRequiresSavedRestoreIntent() {
+        var policy = TerminalKeyboardFocusPolicy()
+        let initialReconnectRestoreAllowed = policy.requestFocus(for: .reconnectRestore)
+        let initialActivationAllowed = policy.requestFocus(for: .initialActivation)
+
+        #expect(initialReconnectRestoreAllowed == false)
+        #expect(initialActivationAllowed)
+        policy.clearReconnect()
+
+        let reconnectRestoreWithoutIntent = policy.requestFocus(for: .reconnectRestore)
+        #expect(reconnectRestoreWithoutIntent == false)
+
+        policy.markForReconnect()
+
+        let reconnectRestoreWithIntent = policy.requestFocus(for: .reconnectRestore)
+        #expect(reconnectRestoreWithIntent)
     }
 }

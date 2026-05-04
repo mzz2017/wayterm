@@ -49,6 +49,8 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     @Published var tmuxAttachPrompt: TmuxAttachPrompt?
+    @Published var terminalBrowseModeBySession: [UUID: Bool] = [:]
+    @Published var terminalFindNavigatorVisibleBySession: [UUID: Bool] = [:]
 
     let tmuxResolver = TmuxAttachResolver()
 
@@ -395,6 +397,7 @@ final class ConnectionSessionManager: ObservableObject {
     private func clearRuntimeStateForClosedSession(_ sessionId: UUID) {
         cancelAndClearShellHandlers(for: sessionId)
         terminalsNeedingReconnectReset.remove(sessionId)
+        terminalBrowseModeBySession.removeValue(forKey: sessionId)
         clearTmuxRuntimeState(for: sessionId)
     }
 
@@ -421,7 +424,7 @@ final class ConnectionSessionManager: ObservableObject {
         DispatchQueue.main.async {
             #if os(iOS)
             guard UIApplication.shared.applicationState == .active else { return }
-            replacementTerminal.requestKeyboardFocus()
+            replacementTerminal.requestKeyboardFocus(for: .initialActivation)
             #else
             _ = replacementTerminal.window?.makeFirstResponder(replacementTerminal)
             #endif
@@ -723,7 +726,19 @@ final class ConnectionSessionManager: ObservableObject {
         // Evict oldest terminals if we're at capacity
         evictOldTerminalsIfNeeded()
 
+        terminal.onKeyboardBrowseModeChange = { [weak self] isBrowsing in
+            Task { @MainActor [weak self] in
+                self?.setTerminalBrowseMode(isBrowsing, for: sessionId)
+            }
+        }
+        terminal.onFindNavigatorVisibilityChange = { [weak self] isVisible in
+            Task { @MainActor [weak self] in
+                self?.setTerminalFindNavigatorVisible(isVisible, for: sessionId)
+            }
+        }
         terminalViews[sessionId] = terminal
+        setTerminalBrowseMode(terminal.isKeyboardInBrowseMode, for: sessionId)
+        setTerminalFindNavigatorVisible(terminal.isFindNavigatorVisible, for: sessionId)
         touchTerminal(sessionId)
 
         logger.debug("Registered terminal for session, total: \(self.terminalViews.count)/\(self.maxTerminals)")
@@ -732,6 +747,8 @@ final class ConnectionSessionManager: ObservableObject {
     func unregisterTerminal(for sessionId: UUID) {
         cleanupTerminalSurface(for: sessionId)
         terminalsNeedingReconnectReset.remove(sessionId)
+        terminalBrowseModeBySession.removeValue(forKey: sessionId)
+        terminalFindNavigatorVisibleBySession.removeValue(forKey: sessionId)
         removeTerminalFromAccessOrder(sessionId)
         logger.debug("Unregistered terminal, remaining: \(self.terminalViews.count)")
     }
@@ -744,7 +761,21 @@ final class ConnectionSessionManager: ObservableObject {
 
     private func cleanupTerminalSurface(for sessionId: UUID) {
         if let terminal = terminalViews.removeValue(forKey: sessionId) {
+            terminal.onKeyboardBrowseModeChange = nil
+            terminal.onFindNavigatorVisibilityChange = nil
             terminal.cleanup()
+        }
+    }
+
+    private func setTerminalBrowseMode(_ isBrowsing: Bool, for sessionId: UUID) {
+        if terminalBrowseModeBySession[sessionId] != isBrowsing {
+            terminalBrowseModeBySession[sessionId] = isBrowsing
+        }
+    }
+
+    private func setTerminalFindNavigatorVisible(_ isVisible: Bool, for sessionId: UUID) {
+        if terminalFindNavigatorVisibleBySession[sessionId] != isVisible {
+            terminalFindNavigatorVisibleBySession[sessionId] = isVisible
         }
     }
 

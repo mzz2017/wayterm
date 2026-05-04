@@ -823,9 +823,6 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             && session.connectionState.isConnecting
             && terminalView.shouldRestoreKeyboardFocusOnReconnect
         let shouldKeepExistingKeyboardFocus = terminalView.isFirstResponder && shouldRestoreKeyboardFocus
-        let shouldAutoCaptureKeyboardFocus =
-            shouldRestoreKeyboardFocus
-            || (session.connectionState.isConnected && terminalView.allowsAutomaticKeyboardFocus)
         terminalView.acceptsTerminalInput = session.connectionState.isConnected
         let shouldStartSSHConnection: Bool = {
             switch session.connectionState {
@@ -859,9 +856,18 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
 
         // Keep the terminal from reclaiming focus while an overlay (for example
         // the disconnected card) should be interactive above it.
-        if shouldRenderTerminal && context.coordinator.isTerminalReady && shouldAutoCaptureKeyboardFocus {
-            if terminalView.window != nil && !terminalView.isFirstResponder {
-                terminalView.requestKeyboardFocus()
+        if shouldRenderTerminal && context.coordinator.isTerminalReady {
+            let focusReason: TerminalKeyboardFocusReason?
+            if shouldRestoreKeyboardFocus {
+                focusReason = .reconnectRestore
+            } else if session.connectionState.isConnected && terminalView.allowsAutomaticKeyboardFocus {
+                focusReason = .initialActivation
+            } else {
+                focusReason = nil
+            }
+
+            if let focusReason, terminalView.window != nil && !terminalView.isFirstResponder {
+                terminalView.requestKeyboardFocus(for: focusReason)
             }
         } else if scenePhase == .active
             && terminalView.isFirstResponder

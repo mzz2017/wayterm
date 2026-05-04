@@ -205,10 +205,18 @@ extension Ghostty {
                 return
             }
 
+            // iPhone touch selection now owns copy explicitly, so don't let
+            // Ghostty mirror selection changes into the pasteboard on iOS.
+            #if os(iOS)
+            let supportsSelectionClipboard = false
+            #else
+            let supportsSelectionClipboard = true
+            #endif
+
             // Create runtime config with callbacks
             var runtime_cfg = ghostty_runtime_config_s(
                 userdata: Unmanaged.passUnretained(self).toOpaque(),
-                supports_selection_clipboard: true,
+                supports_selection_clipboard: supportsSelectionClipboard,
                 wakeup_cb: { userdata in App.wakeup(userdata) },
                 action_cb: { app, target, action in App.action(app!, target: target, action: action) },
                 read_clipboard_cb: { userdata, loc, state in App.readClipboard(userdata, location: loc, state: state) },
@@ -587,6 +595,49 @@ extension Ghostty {
                 }
                 return true
 
+            case GHOSTTY_ACTION_START_SEARCH:
+                #if os(iOS)
+                let needle = action.action.start_search.needle.map { String(cString: $0) } ?? ""
+                DispatchQueue.main.async {
+                    terminalView?.handleGhosttySearchStarted(needle: needle)
+                }
+                return true
+                #else
+                return false
+                #endif
+
+            case GHOSTTY_ACTION_END_SEARCH:
+                #if os(iOS)
+                DispatchQueue.main.async {
+                    terminalView?.handleGhosttySearchEnded()
+                }
+                return true
+                #else
+                return false
+                #endif
+
+            case GHOSTTY_ACTION_SEARCH_TOTAL:
+                #if os(iOS)
+                let total = action.action.search_total.total >= 0 ? Int(action.action.search_total.total) : nil
+                DispatchQueue.main.async {
+                    terminalView?.handleGhosttySearchTotalChange(total)
+                }
+                return true
+                #else
+                return false
+                #endif
+
+            case GHOSTTY_ACTION_SEARCH_SELECTED:
+                #if os(iOS)
+                let selected = action.action.search_selected.selected >= 0 ? Int(action.action.search_selected.selected) : nil
+                DispatchQueue.main.async {
+                    terminalView?.handleGhosttySearchSelectedChange(selected)
+                }
+                return true
+                #else
+                return false
+                #endif
+
             case GHOSTTY_ACTION_CELL_SIZE:
                 // Cell size update - used for row-to-pixel conversion in scrollbar
                 #if os(macOS)
@@ -675,6 +726,9 @@ extension Ghostty {
             confirm: Bool
         ) {
             guard let contents = contents, count > 0 else { return }
+            #if os(iOS)
+            guard location != GHOSTTY_CLIPBOARD_SELECTION else { return }
+            #endif
 
             // The runtime passes an array of clipboard entries; prefer the first
             // textual entry. The API does not supply a byte length, so we treat
@@ -686,15 +740,7 @@ extension Ghostty {
                 var string = String(cString: dataPtr)
                 if !string.isEmpty {
                     // Apply copy transformations from settings
-                    let settings = TerminalCopySettings(
-                        trimTrailingWhitespace: UserDefaults.standard.object(forKey: "terminalCopyTrimTrailingWhitespace") as? Bool ?? true,
-                        collapseBlankLines: UserDefaults.standard.bool(forKey: "terminalCopyCollapseBlankLines"),
-                        stripShellPrompts: UserDefaults.standard.bool(forKey: "terminalCopyStripShellPrompts"),
-                        flattenCommands: UserDefaults.standard.bool(forKey: "terminalCopyFlattenCommands"),
-                        removeBoxDrawing: UserDefaults.standard.bool(forKey: "terminalCopyRemoveBoxDrawing"),
-                        stripAnsiCodes: UserDefaults.standard.object(forKey: "terminalCopyStripAnsiCodes") as? Bool ?? true
-                    )
-                    string = TerminalTextCleaner.cleanText(string, settings: settings)
+                    string = TerminalTextCleaner.cleanText(string, settings: .current())
 
                     Clipboard.copy(string)
                     Ghostty.logger.debug("Wrote to clipboard: \(string.prefix(50))...")

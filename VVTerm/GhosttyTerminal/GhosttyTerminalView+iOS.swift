@@ -20,31 +20,63 @@ private struct IMEProxySnapshot: Equatable {
     var markedRange: NSRange?
 }
 
+private extension UIViewController {
+    var topMostPresentedViewController: UIViewController {
+        var controller = self
+        while let presented = controller.presentedViewController {
+            controller = presented
+        }
+        return controller
+    }
+}
+
+enum TerminalKeyboardFocusReason {
+    case explicitUserRequest
+    case initialActivation
+    case reconnectRestore
+    case directTouch
+    case selectionGesture
+}
+
 struct TerminalKeyboardFocusPolicy {
     private enum Mode {
-        case automatic
-        case manual
+        case typing
+        case browse
     }
 
-    private var mode: Mode = .automatic
+    private var mode: Mode = .typing
     private(set) var shouldRestoreOnReconnect = false
 
     var allowsAutomaticFocus: Bool {
-        mode == .automatic
+        mode == .typing
     }
 
-    mutating func requestFocus() {
-        mode = .automatic
-        shouldRestoreOnReconnect = true
+    var isBrowsing: Bool {
+        mode == .browse
+    }
+
+    mutating func requestFocus(for reason: TerminalKeyboardFocusReason) -> Bool {
+        switch reason {
+        case .explicitUserRequest:
+            mode = .typing
+            shouldRestoreOnReconnect = true
+            return true
+        case .initialActivation, .directTouch, .selectionGesture:
+            guard mode == .typing else { return false }
+            shouldRestoreOnReconnect = true
+            return true
+        case .reconnectRestore:
+            return mode == .typing && shouldRestoreOnReconnect
+        }
     }
 
     mutating func dismissForUser() {
-        mode = .manual
+        mode = .browse
         shouldRestoreOnReconnect = false
     }
 
     mutating func markForReconnect() {
-        mode = .automatic
+        guard mode == .typing else { return }
         shouldRestoreOnReconnect = true
     }
 
@@ -358,6 +390,35 @@ class GhosttyTerminalView: UIView {
 
     private var isSelecting = false
     private var isScrolling = false
+    private var nativeSelectionSnapshot = TerminalNativeTextSnapshot.empty
+    private var nativeSelectedRange: NSRange?
+    private weak var nativeTextInputDelegate: UITextInputDelegate?
+    private lazy var nativeSelectionTokenizer = UITextInputStringTokenizer(textInput: self)
+    private var nativeSelectionAffinity: UITextStorageDirection = .forward
+    private var nativeSelectionInteractionActive = false
+    private var prefersNativeSelectionFirstResponder = false
+    private var nativeTextInteraction: UITextInteraction?
+    private var nativeFindInteraction: UIFindInteraction?
+    @available(iOS 16.0, *)
+    private var nativeFindSession: GhosttyNativeFindSession?
+    private var ghosttyFindReportedTotal: Int?
+    private var ghosttyFindReportedSelectedIndex: Int?
+    private let nativeFindDocumentIdentifier = "terminal"
+    private let nativeFindOverlay = TerminalNativeFindOverlayView()
+    private var nativeFindDecorations: [TerminalNativeFindDecoration] = [] {
+        didSet {
+            updateNativeFindOverlay()
+        }
+    }
+    private var touchSelectionAnchor: TerminalGridPoint?
+    private var touchSelectionSeed: TerminalGridSelection?
+    private var touchSelection: TerminalGridSelection? {
+        didSet {
+            updateTouchSelectionOverlay()
+        }
+    }
+    private let touchSelectionOverlay = TerminalTouchSelectionOverlayView()
+    private let touchSelectionLoupe = TerminalTouchSelectionLoupeView()
     private lazy var selectionRecognizer: UILongPressGestureRecognizer = {
         let recognizer = UILongPressGestureRecognizer(
             target: self,
@@ -392,6 +453,16 @@ class GhosttyTerminalView: UIView {
             target: self,
             action: #selector(handlePanGesture(_:))
         )
+        recognizer.maximumNumberOfTouches = 1
+        return recognizer
+    }()
+    private lazy var selectionStartHandleRecognizer: UIPanGestureRecognizer = {
+        let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handleSelectionHandlePan(_:)))
+        recognizer.maximumNumberOfTouches = 1
+        return recognizer
+    }()
+    private lazy var selectionEndHandleRecognizer: UIPanGestureRecognizer = {
+        let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handleSelectionHandlePan(_:)))
         recognizer.maximumNumberOfTouches = 1
         return recognizer
     }()
@@ -458,6 +529,9 @@ class GhosttyTerminalView: UIView {
         if isPaused { return }
         guard surface?.unsafeCValue != nil else { return }
         guard bounds.width > 0 && bounds.height > 0 else { return }
+        if usesNativeTouchSelection, nativeSelectionInteractionActive || nativeSelectedRange != nil {
+            refreshNativeSelectionSnapshot()
+        }
         markIOSurfaceLayersForDisplay()
     }
 
@@ -510,26 +584,52 @@ class GhosttyTerminalView: UIView {
 
         setupSurface()
         addSubview(imeProxyTextView)
+        if usesNativeTouchSelection {
+            nativeFindOverlay.frame = bounds
+            addSubview(nativeFindOverlay)
+        }
+        if usesAppOwnedTouchSelection {
+            touchSelectionOverlay.frame = bounds
+            touchSelectionOverlay.isHidden = true
+            addSubview(touchSelectionOverlay)
+            touchSelectionLoupe.isHidden = true
+            addSubview(touchSelectionLoupe)
+            touchSelectionOverlay.startHandle.addGestureRecognizer(selectionStartHandleRecognizer)
+            touchSelectionOverlay.endHandle.addGestureRecognizer(selectionEndHandleRecognizer)
+        }
 
         // Setup gesture recognizers with delegate for simultaneous recognition
-        selectionRecognizer.delegate = self
         scrollRecognizer.delegate = self
-        doubleTapRecognizer.delegate = self
-        tripleTapRecognizer.delegate = self
+        if usesAppOwnedTouchSelection {
+            selectionRecognizer.delegate = self
+            doubleTapRecognizer.delegate = self
+            tripleTapRecognizer.delegate = self
+            selectionStartHandleRecognizer.delegate = self
+            selectionEndHandleRecognizer.delegate = self
+        }
 
-        // Triple tap should require double tap to fail first
-        doubleTapRecognizer.require(toFail: tripleTapRecognizer)
+        if usesAppOwnedTouchSelection {
+            // Triple tap should require double tap to fail first
+            doubleTapRecognizer.require(toFail: tripleTapRecognizer)
+        }
 
-        addGestureRecognizer(selectionRecognizer)
         addGestureRecognizer(scrollRecognizer)
-        addGestureRecognizer(doubleTapRecognizer)
-        addGestureRecognizer(tripleTapRecognizer)
+        if usesAppOwnedTouchSelection {
+            addGestureRecognizer(selectionRecognizer)
+            addGestureRecognizer(doubleTapRecognizer)
+            addGestureRecognizer(tripleTapRecognizer)
+        }
         isUserInteractionEnabled = true
 
-        // Setup edit menu interaction for copy/paste
-        let interaction = UIEditMenuInteraction(delegate: self)
-        addInteraction(interaction)
-        editMenuInteraction = interaction
+        if usesNativeTouchSelection {
+            setupNativeTextSelectionInteractions()
+            setupNativeFindInteraction()
+        } else {
+            // Setup edit menu interaction for copy/paste
+            let interaction = UIEditMenuInteraction(delegate: self)
+            addInteraction(interaction)
+            editMenuInteraction = interaction
+        }
 
         setupConfigReloadObservation()
         registerColorSchemeObserver()
@@ -574,6 +674,8 @@ class GhosttyTerminalView: UIView {
         onPwdChange = nil
         onProgressReport = nil
         onResize = nil
+        onKeyboardBrowseModeChange = nil
+        onFindNavigatorVisibilityChange = nil
         richPasteInterceptor = nil
         writeCallback = nil
 
@@ -714,6 +816,9 @@ class GhosttyTerminalView: UIView {
         if !isPaused {
             ghostty_surface_refresh(surface)
             ghostty_surface_draw(surface)
+            if usesNativeTouchSelection {
+                refreshNativeSelectionSnapshot()
+            }
             markIOSurfaceLayersForDisplay()
         }
 
@@ -1012,6 +1117,9 @@ class GhosttyTerminalView: UIView {
     var acceptsTerminalInput = true
     private var keyboardFocusPolicy = TerminalKeyboardFocusPolicy()
     private var suppressDirectTouchKeyboardFocusUntil = Date.distantPast
+    var onKeyboardBrowseModeChange: ((Bool) -> Void)?
+    var onFindNavigatorVisibilityChange: ((Bool) -> Void)?
+    private var isEndingGhosttySearchFromNavigatorDismissal = false
 
     var shouldRestoreKeyboardFocusOnReconnect: Bool {
         keyboardFocusPolicy.shouldRestoreOnReconnect
@@ -1019,6 +1127,17 @@ class GhosttyTerminalView: UIView {
 
     var allowsAutomaticKeyboardFocus: Bool {
         keyboardFocusPolicy.allowsAutomaticFocus
+    }
+
+    var isKeyboardInBrowseMode: Bool {
+        keyboardFocusPolicy.isBrowsing
+    }
+
+    var isFindNavigatorVisible: Bool {
+        if #available(iOS 16.0, *) {
+            return nativeFindInteraction?.isFindNavigatorVisible == true
+        }
+        return false
     }
 
     func markKeyboardFocusForReconnect() {
@@ -1029,13 +1148,26 @@ class GhosttyTerminalView: UIView {
         keyboardFocusPolicy.clearReconnect()
     }
 
-    func requestKeyboardFocus() {
-        keyboardFocusPolicy.requestFocus()
+    @discardableResult
+    func requestKeyboardFocus(for reason: TerminalKeyboardFocusReason) -> Bool {
+        guard keyboardFocusPolicy.requestFocus(for: reason) else { return false }
+        prefersNativeSelectionFirstResponder = false
+        if usesNativeTouchSelection, nativeSelectedRange != nil {
+            setNativeSelectedRange(nil)
+        }
+        notifyKeyboardBrowseModeChange()
         _ = becomeFirstResponder()
+        return true
+    }
+
+    @discardableResult
+    func requestKeyboardFocus() -> Bool {
+        requestKeyboardFocus(for: .explicitUserRequest)
     }
 
     func dismissKeyboardForUser(suppressDirectTouchRefocus: Bool = false) {
         keyboardFocusPolicy.dismissForUser()
+        notifyKeyboardBrowseModeChange()
         if suppressDirectTouchRefocus {
             // Tapping the dismiss button can leak one direct-touch event through to the
             // terminal view underneath. Suppress immediate touch-driven refocus briefly
@@ -1050,8 +1182,17 @@ class GhosttyTerminalView: UIView {
     }
 
     func shouldAutoFocusKeyboard(for touches: Set<UITouch>) -> Bool {
+        guard keyboardFocusPolicy.allowsAutomaticFocus else { return false }
         guard touches.contains(where: { $0.type == .direct }) else { return true }
         return Date() >= suppressDirectTouchKeyboardFocusUntil
+    }
+
+    private func notifyKeyboardBrowseModeChange() {
+        onKeyboardBrowseModeChange?(keyboardFocusPolicy.isBrowsing)
+    }
+
+    private func notifyFindNavigatorVisibilityChange() {
+        onFindNavigatorVisibilityChange?(isFindNavigatorVisible)
     }
 
     override var textInputContextIdentifier: String? {
@@ -1064,6 +1205,14 @@ class GhosttyTerminalView: UIView {
 
     override func becomeFirstResponder() -> Bool {
         guard isTextInputSessionEligible else { return false }
+        if usesNativeTouchSelection,
+           (prefersNativeSelectionFirstResponder || nativeSelectionInteractionActive || nativeSelectedRange != nil) {
+            let result = super.becomeFirstResponder()
+            if let surface = surface?.unsafeCValue {
+                ghostty_surface_set_focus(surface, result || super.isFirstResponder)
+            }
+            return result
+        }
         return imeProxyTextView.becomeFirstResponder()
     }
 
@@ -1097,6 +1246,11 @@ class GhosttyTerminalView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         imeProxyTextView.frame = Self.imeProxyOffscreenFrame
+        nativeFindOverlay.frame = bounds
+        touchSelectionOverlay.frame = bounds
+        bringSubviewToFront(nativeFindOverlay)
+        bringSubviewToFront(touchSelectionOverlay)
+        bringSubviewToFront(touchSelectionLoupe)
 
         guard !isShuttingDown else { return }
 
@@ -1149,7 +1303,9 @@ class GhosttyTerminalView: UIView {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                self?.updateHardwareKeyboardState(reloadInputViewsIfNeeded: true)
+                Task { @MainActor [weak self] in
+                    self?.updateHardwareKeyboardState(reloadInputViewsIfNeeded: true)
+                }
             }
         )
         hardwareKeyboardObservers.append(
@@ -1158,7 +1314,9 @@ class GhosttyTerminalView: UIView {
                 object: nil,
                 queue: .main
             ) { [weak self] _ in
-                self?.updateHardwareKeyboardState(reloadInputViewsIfNeeded: true)
+                Task { @MainActor [weak self] in
+                    self?.updateHardwareKeyboardState(reloadInputViewsIfNeeded: true)
+                }
             }
         )
         updateHardwareKeyboardState(reloadInputViewsIfNeeded: false)
@@ -1192,9 +1350,22 @@ class GhosttyTerminalView: UIView {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
+        let location = touches.first?.location(in: self)
+        if usesNativeTouchSelection, nativeSelectionInteractionActive || nativeSelectedRange != nil {
+            return
+        }
+        if usesAppOwnedTouchSelection,
+           touchSelection != nil,
+           let location,
+           !isPointOnTouchSelectionHandle(location) {
+            clearTouchSelection()
+        }
+        if let location, isPointOnTouchSelectionHandle(location) {
+            return
+        }
         // Tap just focuses keyboard - no mouse events (avoids accidental selection)
         guard shouldAutoFocusKeyboard(for: touches) else { return }
-        requestKeyboardFocus()
+        requestKeyboardFocus(for: .directTouch)
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -1234,6 +1405,13 @@ class GhosttyTerminalView: UIView {
     @objc private func handlePanGesture(_ recognizer: UIPanGestureRecognizer) {
         guard let surface = surface else { return }
         if isSelecting { return }
+        if touchSelection != nil {
+            if recognizer.state == .began,
+               !isPointOnTouchSelectionHandle(recognizer.location(in: self)) {
+                clearTouchSelection()
+            }
+            return
+        }
 
         let translation = recognizer.translation(in: self)
         let location = recognizer.location(in: self)
@@ -1338,6 +1516,629 @@ class GhosttyTerminalView: UIView {
         momentumPhase = .none
     }
 
+    private func setupNativeTextSelectionInteractions() {
+        let interaction = UITextInteraction(for: .nonEditable)
+        interaction.delegate = self
+        interaction.textInput = self
+        addInteraction(interaction)
+        nativeTextInteraction = interaction
+        for gesture in interaction.gesturesForFailureRequirements {
+            scrollRecognizer.require(toFail: gesture)
+        }
+    }
+
+    private func setupNativeFindInteraction() {
+        guard #available(iOS 16.0, *), nativeFindInteraction == nil else { return }
+        let interaction = UIFindInteraction(sessionDelegate: self)
+        interaction.optionsMenuProvider = { _ in nil }
+        addInteraction(interaction)
+        nativeFindInteraction = interaction
+    }
+
+    private func notifyNativeSelectionLayoutChange() {
+        guard nativeSelectionInteractionActive || nativeSelectedRange != nil else { return }
+        nativeTextInputDelegate?.textWillChange(self)
+        nativeTextInputDelegate?.textDidChange(self)
+        nativeTextInputDelegate?.selectionWillChange(self)
+        nativeTextInputDelegate?.selectionDidChange(self)
+    }
+
+    private func refreshNativeSelectionSnapshot(resetSelection: Bool = false) {
+        guard usesNativeTouchSelection else { return }
+
+        nativeSelectionSnapshot = buildNativeSelectionSnapshot()
+        updateNativeFindOverlay()
+        if resetSelection {
+            setNativeSelectedRange(nil)
+            return
+        }
+
+        guard let nativeSelectedRange else { return }
+        let clamped = nativeSelectionSnapshot.clampedRange(nativeSelectedRange)
+        if clamped != nativeSelectedRange {
+            setNativeSelectedRange(clamped)
+        } else {
+            notifyNativeSelectionLayoutChange()
+        }
+    }
+
+    private func buildNativeSelectionSnapshot() -> TerminalNativeTextSnapshot {
+        guard let surface = surface?.unsafeCValue,
+              let metrics = selectionGridMetrics() else {
+            return .empty
+        }
+
+        let rows = (0..<metrics.rows).map { readNativeSelectionLine(surface: surface, row: $0, columns: metrics.cols) }
+        return TerminalNativeTextSnapshot(lines: rows, cellSize: metrics.cellSize, columns: metrics.cols)
+    }
+
+    private func readNativeSelectionLine(surface: ghostty_surface_t, row: Int, columns: Int) -> String {
+        guard columns > 0 else { return "" }
+
+        var text = ghostty_text_s()
+        let selection = ghostty_selection_s(
+            top_left: ghostty_point_s(
+                tag: GHOSTTY_POINT_VIEWPORT,
+                coord: GHOSTTY_POINT_COORD_EXACT,
+                x: 0,
+                y: UInt32(row)
+            ),
+            bottom_right: ghostty_point_s(
+                tag: GHOSTTY_POINT_VIEWPORT,
+                coord: GHOSTTY_POINT_COORD_EXACT,
+                x: UInt32(columns - 1),
+                y: UInt32(row)
+            ),
+            rectangle: true
+        )
+
+        let rawLine: String
+        if ghostty_surface_read_text(surface, selection, &text) {
+            defer { ghostty_surface_free_text(surface, &text) }
+            rawLine = ghosttyTextString(text)
+        } else {
+            rawLine = ""
+        }
+
+        var line = rawLine
+        while line.last == "\n" || line.last == "\r" {
+            line.removeLast()
+        }
+
+        while let scalar = line.unicodeScalars.last,
+              CharacterSet.whitespaces.contains(scalar) {
+            line.removeLast()
+        }
+
+        let lineNSString = line as NSString
+        if lineNSString.length > columns {
+            line = lineNSString.substring(to: columns)
+        }
+
+        return line
+    }
+
+    private func setNativeSelectedRange(_ range: NSRange?) {
+        let clampedRange = range.map { nativeSelectionSnapshot.clampedRange($0) }
+        if nativeSelectedRange == clampedRange {
+            notifyNativeSelectionLayoutChange()
+            return
+        }
+
+        nativeTextInputDelegate?.selectionWillChange(self)
+        nativeSelectedRange = clampedRange
+        if clampedRange == nil, !nativeSelectionInteractionActive {
+            prefersNativeSelectionFirstResponder = false
+        }
+        nativeTextInputDelegate?.selectionDidChange(self)
+    }
+
+    private func selectedNativeSelectionText() -> String? {
+        guard let nativeSelectedRange, nativeSelectedRange.length > 0 else { return nil }
+        return nativeSelectionSnapshot.text(in: nativeSelectedRange)
+    }
+
+    private func updateNativeFindOverlay() {
+        guard usesNativeTouchSelection else { return }
+        let highlights = nativeFindDecorations.flatMap { decoration in
+            nativeSelectionSnapshot.selectionRects(for: decoration.range).map {
+                TerminalNativeFindOverlayView.Highlight(rect: $0.rect, style: decoration.style)
+            }
+        }
+        nativeFindOverlay.highlights = highlights
+    }
+
+    @available(iOS 16.0, *)
+    private func presentFindNavigator(prefillingSelectedText: Bool = false) {
+        refreshNativeSelectionSnapshot()
+        if prefillingSelectedText, let selectionText = normalizedSelectionMenuText() {
+            nativeFindInteraction?.searchText = selectionText
+            nativeFindSession?.applyExternalQuery(selectionText)
+            performGhosttyFindQuery(selectionText)
+        }
+        nativeFindInteraction?.presentFindNavigator(showingReplace: false)
+    }
+
+    func showFindNavigator(prefillingSelectedText: Bool = false) {
+        guard usesNativeTouchSelection else { return }
+        if #available(iOS 16.0, *) {
+            presentFindNavigator(prefillingSelectedText: prefillingSelectedText)
+        }
+    }
+
+    func dismissFindNavigator() {
+        guard #available(iOS 16.0, *), nativeFindInteraction?.isFindNavigatorVisible == true else { return }
+        nativeFindInteraction?.dismissFindNavigator()
+    }
+
+    @MainActor
+    private func performGhosttyFindQuery(_ query: String) {
+        guard let surface else { return }
+        ghosttyFindReportedTotal = 0
+        ghosttyFindReportedSelectedIndex = nil
+        let action = "search:\(query)"
+        guard surface.perform(action: action) else { return }
+        if query.isEmpty {
+            nativeFindSession?.resetReportedResults()
+            nativeFindInteraction?.updateResultCount()
+        }
+    }
+
+    @MainActor
+    private func navigateGhosttyFind(_ direction: UITextStorageDirection) {
+        guard let surface else { return }
+        let action = direction == .backward ? "navigate_search:previous" : "navigate_search:next"
+        _ = surface.perform(action: action)
+    }
+
+    @MainActor
+    private func endGhosttyFindSearchForNavigatorDismissal() {
+        guard let surface else { return }
+        ghosttyFindReportedTotal = 0
+        ghosttyFindReportedSelectedIndex = nil
+        isEndingGhosttySearchFromNavigatorDismissal = true
+        _ = surface.perform(action: "end_search")
+    }
+
+    @MainActor
+    private func invalidateGhosttyFindWithoutClosingNavigator() {
+        performGhosttyFindQuery("")
+    }
+
+    @MainActor
+    private func applyStoredGhosttyFindResultsToNativeSession() {
+        guard #available(iOS 16.0, *), let nativeFindSession else { return }
+        if nativeFindSession.updateReportedResults(
+            total: ghosttyFindReportedTotal,
+            highlightedIndex: ghosttyFindReportedSelectedIndex
+        ) {
+            nativeFindInteraction?.updateResultCount()
+        }
+    }
+
+    func handleGhosttySearchStarted(needle: String) {
+        guard usesNativeTouchSelection else { return }
+        ghosttyFindReportedTotal = 0
+        ghosttyFindReportedSelectedIndex = nil
+        if #available(iOS 16.0, *) {
+            nativeFindInteraction?.searchText = needle
+            nativeFindSession?.applyExternalQuery(needle)
+            applyStoredGhosttyFindResultsToNativeSession()
+            if nativeFindInteraction?.isFindNavigatorVisible != true {
+                nativeFindInteraction?.presentFindNavigator(showingReplace: false)
+            }
+        }
+    }
+
+    func handleGhosttySearchEnded() {
+        guard usesNativeTouchSelection else { return }
+        ghosttyFindReportedTotal = 0
+        ghosttyFindReportedSelectedIndex = nil
+        if #available(iOS 16.0, *) {
+            nativeFindSession?.resetReportedResults()
+            nativeFindInteraction?.updateResultCount()
+            if isEndingGhosttySearchFromNavigatorDismissal {
+                isEndingGhosttySearchFromNavigatorDismissal = false
+            } else if nativeFindInteraction?.isFindNavigatorVisible == true {
+                nativeFindInteraction?.dismissFindNavigator()
+            }
+        }
+    }
+
+    func handleGhosttySearchTotalChange(_ total: Int?) {
+        guard usesNativeTouchSelection else { return }
+        ghosttyFindReportedTotal = total
+        if #available(iOS 16.0, *) {
+            applyStoredGhosttyFindResultsToNativeSession()
+        }
+    }
+
+    func handleGhosttySearchSelectedChange(_ selected: Int?) {
+        guard usesNativeTouchSelection else { return }
+        ghosttyFindReportedSelectedIndex = selected
+        if #available(iOS 16.0, *) {
+            applyStoredGhosttyFindResultsToNativeSession()
+        }
+    }
+
+    private var usesNativeTouchSelection: Bool {
+        UIDevice.current.userInterfaceIdiom == .phone
+    }
+
+    private var usesAppOwnedTouchSelection: Bool {
+        UIDevice.current.userInterfaceIdiom == .phone && !usesNativeTouchSelection
+    }
+
+    private func selectionGridMetrics() -> (cols: Int, rows: Int, cellSize: CGSize)? {
+        guard let terminalSize = terminalSize() else { return nil }
+        let cols = max(Int(terminalSize.columns), 1)
+        let rows = max(Int(terminalSize.rows), 1)
+        let resolvedCellWidth = cellSize.width > 0 ? cellSize.width : max(bounds.width / CGFloat(cols), 1)
+        let resolvedCellHeight = cellSize.height > 0 ? cellSize.height : max(bounds.height / CGFloat(rows), 1)
+        return (cols, rows, CGSize(width: resolvedCellWidth, height: resolvedCellHeight))
+    }
+
+    private func gridPoint(for location: CGPoint) -> TerminalGridPoint? {
+        guard let metrics = selectionGridMetrics() else { return nil }
+        let column = min(max(Int(floor(location.x / metrics.cellSize.width)), 0), metrics.cols - 1)
+        let row = min(max(Int(floor(location.y / metrics.cellSize.height)), 0), metrics.rows - 1)
+        return TerminalGridPoint(row: row, column: column)
+    }
+
+    private func gridPoint(
+        forLinearOffset offset: Int,
+        metrics: (cols: Int, rows: Int, cellSize: CGSize)
+    ) -> TerminalGridPoint {
+        let clampedOffset = min(max(offset, 0), max(metrics.cols * metrics.rows - 1, 0))
+        return TerminalGridPoint(
+            row: clampedOffset / metrics.cols,
+            column: clampedOffset % metrics.cols
+        )
+    }
+
+    private func selectionFromViewportText(
+        _ text: ghostty_text_s,
+        metrics: (cols: Int, rows: Int, cellSize: CGSize)
+    ) -> TerminalGridSelection? {
+        guard metrics.cols > 0, metrics.rows > 0 else { return nil }
+        let start = gridPoint(forLinearOffset: Int(text.offset_start), metrics: metrics)
+        let end = gridPoint(
+            forLinearOffset: Int(text.offset_start + text.offset_len),
+            metrics: metrics
+        )
+        return TerminalGridSelection(start: start, end: end).normalized
+    }
+
+    private func cellFrame(for point: TerminalGridPoint, metrics: (cols: Int, rows: Int, cellSize: CGSize)) -> CGRect {
+        CGRect(
+            x: CGFloat(point.column) * metrics.cellSize.width,
+            y: CGFloat(point.row) * metrics.cellSize.height,
+            width: metrics.cellSize.width,
+            height: metrics.cellSize.height
+        )
+    }
+
+    private func selectionRects(
+        for selection: TerminalGridSelection,
+        metrics: (cols: Int, rows: Int, cellSize: CGSize)
+    ) -> [CGRect] {
+        let normalized = selection.normalized
+        let start = normalized.start
+        let end = normalized.end
+
+        return (start.row...end.row).map { row in
+            let startColumn = row == start.row ? start.column : 0
+            let endColumn = row == end.row ? end.column : max(metrics.cols - 1, 0)
+            let width = CGFloat(max(endColumn - startColumn + 1, 1)) * metrics.cellSize.width
+            return CGRect(
+                x: CGFloat(startColumn) * metrics.cellSize.width,
+                y: CGFloat(row) * metrics.cellSize.height,
+                width: width,
+                height: metrics.cellSize.height
+            )
+        }
+    }
+
+    private func selectionMenuPoint(for selection: TerminalGridSelection) -> CGPoint? {
+        guard let metrics = selectionGridMetrics() else { return nil }
+        let rects = selectionRects(for: selection, metrics: metrics)
+        guard let firstRect = rects.first else { return nil }
+        let bounds = rects.dropFirst().reduce(firstRect) { partialResult, rect in
+            partialResult.union(rect)
+        }
+        return CGPoint(x: bounds.midX, y: min(bounds.maxY + 12, self.bounds.maxY - 1))
+    }
+
+    private func updateTouchSelectionOverlay() {
+        guard usesAppOwnedTouchSelection,
+              let touchSelection,
+              let metrics = selectionGridMetrics() else {
+            touchSelectionOverlay.isHidden = true
+            touchSelectionOverlay.clear()
+            return
+        }
+
+        let normalized = touchSelection.normalized
+        let rects = selectionRects(for: normalized, metrics: metrics)
+        let startFrame = cellFrame(for: normalized.start, metrics: metrics)
+        let endFrame = cellFrame(for: normalized.end, metrics: metrics)
+        touchSelectionOverlay.isHidden = false
+        touchSelectionOverlay.update(
+            rects: rects,
+            startAnchor: CGPoint(x: startFrame.minX, y: startFrame.minY),
+            endAnchor: CGPoint(x: endFrame.maxX, y: endFrame.maxY)
+        )
+    }
+
+    private func isPointOnTouchSelectionHandle(_ point: CGPoint) -> Bool {
+        guard usesAppOwnedTouchSelection, touchSelection != nil else { return false }
+
+        let startHandlePoint = touchSelectionOverlay.convert(point, from: self)
+        return touchSelectionOverlay.startHandle.frame.insetBy(dx: -22, dy: -22).contains(startHandlePoint) ||
+            touchSelectionOverlay.endHandle.frame.insetBy(dx: -22, dy: -22).contains(startHandlePoint)
+    }
+
+    private func dismissEditMenuIfNeeded() {
+        editMenuInteraction?.dismissMenu()
+    }
+
+    private func clearTouchSelection() {
+        touchSelectionAnchor = nil
+        touchSelectionSeed = nil
+        touchSelection = nil
+        touchSelectionLoupe.hideLoupe()
+        isSelecting = false
+    }
+
+    private func updateTouchSelectionLoupe(at location: CGPoint) {
+        guard usesAppOwnedTouchSelection else { return }
+
+        let previousVisibility = touchSelectionLoupe.isHidden
+        touchSelectionLoupe.isHidden = true
+        touchSelectionLoupe.update(
+            from: self,
+            focusPoint: location,
+            in: bounds,
+            safeAreaInsets: safeAreaInsets
+        )
+        if previousVisibility {
+            bringSubviewToFront(touchSelectionOverlay)
+            bringSubviewToFront(touchSelectionLoupe)
+        }
+    }
+
+    private func quickLookWordSelection(at location: CGPoint) -> TerminalGridSelection? {
+        guard let metrics = selectionGridMetrics(),
+              let surface,
+              let cSurface = surface.unsafeCValue else { return nil }
+
+        let pos = ghosttyPoint(location)
+        surface.sendMousePos(.init(x: pos.x, y: pos.y, mods: []))
+
+        var text = ghostty_text_s()
+        guard ghostty_surface_quicklook_word(cSurface, &text) else { return nil }
+        defer { ghostty_surface_free_text(cSurface, &text) }
+        return selectionFromViewportText(text, metrics: metrics)
+    }
+
+    private func startTouchSelection(at location: CGPoint) {
+        if let wordSelection = quickLookWordSelection(at: location) {
+            let normalized = wordSelection.normalized
+            touchSelectionAnchor = nil
+            touchSelectionSeed = normalized
+            touchSelection = normalized
+            isSelecting = true
+            return
+        }
+
+        guard let point = gridPoint(for: location) else { return }
+        touchSelectionAnchor = point
+        touchSelectionSeed = nil
+        touchSelection = TerminalGridSelection(start: point, end: point)
+        isSelecting = true
+    }
+
+    private func updateTouchSelection(at location: CGPoint) {
+        guard let point = gridPoint(for: location) else { return }
+
+        if touchSelectionAnchor == nil, let seed = touchSelectionSeed?.normalized {
+            if point < seed.start {
+                touchSelectionAnchor = seed.end
+            } else if point > seed.end {
+                touchSelectionAnchor = seed.start
+            } else {
+                touchSelection = seed
+                return
+            }
+        }
+
+        guard let anchor = touchSelectionAnchor else { return }
+        touchSelection = TerminalGridSelection(start: anchor, end: point).normalized
+    }
+
+    private func updateTouchSelectionHandle(_ kind: TerminalTouchSelectionHandleKind, at location: CGPoint) {
+        guard var selection = touchSelection?.normalized,
+              let point = gridPoint(for: location) else { return }
+
+        switch kind {
+        case .start:
+            selection.start = point
+        case .end:
+            selection.end = point
+        }
+
+        touchSelection = selection.normalized
+    }
+
+    private func finishTouchSelection() {
+        isSelecting = false
+        touchSelectionLoupe.hideLoupe()
+        guard let touchSelection,
+              let menuPoint = selectionMenuPoint(for: touchSelection) else { return }
+        showEditMenu(at: menuPoint)
+    }
+
+    private func currentSelectionText() -> String? {
+        if let nativeSelectionText = selectedNativeSelectionText() {
+            return nativeSelectionText
+        }
+        if let touchSelectionText = touchSelectionText() {
+            return touchSelectionText
+        }
+        return ghosttySelectionText()
+    }
+
+    private func touchSelectionText() -> String? {
+        guard let touchSelection,
+              let surface = surface?.unsafeCValue else { return nil }
+
+        let normalized = touchSelection.normalized
+        var text = ghostty_text_s()
+        let selection = ghostty_selection_s(
+            top_left: ghostty_point_s(
+                tag: GHOSTTY_POINT_VIEWPORT,
+                coord: GHOSTTY_POINT_COORD_EXACT,
+                x: UInt32(normalized.start.column),
+                y: UInt32(normalized.start.row)
+            ),
+            bottom_right: ghostty_point_s(
+                tag: GHOSTTY_POINT_VIEWPORT,
+                coord: GHOSTTY_POINT_COORD_EXACT,
+                x: UInt32(normalized.end.column),
+                y: UInt32(normalized.end.row)
+            ),
+            rectangle: false
+        )
+        guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
+        defer { ghostty_surface_free_text(surface, &text) }
+        return ghosttyTextString(text)
+    }
+
+    private func ghosttySelectionText() -> String? {
+        guard let surface = surface?.unsafeCValue else { return nil }
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_selection(surface, &text) else { return nil }
+        defer { ghostty_surface_free_text(surface, &text) }
+        return ghosttyTextString(text)
+    }
+
+    private func ghosttyTextString(_ text: ghostty_text_s) -> String {
+        guard let rawText = text.text else { return "" }
+        let buffer = UnsafeBufferPointer(
+            start: UnsafeRawPointer(rawText).assumingMemoryBound(to: UInt8.self),
+            count: Int(text.text_len)
+        )
+        return String(decoding: buffer, as: UTF8.self)
+    }
+
+    private func copyTextToClipboard(_ text: String) {
+        let cleaned = TerminalTextCleaner.cleanText(text, settings: .current())
+        Clipboard.copy(cleaned)
+    }
+
+    private func normalizedSelectionMenuText() -> String? {
+        guard let text = currentSelectionText()?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else { return nil }
+        return text
+    }
+
+    private func selectionMenuSourceRect() -> CGRect {
+        if usesNativeTouchSelection,
+           let selectedTextRange {
+            let rect = firstRect(for: selectedTextRange)
+            if !rect.isNull, !rect.isEmpty {
+                return rect
+            }
+        }
+        return CGRect(x: bounds.midX, y: bounds.midY, width: 1, height: 1)
+    }
+
+    private func nearestPresentingViewController() -> UIViewController? {
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let viewController = current as? UIViewController {
+                return viewController.topMostPresentedViewController
+            }
+            responder = current.next
+        }
+        return window?.rootViewController?.topMostPresentedViewController
+    }
+
+    private func presentSelectionMenuController(_ controller: UIViewController) {
+        guard let presenter = nearestPresentingViewController() else { return }
+        if let popover = controller.popoverPresentationController {
+            popover.sourceView = self
+            popover.sourceRect = selectionMenuSourceRect()
+        }
+        presenter.present(controller, animated: true)
+    }
+
+    private func presentShareSheet(for text: String) {
+        let controller = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+        presentSelectionMenuController(controller)
+    }
+
+    private func presentDictionaryLookup(for text: String) {
+        guard UIReferenceLibraryViewController.dictionaryHasDefinition(forTerm: text) else { return }
+        let controller = UIReferenceLibraryViewController(term: text)
+        presentSelectionMenuController(controller)
+    }
+
+    private func searchWeb(for text: String) {
+        var components = URLComponents(string: "https://www.google.com/search")
+        components?.queryItems = [URLQueryItem(name: "q", value: text)]
+        guard let url = components?.url else { return }
+        UIApplication.shared.open(url)
+    }
+
+    @available(iOS 16.0, *)
+    private func nativeSelectionMenuElements() -> [UIMenuElement] {
+        let selectionText = normalizedSelectionMenuText()
+        var actions: [UIMenuElement] = []
+
+        if selectionText != nil {
+            actions.append(UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+                self?.copy(nil)
+            })
+        }
+
+        actions.append(UIAction(title: String(localized: "Paste"), image: UIImage(systemName: "doc.on.clipboard")) { [weak self] _ in
+            self?.paste(nil)
+        })
+
+        if nativeSelectionSnapshot.length > 0 || selectionGridMetrics() != nil {
+            actions.append(UIAction(title: String(localized: "Select All"), image: UIImage(systemName: "selection.pin.in.out")) { [weak self] _ in
+                self?.selectAll(nil)
+            })
+        }
+
+        if selectionText != nil {
+            actions.append(UIAction(title: String(localized: "Find"), image: UIImage(systemName: "magnifyingglass")) { [weak self] _ in
+                self?.presentFindNavigator(prefillingSelectedText: true)
+            })
+        }
+
+        return actions
+    }
+
+    private func selectAllVisibleText() {
+        if usesNativeTouchSelection {
+            refreshNativeSelectionSnapshot()
+            guard nativeSelectionSnapshot.length > 0 else { return }
+            setNativeSelectedRange(NSRange(location: 0, length: nativeSelectionSnapshot.length))
+            return
+        }
+
+        guard usesAppOwnedTouchSelection,
+              let metrics = selectionGridMetrics() else { return }
+        touchSelection = TerminalGridSelection(
+            start: TerminalGridPoint(row: 0, column: 0),
+            end: TerminalGridPoint(row: metrics.rows - 1, column: metrics.cols - 1)
+        )
+        finishTouchSelection()
+    }
+
     // MARK: - Selection Gestures
 
     /// Double-tap to select word
@@ -1346,7 +2147,8 @@ class GhosttyTerminalView: UIView {
         let location = recognizer.location(in: self)
         let pos = ghosttyPoint(location)
 
-        requestKeyboardFocus()
+        clearTouchSelection()
+        requestKeyboardFocus(for: .selectionGesture)
 
         // Double-click to select word (no modifiers)
         surface.sendMousePos(.init(x: pos.x, y: pos.y, mods: []))
@@ -1368,7 +2170,8 @@ class GhosttyTerminalView: UIView {
         let location = recognizer.location(in: self)
         let pos = ghosttyPoint(location)
 
-        requestKeyboardFocus()
+        clearTouchSelection()
+        requestKeyboardFocus(for: .selectionGesture)
 
         // Triple-click to select line
         surface.sendMousePos(.init(x: pos.x, y: pos.y, mods: []))
@@ -1386,6 +2189,29 @@ class GhosttyTerminalView: UIView {
 
     /// Long press + drag for custom selection
     @objc private func handleSelectionPress(_ recognizer: UILongPressGestureRecognizer) {
+        if usesAppOwnedTouchSelection {
+            let location = recognizer.location(in: self)
+
+            switch recognizer.state {
+            case .began:
+                dismissEditMenuIfNeeded()
+                startTouchSelection(at: location)
+                requestKeyboardFocus(for: .selectionGesture)
+                updateTouchSelectionLoupe(at: location)
+            case .changed:
+                updateTouchSelection(at: location)
+                updateTouchSelectionLoupe(at: location)
+            case .ended:
+                updateTouchSelection(at: location)
+                finishTouchSelection()
+            case .cancelled, .failed:
+                clearTouchSelection()
+            default:
+                break
+            }
+            return
+        }
+
         guard let surface = surface else { return }
         let location = recognizer.location(in: self)
         let pos = ghosttyPoint(location)
@@ -1393,7 +2219,7 @@ class GhosttyTerminalView: UIView {
         switch recognizer.state {
         case .began:
             isSelecting = true
-            requestKeyboardFocus()
+            requestKeyboardFocus(for: .selectionGesture)
             // Start selection with click (no shift for initial position)
             surface.sendMousePos(.init(x: pos.x, y: pos.y, mods: []))
             surface.sendMouseButton(.init(action: .press, button: .left, mods: []))
@@ -1413,8 +2239,48 @@ class GhosttyTerminalView: UIView {
         }
     }
 
+    @objc private func handleSelectionHandlePan(_ recognizer: UIPanGestureRecognizer) {
+        guard usesAppOwnedTouchSelection, touchSelection != nil else { return }
+
+        let kind: TerminalTouchSelectionHandleKind
+        if recognizer.view === touchSelectionOverlay.startHandle {
+            kind = .start
+        } else {
+            kind = .end
+        }
+
+        let location = recognizer.location(in: self)
+        switch recognizer.state {
+        case .began:
+            dismissEditMenuIfNeeded()
+            isSelecting = true
+            updateTouchSelectionHandle(kind, at: location)
+            updateTouchSelectionLoupe(at: location)
+        case .changed:
+            updateTouchSelectionHandle(kind, at: location)
+            updateTouchSelectionLoupe(at: location)
+        case .ended:
+            updateTouchSelectionHandle(kind, at: location)
+            isSelecting = false
+            finishTouchSelection()
+        case .cancelled, .failed:
+            isSelecting = false
+            touchSelectionLoupe.hideLoupe()
+        default:
+            break
+        }
+    }
+
     private func showEditMenu(at location: CGPoint) {
-        guard surface?.unsafeCValue != nil else { return }
+        let hasGhosttySelection: Bool
+        if let surface = surface?.unsafeCValue {
+            hasGhosttySelection = ghostty_surface_has_selection(surface)
+        } else {
+            hasGhosttySelection = false
+        }
+        guard touchSelection != nil || hasGhosttySelection else {
+            return
+        }
         let config = UIEditMenuConfiguration(identifier: nil, sourcePoint: location)
         editMenuInteraction?.presentEditMenu(with: config)
     }
@@ -1422,21 +2288,80 @@ class GhosttyTerminalView: UIView {
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         switch action {
         case #selector(copy(_:)):
+            if let nativeSelectedRange, nativeSelectedRange.length > 0 {
+                return true
+            }
+            if touchSelection != nil {
+                return true
+            }
             guard let cSurface = surface?.unsafeCValue else { return false }
             return ghostty_surface_has_selection(cSurface)
+        case #selector(selectAll(_:)):
+            if usesNativeTouchSelection {
+                return nativeSelectionSnapshot.length > 0 || selectionGridMetrics() != nil
+            }
+            return usesAppOwnedTouchSelection && selectionGridMetrics() != nil
+        case #selector(find(_:)):
+            if usesNativeTouchSelection {
+                return nativeSelectionSnapshot.length > 0
+            }
+            return false
+        case #selector(findNext(_:)), #selector(findPrevious(_:)):
+            if #available(iOS 16.0, *), usesNativeTouchSelection {
+                return nativeFindInteraction?.isFindNavigatorVisible == true
+            }
+            return false
+        case #selector(useSelectionForFind(_:)):
+            if usesNativeTouchSelection {
+                return normalizedSelectionMenuText() != nil
+            }
+            return false
         case #selector(paste(_:)):
             return true
         default:
-            return false
+            return super.canPerformAction(action, withSender: sender)
         }
     }
 
     @objc override func copy(_ sender: Any?) {
-        _ = surface?.perform(action: "copy_to_clipboard")
+        guard let selectionText = currentSelectionText(), !selectionText.isEmpty else { return }
+        copyTextToClipboard(selectionText)
+    }
+
+    @objc override func selectAll(_ sender: Any?) {
+        selectAllVisibleText()
     }
 
     @objc override func paste(_ sender: Any?) {
         performPasteAction()
+    }
+
+    @objc override func find(_ sender: Any?) {
+        showFindNavigator()
+    }
+
+    @objc override func useSelectionForFind(_ sender: Any?) {
+        showFindNavigator(prefillingSelectedText: true)
+    }
+
+    @objc override func findNext(_ sender: Any?) {
+        guard #available(iOS 16.0, *) else { return }
+        nativeFindInteraction?.findNext()
+    }
+
+    @objc override func findPrevious(_ sender: Any?) {
+        guard #available(iOS 16.0, *) else { return }
+        nativeFindInteraction?.findPrevious()
+    }
+
+    private func clearSelectionAfterPaste() {
+        if usesNativeTouchSelection, nativeSelectedRange != nil {
+            setNativeSelectedRange(nil)
+            prefersNativeSelectionFirstResponder = false
+        }
+        if usesAppOwnedTouchSelection, touchSelection != nil {
+            clearTouchSelection()
+        }
     }
 
     // MARK: - Software Keyboard (UIKeyInput)
@@ -1482,6 +2407,7 @@ class GhosttyTerminalView: UIView {
 
     private func performPasteAction(requestRenderAfterward: Bool = false) {
         if interceptRichPasteIfNeeded() {
+            clearSelectionAfterPaste()
             if requestRenderAfterward {
                 requestRender()
             }
@@ -1489,6 +2415,7 @@ class GhosttyTerminalView: UIView {
         }
 
         pasteTextFromClipboard()
+        clearSelectionAfterPaste()
         if requestRenderAfterward {
             requestRender()
         }
@@ -1503,6 +2430,12 @@ class GhosttyTerminalView: UIView {
                 copy(nil)
             }
             return true
+        case "f":
+            if canPerformAction(#selector(find(_:)), withSender: nil) {
+                find(nil)
+                return true
+            }
+            return false
         default:
             return false
         }
@@ -2273,13 +3206,153 @@ class GhosttyTerminalView: UIView {
 
 }
 
+// MARK: - Native Text Selection
+
+extension GhosttyTerminalView: UITextInteractionDelegate {
+    func interactionShouldBegin(_ interaction: UITextInteraction, at point: CGPoint) -> Bool {
+        guard usesNativeTouchSelection else { return false }
+        prefersNativeSelectionFirstResponder = true
+        refreshNativeSelectionSnapshot()
+        return nativeSelectionSnapshot.length > 0
+    }
+
+    func interactionWillBegin(_ interaction: UITextInteraction) {
+        nativeSelectionInteractionActive = true
+        _ = becomeFirstResponder()
+        refreshNativeSelectionSnapshot()
+    }
+
+    func interactionDidEnd(_ interaction: UITextInteraction) {
+        nativeSelectionInteractionActive = false
+        if nativeSelectedRange == nil {
+            prefersNativeSelectionFirstResponder = false
+        }
+        refreshNativeSelectionSnapshot()
+    }
+}
+
+@available(iOS 16.0, *)
+extension GhosttyTerminalView: UIFindInteractionDelegate {
+    func findInteraction(_ interaction: UIFindInteraction, sessionFor view: UIView) -> UIFindSession? {
+        guard view === self, usesNativeTouchSelection else { return nil }
+        refreshNativeSelectionSnapshot()
+        if let nativeFindSession {
+            return nativeFindSession
+        }
+
+        let session = GhosttyNativeFindSession(
+            onSearch: { [weak self] query, _ in
+                self?.performGhosttyFindQuery(query)
+            },
+            onNavigate: { [weak self] direction in
+                self?.navigateGhosttyFind(direction)
+            },
+            onInvalidate: { [weak self] in
+                self?.invalidateGhosttyFindWithoutClosingNavigator()
+            }
+        )
+        nativeFindSession = session
+        applyStoredGhosttyFindResultsToNativeSession()
+        return session
+    }
+
+    func findInteraction(_ interaction: UIFindInteraction, didBegin session: UIFindSession) {
+        refreshNativeSelectionSnapshot()
+        applyStoredGhosttyFindResultsToNativeSession()
+        notifyFindNavigatorVisibilityChange()
+    }
+
+    func findInteraction(_ interaction: UIFindInteraction, didEnd session: UIFindSession) {
+        nativeFindDecorations.removeAll()
+        nativeFindSession?.resetReportedResults()
+        nativeFindSession = nil
+        ghosttyFindReportedTotal = 0
+        ghosttyFindReportedSelectedIndex = nil
+        notifyFindNavigatorVisibilityChange()
+        endGhosttyFindSearchForNavigatorDismissal()
+    }
+}
+
+@available(iOS 16.0, *)
+extension GhosttyTerminalView: UITextSearching {
+    typealias DocumentIdentifier = String
+
+    func compare(_ foundRange: UITextRange, toRange: UITextRange, document: String?) -> ComparisonResult {
+        guard let lhs = nativeSelectionSnapshot.nativeRange(from: foundRange),
+              let rhs = nativeSelectionSnapshot.nativeRange(from: toRange) else {
+            return .orderedSame
+        }
+        if lhs.location < rhs.location { return .orderedAscending }
+        if lhs.location > rhs.location { return .orderedDescending }
+        if lhs.length < rhs.length { return .orderedAscending }
+        if lhs.length > rhs.length { return .orderedDescending }
+        return .orderedSame
+    }
+
+    func performTextSearch(queryString: String, options: UITextSearchOptions, resultAggregator: UITextSearchAggregator<String>) {
+        refreshNativeSelectionSnapshot()
+        nativeFindDecorations.removeAll()
+
+        let ranges = nativeSelectionSnapshot.searchRanges(query: queryString, options: options)
+        for range in ranges {
+            guard let textRange = nativeSelectionSnapshot.nativeRange(range) else { continue }
+            resultAggregator.foundRange(textRange, searchString: queryString, document: nativeFindDocumentIdentifier)
+        }
+        resultAggregator.finishedSearching()
+    }
+
+    func decorate(foundTextRange: UITextRange, document: String?, usingStyle style: UITextSearchFoundTextStyle) {
+        guard let range = nativeSelectionSnapshot.nativeRange(from: foundTextRange) else { return }
+        nativeFindDecorations.removeAll { NSEqualRanges($0.range, range) }
+        nativeFindDecorations.append(TerminalNativeFindDecoration(range: range, style: style))
+    }
+
+    func clearAllDecoratedFoundText() {
+        nativeFindDecorations.removeAll()
+    }
+
+    func willHighlight(foundTextRange: UITextRange, document: String?) {
+        requestRender()
+    }
+
+    func scrollRangeToVisible(_ range: UITextRange, inDocument document: String?) {
+        requestRender()
+    }
+
+    var selectedTextSearchDocument: String? {
+        nativeFindDocumentIdentifier
+    }
+
+    func compare(document: String, toDocument other: String) -> ComparisonResult {
+        document.compare(other)
+    }
+}
+
 // MARK: - Gesture Recognizer Delegate
 
 extension GhosttyTerminalView: UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if gestureRecognizer == scrollRecognizer {
+            if usesNativeTouchSelection, nativeSelectionInteractionActive || nativeSelectedRange != nil {
+                return false
+            }
+            if touchSelection != nil,
+               isPointOnTouchSelectionHandle(touch.location(in: self)) {
+                return false
+            }
+        }
+        return true
+    }
+
     func gestureRecognizer(
         _ gestureRecognizer: UIGestureRecognizer,
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
+        if usesNativeTouchSelection,
+           nativeSelectionInteractionActive || nativeSelectedRange != nil,
+           gestureRecognizer == scrollRecognizer || otherGestureRecognizer == scrollRecognizer {
+            return false
+        }
         // Allow pan and long press to recognize simultaneously
         // The handlers check isSelecting/isScrolling to avoid conflicts
         return true
@@ -2308,7 +3381,7 @@ extension GhosttyTerminalView: UIEditMenuInteractionDelegate {
     ) -> UIMenu? {
         var actions: [UIMenuElement] = []
 
-        if let cSurface = surface?.unsafeCValue, ghostty_surface_has_selection(cSurface) {
+        if let selectionText = currentSelectionText(), !selectionText.isEmpty {
             actions.append(UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
                 self?.copy(nil)
             })
@@ -2317,6 +3390,12 @@ extension GhosttyTerminalView: UIEditMenuInteractionDelegate {
         actions.append(UIAction(title: String(localized: "Paste"), image: UIImage(systemName: "doc.on.clipboard")) { [weak self] _ in
             self?.paste(nil)
         })
+
+        if usesAppOwnedTouchSelection {
+            actions.append(UIAction(title: String(localized: "Select All"), image: UIImage(systemName: "selection.pin.in.out")) { [weak self] _ in
+                self?.selectAll(nil)
+            })
+        }
 
         return UIMenu(children: actions)
     }
@@ -2433,7 +3512,7 @@ extension GhosttyTerminalView {
     }
 
     override var inputAccessoryView: UIView? {
-        resolvedInputAccessoryView()
+        nil
     }
 
     private func handleToolbarKey(_ key: TerminalKey) {
@@ -3362,13 +4441,20 @@ extension GhosttyTerminalView: UITextViewDelegate {
 // MARK: - Software Keyboard (UIKeyInput)
 
 extension GhosttyTerminalView: UIKeyInput, UITextInputTraits {
-    var hasText: Bool { !(imeProxyTextView.text ?? "").isEmpty }
+    var hasText: Bool {
+        if nativeSelectionInteractionActive {
+            return nativeSelectionSnapshot.length > 0
+        }
+        return !(imeProxyTextView.text ?? "").isEmpty
+    }
 
     func insertText(_ text: String) {
+        guard !nativeSelectionInteractionActive else { return }
         imeProxyTextView.insertText(text)
     }
 
     func deleteBackward() {
+        guard !nativeSelectionInteractionActive else { return }
         imeProxyTextView.deleteBackward()
     }
 
@@ -3433,110 +4519,190 @@ extension GhosttyTerminalView: UIKeyInput, UITextInputTraits {
 
 extension GhosttyTerminalView: UITextInput {
     var selectedTextRange: UITextRange? {
-        get { imeProxyTextView.selectedTextRange }
-        set { imeProxyTextView.selectedTextRange = newValue }
+        get { nativeSelectionSnapshot.nativeRange(nativeSelectedRange) }
+        set { setNativeSelectedRange(nativeSelectionSnapshot.nativeRange(from: newValue)) }
     }
 
     var markedTextRange: UITextRange? {
-        imeProxyTextView.markedTextRange
+        nil
     }
 
     var markedTextStyle: [NSAttributedString.Key: Any]? {
-        get { imeProxyTextView.markedTextStyle }
-        set { imeProxyTextView.markedTextStyle = newValue }
+        get { nil }
+        set { }
     }
 
     var inputDelegate: UITextInputDelegate? {
-        get { imeProxyTextView.inputDelegate }
-        set { imeProxyTextView.inputDelegate = newValue }
+        get { nativeTextInputDelegate }
+        set { nativeTextInputDelegate = newValue }
     }
 
     var tokenizer: UITextInputTokenizer {
-        imeProxyTextView.tokenizer
+        nativeSelectionTokenizer
     }
 
     var beginningOfDocument: UITextPosition {
-        imeProxyTextView.beginningOfDocument
+        TerminalNativeTextPosition(offset: 0)
     }
 
     var endOfDocument: UITextPosition {
-        imeProxyTextView.endOfDocument
+        TerminalNativeTextPosition(offset: nativeSelectionSnapshot.length)
     }
 
     func text(in range: UITextRange) -> String? {
-        imeProxyTextView.text(in: range)
+        guard let range = nativeSelectionSnapshot.nativeRange(from: range) else { return nil }
+        return nativeSelectionSnapshot.text(in: range)
     }
 
     func replace(_ range: UITextRange, withText text: String) {
-        imeProxyTextView.replace(range, withText: text)
+        guard !text.isEmpty else { return }
+        sendText(text)
     }
 
     func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
-        imeProxyTextView.setMarkedText(markedText, selectedRange: selectedRange)
     }
 
     func unmarkText() {
-        imeProxyTextView.unmarkText()
+    }
+
+    var textInputView: UIView {
+        self
+    }
+
+    var selectionAffinity: UITextStorageDirection {
+        get { nativeSelectionAffinity }
+        set { nativeSelectionAffinity = newValue }
     }
 
     func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
-        imeProxyTextView.textRange(from: fromPosition, to: toPosition)
+        guard let from = fromPosition as? TerminalNativeTextPosition,
+              let to = toPosition as? TerminalNativeTextPosition else { return nil }
+        return TerminalNativeTextRange(start: from.offset, end: to.offset)
     }
 
     func position(from position: UITextPosition, offset: Int) -> UITextPosition? {
-        imeProxyTextView.position(from: position, offset: offset)
+        guard let position = position as? TerminalNativeTextPosition else { return nil }
+        return TerminalNativeTextPosition(offset: nativeSelectionSnapshot.clampedOffset(position.offset + offset))
     }
 
     func position(from position: UITextPosition, in direction: UITextLayoutDirection, offset: Int) -> UITextPosition? {
-        imeProxyTextView.position(from: position, in: direction, offset: offset)
+        guard let position = position as? TerminalNativeTextPosition else { return nil }
+
+        let delta: Int
+        switch direction {
+        case .left:
+            delta = -offset
+        case .right:
+            delta = offset
+        case .up:
+            delta = -(offset * nativeSelectionSnapshot.columns)
+        case .down:
+            delta = offset * nativeSelectionSnapshot.columns
+        @unknown default:
+            delta = offset
+        }
+
+        return TerminalNativeTextPosition(offset: nativeSelectionSnapshot.clampedOffset(position.offset + delta))
     }
 
     func compare(_ position: UITextPosition, to other: UITextPosition) -> ComparisonResult {
-        imeProxyTextView.compare(position, to: other)
+        guard let position = position as? TerminalNativeTextPosition,
+              let other = other as? TerminalNativeTextPosition else { return .orderedSame }
+        if position.offset < other.offset { return .orderedAscending }
+        if position.offset > other.offset { return .orderedDescending }
+        return .orderedSame
     }
 
     func offset(from: UITextPosition, to other: UITextPosition) -> Int {
-        imeProxyTextView.offset(from: from, to: other)
+        guard let from = from as? TerminalNativeTextPosition,
+              let other = other as? TerminalNativeTextPosition else { return 0 }
+        return other.offset - from.offset
     }
 
     func position(within range: UITextRange, farthestIn direction: UITextLayoutDirection) -> UITextPosition? {
-        imeProxyTextView.position(within: range, farthestIn: direction)
+        guard let range = nativeSelectionSnapshot.nativeRange(from: range) else { return nil }
+        switch direction {
+        case .left, .up:
+            return TerminalNativeTextPosition(offset: range.location)
+        case .right, .down:
+            return TerminalNativeTextPosition(offset: range.location + range.length)
+        @unknown default:
+            return TerminalNativeTextPosition(offset: range.location + range.length)
+        }
     }
 
     func characterRange(byExtending position: UITextPosition, in direction: UITextLayoutDirection) -> UITextRange? {
-        imeProxyTextView.characterRange(byExtending: position, in: direction)
+        guard let position = position as? TerminalNativeTextPosition else { return nil }
+        switch direction {
+        case .left, .up:
+            let start = nativeSelectionSnapshot.clampedOffset(position.offset - 1)
+            return TerminalNativeTextRange(start: start, end: position.offset)
+        case .right, .down:
+            let end = nativeSelectionSnapshot.clampedOffset(position.offset + 1)
+            return TerminalNativeTextRange(start: position.offset, end: end)
+        @unknown default:
+            let end = nativeSelectionSnapshot.clampedOffset(position.offset + 1)
+            return TerminalNativeTextRange(start: position.offset, end: end)
+        }
     }
 
     func baseWritingDirection(for position: UITextPosition, in direction: UITextStorageDirection) -> NSWritingDirection {
-        imeProxyTextView.baseWritingDirection(for: position, in: direction)
+        .leftToRight
     }
 
     func setBaseWritingDirection(_ writingDirection: NSWritingDirection, for range: UITextRange) {
-        imeProxyTextView.setBaseWritingDirection(writingDirection, for: range)
     }
 
     func firstRect(for range: UITextRange) -> CGRect {
-        imeProxyTextView.firstRect(for: range)
+        guard let range = nativeSelectionSnapshot.nativeRange(from: range) else { return .zero }
+        return nativeSelectionSnapshot.firstRect(for: range)
     }
 
     func caretRect(for position: UITextPosition) -> CGRect {
-        imeProxyTextView.caretRect(for: position)
+        guard let position = position as? TerminalNativeTextPosition else { return .zero }
+        return nativeSelectionSnapshot.caretRect(for: position.offset)
     }
 
     func selectionRects(for range: UITextRange) -> [UITextSelectionRect] {
-        imeProxyTextView.selectionRects(for: range)
+        guard let range = nativeSelectionSnapshot.nativeRange(from: range) else { return [] }
+        return nativeSelectionSnapshot.selectionRects(for: range)
     }
 
     func closestPosition(to point: CGPoint) -> UITextPosition? {
-        imeProxyTextView.closestPosition(to: point)
+        TerminalNativeTextPosition(offset: nativeSelectionSnapshot.offset(for: point))
     }
 
     func closestPosition(to point: CGPoint, within range: UITextRange) -> UITextPosition? {
-        imeProxyTextView.closestPosition(to: point, within: range)
+        guard let range = nativeSelectionSnapshot.nativeRange(from: range) else { return nil }
+        let offset = nativeSelectionSnapshot.offset(for: point)
+        let clamped = min(max(offset, range.location), range.location + range.length)
+        return TerminalNativeTextPosition(offset: clamped)
     }
 
     func characterRange(at point: CGPoint) -> UITextRange? {
-        imeProxyTextView.characterRange(at: point)
+        guard let range = nativeSelectionSnapshot.characterRange(at: point) else { return nil }
+        return TerminalNativeTextRange(start: range.location, end: range.location + range.length)
+    }
+
+    func textStyling(at position: UITextPosition, in direction: UITextStorageDirection) -> [NSAttributedString.Key: Any]? {
+        nil
+    }
+
+    @available(iOS 16.0, *)
+    func editMenu(for textRange: UITextRange, suggestedActions: [UIMenuElement]) -> UIMenu? {
+        guard usesNativeTouchSelection else { return nil }
+        return UIMenu(children: nativeSelectionMenuElements())
+    }
+
+    func position(within range: UITextRange, atCharacterOffset offset: Int) -> UITextPosition? {
+        guard let range = nativeSelectionSnapshot.nativeRange(from: range) else { return nil }
+        return TerminalNativeTextPosition(offset: nativeSelectionSnapshot.clampedOffset(range.location + offset))
+    }
+
+    func characterOffset(of position: UITextPosition, within range: UITextRange) -> Int {
+        guard let position = position as? TerminalNativeTextPosition,
+              let range = nativeSelectionSnapshot.nativeRange(from: range) else { return 0 }
+        return position.offset - range.location
     }
 }
 

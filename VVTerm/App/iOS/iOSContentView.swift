@@ -857,6 +857,23 @@ struct iOSTerminalView: View {
         return viewTabConfig.effectiveView(for: sessionManager.selectedViewByServer[serverId])
     }
 
+    private var isSelectedTerminalInBrowseMode: Bool {
+        guard let sessionId = effectiveSelectedSessionId else { return false }
+        return sessionManager.terminalBrowseModeBySession[sessionId] ?? false
+    }
+
+    private var isSelectedTerminalFindNavigatorVisible: Bool {
+        guard let sessionId = effectiveSelectedSessionId else { return false }
+        return sessionManager.terminalFindNavigatorVisibleBySession[sessionId] ?? false
+    }
+
+    private var shouldShowFloatingKeyboardButton: Bool {
+        UIDevice.current.userInterfaceIdiom == .phone
+            && selectedView == ConnectionViewTab.terminal.id
+            && isSelectedTerminalInBrowseMode
+            && !isSelectedTerminalFindNavigatorVisible
+    }
+
     private var canUseZenMode: Bool {
         isConnecting || selectedServer != nil || !serverSessions.isEmpty
     }
@@ -1097,9 +1114,17 @@ struct iOSTerminalView: View {
                     zenModeOverlay
                 }
             }
+            .overlay(alignment: .bottom) {
+                if shouldShowFloatingKeyboardButton {
+                    floatingKeyboardButton
+                        .padding(.bottom, 4)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
             .navigationBarBackButtonHidden(true)
             .toolbar { navigationToolbar }
             .toolbar(effectiveZenModeEnabled ? .hidden : .visible, for: .navigationBar)
+            .animation(.spring(response: 0.28, dampingFraction: 0.84), value: shouldShowFloatingKeyboardButton)
     }
 
     private var sheetContent: some View {
@@ -1318,6 +1343,14 @@ struct iOSTerminalView: View {
                     Label("Settings", systemImage: "gear")
                 }
 
+                if selectedView == "terminal" {
+                    Button {
+                        showFindNavigatorForCurrentSession()
+                    } label: {
+                        Label("Find", systemImage: "magnifyingglass")
+                    }
+                }
+
                 if let server = selectedServer {
                     Button {
                         serverToEdit = server
@@ -1358,6 +1391,47 @@ struct iOSTerminalView: View {
         guard let selectedId = effectiveSelectedSessionId,
               let terminal = ConnectionSessionManager.shared.peekTerminal(for: selectedId) else { return }
         terminal.dismissKeyboardForUser()
+    }
+
+    private func showKeyboardForCurrentSession() {
+        guard selectedView == ConnectionViewTab.terminal.id,
+              let selectedId = effectiveSelectedSessionId,
+              let terminal = ConnectionSessionManager.shared.peekTerminal(for: selectedId) else { return }
+        terminal.requestKeyboardFocus(for: .explicitUserRequest)
+    }
+
+    private func showFindNavigatorForCurrentSession() {
+        guard selectedView == ConnectionViewTab.terminal.id,
+              let selectedId = effectiveSelectedSessionId,
+              let terminal = ConnectionSessionManager.shared.peekTerminal(for: selectedId) else { return }
+        terminal.showFindNavigator()
+    }
+
+    @ViewBuilder
+    private var floatingKeyboardButton: some View {
+        let button = Button {
+            showKeyboardForCurrentSession()
+        } label: {
+            Label {
+                Text("Keyboard")
+            } icon: {
+                Image(systemName: "keyboard")
+            }
+            .font(.system(size: 15, weight: .semibold, design: .rounded))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 2)
+        }
+        .accessibilityLabel(String(localized: "Show Keyboard"))
+
+        if #available(iOS 26, *) {
+            button
+                .buttonStyle(SwiftUI.GlassButtonStyle())
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
+        } else {
+            button
+                .buttonStyle(.glass(tint: Color.accentColor.opacity(colorScheme == .dark ? 0.24 : 0.14)))
+        }
     }
 
     @ViewBuilder
@@ -1651,7 +1725,7 @@ struct iOSTerminalView: View {
         let attemptFocus = { [weak terminal] in
             guard let terminal = terminal else { return }
             if terminal.window != nil {
-                terminal.requestKeyboardFocus()
+                terminal.requestKeyboardFocus(for: .initialActivation)
             }
         }
 
