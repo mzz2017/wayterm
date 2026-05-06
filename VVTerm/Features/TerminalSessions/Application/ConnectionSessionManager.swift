@@ -726,6 +726,7 @@ final class ConnectionSessionManager: ObservableObject {
         // Evict oldest terminals if we're at capacity
         evictOldTerminalsIfNeeded()
 
+        #if os(iOS)
         terminal.onKeyboardBrowseModeChange = { [weak self] isBrowsing in
             Task { @MainActor [weak self] in
                 self?.setTerminalBrowseMode(isBrowsing, for: sessionId)
@@ -736,9 +737,12 @@ final class ConnectionSessionManager: ObservableObject {
                 self?.setTerminalFindNavigatorVisible(isVisible, for: sessionId)
             }
         }
+        #endif
         terminalViews[sessionId] = terminal
+        #if os(iOS)
         setTerminalBrowseMode(terminal.isKeyboardInBrowseMode, for: sessionId)
         setTerminalFindNavigatorVisible(terminal.isFindNavigatorVisible, for: sessionId)
+        #endif
         touchTerminal(sessionId)
 
         logger.debug("Registered terminal for session, total: \(self.terminalViews.count)/\(self.maxTerminals)")
@@ -761,8 +765,10 @@ final class ConnectionSessionManager: ObservableObject {
 
     private func cleanupTerminalSurface(for sessionId: UUID) {
         if let terminal = terminalViews.removeValue(forKey: sessionId) {
+            #if os(iOS)
             terminal.onKeyboardBrowseModeChange = nil
             terminal.onFindNavigatorVisibilityChange = nil
+            #endif
             terminal.cleanup()
         }
     }
