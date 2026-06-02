@@ -256,16 +256,6 @@ struct TerminalTabView: View {
             },
             isProcessing: $voiceProcessing
         )
-        .padding(.vertical, 10)
-        .padding(.horizontal, 14)
-        .frame(maxWidth: 500)
-        .adaptiveGlass()
-        .overlay(
-            Capsule()
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
-        .padding(.horizontal, 12)
-        .padding(.bottom, 10)
     }
 
     private func updateKeyMonitor() {
