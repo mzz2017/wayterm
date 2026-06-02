@@ -903,6 +903,10 @@ struct iOSTerminalView: View {
         isZenModeEnabled && canUseZenMode
     }
 
+    private var shouldShowViewSwitcher: Bool {
+        viewTabConfig.currentVisibleTabs.count > 1
+    }
+
     private var zenSelectedViewBinding: Binding<String> {
         guard let serverId = currentServerId ?? selectedSession?.serverId ?? selectedServer?.id ?? connectingServer?.id else {
             return .constant(viewTabConfig.effectiveDefaultTab())
@@ -1335,13 +1339,15 @@ struct iOSTerminalView: View {
             navigationBackButton
         }
 
-        ToolbarItem(placement: .principal) {
-            if let serverId = currentServerId ?? selectedSession?.serverId ?? selectedServer?.id ?? connectingServer?.id {
-                iOSNativeSegmentedPicker(
-                    selection: selectedViewBinding(for: serverId),
-                    tabs: viewTabConfig.currentVisibleTabs
-                )
-                .fixedSize()
+        if shouldShowViewSwitcher {
+            ToolbarItem(placement: .principal) {
+                if let serverId = currentServerId ?? selectedSession?.serverId ?? selectedServer?.id ?? connectingServer?.id {
+                    iOSNativeSegmentedPicker(
+                        selection: selectedViewBinding(for: serverId),
+                        tabs: viewTabConfig.currentVisibleTabs
+                    )
+                    .fixedSize()
+                }
             }
         }
 

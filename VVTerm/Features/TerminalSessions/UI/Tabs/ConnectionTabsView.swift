@@ -53,6 +53,10 @@ struct ConnectionTerminalContainer: View {
         viewTabConfig.currentVisibleTabs
     }
 
+    private var shouldShowViewPicker: Bool {
+        visibleViewTabs.count > 1
+    }
+
     private var effectiveThemeName: String {
         guard usePerAppearanceTheme else { return terminalThemeName }
         return colorScheme == .dark ? terminalThemeName : terminalThemeNameLight
@@ -522,8 +526,10 @@ struct ConnectionTerminalContainer: View {
 
     @ToolbarContentBuilder
     private var viewPickerToolbarItem: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            viewPickerControl
+        if shouldShowViewPicker {
+            ToolbarItem(placement: .navigation) {
+                viewPickerControl
+            }
         }
     }
 
