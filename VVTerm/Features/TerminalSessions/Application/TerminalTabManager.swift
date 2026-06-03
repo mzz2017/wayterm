@@ -92,6 +92,10 @@ final class TerminalTabManager: ObservableObject {
         paneStates[paneId]?.workingDirectory = workingDirectory
     }
 
+    private func setPanePresentationOverrides(_ presentationOverrides: TerminalPresentationOverrides, for paneId: UUID) {
+        paneStates[paneId]?.presentationOverrides = presentationOverrides
+    }
+
     private func setPaneTitle(_ title: String, for paneId: UUID) {
         guard runtimeTitleByPane[paneId] != title else { return }
 
@@ -585,6 +589,8 @@ final class TerminalTabManager: ObservableObject {
         case .connecting, .reconnecting:
             setPaneTransport(.ssh, fallbackReason: nil, for: paneId)
         case .disconnected, .failed:
+            setPanePresentationOverrides(.empty, for: paneId)
+            terminalViews[paneId]?.applyPresentationOverrides(.empty)
             if paneTmuxStatus(for: paneId) == .foreground {
                 setPaneTmuxStatus(.background, for: paneId)
             }
@@ -603,6 +609,30 @@ final class TerminalTabManager: ObservableObject {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
         setPaneTitle(title, for: paneId)
+    }
+
+    func presentationOverrides(for paneId: UUID) -> TerminalPresentationOverrides {
+        paneStates[paneId]?.presentationOverrides ?? .empty
+    }
+
+    func handleTerminalZoom(_ action: TerminalZoomAction, for paneId: UUID) -> TerminalZoomResult? {
+        guard paneStates[paneId] != nil else { return nil }
+
+        let currentOverrides = presentationOverrides(for: paneId)
+        let overrides = currentOverrides.applyingZoom(action)
+        guard overrides != currentOverrides else {
+            return TerminalZoomResult(
+                presentationOverrides: currentOverrides,
+                effectiveFontSize: currentOverrides.resolvedFontSize()
+            )
+        }
+        setPanePresentationOverrides(overrides, for: paneId)
+        schedulePersist()
+        terminalViews[paneId]?.applyPresentationOverrides(overrides)
+        return TerminalZoomResult(
+            presentationOverrides: overrides,
+            effectiveFontSize: overrides.resolvedFontSize()
+        )
     }
 
     func displayTitle(for tab: TerminalTab) -> String {
@@ -945,7 +975,7 @@ final class TerminalTabManager: ObservableObject {
         tabsByServer.map { serverId, tabs in
             TerminalTabsSnapshot.ServerSnapshot(
                 serverId: serverId,
-                tabs: tabs.map { TerminalTabsSnapshot.TabSnapshot(from: $0) },
+                tabs: tabs.map { TerminalTabsSnapshot.TabSnapshot(from: $0, paneStates: paneStates) },
                 selectedTabId: selectedTabByServer[serverId],
                 selectedView: selectedViewByServer[serverId]
             )
@@ -956,7 +986,10 @@ final class TerminalTabManager: ObservableObject {
         TerminalTabsSnapshot(servers: makeServerSnapshots())
     }
 
-    private func makeRestoredPaneStates(from tabsByServer: [UUID: [TerminalTab]]) -> [UUID: TerminalPaneState] {
+    private func makeRestoredPaneStates(
+        from tabsByServer: [UUID: [TerminalTab]],
+        snapshotsByTabId: [UUID: TerminalTabsSnapshot.TabSnapshot]
+    ) -> [UUID: TerminalPaneState] {
         var restoredPaneStates: [UUID: TerminalPaneState] = [:]
 
         for tabs in tabsByServer.values {
@@ -970,6 +1003,7 @@ final class TerminalTabManager: ObservableObject {
                     if !tmuxResolver.isTmuxEnabled(for: tab.serverId) {
                         paneState.tmuxStatus = .off
                     }
+                    paneState.presentationOverrides = snapshotsByTabId[tab.id]?.panePresentationOverrides?[paneId] ?? .empty
                     restoredPaneStates[paneId] = paneState
                 }
             }
@@ -982,8 +1016,12 @@ final class TerminalTabManager: ObservableObject {
         var restoredTabsByServer: [UUID: [TerminalTab]] = [:]
         var restoredSelectedTabs: [UUID: UUID] = [:]
         var restoredSelectedViews: [UUID: String] = [:]
+        var snapshotsByTabId: [UUID: TerminalTabsSnapshot.TabSnapshot] = [:]
 
         for server in snapshot.servers {
+            for tabSnapshot in server.tabs {
+                snapshotsByTabId[tabSnapshot.id] = tabSnapshot
+            }
             let tabs = server.tabs.map { $0.toTerminalTab() }
             restoredTabsByServer[server.serverId] = tabs
             if let selected = server.selectedTabId {
@@ -997,7 +1035,10 @@ final class TerminalTabManager: ObservableObject {
         tabsByServer = restoredTabsByServer
         selectedTabByServer = restoredSelectedTabs
         selectedViewByServer = restoredSelectedViews
-        paneStates = makeRestoredPaneStates(from: restoredTabsByServer)
+        paneStates = makeRestoredPaneStates(
+            from: restoredTabsByServer,
+            snapshotsByTabId: snapshotsByTabId
+        )
         connectedServerIds = Set(restoredTabsByServer.keys)
     }
 
@@ -1052,8 +1093,9 @@ private struct TerminalTabsSnapshot: Codable {
         let layout: TerminalSplitNode?
         let focusedPaneId: UUID
         let rootPaneId: UUID
+        let panePresentationOverrides: [UUID: TerminalPresentationOverrides]?
 
-        init(from tab: TerminalTab) {
+        init(from tab: TerminalTab, paneStates: [UUID: TerminalPaneState]) {
             self.id = tab.id
             self.serverId = tab.serverId
             self.title = tab.title
@@ -1061,6 +1103,16 @@ private struct TerminalTabsSnapshot: Codable {
             self.layout = tab.layout
             self.focusedPaneId = tab.focusedPaneId
             self.rootPaneId = tab.rootPaneId
+            let overrides: [UUID: TerminalPresentationOverrides] = Dictionary(
+                uniqueKeysWithValues: tab.allPaneIds.compactMap { paneId in
+                    guard let overrides = paneStates[paneId]?.presentationOverrides,
+                          !overrides.isEmpty else {
+                        return nil
+                    }
+                    return (paneId, overrides)
+                }
+            )
+            self.panePresentationOverrides = overrides.isEmpty ? nil : overrides
         }
 
         func toTerminalTab() -> TerminalTab {

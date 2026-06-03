@@ -158,6 +158,11 @@ final class ConnectionSessionManager: ObservableObject {
         sessions[index].workingDirectory = workingDirectory
     }
 
+    private func setPresentationOverrides(_ presentationOverrides: TerminalPresentationOverrides, for sessionId: UUID) {
+        guard let index = indexOfSession(sessionId) else { return }
+        sessions[index].presentationOverrides = presentationOverrides
+    }
+
     private func tmuxStatus(for sessionId: UUID) -> TmuxStatus? {
         sessionWithID(sessionId)?.tmuxStatus
     }
@@ -296,6 +301,10 @@ final class ConnectionSessionManager: ObservableObject {
         case .connected:
             connectedServerIds.insert(serverId)
         case .disconnected, .failed:
+            if case .failed = state {
+                sessions[index].presentationOverrides = .empty
+                terminalViews[sessionId]?.applyPresentationOverrides(.empty)
+            }
             if sessions[index].tmuxStatus == .foreground {
                 setTmuxStatus(.background, for: sessionId)
             }
@@ -348,6 +357,30 @@ final class ConnectionSessionManager: ObservableObject {
 
         runtimeTitleBySession[sessionId] = title
         logger.info("Runtime session title changed: \(title, privacy: .public)")
+    }
+
+    func presentationOverrides(for sessionId: UUID) -> TerminalPresentationOverrides {
+        sessionWithID(sessionId)?.presentationOverrides ?? .empty
+    }
+
+    func handleTerminalZoom(_ action: TerminalZoomAction, for sessionId: UUID) -> TerminalZoomResult? {
+        guard sessionWithID(sessionId) != nil else { return nil }
+
+        let currentOverrides = presentationOverrides(for: sessionId)
+        let overrides = currentOverrides.applyingZoom(action)
+        guard overrides != currentOverrides else {
+            return TerminalZoomResult(
+                presentationOverrides: currentOverrides,
+                effectiveFontSize: currentOverrides.resolvedFontSize()
+            )
+        }
+        setPresentationOverrides(overrides, for: sessionId)
+        schedulePersist()
+        terminalViews[sessionId]?.applyPresentationOverrides(overrides)
+        return TerminalZoomResult(
+            presentationOverrides: overrides,
+            effectiveFontSize: overrides.resolvedFontSize()
+        )
     }
 
     func displayTitle(for session: ConnectionSession) -> String {
@@ -529,6 +562,8 @@ final class ConnectionSessionManager: ObservableObject {
 
     /// Handle shell exit without removing the session (keeps tab for reconnect)
     func handleShellExit(for sessionId: UUID) {
+        setPresentationOverrides(.empty, for: sessionId)
+        terminalViews[sessionId]?.applyPresentationOverrides(.empty)
         updateSessionState(sessionId, to: .disconnected)
         markTerminalForReconnectReset(for: sessionId)
         scheduleSSHUnregister(for: sessionId)
@@ -1087,6 +1122,7 @@ private struct ConnectionSessionsSnapshot: Codable {
         let autoReconnect: Bool
         let parentSessionId: UUID?
         let workingDirectory: String?
+        let presentationOverrides: TerminalPresentationOverrides?
 
         init(from session: ConnectionSession) {
             self.id = session.id
@@ -1097,6 +1133,7 @@ private struct ConnectionSessionsSnapshot: Codable {
             self.autoReconnect = session.autoReconnect
             self.parentSessionId = session.parentSessionId
             self.workingDirectory = session.workingDirectory
+            self.presentationOverrides = session.presentationOverrides.isEmpty ? nil : session.presentationOverrides
         }
 
         func toSession() -> ConnectionSession {
@@ -1110,6 +1147,7 @@ private struct ConnectionSessionsSnapshot: Codable {
                 terminalSurfaceId: nil,
                 autoReconnect: autoReconnect,
                 workingDirectory: workingDirectory,
+                presentationOverrides: presentationOverrides ?? .empty,
                 parentSessionId: parentSessionId
             )
         }

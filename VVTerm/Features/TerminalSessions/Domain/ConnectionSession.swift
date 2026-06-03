@@ -51,6 +51,7 @@ struct ConnectionSession: Identifiable, Hashable {
     var autoReconnect: Bool
     var tmuxStatus: TmuxStatus
     var workingDirectory: String?
+    var presentationOverrides: TerminalPresentationOverrides
     /// Runtime transport for this session (never persisted).
     var activeTransport: ShellTransport
     /// Set only when this session is running over SSH fallback from Mosh.
@@ -69,6 +70,7 @@ struct ConnectionSession: Identifiable, Hashable {
         autoReconnect: Bool = true,
         tmuxStatus: TmuxStatus = .unknown,
         workingDirectory: String? = nil,
+        presentationOverrides: TerminalPresentationOverrides = .empty,
         activeTransport: ShellTransport = .ssh,
         moshFallbackReason: MoshFallbackReason? = nil,
         parentSessionId: UUID? = nil
@@ -83,6 +85,7 @@ struct ConnectionSession: Identifiable, Hashable {
         self.autoReconnect = autoReconnect
         self.tmuxStatus = tmuxStatus
         self.workingDirectory = workingDirectory
+        self.presentationOverrides = presentationOverrides
         self.activeTransport = activeTransport
         self.moshFallbackReason = moshFallbackReason
         self.parentSessionId = parentSessionId

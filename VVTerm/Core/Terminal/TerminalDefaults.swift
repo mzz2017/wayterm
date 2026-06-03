@@ -10,10 +10,100 @@ import UIKit
 import AppKit
 #endif
 
+enum TerminalCursorStyle: String, CaseIterable, Codable, Identifiable {
+    case block
+    case bar
+    case underline
+    case blockHollow = "block_hollow"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .block: return String(localized: "Block")
+        case .bar: return String(localized: "Bar")
+        case .underline: return String(localized: "Underline")
+        case .blockHollow: return String(localized: "Block Hollow")
+        }
+    }
+}
+
+enum TerminalZoomAction {
+    case zoomIn
+    case zoomOut
+    case reset
+}
+
+struct TerminalZoomResult: Hashable {
+    let presentationOverrides: TerminalPresentationOverrides
+    let effectiveFontSize: Double
+}
+
+struct TerminalPresentationOverrides: Codable, Hashable {
+    static let empty = TerminalPresentationOverrides()
+
+    var fontSize: Double?
+
+    init(fontSize: Double? = nil) {
+        self.fontSize = fontSize.map(TerminalDefaults.clampedFontSize)
+    }
+
+    var isEmpty: Bool {
+        fontSize == nil
+    }
+
+    func resolvedFontSize(defaults: UserDefaults = .standard) -> Double {
+        fontSize ?? TerminalDefaults.storedFontSize(defaults: defaults)
+    }
+
+    func applyingZoom(_ action: TerminalZoomAction, defaults: UserDefaults = .standard) -> TerminalPresentationOverrides {
+        var overrides = self
+        let currentFontSize = resolvedFontSize(defaults: defaults)
+
+        switch action {
+        case .zoomIn:
+            overrides.fontSize = TerminalDefaults.clampedFontSize(currentFontSize + TerminalDefaults.fontSizeStep)
+        case .zoomOut:
+            overrides.fontSize = TerminalDefaults.clampedFontSize(currentFontSize - TerminalDefaults.fontSizeStep)
+        case .reset:
+            overrides.fontSize = nil
+        }
+
+        return overrides
+    }
+}
+
+enum TerminalZoomPresentation {
+    static let pinchZoomInThreshold = 1.12
+    static let pinchZoomOutThreshold = 0.89
+    static let magnificationStepThreshold = 0.12
+    static let indicatorFadeInDuration = 0.12
+    static let indicatorFadeOutDuration = 0.18
+    static let indicatorHideDelay = 0.8
+    static let indicatorGestureEndHideDelay = 0.45
+    static let indicatorMinimumWidth = 112.0
+    static let indicatorMinimumHeight = 72.0
+
+    static var indicatorTitle: String {
+        String(localized: "Font Size")
+    }
+
+    static func formattedFontSize(_ fontSize: Double) -> String {
+        String(format: "%.0f pt", fontSize)
+    }
+}
+
 enum TerminalDefaults {
     static let fontNameKey = "terminalFontName"
     static let fontSizeKey = "terminalFontSize"
+    static let cursorStyleKey = "terminalCursorStyle"
+    static let cursorBlinkKey = "terminalCursorBlink"
     static let legacyDefaultFontName = "JetBrainsMono Nerd Font"
+    static let minimumFontSize = 4.0
+    static let maximumFontSize = 32.0
+    static let fontSizeStep = 1.0
+    static let defaultCursorStyle: TerminalCursorStyle = .block
+    static let defaultCursorBlink = true
     #if os(macOS)
     static let defaultPrimaryFontName = "Menlo"
     static let macOSFallbackFontFamilies = [
@@ -28,11 +118,21 @@ enum TerminalDefaults {
 
     static func applyIfNeeded(defaults: UserDefaults) {
         seedFontDefaultsIfNeeded(defaults: defaults)
+        seedCursorDefaultsIfNeeded(defaults: defaults)
 
         if defaults.object(forKey: ImagePasteBehavior.userDefaultsKey) == nil {
             let imagePasteBehavior = RichClipboardSettings.resolvedImagePasteBehavior(defaults: defaults)
             defaults.set(imagePasteBehavior.rawValue, forKey: ImagePasteBehavior.userDefaultsKey)
         }
+    }
+
+    nonisolated static func clampedFontSize(_ fontSize: Double) -> Double {
+        min(max(fontSize.rounded(), minimumFontSize), maximumFontSize)
+    }
+
+    static func storedFontSize(defaults: UserDefaults = .standard) -> Double {
+        let stored = defaults.object(forKey: fontSizeKey) as? Double ?? defaultFontSize
+        return clampedFontSize(stored)
     }
 
     static var defaultFontSize: Double {
@@ -78,6 +178,19 @@ enum TerminalDefaults {
             defaults.set(defaultFontSize, forKey: fontSizeKey)
         }
         #endif
+    }
+
+    private static func seedCursorDefaultsIfNeeded(defaults: UserDefaults) {
+        if let rawStyle = defaults.string(forKey: cursorStyleKey),
+           TerminalCursorStyle(rawValue: rawStyle) != nil {
+            // Existing value is valid.
+        } else {
+            defaults.set(defaultCursorStyle.rawValue, forKey: cursorStyleKey)
+        }
+
+        if defaults.object(forKey: cursorBlinkKey) == nil {
+            defaults.set(defaultCursorBlink, forKey: cursorBlinkKey)
+        }
     }
 
     #if os(macOS)

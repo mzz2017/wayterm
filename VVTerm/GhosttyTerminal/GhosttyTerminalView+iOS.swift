@@ -30,62 +30,6 @@ private extension UIViewController {
     }
 }
 
-enum TerminalKeyboardFocusReason {
-    case explicitUserRequest
-    case initialActivation
-    case reconnectRestore
-    case directTouch
-    case selectionGesture
-    case hardwareKeyboard
-}
-
-struct TerminalKeyboardFocusPolicy {
-    private enum Mode {
-        case typing
-        case browse
-    }
-
-    private var mode: Mode = .typing
-    private(set) var shouldRestoreOnReconnect = false
-
-    var allowsAutomaticFocus: Bool {
-        mode == .typing
-    }
-
-    var isBrowsing: Bool {
-        mode == .browse
-    }
-
-    mutating func requestFocus(for reason: TerminalKeyboardFocusReason) -> Bool {
-        switch reason {
-        case .explicitUserRequest, .hardwareKeyboard:
-            mode = .typing
-            shouldRestoreOnReconnect = true
-            return true
-        case .initialActivation, .directTouch, .selectionGesture:
-            guard mode == .typing else { return false }
-            shouldRestoreOnReconnect = true
-            return true
-        case .reconnectRestore:
-            return mode == .typing && shouldRestoreOnReconnect
-        }
-    }
-
-    mutating func dismissForUser() {
-        mode = .browse
-        shouldRestoreOnReconnect = false
-    }
-
-    mutating func markForReconnect() {
-        guard mode == .typing else { return }
-        shouldRestoreOnReconnect = true
-    }
-
-    mutating func clearReconnect() {
-        shouldRestoreOnReconnect = false
-    }
-}
-
 struct TerminalFindNavigatorLifecycle {
     private(set) var isActive = false
     private(set) var suppressedGhosttySearchEndCount = 0
@@ -687,6 +631,12 @@ class GhosttyTerminalView: UIView {
     /// In custom I/O mode (SSH), the embedder should send a window-change.
     var onResize: ((Int, Int) -> Void)?
 
+    /// Callback invoked when a pinch gesture requests terminal pane zoom.
+    var onZoomAction: ((TerminalZoomAction) -> TerminalZoomResult?)?
+
+    /// Per-surface presentation overrides used to preserve pane zoom across global config reloads.
+    private(set) var surfacePresentationOverrides: TerminalPresentationOverrides = .empty
+
     /// Callback for OSC 9;4 progress reports
     var onProgressReport: ((GhosttyProgressState, Int?) -> Void)?
 
@@ -739,6 +689,10 @@ class GhosttyTerminalView: UIView {
 
     private var isSelecting = false
     private var isScrolling = false
+    private var isPinchingTerminalZoom = false
+    private var pinchReferenceScale: CGFloat = 1
+    private let zoomIndicatorView = TerminalZoomIndicatorView()
+    private var zoomIndicatorHideWorkItem: DispatchWorkItem?
     private var nativeSelectionSnapshot = TerminalNativeTextSnapshot.empty
     private var nativeSelectedRange: NSRange?
     private weak var nativeTextInputDelegate: UITextInputDelegate?
@@ -812,6 +766,17 @@ class GhosttyTerminalView: UIView {
         if #available(iOS 13.4, *) {
             recognizer.allowedScrollTypesMask = .all
         }
+        return recognizer
+    }()
+    private lazy var pinchRecognizer: UIPinchGestureRecognizer = {
+        let recognizer = UIPinchGestureRecognizer(
+            target: self,
+            action: #selector(handlePinchGesture(_:))
+        )
+        recognizer.requiresExclusiveTouchType = false
+        recognizer.allowedTouchTypes = [
+            NSNumber(value: UITouch.TouchType.direct.rawValue)
+        ]
         return recognizer
     }()
     private lazy var selectionStartHandleRecognizer: UIPanGestureRecognizer = {
@@ -931,6 +896,9 @@ class GhosttyTerminalView: UIView {
 
         setupSurface()
         addSubview(imeProxyTextView)
+        zoomIndicatorView.isHidden = true
+        zoomIndicatorView.alpha = 0
+        addSubview(zoomIndicatorView)
         if usesNativeTouchSelection {
             nativeFindOverlay.frame = bounds
             addSubview(nativeFindOverlay)
@@ -947,6 +915,7 @@ class GhosttyTerminalView: UIView {
 
         // Setup gesture recognizers with delegate for simultaneous recognition
         scrollRecognizer.delegate = self
+        pinchRecognizer.delegate = self
         if usesAppOwnedTouchSelection {
             selectionRecognizer.delegate = self
             doubleTapRecognizer.delegate = self
@@ -961,6 +930,7 @@ class GhosttyTerminalView: UIView {
         }
 
         addGestureRecognizer(scrollRecognizer)
+        addGestureRecognizer(pinchRecognizer)
         if usesAppOwnedTouchSelection {
             addGestureRecognizer(selectionRecognizer)
             addGestureRecognizer(doubleTapRecognizer)
@@ -1010,6 +980,8 @@ class GhosttyTerminalView: UIView {
         isShuttingDown = true
         isPaused = true
         stopMomentumScrolling()
+        zoomIndicatorHideWorkItem?.cancel()
+        zoomIndicatorHideWorkItem = nil
 
         // Remove config reload observer
         if let observer = configReloadObserver {
@@ -1208,6 +1180,16 @@ class GhosttyTerminalView: UIView {
                 self?.onReady?()
             }
         }
+    }
+
+    func applyPresentationOverrides(_ presentationOverrides: TerminalPresentationOverrides) {
+        surfacePresentationOverrides = presentationOverrides
+
+        guard let surface = surface?.unsafeCValue else { return }
+        ghosttyAppWrapper?.updateSurfaceConfig(surface, presentationOverrides: presentationOverrides)
+        lastPixelSize = .zero
+        sizeDidChange(bounds.size)
+        requestRender()
     }
 
     private func reportGridResizeIfNeeded() {
@@ -1683,9 +1665,11 @@ class GhosttyTerminalView: UIView {
         imeProxyTextView.frame = bounds
         nativeFindOverlay.frame = bounds
         touchSelectionOverlay.frame = bounds
+        updateZoomIndicatorLayout()
         bringSubviewToFront(nativeFindOverlay)
         bringSubviewToFront(touchSelectionOverlay)
         bringSubviewToFront(touchSelectionLoupe)
+        bringSubviewToFront(zoomIndicatorView)
 
         guard !isShuttingDown else { return }
 
@@ -1867,6 +1851,7 @@ class GhosttyTerminalView: UIView {
     @objc private func handlePanGesture(_ recognizer: UIPanGestureRecognizer) {
         guard let surface = surface else { return }
         if isSelecting { return }
+        if isPinchingTerminalZoom { return }
         if touchSelection != nil {
             if recognizer.state == .began,
                !isPointOnTouchSelectionHandle(recognizer.location(in: self)) {
@@ -1976,6 +1961,90 @@ class GhosttyTerminalView: UIView {
         )
         surface.sendMouseScroll(endEvent)
         momentumPhase = .none
+    }
+
+    @objc private func handlePinchGesture(_ recognizer: UIPinchGestureRecognizer) {
+        guard canHandlePinchZoom else {
+            isPinchingTerminalZoom = false
+            return
+        }
+
+        switch recognizer.state {
+        case .began:
+            isPinchingTerminalZoom = true
+            pinchReferenceScale = recognizer.scale
+            stopMomentumScrolling()
+            showZoomIndicator()
+        case .changed:
+            guard isPinchingTerminalZoom else { return }
+            let relativeScale = recognizer.scale / pinchReferenceScale
+            if relativeScale >= CGFloat(TerminalZoomPresentation.pinchZoomInThreshold) {
+                if let result = onZoomAction?(.zoomIn) {
+                    showZoomIndicator(fontSize: result.effectiveFontSize)
+                }
+                pinchReferenceScale = recognizer.scale
+            } else if relativeScale <= CGFloat(TerminalZoomPresentation.pinchZoomOutThreshold) {
+                if let result = onZoomAction?(.zoomOut) {
+                    showZoomIndicator(fontSize: result.effectiveFontSize)
+                }
+                pinchReferenceScale = recognizer.scale
+            }
+        case .ended, .cancelled, .failed:
+            isPinchingTerminalZoom = false
+            pinchReferenceScale = 1
+            scheduleZoomIndicatorHide(after: TerminalZoomPresentation.indicatorGestureEndHideDelay)
+        default:
+            break
+        }
+    }
+
+    private func showZoomIndicator() {
+        showZoomIndicator(fontSize: surfacePresentationOverrides.resolvedFontSize())
+    }
+
+    private func showZoomIndicator(fontSize: Double) {
+        zoomIndicatorView.update(fontSize: fontSize)
+        updateZoomIndicatorLayout()
+        bringSubviewToFront(zoomIndicatorView)
+
+        zoomIndicatorHideWorkItem?.cancel()
+        zoomIndicatorView.isHidden = false
+        UIView.animate(withDuration: TerminalZoomPresentation.indicatorFadeInDuration) {
+            self.zoomIndicatorView.alpha = 1
+        }
+        scheduleZoomIndicatorHide(after: TerminalZoomPresentation.indicatorHideDelay)
+    }
+
+    private func scheduleZoomIndicatorHide(after delay: TimeInterval) {
+        zoomIndicatorHideWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            UIView.animate(withDuration: TerminalZoomPresentation.indicatorFadeOutDuration, animations: {
+                self.zoomIndicatorView.alpha = 0
+            }, completion: { _ in
+                self.zoomIndicatorView.isHidden = true
+            })
+        }
+        zoomIndicatorHideWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func updateZoomIndicatorLayout() {
+        let fittingSize = zoomIndicatorView.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        let width = max(fittingSize.width, CGFloat(TerminalZoomPresentation.indicatorMinimumWidth))
+        let height = max(fittingSize.height, CGFloat(TerminalZoomPresentation.indicatorMinimumHeight))
+        zoomIndicatorView.bounds = CGRect(x: 0, y: 0, width: width, height: height)
+        zoomIndicatorView.center = CGPoint(x: bounds.midX, y: bounds.midY)
+    }
+
+    private var canHandlePinchZoom: Bool {
+        if usesNativeTouchSelection, nativeSelectionInteractionActive || nativeSelectedRange != nil {
+            return false
+        }
+        if usesAppOwnedTouchSelection, touchSelection != nil {
+            return false
+        }
+        return true
     }
 
     private func setupNativeTextSelectionInteractions() {
@@ -3956,6 +4025,9 @@ extension GhosttyTerminalView: UITextSearching {
 
 extension GhosttyTerminalView: UIGestureRecognizerDelegate {
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if gestureRecognizer == pinchRecognizer {
+            return canHandlePinchZoom
+        }
         if gestureRecognizer == scrollRecognizer {
             if usesNativeTouchSelection, nativeSelectionInteractionActive || nativeSelectedRange != nil {
                 return false
@@ -3975,6 +4047,9 @@ extension GhosttyTerminalView: UIGestureRecognizerDelegate {
         if usesNativeTouchSelection,
            nativeSelectionInteractionActive || nativeSelectedRange != nil,
            gestureRecognizer == scrollRecognizer || otherGestureRecognizer == scrollRecognizer {
+            return false
+        }
+        if gestureRecognizer == pinchRecognizer || otherGestureRecognizer == pinchRecognizer {
             return false
         }
         // Allow pan and long press to recognize simultaneously
@@ -5455,6 +5530,54 @@ extension GhosttyTerminalView: UITextInput {
         guard let position = position as? TerminalNativeTextPosition,
               let range = terminalTextInputRange(from: range) else { return 0 }
         return position.offset - range.location
+    }
+}
+
+private final class TerminalZoomIndicatorView: UIVisualEffectView {
+    private let valueLabel = UILabel()
+    private let titleLabel = UILabel()
+    private let stackView = UIStackView()
+
+    override init(effect: UIVisualEffect? = UIBlurEffect(style: .systemChromeMaterialDark)) {
+        super.init(effect: effect)
+        isUserInteractionEnabled = false
+        clipsToBounds = true
+        layer.cornerRadius = 18
+        layer.cornerCurve = .continuous
+
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: 24, weight: .semibold)
+        valueLabel.textColor = .white
+        valueLabel.textAlignment = .center
+
+        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        titleLabel.textColor = UIColor.white.withAlphaComponent(0.72)
+        titleLabel.textAlignment = .center
+        titleLabel.text = TerminalZoomPresentation.indicatorTitle
+
+        stackView.axis = .vertical
+        stackView.alignment = .center
+        stackView.spacing = 3
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        stackView.addArrangedSubview(valueLabel)
+        stackView.addArrangedSubview(titleLabel)
+        contentView.addSubview(stackView)
+
+        NSLayoutConstraint.activate([
+            stackView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 18),
+            stackView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -18),
+            stackView.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 12),
+            stackView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -12),
+            stackView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            stackView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(fontSize: Double) {
+        valueLabel.text = TerminalZoomPresentation.formattedFontSize(fontSize)
     }
 }
 

@@ -987,6 +987,10 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
             existingTerminal.onTitleChange = { [paneId] title in
                 TerminalTabManager.shared.updatePaneTitle(paneId, rawTitle: title)
             }
+            existingTerminal.onZoomAction = { [paneId] action in
+                TerminalTabManager.shared.handleTerminalZoom(action, for: paneId)
+            }
+            existingTerminal.applyPresentationOverrides(TerminalTabManager.shared.presentationOverrides(for: paneId))
             existingTerminal.writeCallback = { [paneId] data in
                 if let client = TerminalTabManager.shared.getSSHClient(for: paneId),
                    let shellId = TerminalTabManager.shared.shellId(for: paneId) {
@@ -1036,6 +1040,10 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         terminalView.onTitleChange = { [paneId] title in
             TerminalTabManager.shared.updatePaneTitle(paneId, rawTitle: title)
         }
+        terminalView.onZoomAction = { [paneId] action in
+            TerminalTabManager.shared.handleTerminalZoom(action, for: paneId)
+        }
+        terminalView.applyPresentationOverrides(TerminalTabManager.shared.presentationOverrides(for: paneId))
 
         // Store terminal reference
         coordinator.terminal = terminalView
@@ -1065,6 +1073,10 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         if let scrollView = nsView as? TerminalScrollView {
             scrollView.shouldOwnFirstResponder = isActive
+            let terminalView = scrollView.surfaceView
+            if terminalView.surfacePresentationOverrides != TerminalTabManager.shared.presentationOverrides(for: paneId) {
+                terminalView.applyPresentationOverrides(TerminalTabManager.shared.presentationOverrides(for: paneId))
+            }
         }
     }
 

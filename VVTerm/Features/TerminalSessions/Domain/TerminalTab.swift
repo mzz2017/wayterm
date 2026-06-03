@@ -72,6 +72,7 @@ struct TerminalPaneState {
     var lastActivity: Date
     var tmuxStatus: TmuxStatus
     var workingDirectory: String?
+    var presentationOverrides: TerminalPresentationOverrides
     var seedPaneId: UUID?
     /// Runtime transport for this pane (never persisted).
     var activeTransport: ShellTransport
@@ -86,6 +87,7 @@ struct TerminalPaneState {
         self.lastActivity = Date()
         self.tmuxStatus = .unknown
         self.workingDirectory = nil
+        self.presentationOverrides = .empty
         self.seedPaneId = nil
         self.activeTransport = .ssh
         self.moshFallbackReason = nil

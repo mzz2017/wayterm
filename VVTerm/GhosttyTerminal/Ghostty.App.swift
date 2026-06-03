@@ -90,7 +90,9 @@ extension Ghostty {
             primaryFontFamily: String,
             fontSize: Double,
             shellName: String,
-            themeName: String
+            themeName: String,
+            cursorStyle: TerminalCursorStyle = TerminalDefaults.defaultCursorStyle,
+            cursorBlink: Bool = TerminalDefaults.defaultCursorBlink
         ) -> String {
             """
             \(fontFamilyLines(primaryFamily: primaryFontFamily))
@@ -106,7 +108,8 @@ extension Ghostty {
             shell-integration-features = no-cursor,sudo,title
 
             # Cursor
-            cursor-style-blink = true
+            cursor-style = \(cursorStyle.rawValue)
+            cursor-style-blink = \(cursorBlink ? "true" : "false")
 
             theme = \(themeName)
 
@@ -144,6 +147,7 @@ extension Ghostty {
 
         /// Track active surfaces for config propagation
         private var activeSurfaces: [Ghostty.SurfaceReference] = []
+        private var surfaceConfigCache: [SurfaceConfigCacheKey: ghostty_config_t] = [:]
         #if os(macOS)
         /// Track last known appearance to detect changes
         private var lastKnownAppearance: NSAppearance.Name?
@@ -159,6 +163,8 @@ extension Ghostty {
 
         @AppStorage(TerminalDefaults.fontNameKey) private var terminalFontName = TerminalDefaults.defaultFontName
         @AppStorage(TerminalDefaults.fontSizeKey) private var terminalFontSize = TerminalDefaults.defaultFontSize
+        @AppStorage(TerminalDefaults.cursorStyleKey) private var terminalCursorStyleRaw = TerminalDefaults.defaultCursorStyle.rawValue
+        @AppStorage(TerminalDefaults.cursorBlinkKey) private var terminalCursorBlink = TerminalDefaults.defaultCursorBlink
         @AppStorage(CloudKitSyncConstants.terminalThemeNameKey) private var terminalThemeName = "Aizen Dark"
         @AppStorage(CloudKitSyncConstants.terminalThemeNameLightKey) private var terminalThemeNameLight = "Aizen Light"
         @AppStorage(CloudKitSyncConstants.terminalUsePerAppearanceThemeKey) private var usePerAppearanceTheme = true
@@ -184,9 +190,21 @@ extension Ghostty {
             }
         }
 
+        private var terminalCursorStyle: TerminalCursorStyle {
+            TerminalCursorStyle(rawValue: terminalCursorStyleRaw) ?? TerminalDefaults.defaultCursorStyle
+        }
+
         // MARK: - Initialization
 
         private var didStart = false
+
+        private struct SurfaceConfigCacheKey: Hashable {
+            let fontName: String
+            let fontSize: Double
+            let themeName: String
+            let cursorStyleRaw: String
+            let cursorBlink: Bool
+        }
 
         init(autoStart: Bool = true) {
             if autoStart {
@@ -344,6 +362,8 @@ extension Ghostty {
                 appearanceSettingObserver = nil
             }
 
+            clearSurfaceConfigCache()
+
             if let app = self.app {
                 ghostty_app_free(app)
                 self.app = nil
@@ -385,25 +405,23 @@ extension Ghostty {
         /// Reload configuration (call when settings change)
         func reloadConfig() {
             guard let app = self.app else { return }
+            clearSurfaceConfigCache()
 
             // Create new config with updated settings
-            guard let config = ghostty_config_new() else {
-                Ghostty.logger.error("ghostty_config_new failed during reload")
-                return
-            }
-
-            // Load config from settings
-            loadConfigIntoGhostty(config)
-
-            // Finalize config (required before use)
-            ghostty_config_finalize(config)
+            guard let config = makeConfig(refreshThemes: true) else { return }
 
             // Update the app config
             ghostty_app_update_config(app, config)
 
             // Propagate config to all existing surfaces
             for surfaceRef in activeSurfaces where surfaceRef.isValid {
-                ghostty_surface_update_config(surfaceRef.surface, config)
+                if let presentationOverrides = surfaceRef.terminalView?.surfacePresentationOverrides,
+                   !presentationOverrides.isEmpty,
+                   let surfaceConfig = cachedSurfaceConfig(for: presentationOverrides) {
+                    ghostty_surface_update_config(surfaceRef.surface, surfaceConfig)
+                } else {
+                    ghostty_surface_update_config(surfaceRef.surface, config)
+                }
             }
 
             // Clean up invalid surfaces
@@ -420,10 +438,67 @@ extension Ghostty {
             NotificationCenter.default.post(name: Ghostty.configDidReloadNotification, object: nil)
         }
 
+        func updateSurfaceConfig(_ surface: ghostty_surface_t, presentationOverrides: TerminalPresentationOverrides) {
+            guard let config = cachedSurfaceConfig(for: presentationOverrides) else { return }
+            ghostty_surface_update_config(surface, config)
+            unsetenv("XDG_CONFIG_HOME")
+            Ghostty.logger.info("Updated surface presentation overrides")
+        }
+
         // MARK: - Private Helpers
 
+        private func makeConfig(
+            presentationOverrides: TerminalPresentationOverrides = .empty,
+            refreshThemes: Bool
+        ) -> ghostty_config_t? {
+            guard let config = ghostty_config_new() else {
+                Ghostty.logger.error("ghostty_config_new failed during reload")
+                return nil
+            }
+
+            loadConfigIntoGhostty(
+                config,
+                presentationOverrides: presentationOverrides,
+                refreshThemes: refreshThemes
+            )
+            ghostty_config_finalize(config)
+            return config
+        }
+
+        private func cachedSurfaceConfig(for presentationOverrides: TerminalPresentationOverrides) -> ghostty_config_t? {
+            let key = SurfaceConfigCacheKey(
+                fontName: terminalFontName,
+                fontSize: presentationOverrides.resolvedFontSize(),
+                themeName: effectiveThemeName,
+                cursorStyleRaw: terminalCursorStyle.rawValue,
+                cursorBlink: terminalCursorBlink
+            )
+
+            if let cachedConfig = surfaceConfigCache[key] {
+                return cachedConfig
+            }
+
+            guard let config = makeConfig(presentationOverrides: presentationOverrides, refreshThemes: false) else {
+                return nil
+            }
+
+            surfaceConfigCache[key] = config
+            return config
+        }
+
+        private func clearSurfaceConfigCache() {
+            for config in surfaceConfigCache.values {
+                ghostty_config_free(config)
+            }
+            surfaceConfigCache.removeAll()
+        }
+
         /// Generate and load config content into a ghostty_config_t
-        private func loadConfigIntoGhostty(_ config: ghostty_config_t) {
+        private func loadConfigIntoGhostty(
+            _ config: ghostty_config_t,
+            presentationOverrides: TerminalPresentationOverrides = .empty,
+            refreshThemes: Bool = true
+        ) {
             // Create temp config directory and use Ghostty themes
             let tempDir = NSTemporaryDirectory()
             let ghosttyConfigDir = (tempDir as NSString).appendingPathComponent(".config/ghostty")
@@ -431,22 +506,27 @@ extension Ghostty {
             let tempThemesDir = (ghosttyConfigDir as NSString).appendingPathComponent("themes")
 
             do {
+                let themesDirectoryExists = FileManager.default.fileExists(atPath: tempThemesDir)
                 try FileManager.default.createDirectory(atPath: ghosttyConfigDir, withIntermediateDirectories: true)
                 try FileManager.default.createDirectory(atPath: tempThemesDir, withIntermediateDirectories: true)
 
-                // Setup themes - copy from bundle to temp dir if needed
-                setupThemes(tempThemesDir: tempThemesDir)
+                if refreshThemes || !themesDirectoryExists {
+                    setupThemes(tempThemesDir: tempThemesDir)
+                }
 
                 // Detect shell for integration
                 let shell = Foundation.ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
                 let shellName = (shell as NSString).lastPathComponent
 
                 // Create config with font settings, shell integration, and theme
+                let effectiveFontSize = presentationOverrides.fontSize ?? TerminalDefaults.clampedFontSize(terminalFontSize)
                 let configContent = ConfigBuilder.configContent(
                     primaryFontFamily: terminalFontName,
-                    fontSize: terminalFontSize,
+                    fontSize: effectiveFontSize,
                     shellName: shellName,
-                    themeName: effectiveThemeName
+                    themeName: effectiveThemeName,
+                    cursorStyle: terminalCursorStyle,
+                    cursorBlink: terminalCursorBlink
                 )
 
                 Ghostty.logger.info("Loading Ghostty theme: \(self.effectiveThemeName)")
@@ -460,7 +540,7 @@ extension Ghostty {
                 // Load default files - will load our XDG config
                 ghostty_config_load_default_files(config)
 
-                Ghostty.logger.info("Loaded terminal settings - Font: \(self.terminalFontName) \(Int(self.terminalFontSize))pt, Theme: \(self.effectiveThemeName)")
+                Ghostty.logger.info("Loaded terminal settings - Font: \(self.terminalFontName) \(Int(effectiveFontSize))pt, Theme: \(self.effectiveThemeName)")
             } catch {
                 Ghostty.logger.warning("Failed to write config: \(error)")
             }

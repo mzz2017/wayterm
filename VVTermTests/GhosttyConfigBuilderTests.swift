@@ -88,6 +88,23 @@ struct GhosttyConfigBuilderTests {
         #expect(content.contains("window-inherit-font-size = false"))
         #expect(content.contains("shell-integration = fish"))
         #expect(content.contains("theme = Aizen Light"))
+        #expect(content.contains("cursor-style = block"))
+        #expect(content.contains("cursor-style-blink = true"))
         #expect(content.contains("keybind = shift+enter=text:\\n"))
+    }
+
+    @Test
+    func configContentIncludesCursorSettings() {
+        let content = Ghostty.ConfigBuilder.configContent(
+            primaryFontFamily: "Menlo",
+            fontSize: 13,
+            shellName: "fish",
+            themeName: "Aizen Light",
+            cursorStyle: .bar,
+            cursorBlink: false
+        )
+
+        #expect(content.contains("cursor-style = bar"))
+        #expect(content.contains("cursor-style-blink = false"))
     }
 }

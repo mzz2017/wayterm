@@ -31,6 +31,113 @@ private struct PendingCustomThemeSource: Identifiable {
     var content: String
 }
 
+private struct CursorStyleOptionView: View {
+    let style: TerminalCursorStyle
+    let isSelected: Bool
+    let blinks: Bool
+    let palette: TerminalThemePreviewPalette
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ZStack {
+                TerminalCursorPreview(style: style, blinks: blinks, palette: palette)
+                    .frame(width: 72, height: 52)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 3)
+                    )
+                    .shadow(color: .black.opacity(0.15), radius: 2, x: 0, y: 1)
+            }
+
+            Text(style.displayName)
+                .font(.caption)
+                .foregroundStyle(isSelected ? .primary : .secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+private struct TerminalCursorPreview: View {
+    let style: TerminalCursorStyle
+    let blinks: Bool
+    let palette: TerminalThemePreviewPalette
+
+    var body: some View {
+        if blinks {
+            TimelineView(.periodic(from: .now, by: 0.55)) { timeline in
+                previewContent(isVisible: cursorIsVisible(at: timeline.date))
+            }
+        } else {
+            previewContent(isVisible: true)
+        }
+    }
+
+    private func cursorIsVisible(at date: Date) -> Bool {
+        guard blinks else { return true }
+        let tick = Int(date.timeIntervalSinceReferenceDate / 0.55)
+        return tick.isMultiple(of: 2)
+    }
+
+    private func previewContent(isVisible: Bool) -> some View {
+        HStack(spacing: 0) {
+            Text("~ ")
+                .foregroundStyle(palette.foreground.opacity(0.55))
+            cursorSample(isVisible: isVisible)
+        }
+        .font(.system(size: 19, weight: .medium, design: .monospaced))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(palette.background)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(palette.foreground.opacity(0.14), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func cursorSample(isVisible: Bool) -> some View {
+        switch style {
+        case .block:
+            Text("A")
+                .foregroundStyle(isVisible ? palette.cursorText : palette.foreground.opacity(0.75))
+                .padding(.horizontal, 1)
+                .background(
+                    Rectangle()
+                        .fill(isVisible ? palette.cursor : Color.clear)
+                )
+        case .bar:
+            ZStack(alignment: .leading) {
+                Text("A")
+                    .foregroundStyle(palette.foreground.opacity(0.75))
+                Rectangle()
+                    .fill(isVisible ? palette.cursor : Color.clear)
+                    .frame(width: 2, height: 23)
+            }
+        case .underline:
+            ZStack(alignment: .bottom) {
+                Text("A")
+                    .foregroundStyle(palette.foreground.opacity(0.75))
+                Rectangle()
+                    .fill(isVisible ? palette.cursor : Color.clear)
+                    .frame(width: 13, height: 2)
+            }
+        case .blockHollow:
+            Text("A")
+                .foregroundStyle(palette.foreground.opacity(0.75))
+                .padding(.horizontal, 1)
+                .overlay(
+                    Rectangle()
+                        .stroke(isVisible ? palette.cursor : Color.clear, lineWidth: 1.5)
+                )
+        }
+    }
+}
+
 // MARK: - Terminal Settings View
 
 struct TerminalSettingsView: View {
@@ -40,6 +147,7 @@ struct TerminalSettingsView: View {
     @AppStorage(CloudKitSyncConstants.terminalThemeNameKey) private var themeName = "Aizen Dark"
     @AppStorage(CloudKitSyncConstants.terminalThemeNameLightKey) private var themeNameLight = "Aizen Light"
     @AppStorage(CloudKitSyncConstants.terminalUsePerAppearanceThemeKey) private var usePerAppearanceTheme = true
+    @AppStorage("appearanceMode") private var appearanceMode = "system"
     @AppStorage("terminalNotificationsEnabled") private var terminalNotificationsEnabled = true
     @AppStorage("terminalProgressEnabled") private var terminalProgressEnabled = true
     @AppStorage("terminalAccessoryCustomizationEnabled") private var terminalAccessoryCustomizationEnabled = true
@@ -63,7 +171,12 @@ struct TerminalSettingsView: View {
     @AppStorage("sshKeepAliveInterval") private var keepAliveInterval = 30
     @AppStorage("sshAutoReconnect") private var autoReconnect = true
 
+    // Cursor settings
+    @AppStorage(TerminalDefaults.cursorStyleKey) private var cursorStyleRaw = TerminalDefaults.defaultCursorStyle.rawValue
+    @AppStorage(TerminalDefaults.cursorBlinkKey) private var cursorBlink = TerminalDefaults.defaultCursorBlink
+
     @EnvironmentObject private var terminalThemeManager: TerminalThemeManager
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var availableFonts: [String] = []
     @State private var builtInThemeNames: [String] = []
@@ -123,6 +236,27 @@ struct TerminalSettingsView: View {
         TmuxStartupBehavior(rawValue: tmuxStartupBehaviorDefaultRaw) ?? .askEveryTime
     }
 
+    private var selectedCursorStyle: TerminalCursorStyle {
+        TerminalCursorStyle(rawValue: cursorStyleRaw) ?? TerminalDefaults.defaultCursorStyle
+    }
+
+    private var cursorPreviewThemeName: String {
+        guard usePerAppearanceTheme else { return themeName }
+
+        switch appearanceMode {
+        case "light":
+            return themeNameLight
+        case "dark":
+            return themeName
+        default:
+            return colorScheme == .dark ? themeName : themeNameLight
+        }
+    }
+
+    private var cursorPreviewPalette: TerminalThemePreviewPalette {
+        ThemeColorParser.previewPalette(for: cursorPreviewThemeName)
+    }
+
     private var customThemeErrorAlertBinding: Binding<Bool> {
         Binding(
             get: { customThemeErrorMessage != nil },
@@ -171,6 +305,38 @@ struct TerminalSettingsView: View {
                 ), in: 4...32, step: 1)
                 Stepper("", value: $fontSize, in: 4...32, step: 1)
                     .labelsHidden()
+            }
+        }
+    }
+
+    private var cursorSection: some View {
+        Section("Cursor") {
+            VStack(spacing: 16) {
+                HStack(spacing: 0) {
+                    ForEach(TerminalCursorStyle.allCases) { style in
+                        CursorStyleOptionView(
+                            style: style,
+                            isSelected: selectedCursorStyle == style,
+                            blinks: cursorBlink,
+                            palette: cursorPreviewPalette
+                        )
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            cursorStyleRaw = style.rawValue
+                        }
+                        .accessibilityLabel(style.displayName)
+                    }
+                }
+
+                Divider()
+
+                HStack {
+                    Text("Blink")
+                    Spacer()
+                    Toggle("Blink", isOn: $cursorBlink)
+                        .labelsHidden()
+                }
             }
         }
     }
@@ -364,6 +530,7 @@ struct TerminalSettingsView: View {
     var body: some View {
         Form {
             fontSection
+            cursorSection
             themeSection
             terminalBehaviorSection
             keyboardAccessorySection

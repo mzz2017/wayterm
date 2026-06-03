@@ -51,6 +51,12 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     /// Callback when terminal size changes (cols, rows) - used for SSH PTY resize
     var onResize: ((Int, Int) -> Void)?
 
+    /// Callback invoked when a magnification gesture requests terminal pane zoom.
+    var onZoomAction: ((TerminalZoomAction) -> TerminalZoomResult?)?
+
+    /// Per-surface presentation overrides used to preserve pane zoom across global config reloads.
+    private(set) var surfacePresentationOverrides: TerminalPresentationOverrides = .empty
+
     /// Optional app-level paste interceptor used for rich clipboard routing.
     var richPasteInterceptor: ((GhosttyTerminalView) -> Bool)?
 
@@ -68,6 +74,9 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
 
     private var displayLink: CVDisplayLink?
     private var needsRender = false
+    private var accumulatedMagnification: CGFloat = 0
+    private let zoomIndicatorView = TerminalZoomIndicatorView()
+    private var zoomIndicatorHideWorkItem: DispatchWorkItem?
 
     /// Idle detection for display link - stops after timeout to save CPU
     private var lastActivityTime: CFAbsoluteTime = 0
@@ -103,6 +112,8 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     /// Call this when closing a session to ensure proper cleanup.
     func cleanup() {
         isShuttingDown = true
+        zoomIndicatorHideWorkItem?.cancel()
+        zoomIndicatorHideWorkItem = nil
 
         // Stop display link first
         stopDisplayLink()
@@ -175,6 +186,9 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
         setupAppearanceObservation()
         setupFrameObservation()
         setupConfigReloadObservation()
+        zoomIndicatorView.isHidden = true
+        zoomIndicatorView.alphaValue = 0
+        addSubview(zoomIndicatorView)
         if useCustomIO {
             setupDisplayLink()
         }
@@ -478,6 +492,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
             didSignalReady = true
             onReady?()
         }
+        updateZoomIndicatorLayout()
 
         // Check for terminal size changes and notify via callback (for SSH PTY resize)
         if didUpdate, let size = terminalSize() {
@@ -640,6 +655,72 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
         inputHandler.handleScrollWheel(with: event)
     }
 
+    override func magnify(with event: NSEvent) {
+        accumulatedMagnification += event.magnification
+
+        if accumulatedMagnification >= CGFloat(TerminalZoomPresentation.magnificationStepThreshold) {
+            if let result = onZoomAction?(.zoomIn) {
+                showZoomIndicator(fontSize: result.effectiveFontSize)
+            }
+            accumulatedMagnification = 0
+        } else if accumulatedMagnification <= -CGFloat(TerminalZoomPresentation.magnificationStepThreshold) {
+            if let result = onZoomAction?(.zoomOut) {
+                showZoomIndicator(fontSize: result.effectiveFontSize)
+            }
+            accumulatedMagnification = 0
+        }
+
+        if event.phase == .ended || event.phase == .cancelled {
+            accumulatedMagnification = 0
+            scheduleZoomIndicatorHide(after: TerminalZoomPresentation.indicatorGestureEndHideDelay)
+        }
+    }
+
+    private func showZoomIndicator() {
+        showZoomIndicator(fontSize: surfacePresentationOverrides.resolvedFontSize())
+    }
+
+    private func showZoomIndicator(fontSize: Double) {
+        zoomIndicatorView.update(fontSize: fontSize)
+        updateZoomIndicatorLayout()
+        addSubview(zoomIndicatorView, positioned: .above, relativeTo: nil)
+
+        zoomIndicatorHideWorkItem?.cancel()
+        zoomIndicatorView.isHidden = false
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = TerminalZoomPresentation.indicatorFadeInDuration
+            zoomIndicatorView.animator().alphaValue = 1
+        }
+        scheduleZoomIndicatorHide(after: TerminalZoomPresentation.indicatorHideDelay)
+    }
+
+    private func scheduleZoomIndicatorHide(after delay: TimeInterval) {
+        zoomIndicatorHideWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = TerminalZoomPresentation.indicatorFadeOutDuration
+                self.zoomIndicatorView.animator().alphaValue = 0
+            }, completionHandler: {
+                self.zoomIndicatorView.isHidden = true
+            })
+        }
+        zoomIndicatorHideWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func updateZoomIndicatorLayout() {
+        let fittingSize = zoomIndicatorView.fittingSize
+        let width = max(fittingSize.width, CGFloat(TerminalZoomPresentation.indicatorMinimumWidth))
+        let height = max(fittingSize.height, CGFloat(TerminalZoomPresentation.indicatorMinimumHeight))
+        zoomIndicatorView.frame = NSRect(
+            x: bounds.midX - width / 2,
+            y: bounds.midY - height / 2,
+            width: width,
+            height: height
+        )
+    }
+
     // MARK: - Process Lifecycle
 
     /// Check if the terminal process has exited
@@ -687,6 +768,14 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
         needsDisplay = true
         needsLayout = true
         displayIfNeeded()
+    }
+
+    func applyPresentationOverrides(_ presentationOverrides: TerminalPresentationOverrides) {
+        surfacePresentationOverrides = presentationOverrides
+
+        guard let surface = surface?.unsafeCValue else { return }
+        ghosttyAppWrapper?.updateSurfaceConfig(surface, presentationOverrides: presentationOverrides)
+        forceRefresh()
     }
 
     /// Reset Ghostty's terminal state before binding a fresh remote shell to a reused surface.
@@ -829,6 +918,60 @@ private final class DisplayLinkCallbackContext: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return weakViewTable.allObjects.first
+    }
+}
+
+private final class TerminalZoomIndicatorView: NSVisualEffectView {
+    private let valueLabel = NSTextField(labelWithString: "")
+    private let titleLabel = NSTextField(labelWithString: TerminalZoomPresentation.indicatorTitle)
+    private let stackView = NSStackView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        material = .hudWindow
+        blendingMode = .withinWindow
+        state = .active
+        wantsLayer = true
+        layer?.cornerRadius = 18
+        layer?.cornerCurve = .continuous
+        layer?.masksToBounds = true
+
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: 24, weight: .semibold)
+        valueLabel.textColor = .white
+        valueLabel.alignment = .center
+
+        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        titleLabel.textColor = NSColor.white.withAlphaComponent(0.72)
+        titleLabel.alignment = .center
+
+        stackView.orientation = .vertical
+        stackView.alignment = .centerX
+        stackView.spacing = 3
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        stackView.addArrangedSubview(valueLabel)
+        stackView.addArrangedSubview(titleLabel)
+        addSubview(stackView)
+
+        NSLayoutConstraint.activate([
+            stackView.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 18),
+            stackView.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -18),
+            stackView.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 12),
+            stackView.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -12),
+            stackView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            stackView.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    func update(fontSize: Double) {
+        valueLabel.stringValue = TerminalZoomPresentation.formattedFontSize(fontSize)
     }
 }
 

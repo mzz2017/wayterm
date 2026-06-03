@@ -385,6 +385,10 @@ struct SSHTerminalWrapper: NSViewRepresentable {
             existingTerminal.onTitleChange = { [sessionId = session.id] title in
                 ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
             }
+            existingTerminal.onZoomAction = { [sessionId = session.id] action in
+                ConnectionSessionManager.shared.handleTerminalZoom(action, for: sessionId)
+            }
+            existingTerminal.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
             existingTerminal.writeCallback = { [weak coordinator] data in
                 coordinator?.sendToSSH(data)
             }
@@ -439,6 +443,10 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         terminalView.onTitleChange = { [sessionId = session.id] title in
             ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
         }
+        terminalView.onZoomAction = { [sessionId = session.id] action in
+            ConnectionSessionManager.shared.handleTerminalZoom(action, for: sessionId)
+        }
+        terminalView.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
 
         // Store terminal reference in coordinator and register with session manager
         coordinator.terminalView = terminalView
@@ -483,6 +491,10 @@ struct SSHTerminalWrapper: NSViewRepresentable {
 
         if let scrollView = nsView as? TerminalScrollView {
             scrollView.shouldOwnFirstResponder = isActive
+            let terminalView = scrollView.surfaceView
+            if terminalView.surfacePresentationOverrides != ConnectionSessionManager.shared.presentationOverrides(for: session.id) {
+                terminalView.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
+            }
         }
     }
 
@@ -677,6 +689,10 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             existingTerminal.onTitleChange = { [sessionId = session.id] title in
                 ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
             }
+            existingTerminal.onZoomAction = { [sessionId = session.id] action in
+                ConnectionSessionManager.shared.handleTerminalZoom(action, for: sessionId)
+            }
+            existingTerminal.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
 
             // Route through coordinator to preserve write ordering and transport behavior.
             existingTerminal.writeCallback = { [weak coordinator] data in
@@ -750,6 +766,10 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         terminalView.onTitleChange = { [sessionId = session.id] title in
             ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
         }
+        terminalView.onZoomAction = { [sessionId = session.id] action in
+            ConnectionSessionManager.shared.handleTerminalZoom(action, for: sessionId)
+        }
+        terminalView.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
 
         coordinator.terminalView = terminalView
         coordinator.installRichPasteInterception(on: terminalView)
@@ -806,6 +826,9 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         let shouldRenderTerminal = isActive && scenePhase == .active
 
         terminalView.onVoiceButtonTapped = onVoiceTrigger
+        if terminalView.surfacePresentationOverrides != ConnectionSessionManager.shared.presentationOverrides(for: session.id) {
+            terminalView.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
+        }
         if size.width > 0, size.height > 0, size != context.coordinator.lastReportedSize {
             context.coordinator.lastReportedSize = size
             terminalView.sizeDidChange(size)

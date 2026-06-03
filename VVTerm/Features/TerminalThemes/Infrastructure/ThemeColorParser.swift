@@ -6,6 +6,20 @@
 import SwiftUI
 import Foundation
 
+struct TerminalThemePreviewPalette {
+    let background: Color
+    let foreground: Color
+    let cursor: Color
+    let cursorText: Color
+
+    static let fallback = TerminalThemePreviewPalette(
+        background: Color.fromHex("#101418"),
+        foreground: Color.fromHex("#D8E0EA"),
+        cursor: Color.fromHex("#F8B26A"),
+        cursorText: Color.fromHex("#101418")
+    )
+}
+
 /// Parses terminal theme files to extract colors
 struct ThemeColorParser {
     /// Extracts background color from a Ghostty theme file
@@ -18,6 +32,25 @@ struct ThemeColorParser {
         }
 
         return Color.fromHex(colorHex)
+    }
+
+    nonisolated static func previewPalette(for themeName: String) -> TerminalThemePreviewPalette {
+        guard let content = themeContent(for: themeName) else {
+            return .fallback
+        }
+
+        let fallback = TerminalThemePreviewPalette.fallback
+        let background = color(for: "background", in: content) ?? fallback.background
+        let foreground = color(for: "foreground", in: content) ?? fallback.foreground
+        let cursor = color(for: "cursor-color", in: content) ?? foreground
+        let cursorText = color(for: "cursor-text", in: content) ?? background
+
+        return TerminalThemePreviewPalette(
+            background: background,
+            foreground: foreground,
+            cursor: cursor,
+            cursorText: cursorText
+        )
     }
 
     /// Computes the split divider color based on the background color
@@ -119,6 +152,11 @@ struct ThemeColorParser {
             return parts[1].trimmingCharacters(in: .whitespaces)
         }
         return nil
+    }
+
+    private nonisolated static func color(for key: String, in content: String) -> Color? {
+        guard let colorHex = value(for: key, in: content) else { return nil }
+        return Color.fromHex(colorHex)
     }
 
     private nonisolated static func normalizeHex(_ value: String) -> String {
