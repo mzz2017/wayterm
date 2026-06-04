@@ -428,6 +428,13 @@ final class TerminalTabManager: ObservableObject {
 
     /// Unregister SSH shell
     func unregisterSSHClient(for paneId: UUID) async {
+        await unregisterSSHClient(for: paneId, killingManagedTmuxSessionNamed: nil)
+    }
+
+    private func unregisterSSHClient(
+        for paneId: UUID,
+        killingManagedTmuxSessionNamed tmuxSessionName: String?
+    ) async {
         let unregisterResult = shellRegistry.unregister(for: paneId)
 
         guard let registration = unregisterResult.registration else {
@@ -437,6 +444,10 @@ final class TerminalTabManager: ObservableObject {
                 }
             }
             return
+        }
+
+        if let tmuxSessionName {
+            await RemoteTmuxManager.shared.killSession(named: tmuxSessionName, using: registration.client)
         }
 
         await registration.client.closeShell(registration.shellId)
@@ -565,10 +576,8 @@ final class TerminalTabManager: ObservableObject {
 
     /// Clean up a pane (terminal + SSH)
     private func cleanupPane(_ paneId: UUID) {
-        if let status = paneTmuxStatus(for: paneId),
-           status == .foreground || status == .background || status == .installing {
-            killTmuxIfNeeded(for: paneId)
-        }
+        let tmuxSessionToKill = paneTmuxStatus(for: paneId)
+            .flatMap { managedTmuxSessionNameToKill(for: paneId, status: $0) }
 
         clearTmuxRuntimeState(for: paneId)
         unregisterTerminal(for: paneId)
@@ -576,7 +585,10 @@ final class TerminalTabManager: ObservableObject {
         runtimeTitleByPane.removeValue(forKey: paneId)
 
         Task.detached { [weak self] in
-            await self?.unregisterSSHClient(for: paneId)
+            await self?.unregisterSSHClient(
+                for: paneId,
+                killingManagedTmuxSessionNamed: tmuxSessionToKill
+            )
         }
     }
 
@@ -728,11 +740,12 @@ final class TerminalTabManager: ObservableObject {
     private func prepareActiveTmuxPane(
         for paneId: UUID,
         serverId: UUID,
-        using client: SSHClient
+        using client: SSHClient,
+        backend: RemoteTmuxBackend
     ) async {
         updatePaneTmuxStatus(paneId, status: currentTmuxStatus(for: paneId, serverId: serverId))
         let terminalType = await client.remoteTerminalType()
-        await RemoteTmuxManager.shared.prepareConfig(using: client, terminalType: terminalType)
+        await RemoteTmuxManager.shared.prepareConfig(using: client, terminalType: terminalType, backend: backend)
     }
 
     private func immediateTmuxSelection(for paneId: UUID) -> TmuxAttachSelection {
@@ -748,7 +761,8 @@ final class TerminalTabManager: ObservableObject {
     private func tmuxStartupCommand(
         for paneId: UUID,
         selection: TmuxAttachSelection,
-        workingDirectory: String
+        workingDirectory: String,
+        backend: RemoteTmuxBackend
     ) -> String? {
         switch selection {
         case .skipTmux:
@@ -756,10 +770,11 @@ final class TerminalTabManager: ObservableObject {
         case .createManaged:
             return RemoteTmuxManager.shared.attachCommand(
                 sessionName: tmuxResolver.sessionName(for: paneId),
-                workingDirectory: workingDirectory
+                workingDirectory: workingDirectory,
+                backend: backend
             )
         case .attachExisting(let sessionName):
-            return RemoteTmuxManager.shared.attachExistingCommand(sessionName: sessionName)
+            return RemoteTmuxManager.shared.attachExistingCommand(sessionName: sessionName, backend: backend)
         }
     }
 
@@ -845,8 +860,7 @@ final class TerminalTabManager: ObservableObject {
             return
         }
 
-        let tmuxAvailable = await RemoteTmuxManager.shared.isTmuxAvailable(using: client)
-        guard tmuxAvailable else {
+        guard let backend = await RemoteTmuxManager.shared.tmuxBackend(using: client) else {
             await MainActor.run {
                 self.disableTmuxAttachment(for: paneId, status: .missing)
             }
@@ -855,13 +869,14 @@ final class TerminalTabManager: ObservableObject {
 
         let selection = immediateTmuxSelection(for: paneId)
         await runTmuxCleanupIfNeeded(for: serverId, paneId: paneId, selection: selection, using: client)
-        await prepareActiveTmuxPane(for: paneId, serverId: serverId, using: client)
+        await prepareActiveTmuxPane(for: paneId, serverId: serverId, using: client, backend: backend)
 
         let workingDirectory = await resolveTmuxWorkingDirectory(for: paneId, using: client)
         guard let command = tmuxResolver.buildAttachExecCommand(
             for: paneId,
             selection: selection,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            backend: backend
         ) else {
             return
         }
@@ -884,8 +899,7 @@ final class TerminalTabManager: ObservableObject {
             return (nil, true)
         }
 
-        let tmuxAvailable = await RemoteTmuxManager.shared.isTmuxAvailable(using: client)
-        guard tmuxAvailable else {
+        guard let backend = await RemoteTmuxManager.shared.tmuxBackend(using: client) else {
             disableTmuxAttachment(for: paneId, status: .missing)
             return (nil, true)
         }
@@ -901,10 +915,18 @@ final class TerminalTabManager: ObservableObject {
         }
 
         await runTmuxCleanupIfNeeded(for: serverId, paneId: paneId, selection: selection, using: client)
-        await prepareActiveTmuxPane(for: paneId, serverId: serverId, using: client)
+        await prepareActiveTmuxPane(for: paneId, serverId: serverId, using: client, backend: backend)
 
         let workingDirectory = await resolveTmuxWorkingDirectory(for: paneId, using: client)
-        return (tmuxStartupCommand(for: paneId, selection: selection, workingDirectory: workingDirectory), true)
+        return (
+            tmuxStartupCommand(
+                for: paneId,
+                selection: selection,
+                workingDirectory: workingDirectory,
+                backend: backend
+            ),
+            true
+        )
     }
 
     func startTmuxInstall(for paneId: UUID) async {
@@ -914,13 +936,19 @@ final class TerminalTabManager: ObservableObject {
 
         updatePaneTmuxStatus(paneId, status: .installing)
 
+        guard let backend = await RemoteTmuxManager.shared.tmuxInstallBackend(using: registration.client) else {
+            updatePaneTmuxStatus(paneId, status: .off)
+            return
+        }
+
         let sessionName = tmuxResolver.sessionName(for: paneId)
         let workingDirectory = await resolveTmuxWorkingDirectory(for: paneId, using: registration.client)
         let terminalType = await registration.client.remoteTerminalType()
         let script = RemoteTmuxManager.shared.installAndAttachScript(
             sessionName: sessionName,
             workingDirectory: workingDirectory,
-            terminalType: terminalType
+            terminalType: terminalType,
+            backend: backend
         )
         await RemoteTmuxManager.shared.sendScript(script, using: registration.client, shellId: registration.shellId)
 
@@ -949,6 +977,13 @@ final class TerminalTabManager: ObservableObject {
             throw SSHError.notConnected
         }
         try await RemoteMoshManager.shared.installMoshServer(using: registration.client)
+    }
+
+    private func managedTmuxSessionNameToKill(for paneId: UUID, status: TmuxStatus) -> String? {
+        guard status == .foreground || status == .background || status == .installing else { return nil }
+        let ownership = tmuxResolver.sessionOwnership[paneId] ?? .managed
+        guard ownership == .managed else { return nil }
+        return tmuxResolver.sessionName(for: paneId)
     }
 
     func killTmuxIfNeeded(for paneId: UUID) {

@@ -6,6 +6,18 @@ struct RemoteTmuxSession: Hashable {
     let windowCount: Int
 }
 
+enum RemoteTmuxBackend: Hashable, Sendable {
+    case unixTmux
+    case windowsPsmux(commandName: String, shellFamily: RemoteShellFamily, powerShellExecutable: String?)
+
+    nonisolated var isWindows: Bool {
+        if case .windowsPsmux = self {
+            return true
+        }
+        return false
+    }
+}
+
 actor RemoteTmuxManager {
     enum CommandContext {
         case startupExec
@@ -25,24 +37,44 @@ actor RemoteTmuxManager {
 
     private init() {}
 
-    func isTmuxAvailable(using client: SSHClient) async -> Bool {
+    func tmuxBackend(using client: SSHClient) async -> RemoteTmuxBackend? {
+        let environment = await client.remoteEnvironment()
+        guard environment.supportsTmuxRuntime else { return nil }
+
+        if environment.platform == .windows {
+            return await windowsPsmuxBackend(for: environment, using: client)
+        }
+
         let okMarker = "__VVTERM_TMUX_OK__"
         let command = tmuxAvailabilityProbeCommand(okMarker: okMarker)
         let output = try? await client.execute(command, timeout: availabilityTimeout)
-        return output?.contains(okMarker) == true
+        return output?.contains(okMarker) == true ? .unixTmux : nil
+    }
+
+    func tmuxInstallBackend(using client: SSHClient) async -> RemoteTmuxBackend? {
+        let environment = await client.remoteEnvironment()
+        guard environment.supportsTmuxRuntime else { return nil }
+
+        if environment.platform == .windows {
+            return .windowsPsmux(
+                commandName: "psmux",
+                shellFamily: environment.shellProfile.family,
+                powerShellExecutable: environment.powerShellExecutable ?? environment.shellProfile.executableName
+            )
+        }
+
+        return .unixTmux
+    }
+
+    func isTmuxAvailable(using client: SSHClient) async -> Bool {
+        await tmuxBackend(using: client) != nil
     }
 
     func listSessions(using client: SSHClient) async -> [RemoteTmuxSession] {
-        let tmux = tmuxCommand(includeUTF8: false, includeConfig: false)
-        // Try richer format first, then fall back for older tmux versions.
-        let candidates = [
-            "\(RemoteTerminalBootstrap.shellPathExport()); \(tmux) list-sessions -F '#{session_name} #{session_attached} #{session_windows}' 2>/dev/null",
-            "\(RemoteTerminalBootstrap.shellPathExport()); \(tmux) list-sessions -F '#{session_name} #{session_attached}' 2>/dev/null",
-            "\(RemoteTerminalBootstrap.shellPathExport()); \(tmux) list-sessions 2>/dev/null"
-        ]
+        guard let backend = await tmuxBackend(using: client) else { return [] }
+        let candidates = listSessionCommands(backend: backend)
 
-        for (index, body) in candidates.enumerated() {
-            let command = "sh -lc \(RemoteTerminalBootstrap.shellQuoted(body))"
+        for (index, command) in candidates.enumerated() {
             guard let output = try? await client.execute(command, timeout: listTimeout) else { continue }
             let sessions = parseSessionListOutput(output, allowLegacy: index == candidates.count - 1)
 
@@ -54,58 +86,103 @@ actor RemoteTmuxManager {
         return []
     }
 
-    func prepareConfig(using client: SSHClient, terminalType: RemoteTerminalType) async {
-        let body = configWriteCommand(terminalType: terminalType)
-        let command = "sh -lc \(RemoteTerminalBootstrap.shellQuoted(body))"
+    func prepareConfig(
+        using client: SSHClient,
+        terminalType: RemoteTerminalType,
+        backend explicitBackend: RemoteTmuxBackend? = nil
+    ) async {
+        let backend: RemoteTmuxBackend?
+        if let explicitBackend {
+            backend = explicitBackend
+        } else {
+            backend = await tmuxBackend(using: client)
+        }
+        guard let backend else { return }
+        let command = configWriteExecutionCommand(terminalType: terminalType, backend: backend)
         _ = try? await client.execute(command, timeout: configTimeout)
+    }
+
+    nonisolated func configWriteExecutionCommand(
+        terminalType: RemoteTerminalType,
+        backend: RemoteTmuxBackend = .unixTmux
+    ) -> String {
+        let configWrite = configWriteCommand(terminalType: terminalType, backend: backend)
+        return backend.isWindows
+            ? configWrite
+            : "sh -lc \(RemoteTerminalBootstrap.shellQuoted(configWrite))"
     }
 
     nonisolated func attachCommand(
         sessionName: String,
         workingDirectory: String,
-        context: CommandContext = .startupExec
+        context: CommandContext = .startupExec,
+        backend: RemoteTmuxBackend = .unixTmux
     ) -> String {
-        let body = attachOrCreateBody(sessionName: sessionName, workingDirectory: workingDirectory)
-        return commandString(for: body, context: context)
+        let body = attachOrCreateBody(
+            sessionName: sessionName,
+            workingDirectory: workingDirectory,
+            context: context,
+            backend: backend
+        )
+        return commandString(for: body, context: context, backend: backend)
     }
 
     nonisolated func attachExistingCommand(
         sessionName: String,
-        context: CommandContext = .startupExec
+        context: CommandContext = .startupExec,
+        backend: RemoteTmuxBackend = .unixTmux
     ) -> String {
         let body = attachExistingBody(
             sessionName: sessionName,
-            missingCommand: missingSessionCommand(for: context)
+            missingCommand: missingSessionCommand(for: context, backend: backend),
+            backend: backend
         )
-        return commandString(for: body, context: context)
+        return commandString(for: body, context: context, backend: backend)
     }
 
-    nonisolated func attachExistingExecCommand(sessionName: String) -> String {
-        attachExistingCommand(sessionName: sessionName, context: .interactiveShell)
+    nonisolated func attachExistingExecCommand(
+        sessionName: String,
+        backend: RemoteTmuxBackend = .unixTmux
+    ) -> String {
+        attachExistingCommand(sessionName: sessionName, context: .interactiveShell, backend: backend)
     }
 
     nonisolated func attachExecCommand(
         sessionName: String,
-        workingDirectory: String
+        workingDirectory: String,
+        backend: RemoteTmuxBackend = .unixTmux
     ) -> String {
         attachCommand(
             sessionName: sessionName,
             workingDirectory: workingDirectory,
-            context: .interactiveShell
+            context: .interactiveShell,
+            backend: backend
         )
     }
 
     nonisolated func installAndAttachScript(
         sessionName: String,
         workingDirectory: String,
-        terminalType: RemoteTerminalType
+        terminalType: RemoteTerminalType,
+        backend: RemoteTmuxBackend = .unixTmux
     ) -> String {
+        if backend.isWindows {
+            return windowsInstallAndAttachScript(
+                sessionName: sessionName,
+                workingDirectory: workingDirectory,
+                terminalType: terminalType,
+                backend: backend
+            )
+        }
+
         let attach = attachCommand(
             sessionName: sessionName,
             workingDirectory: workingDirectory,
-            context: .startupExec
+            context: .startupExec,
+            backend: backend
         )
-        let configWrite = configWriteCommand(terminalType: terminalType)
+        let configWrite = configWriteCommand(terminalType: terminalType, backend: backend)
+
         let body = """
         \(RemoteTerminalBootstrap.shellPathExport());
         \(configWrite);
@@ -159,14 +236,14 @@ actor RemoteTmuxManager {
     }
 
     func killSession(named sessionName: String, using client: SSHClient) async {
-        let quoted = RemoteTerminalBootstrap.shellQuoted(sessionName)
-        let tmux = tmuxCommand(includeUTF8: false, includeConfig: false)
-        let body = "\(RemoteTerminalBootstrap.shellPathExport()); \(tmux) kill-session -t \(quoted) 2>/dev/null || true"
-        let command = "sh -lc \(RemoteTerminalBootstrap.shellQuoted(body))"
+        guard let backend = await tmuxBackend(using: client) else { return }
+        let command = killSessionCommand(named: sessionName, backend: backend)
         _ = try? await client.execute(command, timeout: killTimeout)
     }
 
     func cleanupLegacySessions(using client: SSHClient) async {
+        guard let backend = await tmuxBackend(using: client) else { return }
+        guard backend == .unixTmux else { return }
         let body = """
         \(RemoteTerminalBootstrap.shellPathExport());
         if command -v tmux >/dev/null 2>&1; then
@@ -193,12 +270,14 @@ actor RemoteTmuxManager {
     }
 
     func currentPath(sessionName: String, using client: SSHClient) async -> String? {
-        let quotedSession = RemoteTerminalBootstrap.shellQuoted(sessionName)
-        let tmux = tmuxCommand(includeUTF8: false, includeConfig: false)
-        let body = "\(RemoteTerminalBootstrap.shellPathExport()); \(tmux) list-panes -t \(quotedSession) -F '#{pane_current_path}' 2>/dev/null | head -n 1"
-        let command = "sh -lc \(RemoteTerminalBootstrap.shellQuoted(body))"
+        guard let backend = await tmuxBackend(using: client) else { return nil }
+        let command = currentPathCommand(sessionName: sessionName, backend: backend)
         guard let output = try? await client.execute(command, timeout: pathTimeout) else { return nil }
-        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = output
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? nil : trimmed
     }
 
@@ -211,6 +290,18 @@ actor RemoteTmuxManager {
     }
 
     nonisolated private func commandString(for body: String, context: CommandContext) -> String {
+        commandString(for: body, context: context, backend: .unixTmux)
+    }
+
+    nonisolated private func commandString(
+        for body: String,
+        context: CommandContext,
+        backend: RemoteTmuxBackend
+    ) -> String {
+        if backend.isWindows {
+            return body
+        }
+
         switch context {
         case .startupExec:
             return body
@@ -220,6 +311,22 @@ actor RemoteTmuxManager {
     }
 
     nonisolated private func missingSessionCommand(for context: CommandContext) -> String {
+        missingSessionCommand(for: context, backend: .unixTmux)
+    }
+
+    nonisolated private func missingSessionCommand(
+        for context: CommandContext,
+        backend: RemoteTmuxBackend
+    ) -> String {
+        if backend.isWindows {
+            switch context {
+            case .startupExec:
+                return windowsDefaultShellCommand(backend: backend)
+            case .interactiveShell:
+                return ""
+            }
+        }
+
         switch context {
         case .startupExec:
             return "exec \"${SHELL:-/bin/sh}\" -l"
@@ -230,22 +337,43 @@ actor RemoteTmuxManager {
 
     nonisolated private func attachOrCreateBody(
         sessionName: String,
-        workingDirectory: String
+        workingDirectory: String,
+        context: CommandContext = .startupExec,
+        backend: RemoteTmuxBackend = .unixTmux
     ) -> String {
+        if case .windowsPsmux = backend {
+            return windowsAttachOrCreateCommand(
+                sessionName: sessionName,
+                workingDirectory: workingDirectory,
+                backend: backend
+            )
+        }
+
         let createCommand = createSessionCommand(
             sessionName: sessionName,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            backend: backend
         )
         return attachExistingBody(
             sessionName: sessionName,
-            missingCommand: createCommand
+            missingCommand: createCommand,
+            backend: backend
         )
     }
 
     nonisolated private func attachExistingBody(
         sessionName: String,
-        missingCommand: String
+        missingCommand: String,
+        backend: RemoteTmuxBackend = .unixTmux
     ) -> String {
+        if case .windowsPsmux = backend {
+            return windowsAttachExistingCommand(
+                sessionName: sessionName,
+                missingCommand: missingCommand,
+                backend: backend
+            )
+        }
+
         let exactSession = RemoteTerminalBootstrap.shellQuoted("=\(sessionName)")
         let plainSession = RemoteTerminalBootstrap.shellQuoted(sessionName)
         let tmuxProbe = tmuxCommand(includeUTF8: false, includeConfig: false)
@@ -264,8 +392,17 @@ actor RemoteTmuxManager {
 
     nonisolated private func createSessionCommand(
         sessionName: String,
-        workingDirectory: String
+        workingDirectory: String,
+        backend: RemoteTmuxBackend = .unixTmux
     ) -> String {
+        if case .windowsPsmux = backend {
+            return windowsCreateSessionCommand(
+                sessionName: sessionName,
+                workingDirectory: workingDirectory,
+                backend: backend
+            )
+        }
+
         let escapedDir = shellDirectoryArgument(workingDirectory)
         let escapedSession = RemoteTerminalBootstrap.shellQuoted(sessionName)
         let tmux = tmuxCommand(includeUTF8: true, includeConfig: true)
@@ -310,6 +447,99 @@ actor RemoteTmuxManager {
         return "sh -c \(RemoteTerminalBootstrap.shellQuoted(body))"
     }
 
+    private func windowsPsmuxBackend(
+        for environment: RemoteEnvironment,
+        using client: SSHClient
+    ) async -> RemoteTmuxBackend? {
+        let shellFamily = environment.shellProfile.family
+        let powerShellExecutable = environment.powerShellExecutable ?? environment.shellProfile.executableName
+
+        for commandName in ["psmux", "pmux"] {
+            let backend = RemoteTmuxBackend.windowsPsmux(
+                commandName: commandName,
+                shellFamily: shellFamily,
+                powerShellExecutable: powerShellExecutable
+            )
+            let output = try? await client.execute(
+                windowsPsmuxAvailabilityProbeCommand(commandName: commandName, backend: backend, requirePsmuxExtension: false),
+                timeout: availabilityTimeout
+            )
+            if output?.contains("__VVTERM_TMUX_OK__:\(commandName)") == true {
+                return backend
+            }
+        }
+
+        let tmuxBackend = RemoteTmuxBackend.windowsPsmux(
+            commandName: "tmux",
+            shellFamily: shellFamily,
+            powerShellExecutable: powerShellExecutable
+        )
+        let output = try? await client.execute(
+            windowsPsmuxAvailabilityProbeCommand(commandName: "tmux", backend: tmuxBackend, requirePsmuxExtension: true),
+            timeout: availabilityTimeout
+        )
+        if output?.contains("__VVTERM_TMUX_OK__:tmux") == true {
+            return tmuxBackend
+        }
+
+        return nil
+    }
+
+    nonisolated func windowsPsmuxAvailabilityProbeCommand(
+        commandName: String,
+        backend: RemoteTmuxBackend,
+        requirePsmuxExtension: Bool
+    ) -> String {
+        let marker = "__VVTERM_TMUX_OK__:\(commandName)"
+        let script = """
+        $cmd = Get-Command \(powerShellQuoted(commandName)) -ErrorAction SilentlyContinue
+        if ($cmd) {
+          & $cmd.Source -V *> $null
+          if ($LASTEXITCODE -eq 0) {
+            $vvtermCommands = (& $cmd.Source list-commands 2>$null) -join "`n"
+            if (-not \(requirePsmuxExtension ? "$true" : "$false") -or $vvtermCommands.Contains('dump-state') -or $vvtermCommands.Contains('claim-session')) {
+              Write-Output \(powerShellQuoted(marker))
+            }
+          }
+        }
+        """
+        return windowsShellCommand(powerShellScript: script, backend: backend)
+    }
+
+    nonisolated private func listSessionCommands(backend: RemoteTmuxBackend) -> [String] {
+        switch backend {
+        case .unixTmux:
+            let tmux = tmuxCommand(includeUTF8: false, includeConfig: false)
+            let bodies = [
+                "\(RemoteTerminalBootstrap.shellPathExport()); \(tmux) list-sessions -F '#{session_name} #{session_attached} #{session_windows}' 2>/dev/null",
+                "\(RemoteTerminalBootstrap.shellPathExport()); \(tmux) list-sessions -F '#{session_name} #{session_attached}' 2>/dev/null",
+                "\(RemoteTerminalBootstrap.shellPathExport()); \(tmux) list-sessions 2>/dev/null"
+            ]
+            return bodies.map { "sh -lc \(RemoteTerminalBootstrap.shellQuoted($0))" }
+
+        case .windowsPsmux(let commandName, _, _):
+            return [
+                windowsPsmuxListSessionsCommand(commandName: commandName, format: "#{session_name} #{session_attached} #{session_windows}", backend: backend),
+                windowsPsmuxListSessionsCommand(commandName: commandName, format: "#{session_name} #{session_attached}", backend: backend),
+                windowsShellCommand(
+                    powerShellScript: "& \(powerShellQuoted(commandName)) list-sessions 2>$null",
+                    backend: backend
+                )
+            ]
+        }
+    }
+
+    nonisolated private func windowsPsmuxListSessionsCommand(
+        commandName: String,
+        format: String,
+        backend: RemoteTmuxBackend
+    ) -> String {
+        windowsShellCommand(
+            powerShellScript: "& \(powerShellQuoted(commandName)) list-sessions -F \(powerShellQuoted(format)) 2>$null",
+            backend: backend
+        )
+    }
+
     nonisolated func parseSessionListOutput(
         _ output: String,
         allowLegacy: Bool
@@ -349,7 +579,7 @@ actor RemoteTmuxManager {
         guard !parts.isEmpty else { return nil }
 
         if parts.count >= 3,
-           let attached = Int(parts[parts.count - 2]),
+           let attached = parseAttachedClients(String(parts[parts.count - 2])),
            let windows = Int(parts[parts.count - 1]) {
             let name = parts[0..<(parts.count - 2)].map(String.init).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty else { return nil }
@@ -357,7 +587,7 @@ actor RemoteTmuxManager {
         }
 
         if parts.count >= 2,
-           let attached = Int(parts[parts.count - 1]) {
+           let attached = parseAttachedClients(String(parts[parts.count - 1])) {
             let name = parts[0..<(parts.count - 1)].map(String.init).joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty else { return nil }
             return (name, max(0, attached), 1)
@@ -375,7 +605,7 @@ actor RemoteTmuxManager {
 
         let attachedClients: Int
         if parts.count >= 2 {
-            attachedClients = Int(parts[1].trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+            attachedClients = parseAttachedClients(String(parts[1])) ?? 0
         } else {
             attachedClients = 0
         }
@@ -388,6 +618,22 @@ actor RemoteTmuxManager {
         }
 
         return (name, max(0, attachedClients), max(1, windowCount))
+    }
+
+    nonisolated private func parseAttachedClients(_ rawValue: String) -> Int? {
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let count = Int(value) {
+            return count
+        }
+
+        switch value.lowercased() {
+        case "true", "yes", "attached":
+            return 1
+        case "false", "no", "detached":
+            return 0
+        default:
+            return nil
+        }
     }
 
     nonisolated private func parseLegacySessionLine(_ line: String) -> RemoteTmuxSession? {
@@ -425,7 +671,171 @@ actor RemoteTmuxManager {
         }
     }
 
-    nonisolated private func configWriteCommand(terminalType: RemoteTerminalType) -> String {
+    nonisolated private func killSessionCommand(named sessionName: String, backend: RemoteTmuxBackend) -> String {
+        switch backend {
+        case .unixTmux:
+            let quoted = RemoteTerminalBootstrap.shellQuoted(sessionName)
+            let tmux = tmuxCommand(includeUTF8: false, includeConfig: false)
+            let body = "\(RemoteTerminalBootstrap.shellPathExport()); \(tmux) kill-session -t \(quoted) 2>/dev/null || true"
+            return "sh -lc \(RemoteTerminalBootstrap.shellQuoted(body))"
+
+        case .windowsPsmux(let commandName, _, _):
+            let script = "& \(powerShellQuoted(commandName)) kill-session -t \(powerShellQuoted(sessionName)) 2>$null"
+            return windowsShellCommand(powerShellScript: script, backend: backend)
+        }
+    }
+
+    nonisolated private func currentPathCommand(sessionName: String, backend: RemoteTmuxBackend) -> String {
+        switch backend {
+        case .unixTmux:
+            let quotedSession = RemoteTerminalBootstrap.shellQuoted(sessionName)
+            let tmux = tmuxCommand(includeUTF8: false, includeConfig: false)
+            let body = "\(RemoteTerminalBootstrap.shellPathExport()); \(tmux) list-panes -t \(quotedSession) -F '#{pane_current_path}' 2>/dev/null | head -n 1"
+            return "sh -lc \(RemoteTerminalBootstrap.shellQuoted(body))"
+
+        case .windowsPsmux(let commandName, _, _):
+            let script = "& \(powerShellQuoted(commandName)) list-panes -t \(powerShellQuoted(sessionName)) -F '#{pane_current_path}' 2>$null | Select-Object -First 1"
+            return windowsShellCommand(powerShellScript: script, backend: backend)
+        }
+    }
+
+    nonisolated private func windowsAttachOrCreateCommand(
+        sessionName: String,
+        workingDirectory: String,
+        backend: RemoteTmuxBackend
+    ) -> String {
+        windowsShellCommand(
+            powerShellScript: windowsAttachOrCreatePowerShell(
+                sessionName: sessionName,
+                workingDirectory: workingDirectory,
+                backend: backend
+            ),
+            backend: backend
+        )
+    }
+
+    nonisolated private func windowsAttachExistingCommand(
+        sessionName: String,
+        missingCommand: String,
+        backend: RemoteTmuxBackend
+    ) -> String {
+        windowsShellCommand(
+            powerShellScript: windowsAttachExistingPowerShell(
+                sessionName: sessionName,
+                missingCommand: missingCommand,
+                backend: backend
+            ),
+            backend: backend
+        )
+    }
+
+    nonisolated private func windowsAttachOrCreatePowerShell(
+        sessionName: String,
+        workingDirectory: String,
+        backend: RemoteTmuxBackend,
+        commandExpression: String? = nil
+    ) -> String {
+        let createCommand = windowsCreateSessionPowerShell(
+            sessionName: sessionName,
+            workingDirectory: workingDirectory,
+            backend: backend,
+            commandExpression: commandExpression
+        )
+        return windowsAttachExistingPowerShell(
+            sessionName: sessionName,
+            missingCommand: createCommand,
+            backend: backend,
+            commandExpression: commandExpression
+        )
+    }
+
+    nonisolated private func windowsAttachExistingPowerShell(
+        sessionName: String,
+        missingCommand: String,
+        backend: RemoteTmuxBackend,
+        commandExpression: String? = nil
+    ) -> String {
+        guard case .windowsPsmux(let commandName, _, _) = backend else { return missingCommand }
+        let psmuxExpression = commandExpression ?? powerShellQuoted(commandName)
+        return """
+        $vvtermPsmux = \(psmuxExpression)
+        $vvtermConfig = \(windowsConfigPathPowerShellExpression())
+        $vvtermSession = \(powerShellQuoted(sessionName))
+        & $vvtermPsmux has-session -t $vvtermSession 2>$null
+        if ($LASTEXITCODE -eq 0) {
+          & $vvtermPsmux -f $vvtermConfig source-file $vvtermConfig 2>$null
+          & $vvtermPsmux -u -f $vvtermConfig attach-session -d -t $vvtermSession
+        } else {
+        \(indentPowerShell(missingCommand, spaces: 2))
+        }
+        """
+    }
+
+    nonisolated private func windowsCreateSessionCommand(
+        sessionName: String,
+        workingDirectory: String,
+        backend: RemoteTmuxBackend
+    ) -> String {
+        windowsShellCommand(
+            powerShellScript: windowsCreateSessionPowerShell(
+                sessionName: sessionName,
+                workingDirectory: workingDirectory,
+                backend: backend
+            ),
+            backend: backend
+        )
+    }
+
+    nonisolated private func windowsCreateSessionPowerShell(
+        sessionName: String,
+        workingDirectory: String,
+        backend: RemoteTmuxBackend,
+        commandExpression: String? = nil
+    ) -> String {
+        guard case .windowsPsmux(let commandName, _, _) = backend else { return "" }
+        let psmuxExpression = commandExpression ?? powerShellQuoted(commandName)
+        return """
+        $vvtermPsmux = \(psmuxExpression)
+        $vvtermConfig = \(windowsConfigPathPowerShellExpression())
+        $vvtermSession = \(powerShellQuoted(sessionName))
+        $vvtermWorkingDirectory = \(windowsWorkingDirectoryExpression(workingDirectory))
+        & $vvtermPsmux -u -f $vvtermConfig new-session -A -s $vvtermSession -c $vvtermWorkingDirectory
+        """
+    }
+
+    nonisolated private func windowsDefaultShellCommand(backend: RemoteTmuxBackend) -> String {
+        guard case .windowsPsmux(_, let shellFamily, let powerShellExecutable) = backend else { return "" }
+        switch shellFamily {
+        case .powershell:
+            let executable = powerShellExecutable ?? "powershell"
+            return "& \(powerShellQuoted(executable))"
+        case .cmd:
+            return "cmd.exe"
+        case .unknown, .posix:
+            if let executable = powerShellExecutable {
+                return "& \(powerShellQuoted(executable))"
+            }
+            return ""
+        }
+    }
+
+    nonisolated private func configWriteCommand(
+        terminalType: RemoteTerminalType,
+        backend: RemoteTmuxBackend = .unixTmux
+    ) -> String {
+        if backend.isWindows {
+            return windowsConfigWriteCommand(terminalType: terminalType, backend: backend)
+        }
+
+        let lines = configLines(terminalType: terminalType, includeWheelBindings: true)
+        let quotedLines = lines.map { "\"\(escapeForDoubleQuotes($0))\"" }.joined(separator: " ")
+        return "mkdir -p \(configDirectory); printf '%s\\n' \(quotedLines) > \(configPath)"
+    }
+
+    nonisolated private func configLines(
+        terminalType: RemoteTerminalType,
+        includeWheelBindings: Bool
+    ) -> [String] {
         let themeName = UserDefaults.standard.string(forKey: CloudKitSyncConstants.terminalThemeNameKey) ?? "Aizen Dark"
         let modeStyle = ThemeColorParser.tmuxModeStyle(for: themeName)
         var lines = [
@@ -470,14 +880,176 @@ actor RemoteTmuxManager {
             "set -g default-terminal \"\(terminalType.rawValue)\"",
             "",
             "# Selection highlighting in copy-mode (from theme: \(themeName))",
-            "set -g mode-style \"\(modeStyle)\"",
-            "",
-            "# Smart mouse scroll: copy-mode at shell, passthrough in TUI apps",
-            "bind -n WheelUpPane if -F '#{||:#{mouse_any_flag},#{alternate_on}}' 'send-keys -M' 'copy-mode -eH; send-keys -M'",
-            "bind -n WheelDownPane if -F '#{||:#{mouse_any_flag},#{alternate_on}}' 'send-keys -M' 'send-keys -M'"
+            "set -g mode-style \"\(modeStyle)\""
         ])
-        let quotedLines = lines.map { "\"\(escapeForDoubleQuotes($0))\"" }.joined(separator: " ")
-        return "mkdir -p \(configDirectory); printf '%s\\n' \(quotedLines) > \(configPath)"
+
+        if includeWheelBindings {
+            lines.append(contentsOf: [
+                "",
+                "# Smart mouse scroll: copy-mode at shell, passthrough in TUI apps",
+                "bind -n WheelUpPane if -F '#{||:#{mouse_any_flag},#{alternate_on}}' 'send-keys -M' 'copy-mode -eH; send-keys -M'",
+                "bind -n WheelDownPane if -F '#{||:#{mouse_any_flag},#{alternate_on}}' 'send-keys -M' 'send-keys -M'"
+            ])
+        } else {
+            lines.append(contentsOf: [
+                "",
+                "# Use psmux's native scroll behavior on Windows"
+            ])
+        }
+
+        return lines
+    }
+
+    nonisolated private func windowsConfigWriteCommand(
+        terminalType: RemoteTerminalType,
+        backend: RemoteTmuxBackend
+    ) -> String {
+        windowsShellCommand(
+            powerShellScript: windowsConfigWritePowerShell(terminalType: terminalType),
+            backend: backend
+        )
+    }
+
+    nonisolated private func windowsConfigWritePowerShell(
+        terminalType: RemoteTerminalType
+    ) -> String {
+        let lines = configLines(terminalType: terminalType, includeWheelBindings: false)
+        let content = lines.joined(separator: "\n") + "\n"
+        return """
+        $vvtermConfigDirectory = \(windowsConfigDirectoryPowerShellExpression())
+        $vvtermConfigPath = \(windowsConfigPathPowerShellExpression())
+        New-Item -ItemType Directory -Force -Path $vvtermConfigDirectory | Out-Null
+        @'
+        \(content)'@ | Set-Content -Encoding UTF8 -NoNewline -Path $vvtermConfigPath
+        """
+    }
+
+    nonisolated private func windowsInstallAndAttachScript(
+        sessionName: String,
+        workingDirectory: String,
+        terminalType: RemoteTerminalType,
+        backend: RemoteTmuxBackend
+    ) -> String {
+        let configWrite = windowsConfigWritePowerShell(terminalType: terminalType)
+        let attach = windowsAttachOrCreatePowerShell(
+            sessionName: sessionName,
+            workingDirectory: workingDirectory,
+            backend: backend,
+            commandExpression: "$vvtermPsmuxCommand.Source"
+        )
+        let script = """
+        \(configWrite)
+        function Get-VVTermPsmuxCommand {
+          $cmd = Get-Command psmux -ErrorAction SilentlyContinue
+          if (-not $cmd) {
+            $cmd = Get-Command pmux -ErrorAction SilentlyContinue
+          }
+          return $cmd
+        }
+        $vvtermPsmuxCommand = Get-VVTermPsmuxCommand
+        $vvtermPsmuxInstalled = $null -ne $vvtermPsmuxCommand
+        if (-not $vvtermPsmuxInstalled -and (Get-Command winget -ErrorAction SilentlyContinue)) {
+          winget install --id marlocarlo.psmux --accept-package-agreements --accept-source-agreements
+          $vvtermPsmuxCommand = Get-VVTermPsmuxCommand
+          $vvtermPsmuxInstalled = $null -ne $vvtermPsmuxCommand
+        }
+        if (-not $vvtermPsmuxInstalled -and (Get-Command scoop -ErrorAction SilentlyContinue)) {
+          scoop bucket add psmux https://github.com/psmux/scoop-psmux
+          scoop install psmux
+          $vvtermPsmuxCommand = Get-VVTermPsmuxCommand
+          $vvtermPsmuxInstalled = $null -ne $vvtermPsmuxCommand
+        }
+        if (-not $vvtermPsmuxInstalled -and (Get-Command choco -ErrorAction SilentlyContinue)) {
+          choco install psmux -y
+          $vvtermPsmuxCommand = Get-VVTermPsmuxCommand
+          $vvtermPsmuxInstalled = $null -ne $vvtermPsmuxCommand
+        }
+        if (-not $vvtermPsmuxInstalled -and (Get-Command cargo -ErrorAction SilentlyContinue)) {
+          cargo install psmux
+          $vvtermPsmuxCommand = Get-VVTermPsmuxCommand
+          $vvtermPsmuxInstalled = $null -ne $vvtermPsmuxCommand
+        }
+        if ($vvtermPsmuxInstalled) {
+        \(indentPowerShell(attach, spaces: 2))
+        } else {
+          Write-Output 'psmux installation failed or no supported package manager was found.'
+        }
+        """
+        return windowsShellCommand(powerShellScript: script, backend: backend)
+    }
+
+    nonisolated private func windowsShellCommand(
+        powerShellScript: String,
+        backend: RemoteTmuxBackend
+    ) -> String {
+        guard case .windowsPsmux(_, let shellFamily, let powerShellExecutable) = backend else {
+            return powerShellScript
+        }
+
+        switch shellFamily {
+        case .powershell:
+            return powerShellScript
+        case .cmd, .unknown, .posix:
+            let executable = powerShellExecutable ?? "powershell"
+            return RemoteTerminalBootstrap.wrapPowerShellCommand(
+                powerShellScript,
+                executableName: executable
+            )
+        }
+    }
+
+    nonisolated private func windowsConfigPathPowerShellExpression() -> String {
+        "$HOME + \(powerShellQuoted("\\.vvterm\\psmux.conf"))"
+    }
+
+    nonisolated private func windowsConfigDirectoryPowerShellExpression() -> String {
+        "$HOME + \(powerShellQuoted("\\.vvterm"))"
+    }
+
+    nonisolated private func windowsWorkingDirectoryExpression(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "$HOME" }
+        if trimmed == "~" || trimmed == "$HOME" || trimmed == "%USERPROFILE%" {
+            return "$HOME"
+        }
+        return powerShellQuoted(normalizedWindowsPath(trimmed))
+    }
+
+    nonisolated private func normalizedWindowsPath(_ value: String) -> String {
+        let normalizedSlashes = value.replacingOccurrences(of: "/", with: "\\")
+        if value.count >= 2 {
+            let prefix = value.prefix(2)
+            let drive = prefix.prefix(1)
+            if drive.range(of: #"^[A-Za-z]$"#, options: .regularExpression) != nil,
+               prefix.dropFirst() == ":" {
+                return normalizedSlashes
+            }
+        }
+
+        if value.count >= 3,
+           value.first == "/",
+           let drive = value.dropFirst().first,
+           drive.isLetter {
+            let remainder = value.dropFirst(2)
+            let normalizedRemainder = remainder.replacingOccurrences(of: "/", with: "\\")
+            return "\(drive.uppercased()):\(normalizedRemainder)"
+        }
+
+        return value
+    }
+
+    nonisolated private func powerShellQuoted(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "''"))'"
+    }
+
+    nonisolated private func indentPowerShell(_ value: String, spaces: Int) -> String {
+        let prefix = String(repeating: " ", count: spaces)
+        return value
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line in
+                line.isEmpty ? "" : prefix + line
+            }
+            .joined(separator: "\n")
     }
 
     nonisolated private func escapeForDoubleQuotes(_ value: String) -> String {

@@ -1178,7 +1178,6 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
 
             if shellId != nil {
                 TerminalTabManager.shared.updatePaneState(paneId, connectionState: .connected)
-                logger.debug("Shell already active for pane")
                 return
             }
 

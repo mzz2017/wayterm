@@ -395,9 +395,7 @@ final class ConnectionSessionManager: ObservableObject {
         let title = session.title
         let wasSelected = selectedSessionId == sessionId
 
-        if session.tmuxStatus == .foreground || session.tmuxStatus == .background || session.tmuxStatus == .installing {
-            killTmuxIfNeeded(for: sessionId)
-        }
+        let tmuxSessionToKill = managedTmuxSessionNameToKill(for: sessionId, status: session.tmuxStatus)
 
         let replacementSessionId = replacementSessionIDAfterClosing(
             sessionId: sessionId,
@@ -422,7 +420,11 @@ final class ConnectionSessionManager: ObservableObject {
         )
 
         // Disconnect SSH client in background
-        scheduleSSHUnregister(for: sessionId, priority: .high)
+        scheduleSSHUnregister(
+            for: sessionId,
+            priority: .high,
+            killingManagedTmuxSessionNamed: tmuxSessionToKill
+        )
 
         if let selectedId = replacementSessionId ?? selectedSessionId,
            let selectedSession = sessionWithID(selectedId) {
@@ -678,7 +680,18 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     func unregisterSSHClient(for sessionId: UUID) async {
+        await unregisterSSHClient(for: sessionId, killingManagedTmuxSessionNamed: nil)
+    }
+
+    private func unregisterSSHClient(
+        for sessionId: UUID,
+        killingManagedTmuxSessionNamed tmuxSessionName: String?
+    ) async {
         let unregisterResult = takeSSHClientRegistration(for: sessionId)
+        if let tmuxSessionName,
+           let client = unregisterResult.shellToClose?.client {
+            await RemoteTmuxManager.shared.killSession(named: tmuxSessionName, using: client)
+        }
         await Self.finishSSHCleanup(for: unregisterResult)
     }
 
@@ -950,9 +963,16 @@ final class ConnectionSessionManager: ObservableObject {
         shellSuspendHandlers.removeValue(forKey: sessionId)
     }
 
-    private func scheduleSSHUnregister(for sessionId: UUID, priority: TaskPriority = .utility) {
+    private func scheduleSSHUnregister(
+        for sessionId: UUID,
+        priority: TaskPriority = .utility,
+        killingManagedTmuxSessionNamed tmuxSessionName: String? = nil
+    ) {
         Task.detached(priority: priority) { [weak self] in
-            await self?.unregisterSSHClient(for: sessionId)
+            await self?.unregisterSSHClient(
+                for: sessionId,
+                killingManagedTmuxSessionNamed: tmuxSessionName
+            )
         }
     }
 
@@ -1287,10 +1307,14 @@ extension ConnectionSessionManager {
         tmuxCleanupServers = cleanupSet
     }
 
-    private func prepareActiveTmuxSession(for sessionId: UUID, using client: SSHClient) async {
+    private func prepareActiveTmuxSession(
+        for sessionId: UUID,
+        using client: SSHClient,
+        backend: RemoteTmuxBackend
+    ) async {
         updateTmuxStatus(sessionId, status: currentTmuxStatus(for: sessionId))
         let terminalType = await client.remoteTerminalType()
-        await RemoteTmuxManager.shared.prepareConfig(using: client, terminalType: terminalType)
+        await RemoteTmuxManager.shared.prepareConfig(using: client, terminalType: terminalType, backend: backend)
     }
 
     private func immediateTmuxSelection(for sessionId: UUID) -> TmuxAttachSelection {
@@ -1306,7 +1330,8 @@ extension ConnectionSessionManager {
     private func tmuxStartupCommand(
         for sessionId: UUID,
         selection: TmuxAttachSelection,
-        workingDirectory: String
+        workingDirectory: String,
+        backend: RemoteTmuxBackend
     ) -> String? {
         switch selection {
         case .skipTmux:
@@ -1314,10 +1339,11 @@ extension ConnectionSessionManager {
         case .createManaged:
             return RemoteTmuxManager.shared.attachCommand(
                 sessionName: tmuxResolver.sessionName(for: sessionId),
-                workingDirectory: workingDirectory
+                workingDirectory: workingDirectory,
+                backend: backend
             )
         case .attachExisting(let sessionName):
-            return RemoteTmuxManager.shared.attachExistingCommand(sessionName: sessionName)
+            return RemoteTmuxManager.shared.attachExistingCommand(sessionName: sessionName, backend: backend)
         }
     }
 
@@ -1342,8 +1368,7 @@ extension ConnectionSessionManager {
             return
         }
 
-        let tmuxAvailable = await RemoteTmuxManager.shared.isTmuxAvailable(using: client)
-        guard tmuxAvailable else {
+        guard let backend = await RemoteTmuxManager.shared.tmuxBackend(using: client) else {
             await MainActor.run {
                 self.disableTmuxAttachment(for: sessionId, status: .missing)
             }
@@ -1353,13 +1378,14 @@ extension ConnectionSessionManager {
         let selection = immediateTmuxSelection(for: sessionId)
 
         await runTmuxCleanupIfNeeded(for: serverId, sessionId: sessionId, selection: selection, using: client)
-        await prepareActiveTmuxSession(for: sessionId, using: client)
+        await prepareActiveTmuxSession(for: sessionId, using: client, backend: backend)
 
         let workingDirectory = await resolveTmuxWorkingDirectory(for: sessionId, using: client)
         guard let rebuilt = tmuxResolver.buildAttachExecCommand(
             for: sessionId,
             selection: selection,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            backend: backend
         ) else {
             return
         }
@@ -1382,8 +1408,7 @@ extension ConnectionSessionManager {
             return (nil, true)
         }
 
-        let tmuxAvailable = await RemoteTmuxManager.shared.isTmuxAvailable(using: client)
-        guard tmuxAvailable else {
+        guard let backend = await RemoteTmuxManager.shared.tmuxBackend(using: client) else {
             disableTmuxAttachment(for: sessionId, status: .missing)
             return (nil, true)
         }
@@ -1399,10 +1424,18 @@ extension ConnectionSessionManager {
         }
 
         await runTmuxCleanupIfNeeded(for: serverId, sessionId: sessionId, selection: selection, using: client)
-        await prepareActiveTmuxSession(for: sessionId, using: client)
+        await prepareActiveTmuxSession(for: sessionId, using: client, backend: backend)
 
         let workingDirectory = await resolveTmuxWorkingDirectory(for: sessionId, using: client)
-        return (tmuxStartupCommand(for: sessionId, selection: selection, workingDirectory: workingDirectory), true)
+        return (
+            tmuxStartupCommand(
+                for: sessionId,
+                selection: selection,
+                workingDirectory: workingDirectory,
+                backend: backend
+            ),
+            true
+        )
     }
 
     func startTmuxInstall(for sessionId: UUID) async {
@@ -1412,13 +1445,19 @@ extension ConnectionSessionManager {
 
         updateTmuxStatus(sessionId, status: .installing)
 
+        guard let backend = await RemoteTmuxManager.shared.tmuxInstallBackend(using: registration.client) else {
+            updateTmuxStatus(sessionId, status: .off)
+            return
+        }
+
         let sessionName = tmuxResolver.sessionName(for: sessionId)
         let workingDirectory = await resolveTmuxWorkingDirectory(for: sessionId, using: registration.client)
         let terminalType = await registration.client.remoteTerminalType()
         let script = RemoteTmuxManager.shared.installAndAttachScript(
             sessionName: sessionName,
             workingDirectory: workingDirectory,
-            terminalType: terminalType
+            terminalType: terminalType,
+            backend: backend
         )
         await RemoteTmuxManager.shared.sendScript(script, using: registration.client, shellId: registration.shellId)
 
@@ -1447,6 +1486,13 @@ extension ConnectionSessionManager {
             throw SSHError.notConnected
         }
         try await RemoteMoshManager.shared.installMoshServer(using: registration.client)
+    }
+
+    private func managedTmuxSessionNameToKill(for sessionId: UUID, status: TmuxStatus) -> String? {
+        guard status == .foreground || status == .background || status == .installing else { return nil }
+        let ownership = tmuxResolver.sessionOwnership[sessionId] ?? .managed
+        guard ownership == .managed else { return nil }
+        return tmuxResolver.sessionName(for: sessionId)
     }
 
     func killTmuxIfNeeded(for sessionId: UUID) {

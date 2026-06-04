@@ -99,15 +99,24 @@ struct RemoteEnvironment: Hashable, Sendable {
     let activeShellName: String?
     let powerShellExecutable: String?
 
-    var supportsTmuxRuntime: Bool {
+    nonisolated var supportsTmuxRuntime: Bool {
+        if platform != .windows {
+            return shellProfile.family == .posix
+        }
+
+        switch shellProfile.family {
+        case .powershell, .cmd:
+            return true
+        case .posix, .unknown:
+            return false
+        }
+    }
+
+    nonisolated var supportsMoshRuntime: Bool {
         platform != .windows && shellProfile.family == .posix
     }
 
-    var supportsMoshRuntime: Bool {
-        platform != .windows && shellProfile.family == .posix
-    }
-
-    var supportsWorkingDirectoryRestore: Bool {
+    nonisolated var supportsWorkingDirectoryRestore: Bool {
         switch shellProfile.family {
         case .posix, .powershell, .cmd:
             return true

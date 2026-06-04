@@ -9,7 +9,7 @@ struct RemoteEnvironmentTests {
     }
 
     @Test
-    func windowsPowerShellEnvironmentDisablesTmuxAndMoshRuntime() {
+    func windowsPowerShellEnvironmentSupportsTmuxButNotMoshRuntime() {
         let environment = RemoteEnvironment(
             platform: .windows,
             shellProfile: .powershell(executableName: "powershell"),
@@ -17,7 +17,21 @@ struct RemoteEnvironmentTests {
             powerShellExecutable: "powershell"
         )
 
-        #expect(environment.supportsTmuxRuntime == false)
+        #expect(environment.supportsTmuxRuntime == true)
+        #expect(environment.supportsMoshRuntime == false)
+        #expect(environment.supportsWorkingDirectoryRestore == true)
+    }
+
+    @Test
+    func windowsCmdEnvironmentSupportsTmuxButNotMoshRuntime() {
+        let environment = RemoteEnvironment(
+            platform: .windows,
+            shellProfile: .cmd,
+            activeShellName: "cmd.exe",
+            powerShellExecutable: "powershell"
+        )
+
+        #expect(environment.supportsTmuxRuntime == true)
         #expect(environment.supportsMoshRuntime == false)
         #expect(environment.supportsWorkingDirectoryRestore == true)
     }
@@ -68,12 +82,26 @@ struct RemoteEnvironmentTests {
     }
 
     @Test
-    func windowsUnknownShellDisablesWorkingDirectoryRestore() {
+    func windowsUnknownShellDisablesTmuxRuntimeEvenWithPowerShellAvailable() {
         let environment = RemoteEnvironment(
             platform: .windows,
             shellProfile: .unknown(),
             activeShellName: nil,
             powerShellExecutable: "powershell"
+        )
+
+        #expect(environment.supportsTmuxRuntime == false)
+        #expect(environment.supportsMoshRuntime == false)
+        #expect(environment.supportsWorkingDirectoryRestore == false)
+    }
+
+    @Test
+    func windowsUnknownShellWithoutPowerShellDisablesTmuxRuntime() {
+        let environment = RemoteEnvironment(
+            platform: .windows,
+            shellProfile: .unknown(),
+            activeShellName: nil,
+            powerShellExecutable: nil
         )
 
         #expect(environment.supportsTmuxRuntime == false)

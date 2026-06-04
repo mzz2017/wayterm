@@ -194,7 +194,6 @@ extension SSHTerminalCoordinator {
 
         if shellId != nil {
             deferSessionStateUpdate(.connected)
-            logger.debug("Shell already active for session \(self.sessionId)")
             return
         }
 

@@ -318,12 +318,12 @@ actor SSHClient {
 
     func supportsTmuxRuntime() async -> Bool {
         let environment = await remoteEnvironment()
-        return environment.platform != .windows && environment.shellProfile.family == .posix
+        return environment.supportsTmuxRuntime
     }
 
     func supportsMoshRuntime() async -> Bool {
         let environment = await remoteEnvironment()
-        return environment.platform != .windows && environment.shellProfile.family == .posix
+        return environment.supportsMoshRuntime
     }
 
     // MARK: - Remote Files
