@@ -422,10 +422,15 @@ struct AddSSHKeySheet: View {
         }
 
         do {
+            let derivedPublicKey = SSHPublicKeyDeriver.publicKey(
+                fromPrivateKeyPEM: keyContent,
+                passphrase: passphrase.isEmpty ? nil : passphrase
+            )
             let entry = try KeychainManager.shared.storeSSHKeyEntry(
                 name: name,
                 privateKey: keyData,
-                passphrase: passphrase.isEmpty ? nil : passphrase
+                passphrase: passphrase.isEmpty ? nil : passphrase,
+                publicKey: derivedPublicKey
             )
             onSave(entry)
             dismiss()

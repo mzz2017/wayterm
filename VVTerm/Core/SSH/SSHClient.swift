@@ -1102,19 +1102,23 @@ actor SSHSession {
                 nil
             )
 
-            // If password auth fails, try keyboard-interactive as fallback
+            // If password auth fails, try keyboard-interactive ONLY if the server lists it.
             if authResult != 0 {
-                logger.info("Password auth failed, trying keyboard-interactive...")
+                let advertisesKbdInteractive = authList
+                    .map { String(cString: $0).contains("keyboard-interactive") } ?? true
+                if advertisesKbdInteractive {
+                    logger.info("Password auth failed, trying keyboard-interactive...")
 
-                keyboardInteractiveContext.setPassword(password)
-                defer { keyboardInteractiveContext.setPassword(nil) }
+                    keyboardInteractiveContext.setPassword(password)
+                    defer { keyboardInteractiveContext.setPassword(nil) }
 
-                authResult = libssh2_userauth_keyboard_interactive_ex(
-                    session,
-                    username,
-                    UInt32(username.utf8.count),
-                    kbdintCallback
-                )
+                    authResult = libssh2_userauth_keyboard_interactive_ex(
+                        session,
+                        username,
+                        UInt32(username.utf8.count),
+                        kbdintCallback
+                    )
+                }
             }
 
         case .sshKey, .sshKeyWithPassphrase:
