@@ -61,6 +61,13 @@ final class TmuxAttachResolver {
         multiplexer(for: serverId).isEnabled
     }
 
+    /// Status to show when the chosen multiplexer is enabled but not found on the host.
+    /// tmux is installable (`.missing` surfaces an install prompt); zmx has no remote
+    /// installer, so fall back to a plain shell (`.off`) rather than a dead-end prompt.
+    func unavailableStatus(for serverId: UUID) -> TmuxStatus {
+        multiplexer(for: serverId) == .zmx ? .off : .missing
+    }
+
     func tmuxStartupBehavior(for serverId: UUID) -> TmuxStartupBehavior {
         guard let server = ServerManager.shared.servers.first(where: { $0.id == serverId }) else {
             return tmuxStartupBehaviorDefault

@@ -1388,7 +1388,7 @@ extension ConnectionSessionManager {
             preferred: tmuxResolver.multiplexer(for: serverId)
         ) else {
             await MainActor.run {
-                self.disableTmuxAttachment(for: sessionId, status: .missing)
+                self.disableTmuxAttachment(for: sessionId, status: self.tmuxResolver.unavailableStatus(for: serverId))
             }
             return
         }
@@ -1430,7 +1430,7 @@ extension ConnectionSessionManager {
             using: client,
             preferred: tmuxResolver.multiplexer(for: serverId)
         ) else {
-            disableTmuxAttachment(for: sessionId, status: .missing)
+            disableTmuxAttachment(for: sessionId, status: tmuxResolver.unavailableStatus(for: serverId))
             return (nil, true)
         }
 

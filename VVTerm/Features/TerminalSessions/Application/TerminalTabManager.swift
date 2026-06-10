@@ -891,7 +891,7 @@ final class TerminalTabManager: ObservableObject {
             preferred: tmuxResolver.multiplexer(for: serverId)
         ) else {
             await MainActor.run {
-                self.disableTmuxAttachment(for: paneId, status: .missing)
+                self.disableTmuxAttachment(for: paneId, status: self.tmuxResolver.unavailableStatus(for: serverId))
             }
             return
         }
@@ -932,7 +932,7 @@ final class TerminalTabManager: ObservableObject {
             using: client,
             preferred: tmuxResolver.multiplexer(for: serverId)
         ) else {
-            disableTmuxAttachment(for: paneId, status: .missing)
+            disableTmuxAttachment(for: paneId, status: tmuxResolver.unavailableStatus(for: serverId))
             return (nil, true)
         }
 
