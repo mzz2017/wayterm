@@ -21,7 +21,7 @@ struct ServerConnectionModeTests {
             notes: "note",
             lastConnected: nil,
             isFavorite: false,
-            tmuxEnabledOverride: nil,
+            multiplexerOverride: nil,
             createdAt: Date(),
             updatedAt: Date()
         )
