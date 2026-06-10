@@ -11,6 +11,17 @@ final class TmuxAttachResolver {
     var sessionNames: [UUID: String] = [:]
     var sessionOwnership: [UUID: SessionOwnership] = [:]
 
+    private let bindingStore = TmuxSessionBindingStore()
+
+    init() {
+        // Hydrate persisted bindings so a chosen session survives an app restart.
+        for (idString, binding) in bindingStore.allBindings() {
+            guard let id = UUID(uuidString: idString) else { continue }
+            sessionNames[id] = binding.sessionName
+            sessionOwnership[id] = (binding.ownership == "managed") ? .managed : .external
+        }
+    }
+
     private(set) var currentPrompt: TmuxAttachPrompt?
     private var promptQueue: [TmuxAttachPrompt] = []
     private var promptContinuations: [UUID: CheckedContinuation<TmuxAttachSelection, Never>] = [:]
@@ -75,6 +86,7 @@ final class TmuxAttachResolver {
     func clearAttachmentState(for entityId: UUID) {
         sessionNames.removeValue(forKey: entityId)
         sessionOwnership.removeValue(forKey: entityId)
+        bindingStore.remove(for: entityId)
     }
 
     func clearRuntimeState(for entityId: UUID, setPrompt: (TmuxAttachPrompt?) -> Void) {
@@ -93,14 +105,32 @@ final class TmuxAttachResolver {
     func updateAttachmentState(for entityId: UUID, selection: TmuxAttachSelection, setPrompt: (TmuxAttachPrompt?) -> Void) {
         switch selection {
         case .createManaged:
-            sessionNames[entityId] = managedSessionName(for: entityId)
+            let name = managedSessionName(for: entityId)
+            sessionNames[entityId] = name
             sessionOwnership[entityId] = .managed
+            persistBinding(for: entityId, name: name, ownership: .managed)
         case .attachExisting(let name):
             sessionNames[entityId] = name
-            sessionOwnership[entityId] = ownership(for: name)
+            let own = ownership(for: name)
+            sessionOwnership[entityId] = own
+            persistBinding(for: entityId, name: name, ownership: own)
         case .skipTmux:
             clearRuntimeState(for: entityId, setPrompt: setPrompt)
         }
+    }
+
+    private func persistBinding(for entityId: UUID, name: String, ownership: SessionOwnership) {
+        // `multiplexer` is informational; reattach uses sessionName + ownership, and the
+        // backend kind is resolved live from the server via multiplexer(for:).
+        let mux = isCurrentDeviceManagedSessionName(name) ? "tmux" : "external"
+        bindingStore.set(
+            TmuxSessionBinding(
+                sessionName: name,
+                ownership: ownership == .managed ? "managed" : "external",
+                multiplexer: mux
+            ),
+            for: entityId
+        )
     }
 
     // MARK: - Selection Resolution
