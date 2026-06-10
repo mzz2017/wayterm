@@ -4,6 +4,13 @@ import Security
 /// Derives the OpenSSH one-line public key ("ssh-ed25519 AAAA..." / "ssh-rsa AAAA...")
 /// from a PEM private key, so we can persist a correct public key alongside imported
 /// keys (libssh2's nil-public-key derivation is unreliable across key formats).
+///
+/// Supports the formats VVTerm itself generates and the common imported ones:
+/// OpenSSH (`BEGIN OPENSSH PRIVATE KEY`, ed25519 + rsa) and PKCS#1 (`BEGIN RSA
+/// PRIVATE KEY`). PKCS#8 (`BEGIN PRIVATE KEY` / `BEGIN ENCRYPTED PRIVATE KEY`) is
+/// intentionally not parsed here: it returns nil so the caller falls back to letting
+/// libssh2 derive the public key itself. The sshd penalty fix does not depend on this
+/// derivation — it comes from not retrying failed auth — so the fall-through is safe.
 enum SSHPublicKeyDeriver {
     static func publicKey(fromPrivateKeyPEM pem: String, passphrase: String? = nil) -> String? {
         if pem.contains("BEGIN OPENSSH PRIVATE KEY") {
