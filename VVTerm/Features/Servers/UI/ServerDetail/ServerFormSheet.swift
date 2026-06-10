@@ -152,7 +152,7 @@ struct ServerFormSheet: View {
     @State private var selectedEnvironment: ServerEnvironment = .production
     @State private var notes: String = ""
     @State private var requiresBiometricUnlock: Bool = false
-    @State private var tmuxEnabled: Bool = true
+    @State private var multiplexer: TerminalMultiplexer = .tmux
     @State private var tmuxStartupBehavior: TmuxStartupBehavior = .vvtermManaged
 
     @State private var showingServerLimitAlert = false
@@ -203,17 +203,17 @@ struct ServerFormSheet: View {
             _selectedEnvironment = State(initialValue: server.environment)
             _notes = State(initialValue: server.notes ?? "")
             _requiresBiometricUnlock = State(initialValue: server.requiresBiometricUnlock)
-            _tmuxEnabled = State(initialValue: server.tmuxEnabledOverride ?? Self.defaultTmuxEnabled())
+            _multiplexer = State(initialValue: server.multiplexerOverride ?? Self.defaultMultiplexer())
             _tmuxStartupBehavior = State(initialValue: server.tmuxStartupBehaviorOverride ?? Self.defaultTmuxStartupBehavior())
         } else if let prefill {
             _name = State(initialValue: prefill.name)
             _host = State(initialValue: prefill.host)
             _port = State(initialValue: String(prefill.port))
             _username = State(initialValue: prefill.username ?? "")
-            _tmuxEnabled = State(initialValue: Self.defaultTmuxEnabled())
+            _multiplexer = State(initialValue: Self.defaultMultiplexer())
             _tmuxStartupBehavior = State(initialValue: Self.defaultTmuxStartupBehavior())
         } else {
-            _tmuxEnabled = State(initialValue: Self.defaultTmuxEnabled())
+            _multiplexer = State(initialValue: Self.defaultMultiplexer())
             _tmuxStartupBehavior = State(initialValue: Self.defaultTmuxStartupBehavior())
         }
     }
@@ -781,9 +781,13 @@ struct ServerFormSheet: View {
 
     private var sessionSection: some View {
         Section {
-            Toggle("Use tmux to preserve sessions", isOn: $tmuxEnabled)
+            Picker("Session persistence", selection: $multiplexer) {
+                ForEach(TerminalMultiplexer.allCases) { mux in
+                    Text(mux.displayName).tag(mux)
+                }
+            }
 
-            if tmuxEnabled {
+            if multiplexer.isEnabled {
                 Picker("On connect", selection: $tmuxStartupBehavior) {
                     ForEach(TmuxStartupBehavior.configCases) { behavior in
                         Text(behavior.displayName).tag(behavior)
@@ -1014,7 +1018,7 @@ struct ServerFormSheet: View {
             cloudflareAppDomainOverride: nil,
             notes: notes.isEmpty ? nil : notes,
             requiresBiometricUnlock: requiresBiometricUnlock,
-            tmuxEnabledOverride: tmuxEnabled,
+            multiplexerOverride: multiplexer,
             tmuxStartupBehaviorOverride: tmuxStartupBehavior,
             createdAt: createdAt
         )
@@ -1036,12 +1040,16 @@ struct ServerFormSheet: View {
         #endif
     }
 
-    private static func defaultTmuxEnabled() -> Bool {
+    private static func defaultMultiplexer() -> TerminalMultiplexer {
         let defaults = UserDefaults.standard
-        if defaults.object(forKey: "terminalTmuxEnabledDefault") == nil {
-            return true
+        if let raw = defaults.string(forKey: "terminalMultiplexerDefault"),
+           let mux = TerminalMultiplexer(rawValue: raw) {
+            return mux
         }
-        return defaults.bool(forKey: "terminalTmuxEnabledDefault")
+        if defaults.object(forKey: "terminalTmuxEnabledDefault") != nil {
+            return .fromLegacyTmuxEnabled(defaults.bool(forKey: "terminalTmuxEnabledDefault"))
+        }
+        return .tmux
     }
 
     private static func defaultTmuxStartupBehavior() -> TmuxStartupBehavior {

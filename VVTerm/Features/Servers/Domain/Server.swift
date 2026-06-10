@@ -20,8 +20,8 @@ struct Server: Identifiable, Codable, Hashable {
     var lastConnected: Date?
     var isFavorite: Bool
     var requiresBiometricUnlock: Bool
-    /// Override for tmux persistence (nil = use global default)
-    var tmuxEnabledOverride: Bool?
+    /// Override for session multiplexer (nil = use global default)
+    var multiplexerOverride: TerminalMultiplexer?
     /// Override for tmux startup behavior (nil = use global default)
     var tmuxStartupBehaviorOverride: TmuxStartupBehavior?
     var createdAt: Date
@@ -45,7 +45,7 @@ struct Server: Identifiable, Codable, Hashable {
         lastConnected: Date? = nil,
         isFavorite: Bool = false,
         requiresBiometricUnlock: Bool = false,
-        tmuxEnabledOverride: Bool? = nil,
+        multiplexerOverride: TerminalMultiplexer? = nil,
         tmuxStartupBehaviorOverride: TmuxStartupBehavior? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -67,7 +67,7 @@ struct Server: Identifiable, Codable, Hashable {
         self.lastConnected = lastConnected
         self.isFavorite = isFavorite
         self.requiresBiometricUnlock = requiresBiometricUnlock
-        self.tmuxEnabledOverride = tmuxEnabledOverride
+        self.multiplexerOverride = multiplexerOverride
         self.tmuxStartupBehaviorOverride = tmuxStartupBehaviorOverride
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -98,7 +98,8 @@ struct Server: Identifiable, Codable, Hashable {
         case lastConnected
         case isFavorite
         case requiresBiometricUnlock
-        case tmuxEnabledOverride
+        case multiplexerOverride
+        case tmuxEnabledOverride   // legacy, decode-only
         case tmuxStartupBehaviorOverride
         case createdAt
         case updatedAt
@@ -127,7 +128,13 @@ struct Server: Identifiable, Codable, Hashable {
         lastConnected = try container.decodeIfPresent(Date.self, forKey: .lastConnected)
         isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
         requiresBiometricUnlock = try container.decodeIfPresent(Bool.self, forKey: .requiresBiometricUnlock) ?? false
-        tmuxEnabledOverride = try container.decodeIfPresent(Bool.self, forKey: .tmuxEnabledOverride)
+        if let mux = try container.decodeIfPresent(String.self, forKey: .multiplexerOverride) {
+            multiplexerOverride = TerminalMultiplexer(rawValue: mux)
+        } else if let legacy = try container.decodeIfPresent(Bool.self, forKey: .tmuxEnabledOverride) {
+            multiplexerOverride = .fromLegacyTmuxEnabled(legacy)
+        } else {
+            multiplexerOverride = nil
+        }
         if let raw = try container.decodeIfPresent(String.self, forKey: .tmuxStartupBehaviorOverride) {
             tmuxStartupBehaviorOverride = TmuxStartupBehavior(rawValue: raw)
         } else {
@@ -156,7 +163,7 @@ struct Server: Identifiable, Codable, Hashable {
         try container.encodeIfPresent(lastConnected, forKey: .lastConnected)
         try container.encode(isFavorite, forKey: .isFavorite)
         try container.encode(requiresBiometricUnlock, forKey: .requiresBiometricUnlock)
-        try container.encodeIfPresent(tmuxEnabledOverride, forKey: .tmuxEnabledOverride)
+        try container.encodeIfPresent(multiplexerOverride?.rawValue, forKey: .multiplexerOverride)
         try container.encodeIfPresent(tmuxStartupBehaviorOverride, forKey: .tmuxStartupBehaviorOverride)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)

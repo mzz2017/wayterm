@@ -792,7 +792,7 @@ final class ServerManager: ObservableObject {
                     lastConnected: servers[i].lastConnected,
                     isFavorite: servers[i].isFavorite,
                     requiresBiometricUnlock: servers[i].requiresBiometricUnlock,
-                    tmuxEnabledOverride: servers[i].tmuxEnabledOverride,
+                    multiplexerOverride: servers[i].multiplexerOverride,
                     tmuxStartupBehaviorOverride: servers[i].tmuxStartupBehaviorOverride,
                     createdAt: servers[i].createdAt,
                     updatedAt: Date()
@@ -861,7 +861,7 @@ final class ServerManager: ObservableObject {
             tags: server.tags,
             notes: server.notes,
             requiresBiometricUnlock: server.requiresBiometricUnlock,
-            tmuxEnabledOverride: server.tmuxEnabledOverride,
+            multiplexerOverride: server.multiplexerOverride,
             tmuxStartupBehaviorOverride: server.tmuxStartupBehaviorOverride,
             createdAt: Date(),
             updatedAt: Date()
@@ -914,7 +914,7 @@ final class ServerManager: ObservableObject {
             lastConnected: server.lastConnected,
             isFavorite: server.isFavorite,
             requiresBiometricUnlock: server.requiresBiometricUnlock,
-            tmuxEnabledOverride: server.tmuxEnabledOverride,
+            multiplexerOverride: server.multiplexerOverride,
             tmuxStartupBehaviorOverride: server.tmuxStartupBehaviorOverride,
             createdAt: server.createdAt,
             updatedAt: Date()

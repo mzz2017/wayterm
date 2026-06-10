@@ -17,14 +17,6 @@ final class TmuxAttachResolver {
 
     // MARK: - Settings
 
-    var tmuxEnabledDefault: Bool {
-        let defaults = UserDefaults.standard
-        if defaults.object(forKey: "terminalTmuxEnabledDefault") == nil {
-            return true
-        }
-        return defaults.bool(forKey: "terminalTmuxEnabledDefault")
-    }
-
     var tmuxStartupBehaviorDefault: TmuxStartupBehavior {
         let defaults = UserDefaults.standard
         guard let rawValue = defaults.string(forKey: "terminalTmuxStartupBehaviorDefault") else {
@@ -33,12 +25,29 @@ final class TmuxAttachResolver {
         return TmuxStartupBehavior(rawValue: rawValue) ?? .askEveryTime
     }
 
-    func isTmuxEnabled(for serverId: UUID) -> Bool {
+    var multiplexerDefault: TerminalMultiplexer {
+        let defaults = UserDefaults.standard
+        if let raw = defaults.string(forKey: "terminalMultiplexerDefault"),
+           let mux = TerminalMultiplexer(rawValue: raw) {
+            return mux
+        }
+        // Migrate the legacy boolean default once.
+        if defaults.object(forKey: "terminalTmuxEnabledDefault") != nil {
+            return .fromLegacyTmuxEnabled(defaults.bool(forKey: "terminalTmuxEnabledDefault"))
+        }
+        return .tmux
+    }
+
+    func multiplexer(for serverId: UUID) -> TerminalMultiplexer {
         if let server = ServerManager.shared.servers.first(where: { $0.id == serverId }),
-           let override = server.tmuxEnabledOverride {
+           let override = server.multiplexerOverride {
             return override
         }
-        return tmuxEnabledDefault
+        return multiplexerDefault
+    }
+
+    func isTmuxEnabled(for serverId: UUID) -> Bool {
+        multiplexer(for: serverId).isEnabled
     }
 
     func tmuxStartupBehavior(for serverId: UUID) -> TmuxStartupBehavior {

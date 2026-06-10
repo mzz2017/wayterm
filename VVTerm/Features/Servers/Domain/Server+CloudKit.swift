@@ -83,7 +83,13 @@ extension Server {
         self.lastConnected = record["lastConnected"] as? Date
         self.isFavorite = record["isFavorite"] as? Bool ?? false
         self.requiresBiometricUnlock = record["requiresBiometricUnlock"] as? Bool ?? false
-        self.tmuxEnabledOverride = record["tmuxEnabledOverride"] as? Bool
+        if let mux = record["multiplexerOverride"] as? String {
+            self.multiplexerOverride = TerminalMultiplexer(rawValue: mux)
+        } else if let legacy = record["tmuxEnabledOverride"] as? Bool {
+            self.multiplexerOverride = .fromLegacyTmuxEnabled(legacy)
+        } else {
+            self.multiplexerOverride = nil
+        }
         if let rawTmuxBehavior = record["tmuxStartupBehaviorOverride"] as? String {
             self.tmuxStartupBehaviorOverride = TmuxStartupBehavior(rawValue: rawTmuxBehavior)
         } else {
@@ -139,7 +145,7 @@ extension Server {
         record["lastConnected"] = lastConnected
         record["isFavorite"] = isFavorite
         record["requiresBiometricUnlock"] = requiresBiometricUnlock
-        record["tmuxEnabledOverride"] = tmuxEnabledOverride
+        record["multiplexerOverride"] = multiplexerOverride?.rawValue
         if let tmuxStartupBehaviorOverride {
             record["tmuxStartupBehaviorOverride"] = tmuxStartupBehaviorOverride.rawValue
         } else {
