@@ -2857,6 +2857,20 @@ enum SSHError: LocalizedError {
         case .unknown(let msg): return "Unknown error: \(msg)"
         }
     }
+
+    /// Whether a connection attempt that failed with this error should be retried.
+    /// Auth/host-key/tailscale failures are deterministic — retrying only piles up
+    /// failed-auth events and triggers sshd penalty boxing.
+    var isRetryable: Bool {
+        switch self {
+        case .authenticationFailed,
+             .hostKeyVerificationFailed,
+             .tailscaleAuthenticationNotAccepted:
+            return false
+        default:
+            return true
+        }
+    }
 }
 
 // MARK: - fd_set helpers for select()
