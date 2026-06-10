@@ -9,9 +9,17 @@ struct RemoteTmuxSession: Hashable {
 enum RemoteTmuxBackend: Hashable, Sendable {
     case unixTmux
     case windowsPsmux(commandName: String, shellFamily: RemoteShellFamily, powerShellExecutable: String?)
+    case zmx(commandName: String)
 
     nonisolated var isWindows: Bool {
         if case .windowsPsmux = self {
+            return true
+        }
+        return false
+    }
+
+    nonisolated var isZmx: Bool {
+        if case .zmx = self {
             return true
         }
         return false
@@ -26,6 +34,8 @@ actor RemoteTmuxManager {
 
     static let shared = RemoteTmuxManager()
 
+    private let zmxBuilder = RemoteZmxCommandBuilder()
+
     private let configDirectory = "~/.vvterm"
     private let configPath = "~/.vvterm/tmux.conf"
     private let availabilityTimeout: Duration = .seconds(8)
@@ -37,12 +47,23 @@ actor RemoteTmuxManager {
 
     private init() {}
 
-    func tmuxBackend(using client: SSHClient) async -> RemoteTmuxBackend? {
+    func tmuxBackend(
+        using client: SSHClient,
+        preferred: TerminalMultiplexer = .tmux
+    ) async -> RemoteTmuxBackend? {
         let environment = await client.remoteEnvironment()
         guard environment.supportsTmuxRuntime else { return nil }
 
         if environment.platform == .windows {
+            // zmx is POSIX-only; Windows always uses psmux.
             return await windowsPsmuxBackend(for: environment, using: client)
+        }
+
+        if preferred == .zmx {
+            let okMarker = "__VVTERM_ZMX_OK__"
+            let command = zmxBuilder.availabilityProbeCommand(okMarker: okMarker)
+            let output = try? await client.execute(command, timeout: availabilityTimeout)
+            return output?.contains(okMarker) == true ? .zmx(commandName: "zmx") : nil
         }
 
         let okMarker = "__VVTERM_TMUX_OK__"
@@ -72,6 +93,15 @@ actor RemoteTmuxManager {
 
     func listSessions(using client: SSHClient) async -> [RemoteTmuxSession] {
         guard let backend = await tmuxBackend(using: client) else { return [] }
+        return await listSessions(using: client, backend: backend)
+    }
+
+    func listSessions(using client: SSHClient, backend: RemoteTmuxBackend) async -> [RemoteTmuxSession] {
+        if case .zmx = backend {
+            guard let output = try? await client.execute(zmxBuilder.listSessionsCommand(), timeout: listTimeout) else { return [] }
+            return zmxBuilder.parseSessionList(output)
+        }
+
         let candidates = listSessionCommands(backend: backend)
 
         for (index, command) in candidates.enumerated() {
@@ -98,6 +128,7 @@ actor RemoteTmuxManager {
             backend = await tmuxBackend(using: client)
         }
         guard let backend else { return }
+        if backend.isZmx { return }   // zmx has no config file
         let command = configWriteExecutionCommand(terminalType: terminalType, backend: backend)
         _ = try? await client.execute(command, timeout: configTimeout)
     }
@@ -118,6 +149,11 @@ actor RemoteTmuxManager {
         context: CommandContext = .startupExec,
         backend: RemoteTmuxBackend = .unixTmux
     ) -> String {
+        if case .zmx = backend {
+            let zmxContext: RemoteZmxCommandBuilder.CommandContext =
+                (context == .startupExec) ? .startupExec : .interactiveShell
+            return zmxBuilder.attachCommand(sessionName: sessionName, context: zmxContext)
+        }
         let body = attachOrCreateBody(
             sessionName: sessionName,
             workingDirectory: workingDirectory,
@@ -132,6 +168,11 @@ actor RemoteTmuxManager {
         context: CommandContext = .startupExec,
         backend: RemoteTmuxBackend = .unixTmux
     ) -> String {
+        if case .zmx = backend {
+            let zmxContext: RemoteZmxCommandBuilder.CommandContext =
+                (context == .startupExec) ? .startupExec : .interactiveShell
+            return zmxBuilder.attachCommand(sessionName: sessionName, context: zmxContext)
+        }
         let body = attachExistingBody(
             sessionName: sessionName,
             missingCommand: missingSessionCommand(for: context, backend: backend),
@@ -166,6 +207,11 @@ actor RemoteTmuxManager {
         terminalType: RemoteTerminalType,
         backend: RemoteTmuxBackend = .unixTmux
     ) -> String {
+        if case .zmx = backend {
+            // No remote installer for zmx; just attach (assumes zmx present).
+            return zmxBuilder.attachCommand(sessionName: sessionName, context: .startupExec)
+        }
+
         if backend.isWindows {
             return windowsInstallAndAttachScript(
                 sessionName: sessionName,
@@ -271,6 +317,7 @@ actor RemoteTmuxManager {
 
     func currentPath(sessionName: String, using client: SSHClient) async -> String? {
         guard let backend = await tmuxBackend(using: client) else { return nil }
+        if backend.isZmx { return nil }   // zmx has no list-panes equivalent
         let command = currentPathCommand(sessionName: sessionName, backend: backend)
         guard let output = try? await client.execute(command, timeout: pathTimeout) else { return nil }
         let trimmed = output
@@ -526,6 +573,10 @@ actor RemoteTmuxManager {
                     backend: backend
                 )
             ]
+
+        case .zmx:
+            // zmx listing is handled in listSessions(using:backend:) via zmxBuilder.
+            return [zmxBuilder.listSessionsCommand()]
         }
     }
 
@@ -682,6 +733,9 @@ actor RemoteTmuxManager {
         case .windowsPsmux(let commandName, _, _):
             let script = "& \(powerShellQuoted(commandName)) kill-session -t \(powerShellQuoted(sessionName)) 2>$null"
             return windowsShellCommand(powerShellScript: script, backend: backend)
+
+        case .zmx:
+            return zmxBuilder.killSessionCommand(named: sessionName)
         }
     }
 
@@ -696,6 +750,10 @@ actor RemoteTmuxManager {
         case .windowsPsmux(let commandName, _, _):
             let script = "& \(powerShellQuoted(commandName)) list-panes -t \(powerShellQuoted(sessionName)) -F '#{pane_current_path}' 2>$null | Select-Object -First 1"
             return windowsShellCommand(powerShellScript: script, backend: backend)
+
+        case .zmx:
+            // zmx has no list-panes; current path is resolved via the shell, not here.
+            return ""
         }
     }
 
