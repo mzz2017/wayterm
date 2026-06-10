@@ -999,7 +999,7 @@ final class TerminalTabManager: ObservableObject {
                 }
             }
             await MainActor.run {
-                self.updatePaneTmuxStatus(paneId, status: .missing)
+                self.updatePaneTmuxStatus(paneId, status: self.tmuxResolver.unavailableStatus(for: serverId))
             }
         }
     }

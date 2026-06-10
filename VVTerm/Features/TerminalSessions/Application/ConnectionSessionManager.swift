@@ -1497,7 +1497,7 @@ extension ConnectionSessionManager {
                 }
             }
             await MainActor.run {
-                self.updateTmuxStatus(sessionId, status: .missing)
+                self.updateTmuxStatus(sessionId, status: self.tmuxResolver.unavailableStatus(for: serverId))
             }
         }
     }
