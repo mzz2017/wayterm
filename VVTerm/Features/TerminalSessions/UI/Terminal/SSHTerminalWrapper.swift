@@ -79,6 +79,13 @@ enum SSHConnectionRunner {
                 lastError = error
                 logger.error("SSH connection failed (attempt \(attempt)): \(error.localizedDescription)")
 
+                // Do not retry deterministic failures (bad auth, host-key mismatch):
+                // repeated failed auths trip sshd's penalty system.
+                if let sshError = error as? SSHError, !sshError.isRetryable {
+                    logger.warning("Non-retryable SSH error; aborting retries")
+                    break
+                }
+
                 if attempt < maxAttempts, let sshError = error as? SSHError {
                     let shouldReset = await shouldResetClient(sshError)
                     if shouldReset {
