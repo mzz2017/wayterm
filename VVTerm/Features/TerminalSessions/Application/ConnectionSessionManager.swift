@@ -1381,7 +1381,10 @@ extension ConnectionSessionManager {
             return
         }
 
-        guard let backend = await RemoteTmuxManager.shared.tmuxBackend(using: client) else {
+        guard let backend = await RemoteTmuxManager.shared.tmuxBackend(
+            using: client,
+            preferred: tmuxResolver.multiplexer(for: serverId)
+        ) else {
             await MainActor.run {
                 self.disableTmuxAttachment(for: sessionId, status: .missing)
             }
@@ -1421,7 +1424,10 @@ extension ConnectionSessionManager {
             return (nil, true)
         }
 
-        guard let backend = await RemoteTmuxManager.shared.tmuxBackend(using: client) else {
+        guard let backend = await RemoteTmuxManager.shared.tmuxBackend(
+            using: client,
+            preferred: tmuxResolver.multiplexer(for: serverId)
+        ) else {
             disableTmuxAttachment(for: sessionId, status: .missing)
             return (nil, true)
         }

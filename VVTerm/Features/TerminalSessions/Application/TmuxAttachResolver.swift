@@ -118,7 +118,7 @@ final class TmuxAttachResolver {
             case .managed:
                 return .createManaged
             case .external:
-                let sessions = await RemoteTmuxManager.shared.listSessions(using: client)
+                let sessions = await listSessions(serverId: serverId, client: client)
                 if sessions.contains(where: { $0.name == existingName }) {
                     return .attachExisting(sessionName: existingName)
                 }
@@ -136,7 +136,7 @@ final class TmuxAttachResolver {
         case .skipTmux:
             return .skipTmux
         case .askEveryTime:
-            let sessions = await RemoteTmuxManager.shared.listSessions(using: client)
+            let sessions = await listSessions(serverId: serverId, client: client)
             return await requestSelection(
                 entityId: entityId,
                 serverId: serverId,
@@ -144,6 +144,18 @@ final class TmuxAttachResolver {
                 setPrompt: setPrompt
             )
         }
+    }
+
+    /// List sessions using the backend that matches the server's chosen multiplexer
+    /// (so a zmx server lists zmx sessions, not tmux).
+    private func listSessions(serverId: UUID, client: SSHClient) async -> [RemoteTmuxSession] {
+        guard let backend = await RemoteTmuxManager.shared.tmuxBackend(
+            using: client,
+            preferred: multiplexer(for: serverId)
+        ) else {
+            return []
+        }
+        return await RemoteTmuxManager.shared.listSessions(using: client, backend: backend)
     }
 
     // MARK: - Prompt Queue
