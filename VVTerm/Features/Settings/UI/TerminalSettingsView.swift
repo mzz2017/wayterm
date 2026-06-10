@@ -152,7 +152,7 @@ struct TerminalSettingsView: View {
     @AppStorage("terminalProgressEnabled") private var terminalProgressEnabled = true
     @AppStorage("terminalAccessoryCustomizationEnabled") private var terminalAccessoryCustomizationEnabled = true
     @AppStorage("terminalKeyboardDismissButtonEnabled") private var terminalKeyboardDismissButtonEnabled = true
-    @AppStorage("terminalTmuxEnabledDefault") private var tmuxEnabledDefault = true
+    @AppStorage("terminalMultiplexerDefault") private var multiplexerDefaultRaw = TerminalMultiplexer.tmux.rawValue
     @AppStorage("terminalTmuxStartupBehaviorDefault") private var tmuxStartupBehaviorDefaultRaw = TmuxStartupBehavior.askEveryTime.rawValue
 
     // Copy settings
@@ -419,9 +419,16 @@ struct TerminalSettingsView: View {
 
     private var sessionPersistenceSection: some View {
         Section {
-            Toggle("Enable tmux by default", isOn: $tmuxEnabledDefault)
+            Picker("Session persistence", selection: Binding(
+                get: { TerminalMultiplexer(rawValue: multiplexerDefaultRaw) ?? .tmux },
+                set: { multiplexerDefaultRaw = $0.rawValue }
+            )) {
+                ForEach(TerminalMultiplexer.allCases) { mux in
+                    Text(mux.displayName).tag(mux)
+                }
+            }
 
-            if tmuxEnabledDefault {
+            if (TerminalMultiplexer(rawValue: multiplexerDefaultRaw) ?? .tmux).isEnabled {
                 Picker("On connect", selection: tmuxStartupBehaviorDefaultBinding) {
                     ForEach(TmuxStartupBehavior.configCases) { behavior in
                         Text(behavior.displayName).tag(behavior)
