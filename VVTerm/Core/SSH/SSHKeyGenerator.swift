@@ -377,4 +377,9 @@ enum SSHKeyGenerator {
         }
         return result
     }
+
+    /// Public: format an `ssh-rsa ...` one-line public key from a SecKey (RSA public key).
+    static func sshRSAPublicKeyString(from publicKey: SecKey) -> String? {
+        try? formatRSAPublicKey(publicKey, comment: "")
+    }
 }
