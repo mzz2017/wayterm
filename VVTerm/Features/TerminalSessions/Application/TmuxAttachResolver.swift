@@ -102,35 +102,42 @@ final class TmuxAttachResolver {
         promptQueue.removeAll { $0.id == entityId }
     }
 
-    func updateAttachmentState(for entityId: UUID, selection: TmuxAttachSelection, setPrompt: (TmuxAttachPrompt?) -> Void) {
+    func updateAttachmentState(for entityId: UUID, serverId: UUID, selection: TmuxAttachSelection, setPrompt: (TmuxAttachPrompt?) -> Void) {
         switch selection {
         case .createManaged:
             let name = managedSessionName(for: entityId)
             sessionNames[entityId] = name
             sessionOwnership[entityId] = .managed
-            persistBinding(for: entityId, name: name, ownership: .managed)
+            persistBinding(for: entityId, serverId: serverId, name: name, ownership: .managed)
         case .attachExisting(let name):
             sessionNames[entityId] = name
             let own = ownership(for: name)
             sessionOwnership[entityId] = own
-            persistBinding(for: entityId, name: name, ownership: own)
+            persistBinding(for: entityId, serverId: serverId, name: name, ownership: own)
         case .skipTmux:
             clearRuntimeState(for: entityId, setPrompt: setPrompt)
         }
     }
 
-    private func persistBinding(for entityId: UUID, name: String, ownership: SessionOwnership) {
-        // `multiplexer` is informational; reattach uses sessionName + ownership, and the
-        // backend kind is resolved live from the server via multiplexer(for:).
-        let mux = isCurrentDeviceManagedSessionName(name) ? "tmux" : "external"
+    private func persistBinding(for entityId: UUID, serverId: UUID, name: String, ownership: SessionOwnership) {
+        // The backend kind is also resolved live from the server at attach time; we store
+        // it here so the persisted binding is self-describing.
         bindingStore.set(
             TmuxSessionBinding(
                 sessionName: name,
                 ownership: ownership == .managed ? "managed" : "external",
-                multiplexer: mux
+                multiplexer: multiplexer(for: serverId).rawValue
             ),
             for: entityId
         )
+    }
+
+    /// Bind a pane to its managed session and persist it (used after a successful install).
+    func bindManagedSession(for entityId: UUID, serverId: UUID) {
+        let name = managedSessionName(for: entityId)
+        sessionNames[entityId] = name
+        sessionOwnership[entityId] = .managed
+        persistBinding(for: entityId, serverId: serverId, name: name, ownership: .managed)
     }
 
     // MARK: - Selection Resolution
@@ -218,11 +225,13 @@ final class TmuxAttachResolver {
     ) async {
         guard !cleanupSet.contains(serverId) else { return }
         cleanupSet.insert(serverId)
+        let preferred = multiplexer(for: serverId)
         await RemoteTmuxManager.shared.cleanupLegacySessions(using: client)
         await RemoteTmuxManager.shared.cleanupDetachedSessions(
             deviceId: DeviceIdentity.id,
             keeping: managedNames,
-            using: client
+            using: client,
+            preferred: preferred
         )
     }
 

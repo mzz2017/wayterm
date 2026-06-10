@@ -72,7 +72,7 @@ actor RemoteTmuxManager {
         return output?.contains(okMarker) == true ? .unixTmux : nil
     }
 
-    func tmuxInstallBackend(using client: SSHClient) async -> RemoteTmuxBackend? {
+    func tmuxInstallBackend(using client: SSHClient, preferred: TerminalMultiplexer = .tmux) async -> RemoteTmuxBackend? {
         let environment = await client.remoteEnvironment()
         guard environment.supportsTmuxRuntime else { return nil }
 
@@ -84,11 +84,16 @@ actor RemoteTmuxManager {
             )
         }
 
+        // zmx has no remote installer; surface the zmx backend so the caller just attaches.
+        if preferred == .zmx {
+            return .zmx(commandName: "zmx")
+        }
+
         return .unixTmux
     }
 
-    func isTmuxAvailable(using client: SSHClient) async -> Bool {
-        await tmuxBackend(using: client) != nil
+    func isTmuxAvailable(using client: SSHClient, preferred: TerminalMultiplexer = .tmux) async -> Bool {
+        await tmuxBackend(using: client, preferred: preferred) != nil
     }
 
     func listSessions(using client: SSHClient) async -> [RemoteTmuxSession] {
@@ -281,8 +286,8 @@ actor RemoteTmuxManager {
         try? await client.write(data, to: shellId)
     }
 
-    func killSession(named sessionName: String, using client: SSHClient) async {
-        guard let backend = await tmuxBackend(using: client) else { return }
+    func killSession(named sessionName: String, using client: SSHClient, preferred: TerminalMultiplexer = .tmux) async {
+        guard let backend = await tmuxBackend(using: client, preferred: preferred) else { return }
         let command = killSessionCommand(named: sessionName, backend: backend)
         _ = try? await client.execute(command, timeout: killTimeout)
     }
@@ -302,16 +307,17 @@ actor RemoteTmuxManager {
         _ = try? await client.execute(command, timeout: cleanupTimeout)
     }
 
-    func cleanupDetachedSessions(deviceId: String, keeping sessionNames: Set<String>, using client: SSHClient) async {
+    func cleanupDetachedSessions(deviceId: String, keeping sessionNames: Set<String>, using client: SSHClient, preferred: TerminalMultiplexer = .tmux) async {
         let prefix = "vvterm_\(deviceId)_"
         let keep = sessionNames
-        let sessions = await listSessions(using: client)
+        guard let backend = await tmuxBackend(using: client, preferred: preferred) else { return }
+        let sessions = await listSessions(using: client, backend: backend)
 
         for session in sessions {
             guard session.name.hasPrefix(prefix) else { continue }
             guard session.attachedClients == 0 else { continue }
             guard !keep.contains(session.name) else { continue }
-            await killSession(named: session.name, using: client)
+            await killSession(named: session.name, using: client, preferred: preferred)
         }
     }
 

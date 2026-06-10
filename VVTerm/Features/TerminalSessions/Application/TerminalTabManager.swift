@@ -460,7 +460,11 @@ final class TerminalTabManager: ObservableObject {
         }
 
         if let tmuxSessionName {
-            await RemoteTmuxManager.shared.killSession(named: tmuxSessionName, using: registration.client)
+            await RemoteTmuxManager.shared.killSession(
+                named: tmuxSessionName,
+                using: registration.client,
+                preferred: tmuxResolver.multiplexer(for: registration.serverId)
+            )
         }
 
         await registration.client.closeShell(registration.shellId)
@@ -935,7 +939,7 @@ final class TerminalTabManager: ObservableObject {
         let selection = await tmuxResolver.resolveSelection(
             for: paneId, serverId: serverId, client: client, setPrompt: setTmuxAttachPrompt
         )
-        tmuxResolver.updateAttachmentState(for: paneId, selection: selection, setPrompt: setTmuxAttachPrompt)
+        tmuxResolver.updateAttachmentState(for: paneId, serverId: serverId, selection: selection, setPrompt: setTmuxAttachPrompt)
 
         if case .skipTmux = selection {
             updatePaneTmuxStatus(paneId, status: .off)
@@ -964,7 +968,8 @@ final class TerminalTabManager: ObservableObject {
 
         updatePaneTmuxStatus(paneId, status: .installing)
 
-        guard let backend = await RemoteTmuxManager.shared.tmuxInstallBackend(using: registration.client) else {
+        let preferred = tmuxResolver.multiplexer(for: serverId)
+        guard let backend = await RemoteTmuxManager.shared.tmuxInstallBackend(using: registration.client, preferred: preferred) else {
             updatePaneTmuxStatus(paneId, status: .off)
             return
         }
@@ -984,11 +989,10 @@ final class TerminalTabManager: ObservableObject {
             guard let self else { return }
             for _ in 0..<6 {
                 try? await Task.sleep(for: .seconds(2))
-                let available = await RemoteTmuxManager.shared.isTmuxAvailable(using: registration.client)
+                let available = await RemoteTmuxManager.shared.isTmuxAvailable(using: registration.client, preferred: preferred)
                 if available {
                     await MainActor.run {
-                        self.tmuxResolver.sessionNames[paneId] = sessionName
-                        self.tmuxResolver.sessionOwnership[paneId] = .managed
+                        self.tmuxResolver.bindManagedSession(for: paneId, serverId: serverId)
                         self.updatePaneTmuxStatus(paneId, status: self.currentTmuxStatus(for: paneId, serverId: serverId))
                     }
                     return
@@ -1020,8 +1024,9 @@ final class TerminalTabManager: ObservableObject {
         guard ownership == .managed else { return }
 
         let sessionName = tmuxResolver.sessionName(for: paneId)
-        Task.detached { [client = registration.client, sessionName] in
-            await RemoteTmuxManager.shared.killSession(named: sessionName, using: client)
+        let preferred = tmuxResolver.multiplexer(for: registration.serverId)
+        Task.detached { [client = registration.client, sessionName, preferred] in
+            await RemoteTmuxManager.shared.killSession(named: sessionName, using: client, preferred: preferred)
         }
     }
 

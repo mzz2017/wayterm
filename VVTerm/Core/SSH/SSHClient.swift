@@ -1103,9 +1103,11 @@ actor SSHSession {
             )
 
             // If password auth fails, try keyboard-interactive ONLY if the server lists it.
+            // When the method list is unavailable (nil), do not attempt it — guessing only
+            // adds another failed-auth event toward sshd's penalty threshold.
             if authResult != 0 {
                 let advertisesKbdInteractive = authList
-                    .map { String(cString: $0).contains("keyboard-interactive") } ?? true
+                    .map { String(cString: $0).contains("keyboard-interactive") } ?? false
                 if advertisesKbdInteractive {
                     logger.info("Password auth failed, trying keyboard-interactive...")
 

@@ -703,7 +703,9 @@ final class ConnectionSessionManager: ObservableObject {
         let unregisterResult = takeSSHClientRegistration(for: sessionId)
         if let tmuxSessionName,
            let client = unregisterResult.shellToClose?.client {
-            await RemoteTmuxManager.shared.killSession(named: tmuxSessionName, using: client)
+            let preferred = sessions.first(where: { $0.id == sessionId })
+                .map { tmuxResolver.multiplexer(for: $0.serverId) } ?? .tmux
+            await RemoteTmuxManager.shared.killSession(named: tmuxSessionName, using: client, preferred: preferred)
         }
         await Self.finishSSHCleanup(for: unregisterResult)
     }
@@ -1435,7 +1437,7 @@ extension ConnectionSessionManager {
         let selection = await tmuxResolver.resolveSelection(
             for: sessionId, serverId: serverId, client: client, setPrompt: setTmuxAttachPrompt
         )
-        tmuxResolver.updateAttachmentState(for: sessionId, selection: selection, setPrompt: setTmuxAttachPrompt)
+        tmuxResolver.updateAttachmentState(for: sessionId, serverId: serverId, selection: selection, setPrompt: setTmuxAttachPrompt)
 
         if case .skipTmux = selection {
             updateTmuxStatus(sessionId, status: .off)
@@ -1464,7 +1466,8 @@ extension ConnectionSessionManager {
 
         updateTmuxStatus(sessionId, status: .installing)
 
-        guard let backend = await RemoteTmuxManager.shared.tmuxInstallBackend(using: registration.client) else {
+        let preferred = tmuxResolver.multiplexer(for: serverId)
+        guard let backend = await RemoteTmuxManager.shared.tmuxInstallBackend(using: registration.client, preferred: preferred) else {
             updateTmuxStatus(sessionId, status: .off)
             return
         }
@@ -1484,11 +1487,10 @@ extension ConnectionSessionManager {
             guard let self else { return }
             for _ in 0..<6 {
                 try? await Task.sleep(for: .seconds(2))
-                let available = await RemoteTmuxManager.shared.isTmuxAvailable(using: registration.client)
+                let available = await RemoteTmuxManager.shared.isTmuxAvailable(using: registration.client, preferred: preferred)
                 if available {
                     await MainActor.run {
-                        self.tmuxResolver.sessionNames[sessionId] = sessionName
-                        self.tmuxResolver.sessionOwnership[sessionId] = .managed
+                        self.tmuxResolver.bindManagedSession(for: sessionId, serverId: serverId)
                         self.updateTmuxStatus(sessionId, status: self.currentTmuxStatus(for: sessionId))
                     }
                     return
@@ -1520,8 +1522,9 @@ extension ConnectionSessionManager {
         guard ownership == .managed else { return }
 
         let sessionName = tmuxResolver.sessionName(for: sessionId)
-        Task.detached { [client = registration.client, sessionName] in
-            await RemoteTmuxManager.shared.killSession(named: sessionName, using: client)
+        let preferred = tmuxResolver.multiplexer(for: registration.serverId)
+        Task.detached { [client = registration.client, sessionName, preferred] in
+            await RemoteTmuxManager.shared.killSession(named: sessionName, using: client, preferred: preferred)
         }
     }
 
