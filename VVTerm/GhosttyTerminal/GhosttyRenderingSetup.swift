@@ -15,6 +15,27 @@ import AppKit
 import UIKit
 #endif
 
+/// External-backend write callback (terminal → embedder). Invoked by libghostty
+/// on the IO thread when the user produces input. Recovers the view via the
+/// surface userdata VVTerm sets at creation and forwards to `writeCallback`.
+private let ghosttyExternalWriteCallback: ghostty_write_callback_fn = { surface, data, len in
+    guard let surface, let data, len > 0 else { return }
+    guard let ud = ghostty_surface_userdata(surface) else { return }
+    let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
+    let swiftData = Data(bytes: data, count: Int(len))
+    view.writeCallback?(swiftData)
+}
+
+/// External-backend resize callback (terminal grid changed → embedder should send
+/// an SSH window-change). Invoked on the IO thread. Forwards cols/rows to the
+/// view's `onResize`; pixel dims are available but SSH only needs cols/rows.
+private let ghosttyExternalResizeCallback: ghostty_resize_callback_fn = { surface, cols, rows, _, _ in
+    guard let surface else { return }
+    guard let ud = ghostty_surface_userdata(surface) else { return }
+    let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
+    view.onResize?(Int(cols), Int(rows))
+}
+
 /// Manages Metal rendering setup and configuration for Ghostty terminal
 @MainActor
 class GhosttyRenderingSetup {
@@ -103,8 +124,14 @@ class GhosttyRenderingSetup {
         // Set font size from settings
         surfaceConfig.font_size = Float(terminalFontSize)
 
-        // Enable custom I/O backend for SSH clients
-        surfaceConfig.use_custom_io = useCustomIO
+        // Select the External termio backend for SSH clients (embedder-driven I/O).
+        if useCustomIO {
+            surfaceConfig.backend_type = GHOSTTY_BACKEND_EXTERNAL
+            surfaceConfig.write_callback = ghosttyExternalWriteCallback
+            surfaceConfig.resize_callback = ghosttyExternalResizeCallback
+        } else {
+            surfaceConfig.backend_type = GHOSTTY_BACKEND_EXEC
+        }
 
         // Set working directory
         var workingDirPtr: UnsafeMutablePointer<CChar>?
@@ -195,8 +222,14 @@ class GhosttyRenderingSetup {
         // Set font size from settings
         surfaceConfig.font_size = Float(terminalFontSize)
 
-        // Enable custom I/O backend for SSH clients
-        surfaceConfig.use_custom_io = useCustomIO
+        // Select the External termio backend for SSH clients (embedder-driven I/O).
+        if useCustomIO {
+            surfaceConfig.backend_type = GHOSTTY_BACKEND_EXTERNAL
+            surfaceConfig.write_callback = ghosttyExternalWriteCallback
+            surfaceConfig.resize_callback = ghosttyExternalResizeCallback
+        } else {
+            surfaceConfig.backend_type = GHOSTTY_BACKEND_EXEC
+        }
 
         // Set working directory
         var workingDirPtr: UnsafeMutablePointer<CChar>?
