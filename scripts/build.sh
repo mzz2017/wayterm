@@ -15,8 +15,8 @@ LIBSSH2_VERSION="1.11.0"
 MACOS_DEPLOYMENT_TARGET="13.3"
 IOS_DEPLOYMENT_TARGET="16.0"
 
-GHOSTTY_REPO="https://github.com/wiedymi/ghostty.git"
-GHOSTTY_REF="${GHOSTTY_REF:-custom-io}"
+GHOSTTY_REPO="${GHOSTTY_REPO:-https://github.com/mzz2017/ghostty.git}"
+GHOSTTY_REF="${GHOSTTY_REF:-ios-external-io}"
 BUNDLE_ID="app.vivy.VivyTerm"
 
 KEEP_WORKDIR="${KEEP_WORKDIR:-0}"
@@ -47,7 +47,7 @@ Commands:
   help      Show this help message
 
 Env:
-  GHOSTTY_REF=<git-ref>   Build a specific ghostty ref (default: custom-io)
+  GHOSTTY_REF=<git-ref>   Build a specific ghostty ref (default: ios-external-io)
   KEEP_WORKDIR=1          Keep ghostty build temp dir for debugging
 EOF
 }
