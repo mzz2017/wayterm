@@ -201,55 +201,33 @@ extension Ghostty {
             )
         }
 
-        // MARK: - Custom I/O API (for SSH clients)
+        // MARK: - External backend I/O (for SSH clients)
 
-        /// Feed data into the terminal for display.
-        ///
-        /// This is used for custom I/O backends like SSH clients where data comes from
-        /// an external source (e.g., SSH channel) instead of a local pty.
-        /// The data should be raw terminal output including escape sequences.
-        ///
-        /// - Parameter data: The raw terminal data to display
+        /// Feed remote bytes (e.g. SSH output) into the terminal for display.
+        /// Used with the External termio backend. Caller serializes per surface.
         @MainActor
-        func feedData(_ data: Data) {
+        func writeOutput(_ data: Data) {
             guard let surface = unsafeCValue else { return }
             guard !data.isEmpty else { return }
             data.withUnsafeBytes { buffer in
-                if let ptr = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) {
-                    ghostty_surface_feed_data(surface, ptr, buffer.count)
+                if let ptr = buffer.baseAddress?.assumingMemoryBound(to: CChar.self) {
+                    ghostty_surface_write_output(surface, ptr, buffer.count)
                 }
             }
         }
 
-        /// Feed string data into the terminal for display.
-        ///
-        /// Convenience method that converts a string to UTF-8 data and feeds it to the terminal.
-        ///
-        /// - Parameter text: The text to display in the terminal
+        /// Convenience: feed a UTF-8 string into the terminal.
         @MainActor
-        func feedText(_ text: String) {
+        func writeOutputText(_ text: String) {
             guard let data = text.data(using: .utf8) else { return }
-            feedData(data)
+            writeOutput(data)
         }
 
-        /// Callback type for receiving terminal write data.
-        ///
-        /// This callback is invoked when the terminal wants to send data to the external source
-        /// (e.g., when the user types, the data should be sent to the SSH channel).
-        typealias WriteCallback = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<UInt8>?, Int) -> Void
-
-        /// Set the write callback for custom I/O backend.
-        ///
-        /// When set, the terminal will call this callback instead of writing to a local pty.
-        /// This is used for SSH clients where keyboard input should be sent to the SSH channel.
-        ///
-        /// - Parameters:
-        ///   - callback: The callback function to receive write data, or nil to clear
-        ///   - userdata: Opaque pointer passed to the callback (e.g., reference to SSH session)
+        /// Notify the terminal that the external session ended (SSH disconnect).
         @MainActor
-        func setWriteCallback(_ callback: WriteCallback?, userdata: UnsafeMutableRawPointer?) {
+        func externalExited(_ exitCode: UInt32 = 0) {
             guard let surface = unsafeCValue else { return }
-            ghostty_surface_set_write_callback(surface, callback, userdata)
+            ghostty_surface_external_exited(surface, exitCode)
         }
     }
 }
