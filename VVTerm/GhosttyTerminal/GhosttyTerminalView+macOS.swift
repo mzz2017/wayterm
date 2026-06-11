@@ -136,7 +136,6 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
 
         // Stop rendering/input callbacks
         if let cSurface = surface?.unsafeCValue {
-            ghostty_surface_set_write_callback(cSurface, nil, nil)
             ghostty_surface_set_focus(cSurface, false)
         }
 
@@ -785,40 +784,33 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
         forceRefresh()
     }
 
-    // MARK: - Custom I/O API (for SSH clients)
+    // MARK: - External backend I/O (for SSH clients)
 
-    /// Callback invoked when user types in the terminal (keyboard input to send to SSH)
+    /// Callback invoked when user types in the terminal (keyboard input to send to SSH).
+    /// Set by the SSH wrapper; the External backend's write callback (registered at
+    /// surface creation) recovers this view via userdata and forwards to it.
     var writeCallback: ((Data) -> Void)?
 
-    /// Feed data from SSH channel to the terminal for rendering
-    func feedData(_ data: Data) {
+    /// Feed data from the SSH channel into the terminal for rendering (External backend).
+    func writeOutput(_ data: Data) {
         guard let surface = surface?.unsafeCValue else { return }
 
         // Feed data immediately - SSH read loop already batches appropriately
         data.withUnsafeBytes { buffer in
-            guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-            ghostty_surface_feed_data(surface, ptr, buffer.count)
+            guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
+            ghostty_surface_write_output(surface, ptr, buffer.count)
         }
 
         // Request render via display link (event-driven, will auto-stop when idle)
         requestRender()
     }
 
-    /// Setup the write callback to capture keyboard input
-    /// Call this after the surface is created to start receiving input
-    func setupWriteCallback() {
+    /// Notify the terminal that the SSH session ended (External backend), so it shows
+    /// ghostty's real "session ended" UI instead of going silent.
+    func externalExited(_ exitCode: UInt32 = 0) {
         guard let surface = surface?.unsafeCValue else { return }
-
-        // Pass self as userdata - we'll use it to call the Swift callback
-        let userdata = Unmanaged.passUnretained(self).toOpaque()
-        ghostty_surface_set_write_callback(surface, { userdata, data, len in
-            guard let userdata = userdata else { return }
-            let view = Unmanaged<GhosttyTerminalView>.fromOpaque(userdata).takeUnretainedValue()
-            guard let data = data, len > 0 else { return }
-            let swiftData = Data(bytes: data, count: len)
-            // Call directly - Ghostty calls this from main thread, no queue hop needed
-            view.writeCallback?(swiftData)
-        }, userdata)
+        ghostty_surface_external_exited(surface, exitCode)
+        requestRender()
     }
 
     /// Send text to the terminal (used by voice input)
