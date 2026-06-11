@@ -16,32 +16,35 @@ import UIKit
 #endif
 
 /// External-backend write callback (terminal → embedder). Invoked by libghostty
-/// on the IO thread when the user produces input. Copies the bytes, then hops to
-/// the main thread (matching the old custom-io contract and `GhosttyTerminalView`'s
-/// `@MainActor` isolation) and forwards to `writeCallback`. `DispatchQueue.main.async`
-/// preserves input ordering (FIFO).
+/// on the IO thread when the user produces input. Recovers the view from the
+/// surface userdata while the callback is live (the surface — and thus the view
+/// it points to — is valid for the call's duration), captures it WEAKLY, then
+/// hops to the main thread (matching the old custom-io contract and
+/// `GhosttyTerminalView`'s `@MainActor` isolation) and forwards to `writeCallback`.
+/// The weak capture avoids a use-after-free if the view is torn down between the
+/// dispatch and its execution. `DispatchQueue.main.async` preserves input ordering.
 private let ghosttyExternalWriteCallback: ghostty_write_callback_fn = { surface, data, len in
     guard let surface, let data, len > 0 else { return }
     guard let ud = ghostty_surface_userdata(surface) else { return }
+    let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
     let swiftData = Data(bytes: data, count: Int(len))
-    DispatchQueue.main.async {
-        let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
-        view.writeCallback?(swiftData)
+    DispatchQueue.main.async { [weak view] in
+        view?.writeCallback?(swiftData)
     }
 }
 
 /// External-backend resize callback (terminal grid changed → embedder should send
-/// an SSH window-change). Invoked on the IO thread; hops to main and forwards
-/// cols/rows to the view's `onResize`. Pixel dims are available but SSH only needs
-/// cols/rows.
+/// an SSH window-change). Invoked on the IO thread; recovers the view live,
+/// captures it weakly, hops to main, and forwards cols/rows to the view's
+/// `onResize`. Pixel dims are available but SSH only needs cols/rows.
 private let ghosttyExternalResizeCallback: ghostty_resize_callback_fn = { surface, cols, rows, _, _ in
     guard let surface else { return }
     guard let ud = ghostty_surface_userdata(surface) else { return }
+    let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
     let c = Int(cols)
     let r = Int(rows)
-    DispatchQueue.main.async {
-        let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
-        view.onResize?(c, r)
+    DispatchQueue.main.async { [weak view] in
+        view?.onResize?(c, r)
     }
 }
 
