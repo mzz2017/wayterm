@@ -74,7 +74,8 @@ enum SSHConnectionRunner {
                 logger.info("SSH shell ended")
                 // External backend: tell ghostty the session ended so it shows the
                 // real "session ended" UI (same as a local process exit).
-                terminal.externalExited(0)
+                // GhosttyTerminalView is @MainActor; hop to main to call it.
+                await MainActor.run { terminal.externalExited(0) }
                 await onProcessExit()
                 return
             } catch {

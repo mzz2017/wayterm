@@ -16,24 +16,33 @@ import UIKit
 #endif
 
 /// External-backend write callback (terminal → embedder). Invoked by libghostty
-/// on the IO thread when the user produces input. Recovers the view via the
-/// surface userdata VVTerm sets at creation and forwards to `writeCallback`.
+/// on the IO thread when the user produces input. Copies the bytes, then hops to
+/// the main thread (matching the old custom-io contract and `GhosttyTerminalView`'s
+/// `@MainActor` isolation) and forwards to `writeCallback`. `DispatchQueue.main.async`
+/// preserves input ordering (FIFO).
 private let ghosttyExternalWriteCallback: ghostty_write_callback_fn = { surface, data, len in
     guard let surface, let data, len > 0 else { return }
     guard let ud = ghostty_surface_userdata(surface) else { return }
-    let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
     let swiftData = Data(bytes: data, count: Int(len))
-    view.writeCallback?(swiftData)
+    DispatchQueue.main.async {
+        let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
+        view.writeCallback?(swiftData)
+    }
 }
 
 /// External-backend resize callback (terminal grid changed → embedder should send
-/// an SSH window-change). Invoked on the IO thread. Forwards cols/rows to the
-/// view's `onResize`; pixel dims are available but SSH only needs cols/rows.
+/// an SSH window-change). Invoked on the IO thread; hops to main and forwards
+/// cols/rows to the view's `onResize`. Pixel dims are available but SSH only needs
+/// cols/rows.
 private let ghosttyExternalResizeCallback: ghostty_resize_callback_fn = { surface, cols, rows, _, _ in
     guard let surface else { return }
     guard let ud = ghostty_surface_userdata(surface) else { return }
-    let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
-    view.onResize?(Int(cols), Int(rows))
+    let c = Int(cols)
+    let r = Int(rows)
+    DispatchQueue.main.async {
+        let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
+        view.onResize?(c, r)
+    }
 }
 
 /// Manages Metal rendering setup and configuration for Ghostty terminal
