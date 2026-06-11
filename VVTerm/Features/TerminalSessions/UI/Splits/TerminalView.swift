@@ -1054,7 +1054,6 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         terminalView.writeCallback = { [weak coordinator] data in
             coordinator?.sendToSSH(data)
         }
-        terminalView.setupWriteCallback()
 
         // Setup resize callback to notify SSH of terminal size changes
         terminalView.onResize = { [weak coordinator] cols, rows in
@@ -1250,7 +1249,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
                     },
                     shouldContinueStreaming: { data, terminal in
                         guard self.terminal != nil else { return false }
-                        terminal.feedData(data)
+                        terminal.writeOutput(data)
                         return true
                     },
                     shouldResetClient: { sshError in
@@ -1273,7 +1272,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
                     onFailure: { error, terminal in
                         let errorMsg = "\r\n\u{001B}[31mSSH Error: \(error.localizedDescription)\u{001B}[0m\r\n"
                         if let data = errorMsg.data(using: .utf8) {
-                            terminal.feedData(data)
+                            terminal.writeOutput(data)
                         }
                         TerminalTabManager.shared.updatePaneState(paneId, connectionState: .failed(error.localizedDescription))
                     }
