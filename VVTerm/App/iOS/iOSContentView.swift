@@ -28,14 +28,19 @@ struct iOSContentView: View {
     @State private var connectingServer: Server?
     @State private var isConnecting = false
 
-    private var hasTerminalNavigationContext: Bool {
-        isConnecting || connectingServer != nil || !sessionManager.sessions.isEmpty
+    private var rootNavigationState: IOSRootNavigationState {
+        IOSRootNavigationState(
+            isConnecting: isConnecting,
+            connectingServerId: connectingServer?.id,
+            sessionServerIds: sessionManager.sessions.map(\.serverId)
+        )
     }
 
     private var preferredConnectViewId: String {
-        viewTabConfig.isTabVisible(ConnectionViewTab.terminal.id)
-            ? ConnectionViewTab.terminal.id
-            : viewTabConfig.effectiveDefaultTab()
+        IOSConnectionViewSelectionPolicy.preferredConnectViewId(
+            isTerminalVisible: viewTabConfig.isTabVisible(ConnectionViewTab.terminal.id),
+            effectiveDefaultViewId: viewTabConfig.effectiveDefaultTab()
+        )
     }
 
     var body: some View {
@@ -108,7 +113,10 @@ struct iOSContentView: View {
             if selectedWorkspace == nil {
                 selectedWorkspace = serverManager.workspaces.first
             }
-            if showingTerminal && !hasTerminalNavigationContext {
+            if IOSRootNavigationPolicy.shouldDismissTerminal(
+                isShowingTerminal: showingTerminal,
+                state: rootNavigationState
+            ) {
                 showingTerminal = false
             }
         }
@@ -119,17 +127,23 @@ struct iOSContentView: View {
         }
         // Sync navigation state with session state - dismiss terminal if session is gone
         .onChangeCompat(of: sessionManager.sessions) { _ in
-            if showingTerminal && !hasTerminalNavigationContext {
+            if IOSRootNavigationPolicy.shouldDismissTerminal(
+                isShowingTerminal: showingTerminal,
+                state: rootNavigationState
+            ) {
                 showingTerminal = false
             }
-            if let connectingServer,
-               sessionManager.sessions.contains(where: { $0.serverId == connectingServer.id }) {
+            if IOSRootNavigationPolicy.shouldClearConnectingState(rootNavigationState) {
                 isConnecting = false
                 self.connectingServer = nil
             }
         }
         .onChange(of: sessionManager.selectedSessionId) { selectedId in
-            if showingTerminal && selectedId == nil && !hasTerminalNavigationContext {
+            if IOSRootNavigationPolicy.shouldDismissTerminalAfterSelectedSessionChange(
+                isShowingTerminal: showingTerminal,
+                selectedSessionId: selectedId,
+                state: rootNavigationState
+            ) {
                 showingTerminal = false
             }
         }
@@ -191,9 +205,10 @@ struct iOSServerListView: View {
     }
 
     private var preferredConnectViewId: String {
-        viewTabConfig.isTabVisible(ConnectionViewTab.terminal.id)
-            ? ConnectionViewTab.terminal.id
-            : viewTabConfig.effectiveDefaultTab()
+        IOSConnectionViewSelectionPolicy.preferredConnectViewId(
+            isTerminalVisible: viewTabConfig.isTabVisible(ConnectionViewTab.terminal.id),
+            effectiveDefaultViewId: viewTabConfig.effectiveDefaultTab()
+        )
     }
 
     var body: some View {
@@ -542,49 +557,32 @@ struct iOSServerListView: View {
     }
 
     private var activeConnections: [ActiveConnection] {
-        let grouped = Dictionary(grouping: sessionManager.sessions, by: { $0.serverId })
-        return grouped.compactMap { serverId, sessions in
-            guard let session = representativeSession(for: sessions) else { return nil }
-            return ActiveConnection(id: serverId, session: session, tabCount: sessions.count)
+        let sessionsById = Dictionary(uniqueKeysWithValues: sessionManager.sessions.map { ($0.id, $0) })
+        let snapshots = sessionManager.sessions.map {
+            IOSActiveConnectionSessionSnapshot(
+                id: $0.id,
+                serverId: $0.serverId,
+                displayTitle: sessionManager.displayTitle(for: $0)
+            )
         }
-        .sorted { lhs, rhs in
-            let lhsTitle = sessionManager.displayTitle(for: lhs.session)
-            let rhsTitle = sessionManager.displayTitle(for: rhs.session)
-            return lhsTitle.localizedCaseInsensitiveCompare(rhsTitle) == .orderedAscending
-        }
-    }
 
-    private func representativeSession(for sessions: [ConnectionSession]) -> ConnectionSession? {
-        if let selectedId = sessionManager.selectedSessionId,
-           let match = sessions.first(where: { $0.id == selectedId }) {
-            return match
+        return IOSServerListPolicy.activeConnections(
+            from: snapshots,
+            selectedSessionId: sessionManager.selectedSessionId
+        ).compactMap { snapshot in
+            guard let session = sessionsById[snapshot.representativeSessionId] else { return nil }
+            return ActiveConnection(id: snapshot.serverId, session: session, tabCount: snapshot.tabCount)
         }
-        return sessions.first
     }
 
     private var filteredServers: [Server] {
-        guard let workspace = selectedWorkspace else {
-            // If no workspace selected, show all servers
-            let allServers = serverManager.servers
-            if searchText.isEmpty { return allServers }
-            let lowercased = searchText.lowercased()
-            return allServers.filter {
-                $0.name.lowercased().contains(lowercased) ||
-                $0.host.lowercased().contains(lowercased)
-            }
-        }
-
-        var servers = serverManager.servers(in: workspace, environment: selectedEnvironment)
-
-        if !searchText.isEmpty {
-            let lowercased = searchText.lowercased()
-            servers = servers.filter {
-                $0.name.lowercased().contains(lowercased) ||
-                $0.host.lowercased().contains(lowercased)
-            }
-        }
-
-        return servers.sorted { $0.name < $1.name }
+        let serversById = Dictionary(uniqueKeysWithValues: serverManager.servers.map { ($0.id, $0) })
+        return IOSServerListPolicy.filteredServers(
+            serverManager.servers.map(\.iosServerListSnapshot),
+            selectedWorkspaceId: selectedWorkspace?.id,
+            selectedEnvironmentId: selectedEnvironment?.id,
+            searchText: searchText
+        ).compactMap { serversById[$0.id] }
     }
 
     private var listRefreshIdentity: String {
@@ -596,16 +594,11 @@ struct iOSServerListView: View {
     }
 
     private var serverCountsByEnvironment: [UUID: Int] {
-        guard let workspace = selectedWorkspace else { return [:] }
-
-        var counts: [UUID: Int] = [:]
-        let workspaceServers = serverManager.servers.filter { $0.workspaceId == workspace.id }
-
-        for env in workspace.environments {
-            counts[env.id] = workspaceServers.filter { $0.environment.id == env.id }.count
-        }
-
-        return counts
+        IOSServerListPolicy.serverCountsByEnvironment(
+            servers: serverManager.servers.map(\.iosServerListSnapshot),
+            workspaceId: selectedWorkspace?.id,
+            environmentIds: selectedWorkspace?.environments.map(\.id) ?? []
+        )
     }
 
     private func presentAddServer(prefill: ServerFormPrefill? = nil) {
@@ -643,6 +636,18 @@ struct iOSServerListView: View {
 
     private func server(for serverId: UUID) -> Server? {
         serverManager.servers.first { $0.id == serverId }
+    }
+}
+
+private extension Server {
+    var iosServerListSnapshot: IOSServerListServerSnapshot {
+        IOSServerListServerSnapshot(
+            id: id,
+            workspaceId: workspaceId,
+            environmentId: environment.id,
+            name: name,
+            host: host
+        )
     }
 }
 
@@ -865,11 +870,10 @@ struct iOSTerminalView: View {
     }
 
     private var effectiveSelectedSessionId: UUID? {
-        if let selectedId = sessionManager.selectedSessionId,
-           serverSessions.contains(where: { $0.id == selectedId }) {
-            return selectedId
-        }
-        return serverSessions.first?.id
+        IOSTerminalViewPolicy.effectiveSelectedSessionId(
+            selectedSessionId: sessionManager.selectedSessionId,
+            serverSessionIds: serverSessions.map(\.id)
+        )
     }
 
     private var selectedView: String {
@@ -936,9 +940,11 @@ struct iOSTerminalView: View {
             set: { newValue in
                 let current = viewTabConfig.effectiveView(for: sessionManager.selectedViewByServer[serverId])
                 guard current != newValue else { return }
-                sessionManager.selectedViewByServer[serverId] = viewTabConfig.isTabVisible(newValue)
-                    ? newValue
-                    : viewTabConfig.effectiveDefaultTab()
+                sessionManager.selectedViewByServer[serverId] = IOSConnectionViewSelectionPolicy.storedViewId(
+                    requestedViewId: newValue,
+                    isRequestedViewVisible: viewTabConfig.isTabVisible(newValue),
+                    effectiveDefaultViewId: viewTabConfig.effectiveDefaultTab()
+                )
             }
         )
     }
@@ -955,43 +961,28 @@ struct iOSTerminalView: View {
     }
 
     private func baseFileTabTitle(for tab: RemoteFileTab) -> String {
-        let candidatePath = fileBrowser.lastVisitedPath(for: tab)
-            ?? tab.lastKnownPath
-            ?? tab.seedPath
-
-        guard let candidatePath else {
-            return selectedServer?.name.nonEmptyString ?? "/"
-        }
-
-        let normalizedPath = RemoteFilePath.normalize(candidatePath)
-        guard normalizedPath != "/" else {
-            return selectedServer?.name.nonEmptyString ?? "/"
-        }
-
-        return RemoteFilePath.breadcrumbs(for: normalizedPath).last?.title
-            ?? (selectedServer?.name.nonEmptyString ?? "/")
+        IOSFileTabTitlePolicy.baseTitle(
+            for: fileTabTitleInput(for: tab),
+            serverName: selectedServer?.name.nonEmptyString
+        )
     }
 
     private func displayedFileTabTitle(for tab: RemoteFileTab) -> String {
-        let baseTitles = Dictionary(
-            uniqueKeysWithValues: serverFileTabs.map { ($0.id, baseFileTabTitle(for: $0)) }
+        let resolvedTitles = IOSFileTabTitlePolicy.displayedTitles(
+            for: serverFileTabs.map { fileTabTitleInput(for: $0) },
+            serverName: selectedServer?.name.nonEmptyString
         )
-        let titleCounts = Dictionary(grouping: baseTitles.values, by: { $0 }).mapValues(\.count)
-        var seenCounts: [String: Int] = [:]
-        var resolvedTitles: [UUID: String] = [:]
-
-        for tab in serverFileTabs {
-            let baseTitle = baseTitles[tab.id] ?? (selectedServer?.name.nonEmptyString ?? "/")
-            guard (titleCounts[baseTitle] ?? 0) > 1 else {
-                resolvedTitles[tab.id] = baseTitle
-                continue
-            }
-
-            seenCounts[baseTitle, default: 0] += 1
-            resolvedTitles[tab.id] = "\(baseTitle) (\(seenCounts[baseTitle, default: 0]))"
-        }
-
         return resolvedTitles[tab.id] ?? baseFileTabTitle(for: tab)
+    }
+
+    private func fileTabTitleInput(for tab: RemoteFileTab) -> IOSFileTabTitleInput {
+        IOSFileTabTitleInput(
+            id: tab.id,
+            serverId: tab.serverId,
+            seedPath: tab.seedPath,
+            lastKnownPath: tab.lastKnownPath,
+            lastVisitedPath: fileBrowser.lastVisitedPath(for: tab)
+        )
     }
 
     private var tmuxAttachPromptBinding: Binding<TmuxAttachPrompt?> {
@@ -1026,23 +1017,25 @@ struct iOSTerminalView: View {
     }
 
     private func attemptForegroundReconnectIfNeeded(refreshTerminal: Bool = false) {
-        guard selectedView == "terminal" else { return }
         guard let session = selectedSession else { return }
+        guard let action = IOSTerminalViewPolicy.foregroundReconnectAction(
+            selectedViewId: selectedView,
+            selectedSession: session.iosTerminalSessionSnapshot,
+            refreshTerminal: refreshTerminal,
+            autoReconnectEnabled: autoReconnectEnabled,
+            isSuspendingForBackground: sessionManager.isSuspendingForBackground
+        ) else {
+            return
+        }
 
-        if refreshTerminal {
+        if action.shouldRefreshTerminal {
             activateTerminal(session)
         }
 
-        guard autoReconnectEnabled else { return }
-        guard !sessionManager.isSuspendingForBackground else { return }
-
-        switch session.connectionState {
-        case .disconnected, .failed:
+        if action.shouldReconnect {
             Task { try? await sessionManager.reconnect(session: session) }
-            reconnectTokenBySession[session.id] = UUID()
-            shouldShowTerminalBySession[session.id] = true
-        default:
-            break
+            reconnectTokenBySession[action.sessionId] = UUID()
+            shouldShowTerminalBySession[action.sessionId] = action.shouldForceTerminalVisible
         }
     }
 
@@ -1699,13 +1692,19 @@ struct iOSTerminalView: View {
     }
 
     private func prepareTerminal(session: ConnectionSession, viewSelection: String, terminalAlreadyExists: Bool) {
-        guard viewSelection == "terminal" else { return }
-        if terminalAlreadyExists {
-            refreshTerminal(for: session)
+        switch IOSTerminalViewPolicy.terminalPreparation(
+            sessionId: session.id,
+            selectedViewId: viewSelection,
+            terminalAlreadyExists: terminalAlreadyExists,
+            isTerminalAlreadyScheduled: shouldShowTerminalBySession[session.id] == true
+        ) {
+        case .none:
             return
+        case .refreshExisting:
+            refreshTerminal(for: session)
+        case .markVisible:
+            shouldShowTerminalBySession[session.id] = true
         }
-        if shouldShowTerminalBySession[session.id] == true { return }
-        shouldShowTerminalBySession[session.id] = true
     }
 
     private func activateTerminal(_ session: ConnectionSession) {
@@ -1737,9 +1736,10 @@ struct iOSTerminalView: View {
             do {
                 let session = try await sessionManager.openConnection(to: server, forceNew: true)
                 await MainActor.run {
-                    sessionManager.selectedViewByServer[server.id] = viewTabConfig.isTabVisible(ConnectionViewTab.terminal.id)
-                        ? ConnectionViewTab.terminal.id
-                        : viewTabConfig.effectiveDefaultTab()
+                    sessionManager.selectedViewByServer[server.id] = IOSConnectionViewSelectionPolicy.preferredConnectViewId(
+                        isTerminalVisible: viewTabConfig.isTabVisible(ConnectionViewTab.terminal.id),
+                        effectiveDefaultViewId: viewTabConfig.effectiveDefaultTab()
+                    )
                     currentServerId = server.id
                     shouldShowTerminalBySession[session.id] = true
                     reconnectTokenBySession[session.id] = session.id
@@ -1766,9 +1766,11 @@ struct iOSTerminalView: View {
 
         guard let newTab else { return }
         fileBrowser.prepareNewTab(newTab, duplicating: sourceTab)
-        sessionManager.selectedViewByServer[server.id] = viewTabConfig.isTabVisible(ConnectionViewTab.files.id)
-            ? ConnectionViewTab.files.id
-            : viewTabConfig.effectiveDefaultTab()
+        sessionManager.selectedViewByServer[server.id] = IOSConnectionViewSelectionPolicy.storedViewId(
+            requestedViewId: ConnectionViewTab.files.id,
+            isRequestedViewVisible: viewTabConfig.isTabVisible(ConnectionViewTab.files.id),
+            effectiveDefaultViewId: viewTabConfig.effectiveDefaultTab()
+        )
     }
 
     private func closeFileTab(_ tab: RemoteFileTab) {
@@ -1789,18 +1791,19 @@ struct iOSTerminalView: View {
     }
 
     private func synchronizeRecoveredTerminalState() {
-        if !canUseZenMode {
-            showingZenPanel = false
-            isZenModeEnabled = false
+        let recoveredState = IOSTerminalViewPolicy.recoveredTerminalState(
+            canUseZenMode: canUseZenMode,
+            requestedTerminalDismissal: requestedTerminalDismissal
+        )
+        if let shouldShowZenPanel = recoveredState.shouldShowZenPanel {
+            showingZenPanel = shouldShowZenPanel
         }
-
-        guard !canUseZenMode else {
-            requestedTerminalDismissal = false
-            return
+        if let shouldEnableZenMode = recoveredState.isZenModeEnabled {
+            isZenModeEnabled = shouldEnableZenMode
         }
+        requestedTerminalDismissal = recoveredState.requestedTerminalDismissal
 
-        guard !requestedTerminalDismissal else { return }
-        requestedTerminalDismissal = true
+        guard recoveredState.shouldCallBack else { return }
         DispatchQueue.main.async {
             onBack()
         }
@@ -2022,6 +2025,35 @@ struct iOSTerminalView: View {
         generator.impactOccurred()
     }
 
+}
+
+private extension ConnectionSession {
+    var iosTerminalSessionSnapshot: IOSTerminalSessionSnapshot {
+        IOSTerminalSessionSnapshot(
+            id: id,
+            serverId: serverId,
+            connectionState: connectionState.iosTerminalConnectionState
+        )
+    }
+}
+
+private extension ConnectionState {
+    var iosTerminalConnectionState: IOSTerminalConnectionState {
+        switch self {
+        case .disconnected:
+            return .disconnected
+        case .connecting:
+            return .connecting
+        case .connected:
+            return .connected
+        case .reconnecting:
+            return .reconnecting
+        case .failed:
+            return .failed
+        case .idle:
+            return .idle
+        }
+    }
 }
 
 #if os(iOS)

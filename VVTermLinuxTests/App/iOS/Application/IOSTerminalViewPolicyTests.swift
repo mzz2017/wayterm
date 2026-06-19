@@ -71,4 +71,16 @@ final class IOSTerminalViewPolicyTests: XCTestCase {
             shouldCallBack: true
         ))
     }
+
+    func testRecoveredStatePreservesZenVisibilityWhenTerminalContextStillExists() {
+        let result = IOSTerminalViewPolicy.recoveredTerminalState(
+            canUseZenMode: true,
+            requestedTerminalDismissal: true
+        )
+
+        XCTAssertEqual(result.shouldShowZenPanel, nil)
+        XCTAssertEqual(result.isZenModeEnabled, nil)
+        XCTAssertEqual(result.requestedTerminalDismissal, false)
+        XCTAssertFalse(result.shouldCallBack)
+    }
 }

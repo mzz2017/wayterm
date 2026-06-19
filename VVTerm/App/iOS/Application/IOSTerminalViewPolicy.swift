@@ -29,8 +29,8 @@ struct IOSTerminalForegroundReconnectAction: Equatable {
 }
 
 struct IOSTerminalRecoveredState: Equatable {
-    let shouldShowZenPanel: Bool
-    let isZenModeEnabled: Bool
+    let shouldShowZenPanel: Bool?
+    let isZenModeEnabled: Bool?
     let requestedTerminalDismissal: Bool
     let shouldCallBack: Bool
 }
@@ -100,8 +100,8 @@ enum IOSTerminalViewPolicy {
         }
 
         return IOSTerminalRecoveredState(
-            shouldShowZenPanel: true,
-            isZenModeEnabled: true,
+            shouldShowZenPanel: nil,
+            isZenModeEnabled: nil,
             requestedTerminalDismissal: false,
             shouldCallBack: false
         )
