@@ -72,6 +72,10 @@ enum SSHConnectionRunner {
 
                 guard !Task.isCancelled else { return }
                 logger.info("SSH shell ended")
+                // External backend: tell ghostty the session ended so it shows the
+                // real "session ended" UI (same as a local process exit).
+                // GhosttyTerminalView is @MainActor; hop to main to call it.
+                await MainActor.run { terminal.externalExited(0) }
                 await onProcessExit()
                 return
             } catch {
@@ -278,7 +282,7 @@ extension SSHTerminalCoordinator {
                 shouldContinueStreaming: { data, terminal in
                     let sessionExists = ConnectionSessionManager.shared.sessions.contains { $0.id == sessionId }
                     guard sessionExists else { return false }
-                    terminal.feedData(data)
+                    terminal.writeOutput(data)
                     return true
                 },
                 shouldResetClient: { sshError in
@@ -301,7 +305,7 @@ extension SSHTerminalCoordinator {
                 onFailure: { error, terminal in
                     let errorMsg = "\r\n\u{001B}[31mSSH Error: \(error.localizedDescription)\u{001B}[0m\r\n"
                     if let data = errorMsg.data(using: .utf8) {
-                        terminal.feedData(data)
+                        terminal.writeOutput(data)
                     }
                     ConnectionSessionManager.shared.updateSessionState(sessionId, to: .failed(error.localizedDescription))
                 }
@@ -471,7 +475,6 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         terminalView.writeCallback = { [weak coordinator] data in
             coordinator?.sendToSSH(data)
         }
-        terminalView.setupWriteCallback()
 
         // Setup resize callback to notify SSH of terminal size changes
         terminalView.onResize = { [weak coordinator] cols, rows in
@@ -787,7 +790,6 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         terminalView.writeCallback = { [weak coordinator] data in
             coordinator?.sendToSSH(data)
         }
-        terminalView.setupWriteCallback()
         terminalView.onResize = { [session] cols, rows in
             guard cols > 0 && rows > 0 else { return }
             Task {

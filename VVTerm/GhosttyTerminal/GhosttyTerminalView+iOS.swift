@@ -1245,7 +1245,6 @@ class GhosttyTerminalView: UIView {
 
         // Stop rendering/input callbacks and mark the surface as not visible.
         if let cSurface = surface?.unsafeCValue {
-            ghostty_surface_set_write_callback(cSurface, nil, nil)
             ghostty_surface_set_focus(cSurface, false)
             ghostty_surface_set_occlusion(cSurface, false)
         }
@@ -4136,38 +4135,33 @@ class GhosttyTerminalView: UIView {
         }
     }
 
-    // MARK: - Custom I/O API (for SSH clients)
+    // MARK: - External backend I/O (for SSH clients)
 
-    /// Callback invoked when user types in the terminal
+    /// Callback invoked when user types in the terminal. The External backend's
+    /// write callback (registered at surface creation) recovers this view via
+    /// userdata and forwards to this closure.
     var writeCallback: ((Data) -> Void)?
 
-    /// Feed data from SSH channel to the terminal for rendering.
-    func feedData(_ data: Data) {
+    /// Feed data from the SSH channel into the terminal for rendering (External backend).
+    func writeOutput(_ data: Data) {
         guard let surface = surface?.unsafeCValue else { return }
 
         // Feed data to terminal
         data.withUnsafeBytes { buffer in
-            guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-            ghostty_surface_feed_data(surface, ptr, buffer.count)
+            guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
+            ghostty_surface_write_output(surface, ptr, buffer.count)
         }
 
         scheduleCustomIORedraw()
         requestRender()
     }
 
-    /// Setup the write callback to capture keyboard input
-    func setupWriteCallback() {
+    /// Notify the terminal that the SSH session ended (External backend).
+    func externalExited(_ exitCode: UInt32 = 0) {
         guard let surface = surface?.unsafeCValue else { return }
-
-        let userdata = Unmanaged.passUnretained(self).toOpaque()
-        ghostty_surface_set_write_callback(surface, { userdata, data, len in
-            guard let userdata = userdata else { return }
-            let view = Unmanaged<GhosttyTerminalView>.fromOpaque(userdata).takeUnretainedValue()
-            guard let data = data, len > 0 else { return }
-            let swiftData = Data(bytes: data, count: len)
-            // Call directly - Ghostty calls this from main thread, no queue hop needed
-            view.writeCallback?(swiftData)
-        }, userdata)
+        ghostty_surface_external_exited(surface, exitCode)
+        scheduleCustomIORedraw()
+        requestRender()
     }
 
 }
