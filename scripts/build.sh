@@ -302,12 +302,12 @@ PY
     local macos_lib
     local ios_lib
     local sim_lib
-    macos_lib=$(find "${xcframework}" -path "*/macos-*/libghostty*.a" -type f -print -quit)
-    ios_lib=$(find "${xcframework}" -path "*/ios-arm64/libghostty*.a" -type f -print -quit)
-    sim_lib=$(find "${xcframework}" -path "*/ios-arm64-simulator/libghostty*.a" -type f -print -quit)
+    macos_lib=$(find "${xcframework}" -path "*/macos-*/*.a" -type f -print -quit)
+    ios_lib=$(find "${xcframework}" -path "*/ios-arm64/*.a" -type f -print -quit)
+    sim_lib=$(find "${xcframework}" -path "*/ios-arm64-simulator/*.a" -type f -print -quit)
 
     if [ -z "${macos_lib}" ] || [ -z "${ios_lib}" ] || [ -z "${sim_lib}" ]; then
-        log_error "Failed to locate libghostty.a inside xcframework"
+        log_error "Failed to locate static libraries inside GhosttyKit.xcframework"
         exit 1
     fi
 
