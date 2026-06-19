@@ -773,6 +773,7 @@ extension Ghostty {
                     guard let terminalView = terminalView else { return }
                     // Convert from backing (pixel) coordinates to points
                     terminalView.cellSize = terminalView.convertFromBacking(backingSize)
+                    NotificationCenter.default.post(name: .ghosttyDidUpdateCellSize, object: terminalView)
                 }
                 #else
                 let cellSize = action.action.cell_size
@@ -784,6 +785,7 @@ extension Ghostty {
                         width: Double(cellSize.width) / scale,
                         height: Double(cellSize.height) / scale
                     )
+                    NotificationCenter.default.post(name: .ghosttyDidUpdateCellSize, object: terminalView)
                 }
                 #endif
                 return true

@@ -35,9 +35,20 @@ let package = Package(
             ]
         ),
         .target(
+            name: "VVTermTerminalCoreLogic",
+            path: "VVTerm/Core/Terminal/Logic"
+        ),
+        .target(
             name: "VVTermIOSApplicationLogic",
             dependencies: ["VVTermRemoteFilesDomain"],
             path: "VVTerm/App/iOS/Application"
+        ),
+        .testTarget(
+            name: "VVTermTerminalCoreLogicTests",
+            dependencies: [
+                "VVTermTerminalCoreLogic"
+            ],
+            path: "VVTermLinuxTests/Core/Terminal"
         ),
         .testTarget(
             name: "VVTermIOSApplicationLogicTests",

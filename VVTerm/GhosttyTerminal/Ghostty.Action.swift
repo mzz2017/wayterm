@@ -48,6 +48,9 @@ extension Notification.Name {
     /// userInfo contains ScrollbarKey with Ghostty.Action.Scrollbar value.
     static let ghosttyDidUpdateScrollbar = Notification.Name("win.aizen.app.ghostty.didUpdateScrollbar")
 
+    /// Posted when the terminal cell size changes.
+    static let ghosttyDidUpdateCellSize = Notification.Name("win.aizen.app.ghostty.didUpdateCellSize")
+
     /// Key for scrollbar state in notification userInfo
     static let ScrollbarKey = ghosttyDidUpdateScrollbar.rawValue + ".scrollbar"
 }

@@ -715,9 +715,6 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
                 }
             }
 
-            if existingTerminal.superview != nil {
-                existingTerminal.removeFromSuperview()
-            }
             if size.width > 0 && size.height > 0 {
                 coordinator.lastReportedSize = size
                 existingTerminal.frame = CGRect(origin: .zero, size: size)
@@ -738,7 +735,7 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
                     coordinator.startSSHConnection(terminal: existingTerminal)
                 }
             }
-            return existingTerminal
+            return terminalHostView(for: existingTerminal)
         }
 
         let initialSize = (size.width > 0 && size.height > 0) ? size : CGSize(width: 800, height: 600)
@@ -809,11 +806,12 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             terminalView.pauseRendering()
         }
 
-        return terminalView
+        return terminalHostView(for: terminalView)
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
-        guard let terminalView = uiView as? GhosttyTerminalView else {
+        let nativeScrollContainer = uiView as? TerminalNativeScrollContainerView
+        guard let terminalView = Self.terminalView(from: uiView) else {
             return
         }
 
@@ -838,6 +836,8 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         if size.width > 0, size.height > 0, size != context.coordinator.lastReportedSize {
             context.coordinator.lastReportedSize = size
             terminalView.sizeDidChange(size)
+            nativeScrollContainer?.setNeedsLayout()
+            nativeScrollContainer?.refreshNativeScrollState()
         }
 
         if context.coordinator.isTerminalReady {
@@ -912,7 +912,7 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
-        guard let terminalView = uiView as? GhosttyTerminalView else { return }
+        guard let terminalView = terminalView(from: uiView) else { return }
 
         // Check if session still exists - if it does, user just navigated away
         // Keep terminal alive for when they come back
@@ -938,6 +938,25 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         coordinator.terminalView = nil
         ConnectionSessionManager.shared.unregisterTerminal(for: coordinator.sessionId)
         coordinator.cancelShell()
+    }
+
+    private func terminalHostView(for terminalView: GhosttyTerminalView) -> UIView {
+        guard TerminalNativeScrollContainerView.isEnabled else {
+            TerminalNativeScrollContainerView.detachExistingContainer(containing: terminalView)
+            terminalView.setNativeHostScrollContainerEnabled(false)
+            return terminalView
+        }
+        return TerminalNativeScrollContainerView(terminalView: terminalView)
+    }
+
+    private static func terminalView(from uiView: UIView) -> GhosttyTerminalView? {
+        if let terminalView = uiView as? GhosttyTerminalView {
+            return terminalView
+        }
+        if let container = uiView as? TerminalNativeScrollContainerView {
+            return container.terminalView
+        }
+        return nil
     }
 
     // MARK: - Coordinator

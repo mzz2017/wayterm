@@ -919,6 +919,7 @@ class GhosttyTerminalView: UIView {
     private var isSelecting = false
     private var isScrolling = false
     private var isPinchingTerminalZoom = false
+    private var isNativeHostScrollContainerEnabled = false
     private var pinchReferenceScale: CGFloat = 1
     private let zoomIndicatorView = TerminalZoomIndicatorView()
     private var zoomIndicatorHideWorkItem: DispatchWorkItem?
@@ -2103,8 +2104,38 @@ class GhosttyTerminalView: UIView {
     private var momentumVelocity: CGPoint = .zero
     private var momentumPhase: Ghostty.Input.Momentum = .none
 
+    func setNativeHostScrollContainerEnabled(_ enabled: Bool) {
+        isNativeHostScrollContainerEnabled = enabled
+        if enabled {
+            stopMomentumScrolling()
+        }
+    }
+
+    func prepareForNativeHostScroll() {
+        isScrolling = false
+        stopMomentumScrolling()
+    }
+
+    func currentScrollOwner() -> TerminalScrollOwner {
+        TerminalScrollRoutingPolicy.owner(for: TerminalScrollContext(
+            remoteScrollOwnerActive: surface?.mouseCaptured ?? false,
+            hasHostScrollableRows: hasHostScrollableRows,
+            isSelecting: isTerminalSelectionActive,
+            isPinching: isPinchingTerminalZoom
+        ))
+    }
+
+    private var hasHostScrollableRows: Bool {
+        guard let scrollbar else { return false }
+        return scrollbar.total > scrollbar.len
+    }
+
     @objc private func handlePanGesture(_ recognizer: UIPanGestureRecognizer) {
         guard let surface = surface else { return }
+        if isNativeHostScrollContainerEnabled,
+           currentScrollOwner() == .hostScrollback {
+            return
+        }
         if isSelecting { return }
         if isPinchingTerminalZoom { return }
         if touchSelection != nil {
@@ -2298,6 +2329,12 @@ class GhosttyTerminalView: UIView {
             return false
         }
         return true
+    }
+
+    private var isTerminalSelectionActive: Bool {
+        isSelecting
+            || touchSelection != nil
+            || (usesNativeTouchSelection && (nativeSelectionInteractionActive || nativeSelectedRange != nil))
     }
 
     private func setupNativeTextSelectionInteractions() {
@@ -4295,6 +4332,10 @@ extension GhosttyTerminalView: UIGestureRecognizerDelegate {
             return canHandlePinchZoom
         }
         if gestureRecognizer == scrollRecognizer {
+            if isNativeHostScrollContainerEnabled,
+               currentScrollOwner() == .hostScrollback {
+                return false
+            }
             if usesNativeTouchSelection, nativeSelectionInteractionActive || nativeSelectedRange != nil {
                 return false
             }
