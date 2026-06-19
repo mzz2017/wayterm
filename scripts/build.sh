@@ -81,6 +81,20 @@ check_deps_ssh() {
     require_cmd xcrun
 }
 
+find_ghostty_xcframework_library() {
+    local xcframework="$1"
+    local slice_pattern="$2"
+    local lib
+
+    lib=$(find "${xcframework}" -path "*/${slice_pattern}/*.a" -type f -print -quit)
+    if [ -z "${lib}" ]; then
+        log_error "Failed to locate static library for ${slice_pattern} inside ${xcframework}"
+        exit 1
+    fi
+
+    printf "%s\n" "${lib}"
+}
+
 strip_lib() {
     local lib="$1"
     if command -v xcrun >/dev/null 2>&1; then
@@ -132,13 +146,14 @@ check_ghostty_vendor() {
         "ghostty_surface_external_exited"
         "ghostty_surface_in_alternate_screen"
     )
+    local xcframework="${VENDOR_GHOSTTY}/GhosttyKit.xcframework"
     local libs=(
         "${VENDOR_GHOSTTY}/lib/libghostty.a"
         "${VENDOR_GHOSTTY}/ios/lib/libghostty.a"
         "${VENDOR_GHOSTTY}/ios-simulator/lib/libghostty.a"
-        "${VENDOR_GHOSTTY}/GhosttyKit.xcframework/macos-arm64_x86_64/libghostty.a"
-        "${VENDOR_GHOSTTY}/GhosttyKit.xcframework/ios-arm64/libghostty-fat.a"
-        "${VENDOR_GHOSTTY}/GhosttyKit.xcframework/ios-arm64-simulator/libghostty-fat.a"
+        "$(find_ghostty_xcframework_library "${xcframework}" "macos-*")"
+        "$(find_ghostty_xcframework_library "${xcframework}" "ios-arm64")"
+        "$(find_ghostty_xcframework_library "${xcframework}" "ios-arm64-simulator")"
     )
     local symbols=(
         "ghostty_surface_write_output"
@@ -302,14 +317,9 @@ PY
     local macos_lib
     local ios_lib
     local sim_lib
-    macos_lib=$(find "${xcframework}" -path "*/macos-*/*.a" -type f -print -quit)
-    ios_lib=$(find "${xcframework}" -path "*/ios-arm64/*.a" -type f -print -quit)
-    sim_lib=$(find "${xcframework}" -path "*/ios-arm64-simulator/*.a" -type f -print -quit)
-
-    if [ -z "${macos_lib}" ] || [ -z "${ios_lib}" ] || [ -z "${sim_lib}" ]; then
-        log_error "Failed to locate static libraries inside GhosttyKit.xcframework"
-        exit 1
-    fi
+    macos_lib=$(find_ghostty_xcframework_library "${xcframework}" "macos-*")
+    ios_lib=$(find_ghostty_xcframework_library "${xcframework}" "ios-arm64")
+    sim_lib=$(find_ghostty_xcframework_library "${xcframework}" "ios-arm64-simulator")
 
     mkdir -p "${VENDOR_GHOSTTY}/lib" "${VENDOR_GHOSTTY}/ios/lib" "${VENDOR_GHOSTTY}/ios-simulator/lib"
     cp "${macos_lib}" "${VENDOR_GHOSTTY}/lib/libghostty.a"
