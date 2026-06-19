@@ -1,14 +1,14 @@
 import Foundation
 
-struct RemoteFileBreadcrumb: Identifiable, Hashable, Sendable {
-    let title: String
-    let path: String
+public struct RemoteFileBreadcrumb: Identifiable, Hashable, Sendable {
+    public let title: String
+    public let path: String
 
-    var id: String { path }
+    public var id: String { path }
 }
 
-enum RemoteFilePath {
-    static func normalize(_ path: String, relativeTo currentPath: String? = nil) -> String {
+public enum RemoteFilePath {
+    public static func normalize(_ path: String, relativeTo currentPath: String? = nil) -> String {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return currentPath ?? "/"
@@ -43,7 +43,7 @@ enum RemoteFilePath {
         return "/" + normalized.joined(separator: "/")
     }
 
-    static func parent(of path: String) -> String {
+    public static func parent(of path: String) -> String {
         let normalized = normalize(path)
         guard normalized != "/" else { return "/" }
 
@@ -55,12 +55,12 @@ enum RemoteFilePath {
         return "/" + components.joined(separator: "/")
     }
 
-    static func appending(_ name: String, to directoryPath: String) -> String {
+    public static func appending(_ name: String, to directoryPath: String) -> String {
         let separator = directoryPath == "/" ? "" : "/"
         return normalize(directoryPath + separator + name)
     }
 
-    static func breadcrumbs(for path: String) -> [RemoteFileBreadcrumb] {
+    public static func breadcrumbs(for path: String) -> [RemoteFileBreadcrumb] {
         let normalized = normalize(path)
         guard normalized != "/" else {
             return [RemoteFileBreadcrumb(title: "/", path: "/")]
