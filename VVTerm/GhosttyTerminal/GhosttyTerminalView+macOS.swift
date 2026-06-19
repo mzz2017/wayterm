@@ -134,6 +134,8 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
         richPasteInterceptor = nil
         writeCallback = nil
 
+        surface?.invalidateCallbackContext()
+
         // Stop rendering/input callbacks
         if let cSurface = surface?.unsafeCValue {
             ghostty_surface_set_focus(cSurface, false)
@@ -235,12 +237,14 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
             return
         }
 
+        let callbackContext = GhosttySurfaceCallbackContext(terminalView: self)
         guard let cSurface = renderingSetup.setupSurface(
             view: self,
             ghosttyApp: app,
             worktreePath: worktreePath,
             initialBounds: bounds,
             window: window,
+            surfaceCallbackContext: callbackContext,
             paneId: paneId,
             command: initialCommand,
             useCustomIO: useCustomIO
@@ -249,7 +253,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
         }
 
         // Wrap in Swift Surface class
-        self.surface = Ghostty.Surface(cSurface: cSurface)
+        self.surface = Ghostty.Surface(cSurface: cSurface, callbackContext: callbackContext)
 
         // Update handlers with surface
         imeHandler.updateSurface(self.surface)
@@ -798,7 +802,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
         // Feed data immediately - SSH read loop already batches appropriately
         data.withUnsafeBytes { buffer in
             guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
-            ghostty_surface_write_output(surface, ptr, buffer.count)
+            ghostty_surface_write_output(surface, ptr, UInt(buffer.count))
         }
 
         // Request render via display link (event-driven, will auto-stop when idle)

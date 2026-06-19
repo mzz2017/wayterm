@@ -55,6 +55,7 @@ enum TerminalScrollOwner: Equatable {
 
 struct TerminalScrollContext: Equatable {
     var remoteScrollOwnerActive: Bool
+    var remoteAlternateScreenActive: Bool = false
     var hasHostScrollableRows: Bool
     var isSelecting: Bool
     var isPinching: Bool
@@ -64,7 +65,9 @@ enum TerminalScrollRoutingPolicy {
     static func owner(for context: TerminalScrollContext) -> TerminalScrollOwner {
         if context.isSelecting { return .selection }
         if context.isPinching { return .pinchZoom }
-        if context.remoteScrollOwnerActive { return .remoteMouseApplication }
+        if context.remoteScrollOwnerActive || context.remoteAlternateScreenActive {
+            return .remoteMouseApplication
+        }
         if !context.hasHostScrollableRows { return .remoteMouseApplication }
         return .hostScrollback
     }

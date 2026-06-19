@@ -511,6 +511,7 @@
 				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				"EXCLUDED_ARCHS[sdk=macosx*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = NO;
 				"HEADER_SEARCH_PATHS[sdk=iphoneos*]" = (
@@ -652,6 +653,7 @@
 				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				"EXCLUDED_ARCHS[sdk=macosx*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = NO;
 				"HEADER_SEARCH_PATHS[sdk=iphoneos*]" = (

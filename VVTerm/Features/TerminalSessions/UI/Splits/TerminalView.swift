@@ -1107,6 +1107,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         private var lastSize: (cols: Int, rows: Int) = (0, 0)
         private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "SSHPane")
 
+        @MainActor
         init(
             paneId: UUID,
             server: Server,
@@ -1160,6 +1161,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
             }
         }
 
+        @MainActor
         func startSSHConnection(terminal: GhosttyTerminalView) {
             if shellTask != nil {
                 logger.debug("Ignoring duplicate start request for pane")
@@ -1205,7 +1207,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
                     }
                 }
 
-                guard let self = self, let terminal = terminal else { return }
+                guard let terminal else { return }
                 await SSHConnectionRunner.run(
                     server: server,
                     credentials: credentials,
@@ -1226,7 +1228,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
                             client: sshClient
                         )
                     },
-                    registerShell: { shell, skipTmuxLifecycle in
+                    registerShell: { [weak self] shell, skipTmuxLifecycle in
                         TerminalTabManager.shared.registerSSHClient(
                             sshClient,
                             shellId: shell.id,
@@ -1237,18 +1239,20 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
                             skipTmuxLifecycle: skipTmuxLifecycle
                         )
                         TerminalTabManager.shared.updatePaneState(paneId, connectionState: .connected)
-                        self.shellId = shell.id
-                        await self.applyWorkingDirectoryIfNeeded(paneId: paneId, shellId: shell.id, sshClient: sshClient)
+                        self?.shellId = shell.id
+                        if let self {
+                            await self.applyWorkingDirectoryIfNeeded(paneId: paneId, shellId: shell.id, sshClient: sshClient)
+                        }
                     },
-                    onBeforeShellStart: { cols, rows in
-                        self.lastSize = (cols, rows)
+                    onBeforeShellStart: { [weak self] cols, rows in
+                        self?.lastSize = (cols, rows)
                     },
                     onShellStarted: { _, _ in },
                     onTitleChange: { title in
                         TerminalTabManager.shared.updatePaneTitle(paneId, rawTitle: title)
                     },
-                    shouldContinueStreaming: { data, terminal in
-                        guard self.terminal != nil else { return false }
+                    shouldContinueStreaming: { [weak self] data, terminal in
+                        guard self?.terminal != nil else { return false }
                         terminal.writeOutput(data)
                         return true
                     },
@@ -1280,6 +1284,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
             }
         }
 
+        @MainActor
         func cancelShell() {
             shellTask?.cancel()
             shellTask = nil
@@ -1297,6 +1302,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
             terminal = nil
         }
 
+        @MainActor
         private func applyWorkingDirectoryIfNeeded(paneId: UUID, shellId: UUID, sshClient: SSHClient) async {
             guard TerminalTabManager.shared.shouldApplyWorkingDirectory(for: paneId) else { return }
             guard let cwd = TerminalTabManager.shared.workingDirectory(for: paneId) else { return }
@@ -1309,7 +1315,13 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         deinit {
             guard !isReusingTerminal else { return }
             guard terminal == nil else { return }
-            cancelShell()
+            shellTask?.cancel()
+            if let shellId {
+                let sshClient = self.sshClient
+                Task.detached(priority: .high) {
+                    await sshClient.closeShell(shellId)
+                }
+            }
         }
     }
 }

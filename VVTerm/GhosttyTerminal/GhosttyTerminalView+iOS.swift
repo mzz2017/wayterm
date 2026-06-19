@@ -1243,6 +1243,8 @@ class GhosttyTerminalView: UIView {
         richPasteInterceptor = nil
         writeCallback = nil
 
+        surface?.invalidateCallbackContext()
+
         // Stop rendering/input callbacks and mark the surface as not visible.
         if let cSurface = surface?.unsafeCValue {
             ghostty_surface_set_focus(cSurface, false)
@@ -1355,11 +1357,13 @@ class GhosttyTerminalView: UIView {
             return
         }
 
+        let callbackContext = GhosttySurfaceCallbackContext(terminalView: self)
         guard let cSurface = renderingSetup.setupSurface(
             view: self,
             ghosttyApp: app,
             worktreePath: worktreePath,
             initialBounds: bounds,
+            surfaceCallbackContext: callbackContext,
             paneId: paneId,
             command: initialCommand,
             useCustomIO: useCustomIO
@@ -1374,7 +1378,7 @@ class GhosttyTerminalView: UIView {
         configureIOSurfaceLayers(size: bounds.size)
 
         // Wrap in Swift Surface class
-        self.surface = Ghostty.Surface(cSurface: cSurface)
+        self.surface = Ghostty.Surface(cSurface: cSurface, callbackContext: callbackContext)
 
         // Register surface with app wrapper for config update tracking
         if let wrapper = ghosttyAppWrapper {
@@ -2118,6 +2122,7 @@ class GhosttyTerminalView: UIView {
     func currentScrollOwner() -> TerminalScrollOwner {
         TerminalScrollRoutingPolicy.owner(for: TerminalScrollContext(
             remoteScrollOwnerActive: surface?.mouseCaptured ?? false,
+            remoteAlternateScreenActive: surface?.inAlternateScreen ?? false,
             hasHostScrollableRows: hasHostScrollableRows,
             isSelecting: isTerminalSelectionActive,
             isPinching: isPinchingTerminalZoom
@@ -4149,7 +4154,7 @@ class GhosttyTerminalView: UIView {
         // Feed data to terminal
         data.withUnsafeBytes { buffer in
             guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
-            ghostty_surface_write_output(surface, ptr, buffer.count)
+            ghostty_surface_write_output(surface, ptr, UInt(buffer.count))
         }
 
         scheduleCustomIORedraw()

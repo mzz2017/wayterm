@@ -118,76 +118,43 @@ extension RemoteFileBrowserScreen {
             }
         }
         .toolbar {
-            if #available(iOS 26, *) {
-                ToolbarItem(placement: .bottomBar) {
-                    iOSBottomToolbarButton(
-                        systemName: "arrow.turn.up.left",
-                        isDisabled: snapshot.currentPath == "/"
-                    ) {
-                        Task { await browser.goUp(in: fileTab, server: server) }
-                    }
+            ToolbarItem(placement: .bottomBar) {
+                iOSBottomToolbarButton(
+                    systemName: "arrow.turn.up.left",
+                    isDisabled: snapshot.currentPath == "/"
+                ) {
+                    Task { await browser.goUp(in: fileTab, server: server) }
                 }
+            }
 
-                ToolbarSpacer(.fixed)
+            adaptiveFixedToolbarSpacer(placement: .bottomBar)
 
-                ToolbarItem(placement: .bottomBar) {
-                    iOSBottomToolbarButton(systemName: "arrow.up.doc") {
-                        beginUpload(to: snapshot.currentPath)
-                    }
+            ToolbarItem(placement: .bottomBar) {
+                iOSBottomToolbarButton(systemName: "arrow.up.doc") {
+                    beginUpload(to: snapshot.currentPath)
                 }
+            }
 
-                ToolbarSpacer(.fixed)
+            adaptiveFixedToolbarSpacer(placement: .bottomBar)
 
-                ToolbarItem(placement: .bottomBar) {
-                    iOSBottomToolbarButton(systemName: "folder.badge.plus") {
-                        beginCreateFolder(in: snapshot.currentPath)
-                    }
+            ToolbarItem(placement: .bottomBar) {
+                iOSBottomToolbarButton(systemName: "folder.badge.plus") {
+                    beginCreateFolder(in: snapshot.currentPath)
                 }
+            }
 
-                ToolbarSpacer(.fixed)
+            adaptiveFixedToolbarSpacer(placement: .bottomBar)
 
-                ToolbarItem(placement: .bottomBar) {
-                    iOSBottomToolbarButton(systemName: "document.on.document") {
-                        copyPathToClipboard(snapshot.currentPath)
-                    }
+            ToolbarItem(placement: .bottomBar) {
+                iOSBottomToolbarButton(systemName: "document.on.document") {
+                    copyPathToClipboard(snapshot.currentPath)
                 }
+            }
 
-                ToolbarSpacer(.fixed)
+            adaptiveFixedToolbarSpacer(placement: .bottomBar)
 
-                ToolbarItem(placement: .bottomBar) {
-                    iOSBrowserMenu()
-                }
-            } else {
-                ToolbarItemGroup(placement: .bottomBar) {
-                    iOSBottomToolbarButton(
-                        systemName: "arrow.turn.up.left",
-                        isDisabled: snapshot.currentPath == "/"
-                    ) {
-                        Task { await browser.goUp(in: fileTab, server: server) }
-                    }
-                }
-
-                ToolbarItemGroup(placement: .bottomBar) {
-                    iOSBottomToolbarButton(systemName: "arrow.up.doc") {
-                        beginUpload(to: snapshot.currentPath)
-                    }
-                }
-
-                ToolbarItemGroup(placement: .bottomBar) {
-                    iOSBottomToolbarButton(systemName: "folder.badge.plus") {
-                        beginCreateFolder(in: snapshot.currentPath)
-                    }
-                }
-
-                ToolbarItemGroup(placement: .bottomBar) {
-                    iOSBottomToolbarButton(systemName: "document.on.document") {
-                        copyPathToClipboard(snapshot.currentPath)
-                    }
-                }
-
-                ToolbarItemGroup(placement: .bottomBar) {
-                    iOSBrowserMenu()
-                }
+            ToolbarItem(placement: .bottomBar) {
+                iOSBrowserMenu()
             }
         }
         .onChange(of: snapshot.currentPath) { _ in

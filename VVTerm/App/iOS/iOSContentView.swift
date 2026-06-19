@@ -1581,23 +1581,10 @@ struct iOSTerminalView: View {
         }
         .accessibilityLabel(Text(accessibilityLabel))
 
-        if #available(iOS 26, *) {
-            if isPrimary {
-                button
-                    .tint(Color.accentColor)
-                    .buttonStyle(SwiftUI.GlassButtonStyle())
-                    .buttonBorderShape(.capsule)
-                    .controlSize(.large)
-            } else {
-                button
-                    .buttonStyle(SwiftUI.GlassButtonStyle())
-                    .buttonBorderShape(.capsule)
-                    .controlSize(.large)
-            }
-        } else {
-            button
-                .buttonStyle(.glass(tint: Color.accentColor.opacity(isPrimary ? 0.5 : (colorScheme == .dark ? 0.24 : 0.14))))
-        }
+        button
+            .buttonStyle(.glass(tint: Color.accentColor.opacity(isPrimary ? 0.5 : (colorScheme == .dark ? 0.24 : 0.14))))
+            .buttonBorderShape(.capsule)
+            .controlSize(.large)
     }
 
     @ViewBuilder
@@ -1889,7 +1876,12 @@ struct iOSTerminalView: View {
             guard ConnectionSessionManager.shared.peekTerminal(for: session.id) === terminal else { return }
             guard terminal.window != nil else { return }
 
-            if let container = terminal.superview {
+            if let nativeScrollContainer = TerminalNativeScrollContainerView.nativeScrollContainer(containing: terminal) {
+                let targetSize = nativeScrollContainer.refreshTerminalViewport()
+                if targetSize.width > 0, targetSize.height > 0 {
+                    terminal.sizeDidChange(targetSize)
+                }
+            } else if let container = terminal.superview {
                 container.setNeedsLayout()
                 container.layoutIfNeeded()
 

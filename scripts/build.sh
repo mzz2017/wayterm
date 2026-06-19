@@ -95,6 +95,13 @@ find_ghostty_xcframework_library() {
     printf "%s\n" "${lib}"
 }
 
+normalize_ghostty_headers() {
+    local root="$1"
+    while IFS= read -r -d '' header; do
+        perl -pi -e 's/[ \t]+$//' "${header}"
+    done < <(find "${root}" -name "*.h" -type f -print0)
+}
+
 strip_lib() {
     local lib="$1"
     if command -v xcrun >/dev/null 2>&1; then
@@ -142,6 +149,7 @@ check_ghostty_vendor() {
         "backend_type"
         "write_callback"
         "resize_callback"
+        "typedef bool (*ghostty_runtime_read_clipboard_cb)"
         "ghostty_surface_write_output"
         "ghostty_surface_external_exited"
         "ghostty_surface_in_alternate_screen"
@@ -182,7 +190,7 @@ check_ghostty_vendor() {
             exit 1
         fi
         for token in "${header_tokens[@]}"; do
-            if ! grep -q "${token}" "${header}"; then
+            if ! grep -Fq "${token}" "${header}"; then
                 log_error "Ghostty header ${header} is missing ${token}"
                 exit 1
             fi
@@ -335,6 +343,8 @@ PY
 
     rm -rf "${VENDOR_GHOSTTY}/GhosttyKit.xcframework"
     rsync -a "${xcframework}" "${VENDOR_GHOSTTY}/"
+
+    normalize_ghostty_headers "${VENDOR_GHOSTTY}"
 
     printf "%s\n" "$(git -C "${workdir}/ghostty" rev-parse HEAD)" > "${VENDOR_GHOSTTY}/VERSION"
 

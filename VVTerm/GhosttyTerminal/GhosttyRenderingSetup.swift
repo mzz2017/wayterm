@@ -15,18 +15,13 @@ import AppKit
 import UIKit
 #endif
 
-/// External-backend write callback (terminal → embedder). Invoked by libghostty
-/// on the IO thread when the user produces input. Recovers the view from the
-/// surface userdata while the callback is live (the surface — and thus the view
-/// it points to — is valid for the call's duration), captures it WEAKLY, then
-/// hops to the main thread (matching the old custom-io contract and
-/// `GhosttyTerminalView`'s `@MainActor` isolation) and forwards to `writeCallback`.
-/// The weak capture avoids a use-after-free if the view is torn down between the
-/// dispatch and its execution. `DispatchQueue.main.async` preserves input ordering.
+/// External-backend write callback (terminal -> embedder). Invoked by libghostty
+/// on the IO thread when the user produces input. Surface userdata points to the
+/// `GhosttySurfaceCallbackContext` owned by `Ghostty.Surface`; resolving it never
+/// dereferences a raw terminal view pointer on the IO thread.
 private let ghosttyExternalWriteCallback: ghostty_write_callback_fn = { surface, data, len in
     guard let surface, let data, len > 0 else { return }
-    guard let ud = ghostty_surface_userdata(surface) else { return }
-    let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
+    guard let view = GhosttySurfaceCallbackContext.terminalView(fromSurface: surface) else { return }
     let swiftData = Data(bytes: data, count: Int(len))
     DispatchQueue.main.async { [weak view] in
         view?.writeCallback?(swiftData)
@@ -34,13 +29,11 @@ private let ghosttyExternalWriteCallback: ghostty_write_callback_fn = { surface,
 }
 
 /// External-backend resize callback (terminal grid changed → embedder should send
-/// an SSH window-change). Invoked on the IO thread; recovers the view live,
-/// captures it weakly, hops to main, and forwards cols/rows to the view's
-/// `onResize`. Pixel dims are available but SSH only needs cols/rows.
+/// an SSH window-change). Invoked on the IO thread; resolves the surface callback
+/// context, hops to main, and forwards cols/rows to the view's `onResize`.
 private let ghosttyExternalResizeCallback: ghostty_resize_callback_fn = { surface, cols, rows, _, _ in
     guard let surface else { return }
-    guard let ud = ghostty_surface_userdata(surface) else { return }
-    let view = Unmanaged<GhosttyTerminalView>.fromOpaque(ud).takeUnretainedValue()
+    guard let view = GhosttySurfaceCallbackContext.terminalView(fromSurface: surface) else { return }
     let c = Int(cols)
     let r = Int(rows)
     DispatchQueue.main.async { [weak view] in
@@ -116,6 +109,7 @@ class GhosttyRenderingSetup {
         worktreePath: String,
         initialBounds: NSRect,
         window: NSWindow?,
+        surfaceCallbackContext: GhosttySurfaceCallbackContext,
         paneId: String? = nil,
         command: String? = nil,
         useCustomIO: Bool = false
@@ -128,7 +122,7 @@ class GhosttyRenderingSetup {
         surfaceConfig.platform.macos.nsview = Unmanaged.passUnretained(view).toOpaque()
 
         // Set userdata
-        surfaceConfig.userdata = Unmanaged.passUnretained(view).toOpaque()
+        surfaceConfig.userdata = surfaceCallbackContext.opaquePointer
 
         // Set scale factor for retina displays
         surfaceConfig.scale_factor = Double(window?.backingScaleFactor ?? 2.0)
@@ -212,6 +206,7 @@ class GhosttyRenderingSetup {
         ghosttyApp: ghostty_app_t,
         worktreePath: String,
         initialBounds: CGRect,
+        surfaceCallbackContext: GhosttySurfaceCallbackContext,
         paneId: String? = nil,
         command: String? = nil,
         useCustomIO: Bool = false
@@ -224,7 +219,7 @@ class GhosttyRenderingSetup {
         surfaceConfig.platform.ios.uiview = Unmanaged.passUnretained(view).toOpaque()
 
         // Set userdata
-        surfaceConfig.userdata = Unmanaged.passUnretained(view).toOpaque()
+        surfaceConfig.userdata = surfaceCallbackContext.opaquePointer
 
         // Set scale factor for retina displays
         // Use contentScaleFactor which we set in GhosttyTerminalView.init to UIScreen.main.scale

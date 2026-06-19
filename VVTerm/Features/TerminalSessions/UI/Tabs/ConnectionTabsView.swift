@@ -545,14 +545,7 @@ struct ConnectionTerminalContainer: View {
 
     @ToolbarContentBuilder
     private var tabsToolbarSpacer: some ToolbarContent {
-        if #available(macOS 26.0, *) {
-            ToolbarSpacer(.fixed, placement: .navigation)
-        } else {
-            ToolbarItem(placement: .navigation) {
-                Color.clear
-                    .frame(width: 8, height: 1)
-            }
-        }
+        adaptiveFixedToolbarSpacer(placement: .navigation)
     }
 
     @ToolbarContentBuilder

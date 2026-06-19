@@ -40,7 +40,9 @@ enum SSHConnectionRunner {
                 _ = try await sshClient.connect(to: server, credentials: credentials)
                 guard !Task.isCancelled else { return }
 
-                let size = terminal.terminalSize()
+                let size = await MainActor.run {
+                    terminal.terminalSize()
+                }
                 let cols = Int(size?.columns ?? 80)
                 let rows = Int(size?.rows ?? 24)
 
@@ -115,6 +117,7 @@ enum SSHConnectionRunner {
 // MARK: - SSH Terminal Coordinator Protocol
 
 /// Protocol for shared SSH terminal coordinator functionality across platforms
+@MainActor
 protocol SSHTerminalCoordinator: AnyObject {
     var server: Server { get }
     var credentials: ServerCredentials { get }
@@ -236,7 +239,7 @@ extension SSHTerminalCoordinator {
                 }
             }
 
-            guard let self = self, let terminal = terminal else { return }
+            guard let terminal else { return }
             await SSHConnectionRunner.run(
                 server: server,
                 credentials: credentials,
@@ -257,7 +260,7 @@ extension SSHTerminalCoordinator {
                         client: sshClient
                     )
                 },
-                registerShell: { shell, skipTmuxLifecycle in
+                registerShell: { [weak self] shell, skipTmuxLifecycle in
                     ConnectionSessionManager.shared.registerSSHClient(
                         sshClient,
                         shellId: shell.id,
@@ -268,12 +271,14 @@ extension SSHTerminalCoordinator {
                         skipTmuxLifecycle: skipTmuxLifecycle
                     )
                     ConnectionSessionManager.shared.updateSessionState(sessionId, to: .connected)
-                    self.shellId = shell.id
+                    self?.shellId = shell.id
                 },
-                onBeforeShellStart: { cols, rows in
+                onBeforeShellStart: { [weak self] cols, rows in
+                    guard let self else { return }
                     await self.onBeforeShellStart(cols: cols, rows: rows)
                 },
-                onShellStarted: { terminal, _ in
+                onShellStarted: { [weak self] terminal, _ in
+                    guard let self else { return }
                     await self.onShellStarted(terminal: terminal)
                 },
                 onTitleChange: { title in
@@ -585,8 +590,11 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         }
 
         private func applyWorkingDirectoryIfNeeded() async {
-            guard ConnectionSessionManager.shared.shouldApplyWorkingDirectory(for: sessionId) else { return }
-            guard let cwd = ConnectionSessionManager.shared.workingDirectory(for: sessionId) else { return }
+            let cwd: String? = await MainActor.run {
+                guard ConnectionSessionManager.shared.shouldApplyWorkingDirectory(for: sessionId) else { return nil }
+                return ConnectionSessionManager.shared.workingDirectory(for: sessionId)
+            }
+            guard let cwd else { return }
             let environment = await sshClient.remoteEnvironment()
             guard environment.shellProfile.family != .unknown else { return }
             guard let payload = RemoteTerminalBootstrap.directoryChangeCommand(for: cwd, environment: environment).data(using: .utf8) else { return }
@@ -604,7 +612,13 @@ struct SSHTerminalWrapper: NSViewRepresentable {
             // If it is, the terminal is being reused by another view (e.g., split view)
             guard terminalView == nil else { return }
 
-            cancelShell()
+            shellTask?.cancel()
+            if let shellId {
+                let sshClient = self.sshClient
+                Task.detached(priority: .high) {
+                    await sshClient.closeShell(shellId)
+                }
+            }
         }
     }
 }
@@ -1019,8 +1033,11 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         }
 
         private func applyWorkingDirectoryIfNeeded() async {
-            guard ConnectionSessionManager.shared.shouldApplyWorkingDirectory(for: sessionId) else { return }
-            guard let cwd = ConnectionSessionManager.shared.workingDirectory(for: sessionId) else { return }
+            let cwd: String? = await MainActor.run {
+                guard ConnectionSessionManager.shared.shouldApplyWorkingDirectory(for: sessionId) else { return nil }
+                return ConnectionSessionManager.shared.workingDirectory(for: sessionId)
+            }
+            guard let cwd else { return }
             let environment = await sshClient.remoteEnvironment()
             guard environment.shellProfile.family != .unknown else { return }
             guard let payload = RemoteTerminalBootstrap.directoryChangeCommand(for: cwd, environment: environment).data(using: .utf8) else { return }
@@ -1032,7 +1049,18 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         deinit {
             // Don't cleanup if session is still active (user just navigated away)
             guard !preserveSession else { return }
-            cancelShell()
+            shellTask?.cancel()
+            if let shellId {
+                let sshClient = self.sshClient
+                Task.detached(priority: .high) {
+                    await sshClient.closeShell(shellId)
+                }
+            }
+            if let terminalView {
+                Task { @MainActor in
+                    terminalView.cleanup()
+                }
+            }
         }
     }
 }

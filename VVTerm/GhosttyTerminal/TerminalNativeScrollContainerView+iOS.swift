@@ -91,13 +91,29 @@ final class TerminalNativeScrollContainerView: UIView {
 
     deinit {
         removeObservers()
-        if !isDetachedForReuse, terminalView.superview === scrollView {
-            terminalView.setNativeHostScrollContainerEnabled(false)
+    }
+
+    override func willMove(toSuperview newSuperview: UIView?) {
+        if newSuperview == nil {
+            removeObservers()
+            disableNativeHostScrollContainerIfOwned()
         }
+        super.willMove(toSuperview: newSuperview)
+    }
+
+    static func nativeScrollContainer(containing terminalView: GhosttyTerminalView) -> TerminalNativeScrollContainerView? {
+        var view = terminalView.superview
+        while let current = view {
+            if let container = current as? TerminalNativeScrollContainerView {
+                return container
+            }
+            view = current.superview
+        }
+        return nil
     }
 
     static func detachExistingContainer(containing terminalView: GhosttyTerminalView) {
-        if let container = terminalView.superview?.superview as? TerminalNativeScrollContainerView {
+        if let container = nativeScrollContainer(containing: terminalView) {
             container.detachTerminalForReuse()
         } else if terminalView.superview != nil {
             terminalView.removeFromSuperview()
@@ -116,6 +132,13 @@ final class TerminalNativeScrollContainerView: UIView {
         updateContentSize()
         synchronizeScrollPositionFromTerminalIfNeeded()
         positionTerminalViewport()
+    }
+
+    func refreshTerminalViewport() -> CGSize {
+        setNeedsLayout()
+        layoutIfNeeded()
+        refreshNativeScrollState()
+        return scrollView.bounds.size
     }
 
     private func handleScrollbarUpdate(_ notification: Notification) {
@@ -207,6 +230,11 @@ final class TerminalNativeScrollContainerView: UIView {
         isDetachedForReuse = true
         scrollView.shouldBeginHostPan = nil
         terminalView.removeFromSuperview()
+        terminalView.setNativeHostScrollContainerEnabled(false)
+    }
+
+    private func disableNativeHostScrollContainerIfOwned() {
+        guard !isDetachedForReuse, terminalView.superview === scrollView else { return }
         terminalView.setNativeHostScrollContainerEnabled(false)
     }
 

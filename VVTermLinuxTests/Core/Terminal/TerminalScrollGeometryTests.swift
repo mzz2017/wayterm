@@ -50,6 +50,19 @@ final class TerminalScrollGeometryTests: XCTestCase {
     func testScrollOwnerRoutesMouseCaptureToRemoteApplication() {
         let context = TerminalScrollContext(
             remoteScrollOwnerActive: true,
+            remoteAlternateScreenActive: false,
+            hasHostScrollableRows: true,
+            isSelecting: false,
+            isPinching: false
+        )
+
+        XCTAssertEqual(TerminalScrollRoutingPolicy.owner(for: context), .remoteMouseApplication)
+    }
+
+    func testScrollOwnerRoutesAlternateScreenToRemoteApplication() {
+        let context = TerminalScrollContext(
+            remoteScrollOwnerActive: false,
+            remoteAlternateScreenActive: true,
             hasHostScrollableRows: true,
             isSelecting: false,
             isPinching: false
@@ -73,6 +86,7 @@ final class TerminalScrollGeometryTests: XCTestCase {
         XCTAssertEqual(
             TerminalScrollRoutingPolicy.owner(for: TerminalScrollContext(
                 remoteScrollOwnerActive: true,
+                remoteAlternateScreenActive: false,
                 hasHostScrollableRows: false,
                 isSelecting: true,
                 isPinching: true
@@ -83,6 +97,7 @@ final class TerminalScrollGeometryTests: XCTestCase {
         XCTAssertEqual(
             TerminalScrollRoutingPolicy.owner(for: TerminalScrollContext(
                 remoteScrollOwnerActive: false,
+                remoteAlternateScreenActive: true,
                 hasHostScrollableRows: false,
                 isSelecting: false,
                 isPinching: true
@@ -90,4 +105,5 @@ final class TerminalScrollGeometryTests: XCTestCase {
             .pinchZoom
         )
     }
+
 }

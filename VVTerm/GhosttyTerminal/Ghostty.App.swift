@@ -660,7 +660,7 @@ extension Ghostty {
                     }
                 }
                 guard let surfaceUserdata = ghostty_surface_userdata(surface) else { return nil }
-                return Unmanaged<GhosttyTerminalView>.fromOpaque(surfaceUserdata).takeUnretainedValue()
+                return GhosttySurfaceCallbackContext.terminalView(fromUserdata: surfaceUserdata)
             }()
 
             switch action.tag {
@@ -817,11 +817,9 @@ extension Ghostty {
             }
         }
 
-        static func readClipboard(_ userdata: UnsafeMutableRawPointer?, location: ghostty_clipboard_e, state: UnsafeMutableRawPointer?) {
-            // userdata is the GhosttyTerminalView instance
-            guard let userdata = userdata else { return }
-            let terminalView = Unmanaged<GhosttyTerminalView>.fromOpaque(userdata).takeUnretainedValue()
-            guard let surface = terminalView.surface?.unsafeCValue else { return }
+        static func readClipboard(_ userdata: UnsafeMutableRawPointer?, location: ghostty_clipboard_e, state: UnsafeMutableRawPointer?) -> Bool {
+            guard let terminalView = GhosttySurfaceCallbackContext.terminalView(fromUserdata: userdata) else { return false }
+            guard let surface = terminalView.surface?.unsafeCValue else { return false }
 
             // Read from macOS clipboard
             let clipboardString = Clipboard.readString() ?? ""
@@ -832,6 +830,7 @@ extension Ghostty {
             }
 
             Ghostty.logger.debug("Read clipboard: \(clipboardString.prefix(50))...")
+            return true
         }
 
         static func confirmReadClipboard(
@@ -878,9 +877,7 @@ extension Ghostty {
         }
 
         static func closeSurface(_ userdata: UnsafeMutableRawPointer?, processAlive: Bool) {
-            // userdata is the GhosttyTerminalView instance
-            guard let userdata = userdata else { return }
-            let terminalView = Unmanaged<GhosttyTerminalView>.fromOpaque(userdata).takeUnretainedValue()
+            guard let terminalView = GhosttySurfaceCallbackContext.terminalView(fromUserdata: userdata) else { return }
 
             Ghostty.logger.info("Close surface: processAlive=\(processAlive)")
 

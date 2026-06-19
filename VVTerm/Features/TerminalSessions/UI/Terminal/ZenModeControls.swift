@@ -48,13 +48,7 @@ struct ZenModeFloatingOverlay<Panel: View>: View {
 
     @ViewBuilder
     private func chromeStack(panelWidth: CGFloat) -> some View {
-        if #available(iOS 26, macOS 26, *) {
-            GlassEffectContainer(spacing: 12) {
-                overlayContent(panelWidth: panelWidth)
-            }
-        } else {
-            overlayContent(panelWidth: panelWidth)
-        }
+        overlayContent(panelWidth: panelWidth)
     }
 
     private func overlayContent(panelWidth: CGFloat) -> some View {

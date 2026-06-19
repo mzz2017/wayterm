@@ -6,6 +6,7 @@ extension Ghostty {
     /// Wraps a `ghostty_surface_t`
     final class Surface: @unchecked Sendable {
         private var surface: ghostty_surface_t?
+        private var callbackContext: GhosttySurfaceCallbackContext?
         private let lock = NSLock()
 
         /// Track if surface has been explicitly freed
@@ -20,8 +21,17 @@ extension Ghostty {
         }
 
         /// Initialize from the C structure.
-        init(cSurface: ghostty_surface_t) {
+        init(cSurface: ghostty_surface_t, callbackContext: GhosttySurfaceCallbackContext? = nil) {
             self.surface = cSurface
+            self.callbackContext = callbackContext
+        }
+
+        @MainActor
+        func invalidateCallbackContext() {
+            lock.lock()
+            let context = callbackContext
+            lock.unlock()
+            context?.invalidate()
         }
 
         /// Explicitly free the surface. Call this from cleanup() on main actor.
@@ -33,10 +43,13 @@ extension Ghostty {
                 lock.unlock()
                 return
             }
+            let context = callbackContext
             hasBeenFreed = true
             surface = nil
+            callbackContext = nil
             lock.unlock()
 
+            context?.invalidate()
             ghostty_surface_free(surf)
         }
 
@@ -47,14 +60,17 @@ extension Ghostty {
                 lock.unlock()
                 return
             }
+            let context = callbackContext
             hasBeenFreed = true
             surface = nil
+            callbackContext = nil
             lock.unlock()
 
             // Fallback: schedule free on main actor
             // This is a safety net - prefer calling free() explicitly
             // MainActor.run used to avoid Sendable warning on raw pointer
             DispatchQueue.main.async {
+                context?.invalidate()
                 ghostty_surface_free(surf)
             }
         }
@@ -97,6 +113,18 @@ extension Ghostty {
         var mouseCaptured: Bool {
             guard let surface = unsafeCValue else { return false }
             return ghostty_surface_mouse_captured(surface)
+        }
+
+        /// Whether the terminal is currently rendering the alternate screen.
+        ///
+        /// Full-screen terminal applications such as vim, less, htop, and many
+        /// TUIs use the alternate screen even when they have not enabled mouse
+        /// reporting. Host scrollback gestures should stay with the remote
+        /// application in that state.
+        @MainActor
+        var inAlternateScreen: Bool {
+            guard let surface = unsafeCValue else { return false }
+            return ghostty_surface_in_alternate_screen(surface)
         }
 
         /// Whether closing this terminal requires user confirmation.
@@ -211,7 +239,7 @@ extension Ghostty {
             guard !data.isEmpty else { return }
             data.withUnsafeBytes { buffer in
                 if let ptr = buffer.baseAddress?.assumingMemoryBound(to: CChar.self) {
-                    ghostty_surface_write_output(surface, ptr, buffer.count)
+                    ghostty_surface_write_output(surface, ptr, UInt(buffer.count))
                 }
             }
         }

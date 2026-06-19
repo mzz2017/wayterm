@@ -129,13 +129,7 @@ struct VoiceRecordingView: View {
 
     @ViewBuilder
     private func voiceChrome<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        if #available(iOS 26, macOS 26, *) {
-            GlassEffectContainer(spacing: 12) {
-                content()
-            }
-        } else {
-            fallbackVoiceChrome(content: content)
-        }
+        fallbackVoiceChrome(content: content)
     }
 
     private func fallbackVoiceChrome<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -301,8 +295,12 @@ private extension View {
     @ViewBuilder
     func voiceGlassCircle(tint: Color) -> some View {
         if #available(iOS 26, macOS 26, *) {
+            #if swift(>=6.1)
             self
                 .glassEffect(.regular.tint(tint.opacity(0.18)).interactive(), in: Circle())
+            #else
+            fallbackVoiceGlassCircle(tint: tint)
+            #endif
         } else {
             fallbackVoiceGlassCircle(tint: tint)
         }
@@ -311,8 +309,12 @@ private extension View {
     @ViewBuilder
     func voiceGlassCapsule(tint: Color) -> some View {
         if #available(iOS 26, macOS 26, *) {
+            #if swift(>=6.1)
             self
                 .glassEffect(.regular.tint(tint.opacity(0.12)), in: Capsule())
+            #else
+            fallbackVoiceGlassCapsule(tint: tint)
+            #endif
         } else {
             fallbackVoiceGlassCapsule(tint: tint)
         }
@@ -321,11 +323,15 @@ private extension View {
     @ViewBuilder
     func voiceGlassRect(tint: Color, cornerRadius: CGFloat) -> some View {
         if #available(iOS 26, macOS 26, *) {
+            #if swift(>=6.1)
             self
                 .glassEffect(
                     .regular.tint(tint.opacity(0.08)),
                     in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 )
+            #else
+            fallbackVoiceGlassRect(tint: tint, cornerRadius: cornerRadius)
+            #endif
         } else {
             fallbackVoiceGlassRect(tint: tint, cornerRadius: cornerRadius)
         }
