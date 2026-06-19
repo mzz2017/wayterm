@@ -16,7 +16,9 @@ MACOS_DEPLOYMENT_TARGET="13.3"
 IOS_DEPLOYMENT_TARGET="16.0"
 
 GHOSTTY_REPO="${GHOSTTY_REPO:-https://github.com/mzz2017/ghostty.git}"
-GHOSTTY_REF="${GHOSTTY_REF:-ios-external-io}"
+DEFAULT_GHOSTTY_REF="a89f13435a2fc1345714771e3857e94f642b348d"
+GHOSTTY_REF="${GHOSTTY_REF:-${DEFAULT_GHOSTTY_REF}}"
+GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-}"
 BUNDLE_ID="app.vivy.VivyTerm"
 
 KEEP_WORKDIR="${KEEP_WORKDIR:-0}"
@@ -42,13 +44,17 @@ Usage: $0 [command]
 Commands:
   all       Build GhosttyKit + libssh2/OpenSSL (default)
   ghostty   Build GhosttyKit.xcframework and copy .a libs
+  check-ghostty
+            Verify vendored Ghostty headers/libs expose the ABI VVTerm uses
   ssh       Build libssh2 + OpenSSL (macOS + iOS + simulator)
   clean     Remove .build + Vendor libraries
   help      Show this help message
 
 Env:
-  GHOSTTY_REF=<git-ref>   Build a specific ghostty ref (default: ios-external-io)
-  KEEP_WORKDIR=1          Keep ghostty build temp dir for debugging
+  GHOSTTY_REPO=<git-url>       Remote repo to fetch when GHOSTTY_SOURCE_DIR is unset
+  GHOSTTY_REF=<git-ref>        Build a specific ghostty ref (default: ${DEFAULT_GHOSTTY_REF})
+  GHOSTTY_SOURCE_DIR=<path>    Build from a local ghostty checkout instead of remote
+  KEEP_WORKDIR=1               Keep ghostty build temp dir for debugging
 EOF
 }
 
@@ -84,14 +90,118 @@ strip_lib() {
     fi
 }
 
+prepare_ghostty_source() {
+    local workdir="$1"
+
+    if [ -n "${GHOSTTY_SOURCE_DIR}" ]; then
+        local source_root
+        source_root="$(git -C "${GHOSTTY_SOURCE_DIR}" rev-parse --show-toplevel)"
+        log_info "Cloning local ghostty source from ${source_root} @ ${GHOSTTY_REF}..."
+
+        if [ -n "$(git -C "${source_root}" status --porcelain)" ]; then
+            log_warn "Local ghostty source has uncommitted changes; git clone will not include them."
+        fi
+
+        git clone --no-hardlinks "${source_root}" "${workdir}/ghostty"
+        git -C "${workdir}/ghostty" checkout --detach "${GHOSTTY_REF}"
+    else
+        log_info "Cloning ghostty from ${GHOSTTY_REPO} @ ${GHOSTTY_REF}..."
+        git clone --filter=blob:none --no-checkout "${GHOSTTY_REPO}" "${workdir}/ghostty"
+        git -C "${workdir}/ghostty" fetch --depth 1 origin "${GHOSTTY_REF}"
+        git -C "${workdir}/ghostty" checkout --detach FETCH_HEAD
+    fi
+}
+
+check_ghostty_vendor() {
+    log_section "Ghostty vendor ABI check"
+
+    local headers=(
+        "${VENDOR_GHOSTTY}/include/ghostty.h"
+        "${VENDOR_GHOSTTY}/ios/include/ghostty.h"
+        "${VENDOR_GHOSTTY}/ios-simulator/include/ghostty.h"
+        "${VENDOR_GHOSTTY}/GhosttyKit.xcframework/macos-arm64_x86_64/Headers/ghostty.h"
+        "${VENDOR_GHOSTTY}/GhosttyKit.xcframework/ios-arm64/Headers/ghostty.h"
+        "${VENDOR_GHOSTTY}/GhosttyKit.xcframework/ios-arm64-simulator/Headers/ghostty.h"
+    )
+    local header_tokens=(
+        "GHOSTTY_BACKEND_EXTERNAL"
+        "backend_type"
+        "write_callback"
+        "resize_callback"
+        "ghostty_surface_write_output"
+        "ghostty_surface_external_exited"
+        "ghostty_surface_in_alternate_screen"
+    )
+    local libs=(
+        "${VENDOR_GHOSTTY}/lib/libghostty.a"
+        "${VENDOR_GHOSTTY}/ios/lib/libghostty.a"
+        "${VENDOR_GHOSTTY}/ios-simulator/lib/libghostty.a"
+        "${VENDOR_GHOSTTY}/GhosttyKit.xcframework/macos-arm64_x86_64/libghostty.a"
+        "${VENDOR_GHOSTTY}/GhosttyKit.xcframework/ios-arm64/libghostty-fat.a"
+        "${VENDOR_GHOSTTY}/GhosttyKit.xcframework/ios-arm64-simulator/libghostty-fat.a"
+    )
+    local symbols=(
+        "ghostty_surface_write_output"
+        "ghostty_surface_external_exited"
+        "ghostty_surface_in_alternate_screen"
+    )
+
+    local nm_cmd=()
+    if command -v llvm-nm >/dev/null 2>&1; then
+        nm_cmd=(llvm-nm)
+    elif command -v xcrun >/dev/null 2>&1 && xcrun -find llvm-nm >/dev/null 2>&1; then
+        nm_cmd=(xcrun llvm-nm)
+    elif command -v xcrun >/dev/null 2>&1 && xcrun -find nm >/dev/null 2>&1; then
+        nm_cmd=(xcrun nm)
+    elif command -v nm >/dev/null 2>&1; then
+        nm_cmd=(nm)
+    else
+        log_error "Missing dependency: llvm-nm or nm"
+        exit 1
+    fi
+
+    local header token lib symbol
+    for header in "${headers[@]}"; do
+        if [ ! -f "${header}" ]; then
+            log_error "Missing Ghostty header: ${header}"
+            exit 1
+        fi
+        for token in "${header_tokens[@]}"; do
+            if ! grep -q "${token}" "${header}"; then
+                log_error "Ghostty header ${header} is missing ${token}"
+                exit 1
+            fi
+        done
+    done
+
+    for lib in "${libs[@]}"; do
+        if [ ! -f "${lib}" ]; then
+            log_error "Missing Ghostty library: ${lib}"
+            exit 1
+        fi
+        local nm_output
+        if ! nm_output="$("${nm_cmd[@]}" -g "${lib}" 2>&1)"; then
+            log_error "Unable to inspect Ghostty library ${lib} with ${nm_cmd[*]}: ${nm_output%%$'\n'*}"
+            exit 1
+        fi
+        for symbol in "${symbols[@]}"; do
+            if ! grep -Eq "[[:space:]]_?${symbol}$" <<< "${nm_output}"; then
+                log_error "Ghostty library ${lib} is missing ${symbol}"
+                exit 1
+            fi
+        done
+    done
+
+    log_info "Ghostty vendor ABI check passed"
+}
+
 build_ghosttykit() {
     log_section "GhosttyKit"
 
     GHOSTTY_WORKDIR="$(mktemp -d "/tmp/ghosttykit.XXXXXX")"
     local workdir="$GHOSTTY_WORKDIR"
 
-    log_info "Cloning ghostty @ ${GHOSTTY_REF}..."
-    git clone --filter=blob:none --branch "${GHOSTTY_REF}" --depth 1 "${GHOSTTY_REPO}" "${workdir}/ghostty"
+    prepare_ghostty_source "${workdir}"
 
     local embedded_path="${workdir}/ghostty/src/apprt/embedded.zig"
     if [ -f "${embedded_path}" ]; then
@@ -231,6 +341,7 @@ PY
     log_info "  macOS: $(ls -lh "${VENDOR_GHOSTTY}/lib/libghostty.a" | awk '{print $5}')"
     log_info "  iOS: $(ls -lh "${VENDOR_GHOSTTY}/ios/lib/libghostty.a" | awk '{print $5}')"
     log_info "  iOS Simulator: $(ls -lh "${VENDOR_GHOSTTY}/ios-simulator/lib/libghostty.a" | awk '{print $5}')"
+    check_ghostty_vendor
 
     if [ "${KEEP_WORKDIR}" = "1" ]; then
         log_warn "Keeping workdir: ${workdir}"
@@ -475,6 +586,9 @@ case "${COMMAND}" in
     ghostty)
         check_deps_ghostty
         build_ghosttykit
+        ;;
+    check-ghostty)
+        check_ghostty_vendor
         ;;
     ssh)
         check_deps_ssh
