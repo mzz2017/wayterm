@@ -1,13 +1,22 @@
 import Foundation
+#if canImport(os)
 import os
+#endif
 
 enum RemoteTerminalTypeResolver {
     typealias CommandExecutor = @Sendable (_ command: String, _ timeout: Duration?) async throws -> String
 
+    enum Preference: Hashable, Sendable {
+        case compatibility
+        case ghosttyTerminfo
+    }
+
+    #if canImport(os)
     private static let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "VVTerm",
         category: "RemoteTerminalTypeResolver"
     )
+    #endif
     private static let probeTimeout: Duration = .seconds(5)
     private static let installTimeout: Duration = .seconds(12)
     private static let probeMarker = "__VVTERM_XTERM_GHOSTTY_OK__"
@@ -27,9 +36,13 @@ enum RemoteTerminalTypeResolver {
         environment: RemoteEnvironment,
         execute: CommandExecutor,
         bundle: Bundle = .main,
-        terminfoSource: String? = nil
+        terminfoSource: String? = nil,
+        preference: Preference = .compatibility
     ) async -> RemoteTerminalType {
         guard environment.shellProfile.family == .posix else {
+            return RemoteTerminalBootstrap.defaultTerminalType
+        }
+        guard preference == .ghosttyTerminfo else {
             return RemoteTerminalBootstrap.defaultTerminalType
         }
 
@@ -39,7 +52,9 @@ enum RemoteTerminalTypeResolver {
 
         let resolvedTerminfoSource = terminfoSource ?? RemoteTerminalBootstrap.ghosttyTerminfoSource(bundle: bundle)
         guard let resolvedTerminfoSource else {
+            #if canImport(os)
             logger.warning("Ghostty terminfo source not found in bundle; falling back to \(RemoteTerminalBootstrap.defaultTerminalType.rawValue, privacy: .public)")
+            #endif
             return RemoteTerminalBootstrap.defaultTerminalType
         }
 
@@ -47,10 +62,14 @@ enum RemoteTerminalTypeResolver {
         case .installed:
             return .xtermGhostty
         case .missingTic:
+            #if canImport(os)
             logger.info("Remote host does not provide tic; keeping compatibility TERM")
+            #endif
             return RemoteTerminalBootstrap.defaultTerminalType
         case .failed:
+            #if canImport(os)
             logger.info("Ghostty terminfo installation failed; keeping compatibility TERM")
+            #endif
             return RemoteTerminalBootstrap.defaultTerminalType
         }
     }
@@ -103,7 +122,9 @@ enum RemoteTerminalTypeResolver {
             let output = try await execute(probeCommand(), probeTimeout)
             return output.contains(probeMarker)
         } catch {
+            #if canImport(os)
             logger.debug("Ghostty terminfo probe failed: \(error.localizedDescription, privacy: .public)")
+            #endif
             return false
         }
     }
@@ -122,7 +143,9 @@ enum RemoteTerminalTypeResolver {
             }
             return .failed
         } catch {
+            #if canImport(os)
             logger.debug("Ghostty terminfo installation command failed: \(error.localizedDescription, privacy: .public)")
+            #endif
             return .failed
         }
     }

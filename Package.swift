@@ -39,6 +39,29 @@ let package = Package(
             path: "VVTerm/Core/Terminal/Logic"
         ),
         .target(
+            name: "VVTermSSHCoreLogic",
+            path: "VVTerm/Core/SSH",
+            exclude: [
+                "KnownHostsManager.swift",
+                "RemoteClipboardTransferService.swift",
+                "RemoteEnvironmentResolver.swift",
+                "RemoteMoshManager.swift",
+                "RemoteTmuxManager.swift",
+                "RemoteZmxCommandBuilder.swift",
+                "SSHClient.swift",
+                "SSHKeyGenerator.swift",
+                "SSHPublicKeyDeriver.swift",
+                "ShellTransport.swift",
+                "TerminalRichPasteCoordinator.swift"
+            ],
+            sources: [
+                "RemoteEnvironment.swift",
+                "RemotePlatform.swift",
+                "RemoteTerminalBootstrap.swift",
+                "RemoteTerminalTypeResolver.swift"
+            ]
+        ),
+        .target(
             name: "VVTermIOSApplicationLogic",
             dependencies: ["VVTermRemoteFilesDomain"],
             path: "VVTerm/App/iOS/Application"
@@ -49,6 +72,13 @@ let package = Package(
                 "VVTermTerminalCoreLogic"
             ],
             path: "VVTermLinuxTests/Core/Terminal"
+        ),
+        .testTarget(
+            name: "VVTermSSHCoreLogicTests",
+            dependencies: [
+                "VVTermSSHCoreLogic"
+            ],
+            path: "VVTermLinuxTests/Core/SSH"
         ),
         .testTarget(
             name: "VVTermIOSApplicationLogicTests",

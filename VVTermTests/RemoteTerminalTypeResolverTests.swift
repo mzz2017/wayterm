@@ -66,7 +66,7 @@ struct RemoteTerminalTypeResolverTests {
     }
 
     @Test
-    func resolveUsesGhosttyWhenProbeSucceeds() async {
+    func resolveDefaultsToCompatibilityWithoutProbingPOSIXRemotes() async {
         let executor = FakeExecutor(outputs: [
             .success("__VVTERM_XTERM_GHOSTTY_OK__")
         ])
@@ -77,6 +77,25 @@ struct RemoteTerminalTypeResolverTests {
                 try await executor.run(command: command, timeout: timeout)
             },
             terminfoSource: terminfoSource
+        )
+
+        #expect(terminalType == .xterm256Color)
+        #expect(await executor.recordedCommands().isEmpty)
+    }
+
+    @Test
+    func resolveUsesGhosttyWhenExplicitlyRequestedAndProbeSucceeds() async {
+        let executor = FakeExecutor(outputs: [
+            .success("__VVTERM_XTERM_GHOSTTY_OK__")
+        ])
+
+        let terminalType = await RemoteTerminalTypeResolver.resolve(
+            environment: posixEnvironment,
+            execute: { command, timeout in
+                try await executor.run(command: command, timeout: timeout)
+            },
+            terminfoSource: terminfoSource,
+            preference: .ghosttyTerminfo
         )
 
         let commands = await executor.recordedCommands()
@@ -107,7 +126,8 @@ struct RemoteTerminalTypeResolverTests {
             execute: { command, timeout in
                 try await executor.run(command: command, timeout: timeout)
             },
-            terminfoSource: terminfoSource
+            terminfoSource: terminfoSource,
+            preference: .ghosttyTerminfo
         )
 
         let commands = await executor.recordedCommands()
@@ -129,7 +149,8 @@ struct RemoteTerminalTypeResolverTests {
             execute: { command, timeout in
                 try await executor.run(command: command, timeout: timeout)
             },
-            terminfoSource: terminfoSource
+            terminfoSource: terminfoSource,
+            preference: .ghosttyTerminfo
         )
 
         #expect(terminalType == .xterm256Color)
