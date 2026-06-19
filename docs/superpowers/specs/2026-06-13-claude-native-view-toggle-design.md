@@ -515,6 +515,3 @@ claude transcript:
 - claude-code-viewer：https://github.com/d-kimuson/claude-code-viewer （PR #174）
 - stream-json 控制协议逆向：
   https://github.com/Roasbeef/claude-agent-sdk-go/blob/main/docs/cli-protocol.md
-
-
-

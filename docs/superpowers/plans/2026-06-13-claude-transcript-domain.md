@@ -939,5 +939,3 @@ git commit -m "feat(transcript): conversation projection pairing tool_use with r
 2. **Inline Execution** — 本会话内分批执行，带检查点。
 
 因为本包能在这台机器上真 `swift test`，两种都可全程验证到绿。
-
-
