@@ -48,7 +48,7 @@ final class TerminalNativeScrollContainerView: UIView {
         scrollView.showsVerticalScrollIndicator = true
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.contentInsetAdjustmentBehavior = .never
-        scrollView.keyboardDismissMode = .interactive
+        scrollView.keyboardDismissMode = .none
         scrollView.delaysContentTouches = false
         scrollView.canCancelContentTouches = true
         scrollView.scrollsToTop = false
