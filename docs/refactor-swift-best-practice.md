@@ -302,7 +302,7 @@ final class RecordingTerminalSSHClient: FakeTerminalSSHClient {
 - Consumes:
   - Existing `SSHShellRegistry.register`, `tryBeginStart`, `finishStart`, and `unregister`.
 
-- [ ] **Step 1: Write failing tests for closed entity registration**
+- [x] **Step 1: Write failing tests for closed entity registration**
 
 Add this test class:
 
@@ -374,7 +374,7 @@ final class TerminalConnectionRegistryTests: XCTestCase {
 }
 ```
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 Run:
 
@@ -384,7 +384,7 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected: fail to compile because `generation`, `closeEntity`, and `rejectedShellToClose` do not exist.
 
-- [ ] **Step 3: Implement generation guard**
+- [x] **Step 3: Implement generation guard**
 
 Update `SSHShellRegistry` with generation values stored per entity. `closeEntity` increments the generation and removes registration/start. `tryBeginStart` returns the current generation. `register` accepts only the current generation and only when a start exists for the same client.
 
@@ -409,15 +409,15 @@ struct StartResult: Sendable {
 }
 ```
 
-- [ ] **Step 4: Thread generation through managers**
+- [x] **Step 4: Thread generation through managers**
 
 Add generation arguments to `ConnectionSessionManager.registerSSHClient` and `TerminalTabManager.registerSSHClient`. Store generation returned from `tryBeginShellStart` in the caller until shell registration. In this task, keep existing `SSHConnectionRunner` placement unchanged.
 
-- [ ] **Step 5: Run green test**
+- [x] **Step 5: Run green test**
 
 Run the same focused command. Expected: `TerminalConnectionRegistryTests` passes.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VVTerm/Features/TerminalSessions/Application/SSHShellRegistry.swift \
@@ -446,7 +446,7 @@ git commit -m "fix: reject stale terminal shell registrations"
 - Consumes:
   - Task 1 generation guard and existing `unregisterSSHClient`.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add tests:
 
@@ -477,7 +477,7 @@ func testCloseSessionAndWaitWaitsForShellTeardownAndUnregister() async {
 
 Add pane equivalent to `ConnectionLifecycleIntegrationTests` using `TerminalTabManager.shared`.
 
-- [ ] **Step 2: Run red tests**
+- [x] **Step 2: Run red tests**
 
 Run:
 
@@ -487,7 +487,7 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected: fail to compile because `closeSessionAndWait` and `closePaneAndWait` do not exist.
 
-- [ ] **Step 3: Implement awaitable close APIs**
+- [x] **Step 3: Implement awaitable close APIs**
 
 Keep existing synchronous `closeSession` as a UI intent wrapper:
 
@@ -501,15 +501,15 @@ func closeSession(_ session: ConnectionSession, notingSessionEnd: Bool = true) {
 
 Move current close body into `closeSessionAndWait` and await unregister plus shell teardown before returning. Mirror this pattern in `TerminalTabManager`.
 
-- [ ] **Step 4: Replace UI close call sites that can await**
+- [x] **Step 4: Replace UI close call sites that can await**
 
 For UI button handlers that are sync, call the wrapper. For async flows like disconnect, call `await closeSessionAndWait` or `await disconnectServerAndWait`.
 
-- [ ] **Step 5: Run green tests**
+- [x] **Step 5: Run green tests**
 
 Run the focused command from Step 2. Expected: tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift \
@@ -537,7 +537,7 @@ git commit -m "fix: make terminal close teardown awaitable"
 - Consumes:
   - Existing `SSHConnectionRunner.run` behavior.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Create a runner test with fake callbacks that verify non-retryable auth failures are not retried:
 
@@ -554,7 +554,7 @@ final class TerminalConnectionRunnerTests: XCTestCase {
 }
 ```
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 Run:
 
@@ -564,15 +564,15 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected: fail to compile because the runner file and testing probe do not exist.
 
-- [ ] **Step 3: Move runner unchanged**
+- [x] **Step 3: Move runner unchanged**
 
 Move `SSHConnectionRunner` from `SSHTerminalWrapper.swift` to `TerminalConnectionRunner.swift`. Rename it to `TerminalConnectionRunner`. Keep behavior identical except for names.
 
-- [ ] **Step 4: Update UI imports/usages**
+- [x] **Step 4: Update UI imports/usages**
 
 Replace `SSHConnectionRunner.run` with `TerminalConnectionRunner.run` in tab and pane code.
 
-- [ ] **Step 5: Run green tests and compile**
+- [x] **Step 5: Run green tests and compile**
 
 Run the focused runner test. Then run:
 
@@ -580,7 +580,7 @@ Run the focused runner test. Then run:
 xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VVTerm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift \
@@ -608,7 +608,7 @@ git commit -m "refactor: move terminal connection runner to application layer"
 - Consumes:
   - Existing `ConnectionState`.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```swift
 final class TerminalEntityStateTests: XCTestCase {
@@ -628,11 +628,11 @@ final class TerminalEntityStateTests: XCTestCase {
 }
 ```
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 Expected: compile failure because the new types do not exist.
 
-- [ ] **Step 3: Add new domain types**
+- [x] **Step 3: Add new domain types**
 
 Add exact state enum and mapping helpers:
 
@@ -650,15 +650,15 @@ extension TerminalEntityConnectionState {
 }
 ```
 
-- [ ] **Step 4: Keep compatibility**
+- [x] **Step 4: Keep compatibility**
 
 Do not remove `ConnectionState` in this task. Add bridging only. Existing UI behavior must remain unchanged.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run `TerminalEntityStateTests`, `ConnectionSessionDomainTests`, and `TerminalSplitNodeTests`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VVTerm/Features/TerminalSessions/Domain/TerminalEntityID.swift \
@@ -688,7 +688,7 @@ git commit -m "refactor: add explicit terminal entity state"
 - Consumes:
   - `TerminalEntityID`, `TerminalEntityConnectionState`, `TerminalConnectionRunner`.
 
-- [ ] **Step 1: Write fake SSH protocol and tests**
+- [x] **Step 1: Write fake SSH protocol and tests**
 
 Define testing-only protocol in the test file:
 
@@ -717,23 +717,23 @@ func testCloseWaitsForShellCloseAndDisconnect() async {
 }
 ```
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 Expected: compile failure because runtime and testing configuration do not exist.
 
-- [ ] **Step 3: Implement runtime with injected client**
+- [x] **Step 3: Implement runtime with injected client**
 
 The runtime owns a single client instance and tracks `connectTask`, `shellId`, and `state`. `close(mode:)` cancels connect, closes shell if present, disconnects when requested, and only returns after cleanup.
 
-- [ ] **Step 4: Implement registry**
+- [x] **Step 4: Implement registry**
 
 `TerminalConnectionRegistry` stores `[TerminalEntityID: TerminalConnectionRuntime]`, maps server IDs to entity IDs, and exposes `waitForServerTeardown(_:)`.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run `TerminalConnectionRuntimeTests` and `TerminalConnectionRegistryTests`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VVTerm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift \
@@ -760,27 +760,27 @@ git commit -m "refactor: add terminal connection runtime owner"
 - Consumes:
   - Task 5 runtime registry.
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 Add a test that no `SSHClient` is created by coordinator by injecting a runtime factory into `ConnectionSessionManager` and asserting `attachSurface` starts the runtime.
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 Expected: compile failure for missing attach/send/resize API.
 
-- [ ] **Step 3: Change `SSHTerminalWrapper.Coordinator`**
+- [x] **Step 3: Change `SSHTerminalWrapper.Coordinator`**
 
 Remove `let sshClient: SSHClient`, `var shellTask`, and `var shellId` from both macOS and iOS coordinators. `sendToSSH`, resize callbacks, and onReady call manager APIs only.
 
-- [ ] **Step 4: Move rich paste client resolution**
+- [x] **Step 4: Move rich paste client resolution**
 
 `TerminalRichPasteSupport` resolves a `RemoteConnectionLease` or command executor from the manager, not the coordinator's client.
 
-- [ ] **Step 5: Run tests and compile**
+- [x] **Step 5: Run tests and compile**
 
 Run `ConnectionSessionManagerOpenTests`, `TerminalConnectionRuntimeTests`, and `build-for-testing`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift \
@@ -809,27 +809,27 @@ git commit -m "refactor: move tab SSH ownership to runtime"
 - Consumes:
   - Shared runtime registry from Task 5.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add tests that closing a pane waits for runtime close and that late pane shell registration is rejected after close.
 
-- [ ] **Step 2: Run red tests**
+- [x] **Step 2: Run red tests**
 
 Expected: compile failure or failing assertions because pane close is not awaitable yet.
 
-- [ ] **Step 3: Remove pane coordinator SSH ownership**
+- [x] **Step 3: Remove pane coordinator SSH ownership**
 
 Remove `SSHClient`, `shellTask`, and `shellId` from `SSHTerminalPaneWrapper.Coordinator`. Replace `Task.detached` close paths with `await TerminalTabManager.shared.closePaneAndWait(paneId)`.
 
-- [ ] **Step 4: Use same runtime APIs as tabs**
+- [x] **Step 4: Use same runtime APIs as tabs**
 
 Panes and tabs use `TerminalEntityID` to address runtime. Keep pane-specific layout state in `TerminalTabManager`.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run `ConnectionLifecycleIntegrationTests` and `TerminalConnectionRuntimeTests`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift \
@@ -859,27 +859,27 @@ git commit -m "refactor: move pane SSH ownership to runtime"
 - Consumes:
   - Existing terminal view dictionaries in managers.
 
-- [ ] **Step 1: Write failing surface tests**
+- [x] **Step 1: Write failing surface tests**
 
 Add tests proving surface detach does not close SSH runtime by itself and repeated cleanup is idempotent.
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 Expected: fail because `TerminalSurfaceRegistry` does not exist.
 
-- [ ] **Step 3: Move terminal view storage**
+- [x] **Step 3: Move terminal view storage**
 
 Move `terminalViews`, access order, browse/find state callbacks, and cleanup into `TerminalSurfaceRegistry`. Managers keep state and intent methods only.
 
-- [ ] **Step 4: Keep SwiftUI lifecycle surface-only**
+- [x] **Step 4: Keep SwiftUI lifecycle surface-only**
 
 `dismantleUIView`, `dismantleNSView`, and coordinator `deinit` can detach or pause surfaces, but they must not close SSH. Closing SSH happens through explicit app-layer close intent.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run `TerminalSurfaceTeardownTests`, `ConnectionSessionManagerOpenTests`, and `ConnectionLifecycleIntegrationTests`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VVTerm/Features/TerminalSessions/Application/TerminalSurfaceRegistry.swift \
@@ -905,7 +905,7 @@ git commit -m "refactor: separate terminal surface lifecycle"
 - Consumes:
   - Existing `SSHAuthenticationGate`.
 
-- [ ] **Step 1: Write failing cancellation tests**
+- [x] **Step 1: Write failing cancellation tests**
 
 ```swift
 final class SSHAuthenticationGateCancellationTests: XCTestCase {
@@ -938,15 +938,15 @@ final class SSHAuthenticationGateCancellationTests: XCTestCase {
 }
 ```
 
-- [ ] **Step 2: Run red tests**
+- [x] **Step 2: Run red tests**
 
 Expected: failing assertion because canceled waiter can remain queued.
 
-- [ ] **Step 3: Implement cancellable waiter IDs**
+- [x] **Step 3: Implement cancellable waiter IDs**
 
 Store waiters by UUID per key. Use `withTaskCancellationHandler` to remove a canceled waiter. Resume only live waiters.
 
-- [ ] **Step 4: Preserve existing behavior**
+- [x] **Step 4: Preserve existing behavior**
 
 Run existing overlap tests to prove same-key serialization and different-key parallelism remain.
 
@@ -976,7 +976,7 @@ git commit -m "fix: make SSH auth gate cancellation-aware"
 - Consumes:
   - Existing direct libssh2 calls in `SSHSession`.
 
-- [ ] **Step 1: Write failing fd cleanup test**
+- [x] **Step 1: Write failing fd cleanup test**
 
 ```swift
 func testSessionInitFailureClosesSocketExactlyOnce() async {
@@ -990,23 +990,23 @@ func testSessionInitFailureClosesSocketExactlyOnce() async {
 }
 ```
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 Expected: compile failure because driver injection does not exist.
 
-- [ ] **Step 3: Introduce driver without broad behavior change**
+- [x] **Step 3: Introduce driver without broad behavior change**
 
 Move C calls behind driver methods. Preserve current behavior first. Then fix double-close by ensuring fd ownership transfers to exactly one cleanup path.
 
-- [ ] **Step 4: Add raw error mapping tests**
+- [x] **Step 4: Add raw error mapping tests**
 
 Inject handshake/auth/channel/SFTP raw codes and assert internal errors preserve operation, raw code, and last message.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run `LibSSH2SessionLifecycleTests` and `SSHErrorRetryableTests`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VVTerm/Core/SSH/LibSSH2SessionDriver.swift \
@@ -1030,27 +1030,27 @@ git commit -m "refactor: add testable libssh2 session boundary"
 - Consumes:
   - Driver from Task 10.
 
-- [ ] **Step 1: Write failing timeout abort test**
+- [x] **Step 1: Write failing timeout abort test**
 
 Test that a fake blocking handshake receives abort when timeout fires.
 
-- [ ] **Step 2: Run red test**
+- [x] **Step 2: Run red test**
 
 Expected: abort count is zero.
 
-- [ ] **Step 3: Add timeout abort hook**
+- [x] **Step 3: Add timeout abort hook**
 
 Change timeout wrapper so timeout calls `pendingSession.abort()` or driver socket abort before throwing `.timeout`.
 
-- [ ] **Step 4: Remove unsafe shared flag where possible**
+- [x] **Step 4: Remove unsafe shared flag where possible**
 
 Replace `_isAborted` and `_sessionForAbort` with a small synchronized abort state object. Keep nonisolated `abort()` only as a narrow fd-close path.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run `LibSSH2SessionLifecycleTests` and `build-for-testing`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VVTerm/Core/SSH/SSHClient.swift \
@@ -1080,7 +1080,7 @@ git commit -m "fix: abort SSH session on blocking timeouts"
 - Consumes:
   - Existing tmux/mosh/known-host logic.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add tests:
 
@@ -1105,23 +1105,23 @@ func testNewHostDoesNotSaveUntilPolicyApproves() async throws {
 }
 ```
 
-- [ ] **Step 2: Run red tests**
+- [x] **Step 2: Run red tests**
 
 Expected: cancellation is swallowed or new host auto-save behavior fails the test.
 
-- [ ] **Step 3: Introduce command executor**
+- [x] **Step 3: Introduce command executor**
 
 Move tmux/mosh helper dependencies from raw `SSHClient` to `RemoteCommandExecuting` while keeping call sites bridged through `SSHClient`.
 
-- [ ] **Step 4: Introduce known-host service boundary**
+- [x] **Step 4: Introduce known-host service boundary**
 
 Low-level `SSHSession` obtains a verification result and returns a typed error or requires policy callback before saving.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run tmux, mosh, known-host, and SSH retryability tests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VVTerm/Core/SSH/RemoteCommandExecuting.swift \
@@ -1155,27 +1155,27 @@ git commit -m "refactor: preserve remote command failure semantics"
 - Consumes:
   - Runtime registry from TerminalSessions and existing owned clients.
 
-- [ ] **Step 1: Write failing lease tests**
+- [x] **Step 1: Write failing lease tests**
 
 Test borrowed leases do not disconnect the underlying client on close, while owned leases do.
 
-- [ ] **Step 2: Run red tests**
+- [x] **Step 2: Run red tests**
 
 Expected: compile failure because lease type does not exist.
 
-- [ ] **Step 3: Implement lease**
+- [x] **Step 3: Implement lease**
 
 Lease owns close semantics. RemoteFiles and Stats no longer decide raw client disconnect with untracked `Task.detached`.
 
-- [ ] **Step 4: Update feature adapters**
+- [x] **Step 4: Update feature adapters**
 
 `SSHSFTPAdapter.disconnect(serverId:)` becomes async or returns a tracked task. `ServerStatsCollector.stopCollecting()` awaits or stores owned lease close.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run RemoteFiles, Stats, and lifecycle tests listed above.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VVTerm/Core/SSH/RemoteConnectionLease.swift \
@@ -1669,11 +1669,111 @@ Then run:
 xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/refactor-swift-best-practice.md VVTerm VVTermTests
 git commit -m "refactor: complete remote lease boundary cleanup"
+```
+
+## Task 21: Core SSH FFI Boundary Final Sweep
+
+**Files:**
+- Modify: `VVTerm/Core/SSH/SSHClient.swift`
+- Modify: `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
+- Modify: `VVTerm/Core/SSH/KnownHostsManager.swift`
+- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Test: `VVTermTests/SSHErrorRetryableTests.swift`
+- Test: `VVTermTests/KnownHostsManagerTests.swift`
+
+**Interfaces:**
+- Consumes:
+  - `LibSSH2SessionDriving`
+  - `LibSSH2RawError`
+  - `KnownHostsStore`
+  - `KnownHostVerificationService`
+  - `SSHSession.abort()`
+- Produces:
+  - Every remaining allowed `NSLock`, `nonisolated(unsafe)`, and direct libssh2 C call in `Core/SSH` is classified in the Progress Ledger as a stable low-level boundary, a test fake, or a follow-up task.
+  - Raw libssh2 failures used by connect/auth/channel/session teardown preserve operation, raw code, and message before translation.
+  - Known-host storage has one authoritative actor-backed implementation for new application/infrastructure code; legacy synchronous access is either removed or explicitly documented as a narrow compatibility facade.
+
+- [ ] **Step 1: Run focused Core SSH audit commands**
+
+```bash
+rg -n "nonisolated\\(unsafe\\)|NSLock|DispatchQueue|libssh2_|withUnsafe|UnsafeMutable|UnsafePointer|Darwin\\.close|closeSocket|session_last_error" VVTerm/Core/SSH -g '*.swift'
+rg -n "KnownHostsManager|KnownHostsStore|KnownHostVerificationService|libssh2|LibSSH2RawError|SSHError\\.libssh2|Authentication failed" VVTermTests VVTerm/Core/SSH -g '*.swift'
+```
+
+Classify each hit in the Progress Ledger before editing code. Exemptions must name the owner and invariant, for example "private process-global libssh2 init lock" or "keyboard-interactive callback context lifetime is owned by `SSHSession`".
+
+- [ ] **Step 2: Add RED auth raw-error boundary tests**
+
+Add focused tests to `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`:
+
+```swift
+func testPublicKeyAuthFailurePreservesRawLibSSH2Error() async {
+    let driver = RecordingLibSSH2SessionDriver(
+        sessionInitResult: OpaquePointer(bitPattern: 0x1),
+        authMethods: "publickey",
+        publicKeyAuthResult: .failure(
+            LibSSH2RawError(
+                operation: .authentication,
+                code: -19,
+                message: "Callback returned error"
+            )
+        )
+    )
+    let session = SSHSession(config: .libSSH2LifecycleTest, driver: driver)
+
+    do {
+        try await session.connect()
+        XCTFail("Expected raw libssh2 authentication failure")
+    } catch SSHError.libssh2(let rawError) {
+        XCTAssertEqual(rawError.operation, .authentication)
+        XCTAssertEqual(rawError.code, -19)
+        XCTAssertEqual(rawError.message, "Callback returned error")
+    } catch {
+        XCTFail("Expected SSHError.libssh2, got \(error)")
+    }
+}
+```
+
+This is intentionally an auth-boundary RED test, not a handshake test. Handshake is already behind `LibSSH2SessionDriving`; the current unprotected behavior to expose is that auth last-error details such as `-19 Callback returned error` can be collapsed into `SSHError.authenticationFailed`. If the auth audit finds a narrower unprotected libssh2 path, use the same RED shape for that path instead. Do not add a broad integration test that needs a real server.
+
+- [ ] **Step 3: Run RED tests**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/SSHErrorRetryableTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected: the new auth raw-boundary assertion fails or fails to compile because `LibSSH2SessionDriving` cannot model auth methods, public-key auth, or `.authentication` raw errors yet.
+
+- [ ] **Step 4: Move one raw boundary behind `LibSSH2SessionDriving`**
+
+Make the minimal production change for the failing test:
+- Add only the driver method needed by the new test, named after the libssh2 auth operation it protects.
+- Add `LibSSH2RawError.Operation.authentication` and throw `SSHError.libssh2(rawError)` internally when libssh2 reports an auth callback/protocol error distinct from a normal credential rejection.
+- Keep unsafe pointers inside the driver method or inside a small non-escaping closure.
+- Log or preserve `LibSSH2RawError` before converting to user-facing `SSHError`.
+- Keep `SSHSession` as the owner of session/channel/socket cleanup; do not let SwiftUI, RemoteFiles, or Stats own this teardown path.
+
+- [ ] **Step 5: Reconcile known-host ownership**
+
+If Step 1 still finds new code paths using `KnownHostsManager.shared` directly, move them to `KnownHostsStore` / `KnownHostVerificationService`. If only settings/test compatibility remains, record the compatibility reason in the Progress Ledger and add or update a test in `KnownHostsManagerTests` that protects the intended store behavior.
+
+- [ ] **Step 6: Run focused Core SSH verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/SSHErrorRetryableTests -only-testing:VVTermTests/KnownHostsManagerTests -only-testing:VVTermTests/SSHAuthenticationGateCancellationTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add docs/refactor-swift-best-practice.md VVTerm/Core/SSH VVTermTests/Core/SSH VVTermTests/SSHErrorRetryableTests.swift VVTermTests/KnownHostsManagerTests.swift
+git commit -m "refactor: tighten core SSH FFI boundaries"
 ```
 
 ## Progress Ledger
@@ -1702,7 +1802,9 @@ git commit -m "refactor: complete remote lease boundary cleanup"
 - 2026-06-21: Task 20 audit classification completed. Non-exempt hits were RemoteFiles/App raw borrowed-client provider wiring and Terminal Rich Paste UI-side raw-client-to-lease wrapping. Exempt hits are Stats and RemoteFiles owned `SSHClient()` infrastructure fallback construction, TerminalSessions application-layer runtime construction/private raw-client helpers, `RemoteConnectionLease.withExclusiveClient`, Stats `disconnectWhenDone: false` inside the lease-gated connection bridge, and UI event `Task {}` wrappers that send store/collector intent rather than owning teardown.
 - 2026-06-21: Task 20 RED/GREEN completed for RemoteFiles lease boundary. `SSHSFTPAdapterTests.borrowedLeaseProviderIsTheRemoteFilesConnectionBoundary` first failed to compile because `SSHSFTPAdapter` still accepted `borrowedClientProvider`; GREEN passed after `SSHSFTPAdapter`, app composition, and terminal rich-paste runtime paths consumed `RemoteConnectionLease` providers. `sharedStatsClient` is now private to terminal managers and tests assert `sharedStatsLease(...).client` identity instead.
 - 2026-06-21: Task 20 API/boundary cleanup completed after code review. Reviewer found iOS UI still pulled raw `SSHClient`/`shellId` for resize and raw terminal helpers were still module-internal; fixed by routing iOS refresh resize through `ConnectionSessionManager.resizeSession(...)`, reusing that manager intent in redraw-after-close, and making raw terminal client helpers private. Verification: expanded focused suite passed 24 XCTest tests plus 67 Swift Testing tests; `git diff --check` passed; `xcodebuild build-for-testing -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed; re-review found no remaining issues.
-- Next task: Post-Task-20 plan audit for remaining Swift best-practice gaps.
+- 2026-06-21: Post-Task-20 plan audit reconciled historical checklist drift. Tasks 1-13 are now marked complete because their current code/test artifacts exist in-tree: generation-guard shell registration, awaitable close APIs, application-layer runner/runtime/registry, terminal surface registry, cancellation-aware auth gate, libssh2 session driver and abort tests, `RemoteCommandExecuting`, known-host verification service, and `RemoteConnectionLease`.
+- 2026-06-21: Post-Task-20 remaining gap classification selected Core SSH/FFI for the next wave. RemoteFiles/Stats raw lease boundaries are complete from Task 20; broad UI `Task {}` hits are lower priority unless they own lifecycle-critical teardown. The highest-risk remaining area is concentrated in `SSHClient.swift` and `LibSSH2SessionDriver.swift`: direct auth/channel/SFTP libssh2 calls, keyboard-interactive callback lifetime, raw error preservation, and legacy known-host storage compatibility.
+- Next task: Task 21 Core SSH FFI Boundary Final Sweep.
 
 ## Self-Review
 
