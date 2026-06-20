@@ -544,6 +544,61 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func tabManagerReconnectPaneSkipsWhenRegistryRuntimeIsLive() async {
+        await withCleanTabManager { manager in
+            let serverId = UUID()
+            let paneId = UUID()
+            manager.paneStates[paneId] = TerminalPaneState(
+                paneId: paneId,
+                tabId: UUID(),
+                serverId: serverId
+            )
+
+            // Given a pane with a live manager-owned opening runtime and a stale
+            // disconnected display snapshot.
+            let client = SSHClient()
+            #expect(manager.tryBeginShellStart(for: paneId, client: client))
+            manager.updatePaneState(paneId, connectionState: .connecting)
+            manager.paneStates[paneId]?.connectionState = .disconnected
+
+            // When split-pane reconnect is requested.
+            await manager.reconnectPane(paneId)
+
+            // Then the application layer must not unregister or cancel the live
+            // opening runtime just because the UI snapshot is stale.
+            #expect(manager.isShellStartInFlight(for: paneId))
+        }
+    }
+
+    @Test
+    func tabManagerReconnectPaneStartsWhenSnapshotIsConnectingButRegistryRuntimeIsInactive() async {
+        await withCleanTabManager { manager in
+            let serverId = UUID()
+            let paneId = UUID()
+            var stalePane = TerminalPaneState(
+                paneId: paneId,
+                tabId: UUID(),
+                serverId: serverId
+            )
+            stalePane.connectionState = .connecting
+            manager.paneStates[paneId] = stalePane
+
+            // When a user retry reaches the application layer after the display
+            // snapshot says connecting but the runtime registry is inactive.
+            await manager.reconnectPane(paneId)
+
+            // Then reconnect is driven by registry liveness, not blocked by the
+            // stale connecting snapshot.
+            #expect(manager.hasLiveRuntime(forPaneId: paneId))
+            if case .reconnecting(let attempt) = manager.paneStates[paneId]?.connectionState {
+                #expect(attempt == 1)
+            } else {
+                Issue.record("Expected pane to enter reconnecting state.")
+            }
+        }
+    }
+
+    @Test
     func tabManagerCloseTabAndWaitWaitsForPaneUnregister() async {
         await withCleanTabManager { manager in
             let serverId = UUID()

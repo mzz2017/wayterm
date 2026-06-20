@@ -830,13 +830,12 @@ struct TerminalPaneView: View {
             }
         }
         reconnectInFlight = true
-        TerminalTabManager.shared.updatePaneState(paneId, connectionState: .connecting)
         connectWatchdogToken = UUID()
-        startConnectWatchdog()
         reconnectToken = UUID()
         Task {
-            await TerminalTabManager.shared.unregisterSSHClient(for: paneId)
+            await TerminalTabManager.shared.reconnectPane(paneId)
             await MainActor.run {
+                startConnectWatchdog()
                 reconnectInFlight = false
             }
         }

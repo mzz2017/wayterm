@@ -1041,6 +1041,16 @@ final class TerminalTabManager: ObservableObject {
         )
     }
 
+    func reconnectPane(_ paneId: UUID) async {
+        guard paneStates[paneId] != nil else { return }
+        if terminalConnectionRegistry.isOpeningOrStreaming(.pane(paneId)) {
+            return
+        }
+
+        updatePaneState(paneId, connectionState: .reconnecting(attempt: 1))
+        await unregisterSSHClient(for: paneId)
+    }
+
     /// Returns true when the same SSH client instance is registered to another live pane.
     /// This is used to avoid disconnecting a truly shared client during retry cleanup.
     func hasOtherRegistrations(using client: SSHClient, excluding paneId: UUID) -> Bool {
