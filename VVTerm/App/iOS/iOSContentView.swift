@@ -624,14 +624,7 @@ struct iOSServerListView: View {
             guard let server = server(for: connection.id) else { return }
             guard await AppLockManager.shared.ensureServerUnlocked(server) else { return }
 
-            let sessionHasLiveRuntime = await MainActor.run {
-                sessionManager.hasLiveRuntime(forSessionId: connection.session.id)
-            }
-            if IOSServerListPolicy.shouldReconnectActiveConnection(
-                sessionHasLiveRuntime: sessionHasLiveRuntime
-            ) {
-                try? await sessionManager.reconnect(session: connection.session)
-            }
+            _ = await sessionManager.reconnectSessionIfRuntimeInactive(connection.session)
 
             await MainActor.run {
                 sessionManager.selectSession(connection.session)
@@ -1031,24 +1024,25 @@ struct iOSTerminalView: View {
     }
 
     private func attemptForegroundReconnectIfNeeded(refreshTerminal: Bool = false) {
-        guard let action = sessionManager.foregroundReconnectActionForSelectedSession(
-            selectedViewId: selectedView,
-            terminalViewId: ConnectionViewTab.terminal.id,
-            refreshTerminal: refreshTerminal,
-            autoReconnectEnabled: autoReconnectEnabled
-        ) else {
-            return
-        }
-        guard let session = sessionManager.sessions.first(where: { $0.id == action.sessionId }) else { return }
+        Task { @MainActor in
+            guard let action = await sessionManager.handleForegroundReconnectForSelectedSession(
+                selectedViewId: selectedView,
+                terminalViewId: ConnectionViewTab.terminal.id,
+                refreshTerminal: refreshTerminal,
+                autoReconnectEnabled: autoReconnectEnabled
+            ) else {
+                return
+            }
+            guard let session = sessionManager.sessions.first(where: { $0.id == action.sessionId }) else { return }
 
-        if action.shouldRefreshTerminal {
-            activateTerminal(session)
-        }
+            if action.shouldRefreshTerminal {
+                activateTerminal(session)
+            }
 
-        if action.shouldReconnect {
-            Task { try? await sessionManager.reconnect(session: session) }
-            reconnectTokenBySession[action.sessionId] = UUID()
-            shouldShowTerminalBySession[action.sessionId] = action.shouldForceTerminalVisible
+            if action.shouldReconnect {
+                reconnectTokenBySession[action.sessionId] = UUID()
+                shouldShowTerminalBySession[action.sessionId] = action.shouldForceTerminalVisible
+            }
         }
     }
 

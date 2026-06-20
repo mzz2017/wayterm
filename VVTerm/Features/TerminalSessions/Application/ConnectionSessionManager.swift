@@ -122,13 +122,13 @@ final class ConnectionSessionManager: ObservableObject {
         _ sessionId: UUID,
         isSceneActive: Bool,
         autoReconnectEnabled: Bool,
-        reconnectInFlight: Bool
+        reconnectInFlight: Bool = false
     ) -> Bool {
         guard let state = sessionState(for: sessionId) else { return false }
         return TerminalAutoReconnectPolicy.shouldAttemptReconnect(
             isSceneActive: isSceneActive,
             autoReconnectEnabled: autoReconnectEnabled,
-            reconnectInFlight: reconnectInFlight,
+            reconnectInFlight: reconnectInFlight || sessionReconnectsInFlight.contains(sessionId),
             isSuspendingForBackground: isSuspendingForBackground,
             connectionState: state,
             hasLiveRuntime: hasLiveRuntime(forSessionId: sessionId)
@@ -141,7 +141,7 @@ final class ConnectionSessionManager: ObservableObject {
     ) -> Bool {
         guard let state = sessionState(for: sessionId) else { return false }
         return TerminalManualReconnectPolicy.shouldAttemptReconnect(
-            reconnectInFlight: reconnectInFlight,
+            reconnectInFlight: reconnectInFlight || sessionReconnectsInFlight.contains(sessionId),
             snapshotState: state,
             hasLiveRuntime: hasLiveRuntime(forSessionId: sessionId)
         )
@@ -168,6 +168,29 @@ final class ConnectionSessionManager: ObservableObject {
         )
     }
 
+    func handleForegroundReconnectForSelectedSession(
+        selectedViewId: String,
+        terminalViewId: String,
+        refreshTerminal: Bool,
+        autoReconnectEnabled: Bool
+    ) async -> TerminalForegroundReconnectAction? {
+        guard let action = foregroundReconnectActionForSelectedSession(
+            selectedViewId: selectedViewId,
+            terminalViewId: terminalViewId,
+            refreshTerminal: refreshTerminal,
+            autoReconnectEnabled: autoReconnectEnabled
+        ) else {
+            return nil
+        }
+
+        if action.shouldReconnect,
+           let session = sessionWithID(action.sessionId) {
+            _ = await reconnectSessionIfRuntimeInactive(session)
+        }
+
+        return action
+    }
+
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ConnectionSession")
     private var shellRegistry = SSHShellRegistry(staleThreshold: 120)
 
@@ -182,11 +205,15 @@ final class ConnectionSessionManager: ObservableObject {
     private var shellSuspendHandlers: [UUID: @MainActor () async -> Void] = [:]
     /// Server IDs with an in-flight open request, used to collapse repeated clicks.
     private var sessionOpensInFlight: Set<UUID> = []
+    private var sessionReconnectsInFlight: Set<UUID> = []
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
     private var serverDisconnectTasks: [UUID: Task<Void, Never>] = [:]
     /// Application-owned connect watchdog timers keyed by session.
     private var connectWatchdogTasks: [UUID: Task<Void, Never>] = [:]
     private var connectWatchdogGenerations: [UUID: UUID] = [:]
+    private var credentialsProvider: @MainActor (Server) async throws -> ServerCredentials = { server in
+        try KeychainManager.shared.getCredentials(for: server)
+    }
     /// Per-server teardown work from ordinary tab closes. New opens wait for this too.
     private var serverTeardownTasks: [UUID: [UUID: Task<Void, Never>]] = [:]
     /// Application-owned tab SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
@@ -1876,6 +1903,65 @@ final class ConnectionSessionManager: ObservableObject {
         await unregisterSSHClient(for: session.id)
     }
 
+    func reconnectSessionIfRuntimeInactive(_ session: ConnectionSession) async -> Bool {
+        guard canStartSessionReconnect(session.id) else {
+            return false
+        }
+
+        do {
+            try await reconnect(session: session)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func canStartSessionReconnect(_ sessionId: UUID) -> Bool {
+        guard let state = sessionState(for: sessionId) else { return false }
+        return TerminalManualReconnectPolicy.shouldAttemptReconnect(
+            reconnectInFlight: false,
+            snapshotState: state,
+            hasLiveRuntime: hasLiveRuntime(forSessionId: sessionId)
+        )
+    }
+
+    func retrySessionConnection(
+        session: ConnectionSession,
+        server: Server?
+    ) async -> TerminalReconnectRequestResult {
+        guard let server else {
+            return .credentialLoadFailed(String(localized: "Failed to load credentials"))
+        }
+        guard shouldManuallyReconnectSession(
+            session.id,
+            reconnectInFlight: sessionReconnectsInFlight.contains(session.id)
+        ) else {
+            return .skipped
+        }
+
+        sessionReconnectsInFlight.insert(session.id)
+        defer { sessionReconnectsInFlight.remove(session.id) }
+
+        do {
+            let credentials = try await credentialsProvider(server)
+            guard canStartSessionReconnect(session.id) else {
+                return .skipped
+            }
+            try await reconnect(session: session)
+            return .started(credentials)
+        } catch {
+            return .credentialLoadFailed(error.localizedDescription)
+        }
+    }
+
+    func loadCredentials(for server: Server) async -> TerminalCredentialLoadResult {
+        do {
+            return .loaded(try await credentialsProvider(server))
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
     func retrustHostAndReconnect(session: ConnectionSession, server: Server) async -> Bool {
         await KnownHostsStore.shared.remove(host: server.host, port: server.port)
         guard !Task.isCancelled else { return false }
@@ -2436,9 +2522,13 @@ extension ConnectionSessionManager {
         shellCancelHandlers.removeAll()
         shellSuspendHandlers.removeAll()
         sessionOpensInFlight.removeAll()
+        sessionReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
         connectWatchdogGenerations.removeAll()
+        credentialsProvider = { server in
+            try KeychainManager.shared.getCredentials(for: server)
+        }
         serverDisconnectTasks.removeAll()
         terminalsNeedingReconnectReset.removeAll()
         isSuspendingForBackground = false
@@ -2483,6 +2573,12 @@ extension ConnectionSessionManager {
         _ operation: (@MainActor @Sendable () async -> Void)?
     ) {
         tmuxKillOperationForTesting = operation
+    }
+
+    func setCredentialsProviderForTesting(
+        _ provider: @escaping @MainActor (Server) async throws -> ServerCredentials
+    ) {
+        credentialsProvider = provider
     }
 
     func registerTerminalForTesting(sessionId: UUID) {

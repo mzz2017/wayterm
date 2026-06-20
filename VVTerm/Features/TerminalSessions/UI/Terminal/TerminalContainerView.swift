@@ -30,7 +30,6 @@ struct TerminalContainerView: View {
     @State private var isInstallingMosh = false
     @State private var operationNotice: NoticeItem?
     @State private var dismissFallbackBanner = false
-    @State private var reconnectInFlight = false
     @State private var hasEstablishedConnection = false
     @State private var showingRetrustHostConfirmation = false
     @StateObject private var richPasteUI = TerminalRichPasteUIModel()
@@ -237,10 +236,12 @@ struct TerminalContainerView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
-            loadCredentialsIfNeeded(force: true)
+            await loadCredentialsIfNeeded(force: true)
         }
         .onChange(of: server?.id) { _ in
-            loadCredentialsIfNeeded(force: true)
+            credentials = nil
+            credentialLoadErrorMessage = nil
+            Task { await loadCredentialsIfNeeded(force: true) }
         }
         .onAppear {
             updateTerminalBackgroundColor()
@@ -280,7 +281,6 @@ struct TerminalContainerView: View {
                 if state.isConnected {
                     hasEstablishedConnection = true
                 }
-                reconnectInFlight = false
                 startConnectWatchdog()
             } else if case .disconnected = state {
                 attemptAutoReconnectIfNeeded()
@@ -670,8 +670,7 @@ struct TerminalContainerView: View {
         guard ConnectionSessionManager.shared.shouldAutoReconnectSession(
             session.id,
             isSceneActive: scenePhase == .active,
-            autoReconnectEnabled: autoReconnectEnabled,
-            reconnectInFlight: reconnectInFlight
+            autoReconnectEnabled: autoReconnectEnabled
         ) else { return }
         Task { await retryConnection() }
     }
@@ -689,18 +688,24 @@ struct TerminalContainerView: View {
 
     @MainActor
     private func retryConnection() async {
-        guard ConnectionSessionManager.shared.shouldManuallyReconnectSession(
-            session.id,
-            reconnectInFlight: reconnectInFlight
-        ) else { return }
-        reconnectInFlight = true
-        defer { reconnectInFlight = false }
         isReady = false
         operationNotice = nil
-        loadCredentialsIfNeeded(force: true)
-        guard credentials != nil else { return }
+        let result = await ConnectionSessionManager.shared.retrySessionConnection(
+            session: session,
+            server: server
+        )
+        guard let loadedCredentials = result.credentials else {
+            if let message = result.errorMessage {
+                credentialLoadErrorMessage = String(
+                    format: String(localized: "Failed to load credentials: %@"),
+                    message
+                )
+            }
+            return
+        }
+        credentials = loadedCredentials
+        credentialLoadErrorMessage = nil
         ghosttyApp.startIfNeeded()
-        try? await ConnectionSessionManager.shared.reconnect(session: session)
         startConnectWatchdog()
         reconnectToken = UUID()
     }
@@ -729,16 +734,19 @@ struct TerminalContainerView: View {
     }
 
     @MainActor
-    private func loadCredentialsIfNeeded(force: Bool) {
+    private func loadCredentialsIfNeeded(force: Bool) async {
         guard let server else { return }
         if !force, credentials != nil { return }
-        do {
-            credentials = try KeychainManager.shared.getCredentials(for: server)
+        let serverId = server.id
+        let result = await ConnectionSessionManager.shared.loadCredentials(for: server)
+        guard self.server?.id == serverId else { return }
+        if let loadedCredentials = result.credentials {
+            credentials = loadedCredentials
             credentialLoadErrorMessage = nil
-        } catch {
+        } else if let message = result.errorMessage {
             credentialLoadErrorMessage = String(
                 format: String(localized: "Failed to load credentials: %@"),
-                error.localizedDescription
+                message
             )
         }
     }

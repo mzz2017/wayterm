@@ -93,14 +93,14 @@ final class TerminalTabManager: ObservableObject {
         _ paneId: UUID,
         isSceneActive: Bool,
         autoReconnectEnabled: Bool,
-        reconnectInFlight: Bool,
+        reconnectInFlight: Bool = false,
         isSuspendingForBackground: Bool = false
     ) -> Bool {
         guard let state = paneStates[paneId]?.connectionState else { return false }
         return TerminalAutoReconnectPolicy.shouldAttemptReconnect(
             isSceneActive: isSceneActive,
             autoReconnectEnabled: autoReconnectEnabled,
-            reconnectInFlight: reconnectInFlight,
+            reconnectInFlight: reconnectInFlight || paneReconnectsInFlight.contains(paneId),
             isSuspendingForBackground: isSuspendingForBackground,
             connectionState: state,
             hasLiveRuntime: hasLiveRuntime(forPaneId: paneId)
@@ -113,7 +113,7 @@ final class TerminalTabManager: ObservableObject {
     ) -> Bool {
         guard let state = paneStates[paneId]?.connectionState else { return false }
         return TerminalManualReconnectPolicy.shouldAttemptReconnect(
-            reconnectInFlight: reconnectInFlight,
+            reconnectInFlight: reconnectInFlight || paneReconnectsInFlight.contains(paneId),
             snapshotState: state,
             hasLiveRuntime: hasLiveRuntime(forPaneId: paneId)
         )
@@ -131,11 +131,15 @@ final class TerminalTabManager: ObservableObject {
     private var shellRegistry = SSHShellRegistry(staleThreshold: 120)
     /// Server IDs with an in-flight tab-open request to avoid queued duplicates.
     private var tabOpensInFlight: Set<UUID> = []
+    private var paneReconnectsInFlight: Set<UUID> = []
     /// In-flight SSH teardown tasks by server, used to serialize close/open ordering.
     private var serverTeardownTasks: [UUID: [UUID: Task<Void, Never>]] = [:]
     /// Application-owned connect watchdog timers keyed by pane.
     private var connectWatchdogTasks: [UUID: Task<Void, Never>] = [:]
     private var connectWatchdogGenerations: [UUID: UUID] = [:]
+    private var credentialsProvider: @MainActor (Server) async throws -> ServerCredentials = { server in
+        try KeychainManager.shared.getCredentials(for: server)
+    }
     /// Application-owned pane SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
     private var paneRuntimes: [UUID: PaneRuntimeState] = [:]
     private let terminalConnectionRegistry = TerminalConnectionRegistry()
@@ -1164,6 +1168,49 @@ final class TerminalTabManager: ObservableObject {
         await unregisterSSHClient(for: paneId)
     }
 
+    func retryPaneConnection(
+        paneId: UUID,
+        server: Server
+    ) async -> TerminalReconnectRequestResult {
+        guard shouldManuallyReconnectPane(
+            paneId,
+            reconnectInFlight: paneReconnectsInFlight.contains(paneId)
+        ) else {
+            return .skipped
+        }
+
+        paneReconnectsInFlight.insert(paneId)
+        defer { paneReconnectsInFlight.remove(paneId) }
+
+        do {
+            let credentials = try await credentialsProvider(server)
+            guard canStartPaneReconnect(paneId) else {
+                return .skipped
+            }
+            await reconnectPane(paneId)
+            return .started(credentials)
+        } catch {
+            return .credentialLoadFailed(error.localizedDescription)
+        }
+    }
+
+    private func canStartPaneReconnect(_ paneId: UUID) -> Bool {
+        guard let state = paneStates[paneId]?.connectionState else { return false }
+        return TerminalManualReconnectPolicy.shouldAttemptReconnect(
+            reconnectInFlight: false,
+            snapshotState: state,
+            hasLiveRuntime: hasLiveRuntime(forPaneId: paneId)
+        )
+    }
+
+    func loadCredentials(for server: Server) async -> TerminalCredentialLoadResult {
+        do {
+            return .loaded(try await credentialsProvider(server))
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
     func retrustHostAndReconnect(paneId: UUID, server: Server) async -> Bool {
         await KnownHostsStore.shared.remove(host: server.host, port: server.port)
         guard !Task.isCancelled else { return false }
@@ -2090,9 +2137,13 @@ extension TerminalTabManager {
         terminalRegistryVersion = 0
         shellRegistry.removeAll()
         tabOpensInFlight.removeAll()
+        paneReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
         connectWatchdogGenerations.removeAll()
+        credentialsProvider = { server in
+            try KeychainManager.shared.getCredentials(for: server)
+        }
         serverTeardownTasks.removeAll()
         paneRuntimes.removeAll()
         terminalConnectionRegistry.removeAll()
@@ -2127,6 +2178,12 @@ extension TerminalTabManager {
         _ operation: (@MainActor @Sendable () async -> Void)?
     ) {
         tmuxKillOperationForTesting = operation
+    }
+
+    func setCredentialsProviderForTesting(
+        _ provider: @escaping @MainActor (Server) async throws -> ServerCredentials
+    ) {
+        credentialsProvider = provider
     }
 
     func beginShellStartForTesting(

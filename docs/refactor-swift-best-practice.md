@@ -2699,11 +2699,11 @@ git commit -m "fix: await terminal runner finish on close"
 
 Add tests that prove root and split-pane reconnect/watchdog decisions can run from an application-layer API without constructing SwiftUI views. Include iOS foreground resume policy as a pure or manager-owned decision test.
 
-- [ ] **Step 2: Move root-session reconnect orchestration into Application**
+- [x] **Step 2: Move root-session reconnect orchestration into Application**
 
 Extract root terminal reconnect/watchdog/retrust/install sequencing from `TerminalContainerView` into `ConnectionSessionManager` or a narrow application coordinator. The view should call intent methods and render state only.
 
-- [ ] **Step 3: Move split-pane reconnect orchestration into Application**
+- [x] **Step 3: Move split-pane reconnect orchestration into Application**
 
 Apply the same boundary to `TerminalView` and `TerminalTabManager`.
 
@@ -2711,18 +2711,18 @@ Apply the same boundary to `TerminalView` and `TerminalTabManager`.
 
 `iOSContentView` should not decide whether to reconnect by combining scene phase, selected session, reconnect tokens, and terminal visibility. It should send foreground/selection intent to an application-layer API.
 
-- [ ] **Step 5: Run focused verification**
+- [x] **Step 5: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/IOSTerminalViewPolicyTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 6: API and boundary cleanup**
+- [x] **Step 6: API and boundary cleanup**
 
 Verify SwiftUI lifecycle callbacks only attach/detach surfaces or send intent, and that application APIs expose clear side-effectful names.
 
-- [ ] **Step 7: Request review and commit**
+- [x] **Step 7: Request review and commit**
 
 ```bash
 git add VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTerm/App/iOS/iOSContentView.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift VVTermTests/IOSTerminalViewPolicyTests.swift docs/refactor-swift-best-practice.md
@@ -2893,6 +2893,7 @@ Commit each split sub-task atomically.
 - 2026-06-21: Task 36 RED/GREEN completed. RED verification showed `closeSessionAndWait(_:)` already waited for a delayed stored runner task, while `closePaneAndWait(_:)` returned before a delayed stored runtime shell task finished. `TerminalConnectionRuntime.close(mode:)` now awaits the stored shell task in every close branch, and regression tests cover both session and pane close ordering. Verification: focused lifecycle/runtime suite passed 57 Swift Testing tests, and `git diff --check` passed.
 - 2026-06-21: Task 37 slice 1 RED/GREEN completed. Application-layer APIs now own root auto/manual reconnect decisions, split-pane manual reconnect decisions, watchdog scheduling predicates, iOS selected-session foreground reconnect action, and retrust/mosh install-then-reconnect sequencing. SwiftUI terminal views still own `reconnectInFlight`, rebuild tokens, and the 20-second watchdog sleep bridge, so Task 37 remains open for the full coordinator/timing move. Verification: focused Task 37 suite passed 64 Swift Testing tests, and `git diff --check` passed.
 - 2026-06-21: Task 37 slice 2 RED/GREEN completed. `ConnectionSessionManager` and `TerminalTabManager` now own connect watchdog timer tasks and generation cancellation; root and split SwiftUI views no longer store watchdog tokens, sleep for the 20-second timeout, or call timeout handlers directly. Task 37 remains open for moving remaining credential-loading and `reconnectInFlight` retry-state orchestration out of the views. Verification: focused Task 37 suite passed 67 Swift Testing tests, and `git diff --check` passed.
+- 2026-06-21: Task 37 final RED/GREEN, API cleanup, and review fixes completed. Root, split, and iOS terminal views no longer own retry in-flight state, call Keychain directly, execute reconnect directly, or derive foreground reconnect from registry state in SwiftUI. Managers now load credentials through application-layer providers, gate duplicate retry intent, revalidate liveness after awaited credential loading, execute foreground/open-active reconnect intent, return wrapper credentials or UI actions to views, and keep reconnect/watchdog/retrust/mosh sequencing in TerminalSessions Application. Boundary scan found no `reconnectInFlight`, direct `KeychainManager.shared.getCredentials`, old watchdog token/sleep, direct `reconnect(session:)`, direct live-runtime lookup, direct known-host reset, or direct reconnect policy calls in the target SwiftUI files. Verification: focused Task 37 suite passed 74 Swift Testing tests, and `git diff --check` passed.
 - 2026-06-21: Task 31 completed, with Task 36 ledger correction. Terminal runtime/client factory ownership is centralized in `TerminalConnectionRuntime`; session and tab managers still hold temporary application-boundary bridge maps and shell registry leases for runtime lookup/registration, but runner finish ordering is protected by awaitable runtime close paths and late/missing shell registrations are rejected before runner follow-up callbacks mutate closed state.
 - 2026-06-21: Task 32 RED/GREEN and API cleanup completed. `TerminalConnectionRunner` now depends on `TerminalConnectionSurface` and abstract connection operations instead of `GhosttyTerminalView`; `GhosttyTerminalView` adaptation lives at the surface registry/application boundary, and runner tests cover fake-surface size reads, stream writes, and process-exit notification without constructing a UI surface.
 - 2026-06-21: Final audit after Task 32 found repo-wide drift against the Swift test context rule: multiple older `VVTermTests/**/*.swift` files still lack `Test Context` headers. Task 33 is added to close this rule before final ready-for-merge review.

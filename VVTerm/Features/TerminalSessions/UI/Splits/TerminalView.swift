@@ -385,7 +385,6 @@ struct TerminalPaneView: View {
     @State private var isInstallingMosh = false
     @State private var operationNotice: NoticeItem?
     @State private var dismissFallbackBanner = false
-    @State private var reconnectInFlight = false
     @State private var terminalBackgroundColor: Color = Self.initialTerminalBackgroundColor()
     @State private var hasEstablishedConnection = false
     @State private var showingRetrustHostConfirmation = false
@@ -574,10 +573,11 @@ struct TerminalPaneView: View {
             if connectionState.isConnected {
                 hasEstablishedConnection = true
             }
-            do {
-                credentials = try KeychainManager.shared.getCredentials(for: server)
+            let result = await TerminalTabManager.shared.loadCredentials(for: server)
+            if let loadedCredentials = result.credentials {
+                credentials = loadedCredentials
                 credentialLoadErrorMessage = nil
-            } catch {
+            } else if result.errorMessage != nil {
                 credentialLoadErrorMessage = String(localized: "Failed to load credentials")
             }
 
@@ -610,7 +610,6 @@ struct TerminalPaneView: View {
                 if state.isConnected {
                     hasEstablishedConnection = true
                 }
-                reconnectInFlight = false
                 startConnectWatchdog()
             } else if case .disconnected = state {
                 attemptAutoReconnectIfNeeded()
@@ -808,37 +807,30 @@ struct TerminalPaneView: View {
         guard TerminalTabManager.shared.shouldAutoReconnectPane(
             paneId,
             isSceneActive: scenePhase == .active,
-            autoReconnectEnabled: autoReconnectEnabled,
-            reconnectInFlight: reconnectInFlight
+            autoReconnectEnabled: autoReconnectEnabled
         ) else { return }
         retryConnection()
     }
 
     private func retryConnection() {
-        guard TerminalTabManager.shared.shouldManuallyReconnectPane(
-            paneId,
-            reconnectInFlight: reconnectInFlight
-        ) else { return }
         credentialLoadErrorMessage = nil
         operationNotice = nil
         isReady = false
-        if credentials == nil {
-            do {
-                credentials = try KeychainManager.shared.getCredentials(for: server)
-                credentialLoadErrorMessage = nil
-            } catch {
-                credentialLoadErrorMessage = String(localized: "Failed to load credentials")
+        Task { @MainActor in
+            let result = await TerminalTabManager.shared.retryPaneConnection(
+                paneId: paneId,
+                server: server
+            )
+            guard let loadedCredentials = result.credentials else {
+                if result.errorMessage != nil {
+                    credentialLoadErrorMessage = String(localized: "Failed to load credentials")
+                }
                 return
             }
-        }
-        reconnectInFlight = true
-        reconnectToken = UUID()
-        Task {
-            await TerminalTabManager.shared.reconnectPane(paneId)
-            await MainActor.run {
-                startConnectWatchdog()
-                reconnectInFlight = false
-            }
+            credentials = loadedCredentials
+            credentialLoadErrorMessage = nil
+            reconnectToken = UUID()
+            startConnectWatchdog()
         }
     }
 

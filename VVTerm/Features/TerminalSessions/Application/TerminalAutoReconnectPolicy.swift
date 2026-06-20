@@ -34,6 +34,52 @@ enum TerminalConnectWatchdogAction {
     case continueWatching
 }
 
+enum TerminalReconnectRequestResult {
+    case skipped
+    case credentialLoadFailed(String)
+    case started(ServerCredentials)
+
+    var isSkipped: Bool {
+        if case .skipped = self {
+            return true
+        }
+        return false
+    }
+
+    var credentials: ServerCredentials? {
+        if case .started(let credentials) = self {
+            return credentials
+        }
+        return nil
+    }
+
+    var errorMessage: String? {
+        if case .credentialLoadFailed(let message) = self {
+            return message
+        }
+        return nil
+    }
+}
+
+enum TerminalCredentialLoadResult {
+    case loaded(ServerCredentials)
+    case failed(String)
+
+    var credentials: ServerCredentials? {
+        if case .loaded(let credentials) = self {
+            return credentials
+        }
+        return nil
+    }
+
+    var errorMessage: String? {
+        if case .failed(let message) = self {
+            return message
+        }
+        return nil
+    }
+}
+
 struct TerminalForegroundReconnectAction: Equatable {
     let sessionId: UUID
     let shouldRefreshTerminal: Bool

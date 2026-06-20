@@ -462,6 +462,145 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerRetryLoadsCredentialsAndGatesDuplicateRequests() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .disconnected
+            )
+            let credentialGate = CredentialProviderGate(credentials: makeCredentials(serverId: server.id))
+            manager.sessions = [session]
+            manager.setCredentialsProviderForTesting { _ in
+                await credentialGate.load()
+            }
+
+            await withServerList([server]) {
+                // Given SwiftUI sends retry intent while credential loading is
+                // still in progress inside the application layer.
+                let firstRetry = Task {
+                    await manager.retrySessionConnection(session: session, server: server)
+                }
+                try? await Task.sleep(for: .milliseconds(20))
+
+                // When another retry intent arrives before credential loading
+                // completes.
+                let duplicateResult = await manager.retrySessionConnection(
+                    session: session,
+                    server: server
+                )
+
+                // Then the manager-owned retry gate rejects the duplicate
+                // without asking SwiftUI to track reconnectInFlight.
+                #expect(duplicateResult.isSkipped)
+
+                await credentialGate.release()
+                let result = await firstRetry.value
+                #expect(
+                    result.credentials?.serverId == server.id,
+                    "A successful retry should return loaded credentials for the UI wrapper to render."
+                )
+                #expect(
+                    await credentialGate.loadCount == 1,
+                    "Duplicate retry intent must not load credentials a second time."
+                )
+                #expect(manager.sessionState(for: session.id) == .reconnecting(attempt: 1))
+            }
+        }
+    }
+
+    @Test
+    func connectionManagerRetrySkipsIfRuntimeBecomesLiveWhileLoadingCredentials() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .disconnected
+            )
+            let credentialGate = CredentialProviderGate(credentials: makeCredentials(serverId: server.id))
+            manager.sessions = [session]
+            manager.setCredentialsProviderForTesting { _ in
+                await credentialGate.load()
+            }
+
+            await withServerList([server]) {
+                // Given retry intent has started credential loading.
+                let retryTask = Task {
+                    await manager.retrySessionConnection(session: session, server: server)
+                }
+                try? await Task.sleep(for: .milliseconds(20))
+
+                // When the runtime becomes live before credential loading
+                // returns to the manager.
+                manager.updateSessionState(session.id, to: .connected)
+                manager.sessions[0].connectionState = .disconnected
+                await credentialGate.release()
+                let result = await retryTask.value
+
+                // Then the retry intent is skipped and the UI should not
+                // rebuild a wrapper for a stale reconnect.
+                #expect(
+                    result.isSkipped,
+                    "Retry must revalidate runtime liveness after awaited credential loading."
+                )
+            }
+        }
+    }
+
+    @Test
+    func connectionManagerForegroundReconnectIntentExecutesReconnectInApplicationLayer() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .disconnected
+            )
+            manager.sessions = [session]
+            manager.selectedSessionId = session.id
+
+            await withServerList([server]) {
+                // Given iOS sends foreground intent to the application layer.
+                let action = await manager.handleForegroundReconnectForSelectedSession(
+                    selectedViewId: "terminal",
+                    terminalViewId: "terminal",
+                    refreshTerminal: true,
+                    autoReconnectEnabled: true
+                )
+
+                // Then the manager returns UI render instructions and performs
+                // reconnect execution itself.
+                #expect(action?.sessionId == session.id)
+                #expect(action?.shouldReconnect == true)
+                #expect(manager.sessionState(for: session.id) == .reconnecting(attempt: 1))
+            }
+        }
+    }
+
+    @Test
+    func connectionManagerLoadsCredentialsThroughApplicationBoundary() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            manager.setCredentialsProviderForTesting { server in
+                makeCredentials(serverId: server.id)
+            }
+
+            // Given SwiftUI needs credentials for rendering the terminal
+            // wrapper but must not read Keychain directly.
+            let result = await manager.loadCredentials(for: server)
+
+            // Then the application layer performs credential loading and
+            // returns only the renderable value or user-facing error.
+            #expect(
+                result.credentials?.serverId == server.id,
+                "TerminalContainerView should obtain wrapper credentials through ConnectionSessionManager."
+            )
+        }
+    }
+
+    @Test
     func connectionManagerRefreshesLiveActivityWithRegistryActiveSessionsOnly() async {
         await withCleanConnectionManager { manager in
             let server = makeServer()
@@ -680,6 +819,108 @@ struct ConnectionLifecycleIntegrationTests {
             // Then retry is triggered by TerminalTabManager's task.
             #expect(retryCount == 1)
             #expect(manager.paneStates[paneId]?.connectionState == .disconnected)
+        }
+    }
+
+    @Test
+    func tabManagerRetryLoadsCredentialsAndGatesDuplicateRequests() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tabId = UUID()
+            let paneId = UUID()
+            var paneState = TerminalPaneState(paneId: paneId, tabId: tabId, serverId: server.id)
+            paneState.connectionState = .disconnected
+            let credentialGate = CredentialProviderGate(credentials: makeCredentials(serverId: server.id))
+            manager.paneStates[paneId] = paneState
+            manager.setCredentialsProviderForTesting { _ in
+                await credentialGate.load()
+            }
+
+            // Given split-pane SwiftUI sends retry intent while credential
+            // loading is still in progress inside TerminalTabManager.
+            let firstRetry = Task {
+                await manager.retryPaneConnection(paneId: paneId, server: server)
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+
+            // When another retry intent arrives before credential loading
+            // completes.
+            let duplicateResult = await manager.retryPaneConnection(
+                paneId: paneId,
+                server: server
+            )
+
+            // Then the manager-owned retry gate rejects the duplicate without
+            // SwiftUI tracking reconnectInFlight.
+            #expect(duplicateResult.isSkipped)
+
+            await credentialGate.release()
+            let result = await firstRetry.value
+            #expect(
+                result.credentials?.serverId == server.id,
+                "A successful pane retry should return loaded credentials for the UI wrapper to render."
+            )
+            #expect(
+                await credentialGate.loadCount == 1,
+                "Duplicate pane retry intent must not load credentials a second time."
+            )
+            #expect(manager.paneStates[paneId]?.connectionState == .reconnecting(attempt: 1))
+        }
+    }
+
+    @Test
+    func tabManagerRetrySkipsIfRuntimeBecomesLiveWhileLoadingCredentials() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tabId = UUID()
+            let paneId = UUID()
+            var paneState = TerminalPaneState(paneId: paneId, tabId: tabId, serverId: server.id)
+            paneState.connectionState = .disconnected
+            let credentialGate = CredentialProviderGate(credentials: makeCredentials(serverId: server.id))
+            manager.paneStates[paneId] = paneState
+            manager.setCredentialsProviderForTesting { _ in
+                await credentialGate.load()
+            }
+
+            // Given pane retry intent has started credential loading.
+            let retryTask = Task {
+                await manager.retryPaneConnection(paneId: paneId, server: server)
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+
+            // When the pane runtime becomes live before credential loading
+            // returns to the manager.
+            manager.updatePaneState(paneId, connectionState: .connected)
+            manager.paneStates[paneId]?.connectionState = .disconnected
+            await credentialGate.release()
+            let result = await retryTask.value
+
+            // Then the retry is skipped instead of forcing a stale wrapper
+            // rebuild from SwiftUI.
+            #expect(
+                result.isSkipped,
+                "Pane retry must revalidate runtime liveness after awaited credential loading."
+            )
+        }
+    }
+
+    @Test
+    func tabManagerLoadsCredentialsThroughApplicationBoundary() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            manager.setCredentialsProviderForTesting { server in
+                makeCredentials(serverId: server.id)
+            }
+
+            // Given split-pane SwiftUI needs credentials for rendering the pane
+            // wrapper but must not read Keychain directly.
+            let result = await manager.loadCredentials(for: server)
+
+            // Then TerminalTabManager performs credential loading.
+            #expect(
+                result.credentials?.serverId == server.id,
+                "TerminalPaneView should obtain wrapper credentials through TerminalTabManager."
+            )
         }
     }
 
@@ -2371,6 +2612,29 @@ private actor RunnerTaskGate {
 
     func markCloseReturned() {
         closeReturned = true
+    }
+}
+
+private actor CredentialProviderGate {
+    private let credentials: ServerCredentials
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private(set) var loadCount = 0
+
+    init(credentials: ServerCredentials) {
+        self.credentials = credentials
+    }
+
+    func load() async -> ServerCredentials {
+        loadCount += 1
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+        }
+        return credentials
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
     }
 }
 
