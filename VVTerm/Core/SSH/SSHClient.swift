@@ -29,6 +29,38 @@ enum SSHUploadStrategy: Sendable {
     case execPreferred
 }
 
+private final class SSHClientAbortState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var aborted = false
+    private var sessionForAbort: SSHSession?
+
+    var isAborted: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return aborted
+    }
+
+    func reset() {
+        lock.lock()
+        aborted = false
+        lock.unlock()
+    }
+
+    func setSessionForAbort(_ session: SSHSession?) {
+        lock.lock()
+        sessionForAbort = session
+        lock.unlock()
+    }
+
+    func abort() {
+        lock.lock()
+        aborted = true
+        let session = sessionForAbort
+        lock.unlock()
+        session?.abort()
+    }
+}
+
 actor SSHClient {
     private struct MoshShellRuntime {
         let session: MoshClientSession
@@ -48,31 +80,26 @@ actor SSHClient {
     private let moshStartupTimeout: Duration = .seconds(8)
     private let connectTimeout: Duration = .seconds(30)
     private let disconnectTimeout: Duration = .seconds(4)
+    private let shellStartTimeout: Duration = .seconds(20)
     private let execTimeout: Duration = .seconds(20)
     private let downloadTimeout: Duration = .seconds(120)
     private let uploadTimeout: Duration = .seconds(60)
-
-    /// Stored session reference for nonisolated abort access
-    private nonisolated(unsafe) var _sessionForAbort: SSHSession?
-
-    /// Flag to track if abort was called - prevents new operations
-    private nonisolated(unsafe) var _isAborted = false
+    private let abortState = SSHClientAbortState()
 
     /// Immediately abort the connection by closing the socket (non-blocking, can be called from any thread)
     nonisolated func abort() {
-        _isAborted = true
-        _sessionForAbort?.abort()
+        abortState.abort()
     }
 
     /// Check if the client has been aborted
     var isAborted: Bool {
-        _isAborted
+        abortState.isAborted
     }
 
     // MARK: - Connection
 
     func connect(to server: Server, credentials: ServerCredentials) async throws -> SSHSession {
-        _isAborted = false
+        abortState.reset()
         try Task.checkCancellation()
 
         let key = "\(server.host):\(server.port):\(server.username):\(server.connectionMode):\(server.authMethod):\(server.cloudflareAccessMode?.rawValue ?? "none"):\(server.cloudflareTeamDomainOverride ?? "")"
@@ -122,13 +149,20 @@ actor SSHClient {
 
         let pendingSession = SSHSession(config: config)
         pendingConnectSession = pendingSession
+        abortState.setSessionForAbort(pendingSession)
 
         let task = Task { [connectTimeout] () -> SSHSession in
             try Task.checkCancellation()
             do {
-                try await SSHClient.runWithTimeout(connectTimeout) {
-                    try await pendingSession.connect()
-                }
+                try await SSHClient.runWithTimeout(
+                    connectTimeout,
+                    operation: {
+                        try await pendingSession.connect()
+                    },
+                    onTimeout: {
+                        pendingSession.abort()
+                    }
+                )
                 try Task.checkCancellation()
                 return pendingSession
             } catch {
@@ -144,19 +178,19 @@ actor SSHClient {
         do {
             let session = try await task.value
             pendingConnectSession = nil
-            if _isAborted || Task.isCancelled || task.isCancelled {
+            if abortState.isAborted || Task.isCancelled || task.isCancelled {
                 session.abort()
                 await session.disconnect()
                 connectTask = nil
                 connectionKey = nil
                 self.session = nil
-                self._sessionForAbort = nil
+                abortState.setSessionForAbort(nil)
                 self.connectedServer = nil
                 await disconnectCloudflareTransport(reason: "connect cancellation")
                 throw CancellationError()
             }
             self.session = session
-            self._sessionForAbort = session
+            abortState.setSessionForAbort(session)
             self.connectedServer = server
             self.resolvedRemoteEnvironment = nil
             self.resolvedRemoteTerminalType = nil
@@ -169,7 +203,7 @@ actor SSHClient {
             connectTask = nil
             connectionKey = nil
             self.session = nil
-            self._sessionForAbort = nil
+            abortState.setSessionForAbort(nil)
             self.connectedServer = nil
             self.resolvedRemoteEnvironment = nil
             self.resolvedRemoteTerminalType = nil
@@ -189,7 +223,7 @@ actor SSHClient {
     }
 
     func disconnect() async {
-        _isAborted = true
+        abortState.abort()
 
         let activeMoshShells = Array(moshShells.values)
         moshShells.removeAll()
@@ -207,11 +241,10 @@ actor SSHClient {
 
         let activeSession = session
         session = nil
-        _sessionForAbort = nil
+        abortState.setSessionForAbort(nil)
         connectedServer = nil
         resolvedRemoteEnvironment = nil
         resolvedRemoteTerminalType = nil
-        activeSession?.abort()
         await disconnectSSHSession(activeSession)
         await disconnectCloudflareTransport(reason: "client disconnect")
 
@@ -221,7 +254,7 @@ actor SSHClient {
     // MARK: - Command Execution
 
     func execute(_ command: String, timeout: Duration? = nil) async throws -> String {
-        guard !_isAborted else {
+        guard !abortState.isAborted else {
             throw SSHError.notConnected
         }
         guard let session = session else {
@@ -240,7 +273,7 @@ actor SSHClient {
         permissions: Int32 = 0o600,
         strategy: SSHUploadStrategy = .automatic
     ) async throws {
-        guard !_isAborted else {
+        guard !abortState.isAborted else {
             throw SSHError.notConnected
         }
         guard let session = session else {
@@ -309,49 +342,49 @@ actor SSHClient {
     // MARK: - Remote Files
 
     func listDirectory(at path: String, maxEntries: Int? = nil) async throws -> [RemoteFileEntry] {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         return try await session.listDirectory(at: path, maxEntries: maxEntries)
     }
 
     func stat(at path: String) async throws -> RemoteFileEntry {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         return try await session.stat(at: path)
     }
 
     func lstat(at path: String) async throws -> RemoteFileEntry {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         return try await session.lstat(at: path)
     }
 
     func readlink(at path: String) async throws -> String {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         return try await session.readlink(at: path)
     }
 
     func readFile(at path: String, maxBytes: Int, offset: UInt64 = 0) async throws -> Data {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         return try await session.readFile(at: path, maxBytes: maxBytes, offset: offset)
     }
 
     func fileSystemStatus(at path: String) async throws -> RemoteFileFilesystemStatus {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         return try await session.fileSystemStatus(at: path)
     }
 
     func downloadFile(at path: String, to localURL: URL) async throws {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
 
@@ -365,42 +398,42 @@ actor SSHClient {
     }
 
     func resolveHomeDirectory() async throws -> String {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         return try await session.resolveHomeDirectory()
     }
 
     func createDirectory(at path: String, permissions: Int32 = 0o755) async throws {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         try await session.createDirectory(at: path, permissions: permissions)
     }
 
     func setPermissions(at path: String, permissions: UInt32) async throws {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         try await session.setPermissions(at: path, permissions: permissions)
     }
 
     func renameItem(at sourcePath: String, to destinationPath: String) async throws {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         try await session.renameItem(at: sourcePath, to: destinationPath)
     }
 
     func deleteFile(at path: String) async throws {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         try await session.deleteFile(at: path)
     }
 
     func deleteDirectory(at path: String) async throws {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         try await session.deleteDirectory(at: path)
@@ -417,7 +450,8 @@ actor SSHClient {
         let environment = await remoteEnvironment()
         let terminalType = await remoteTerminalType()
         if connectionMode != .mosh {
-            let sshShell = try await session.startShell(
+            let sshShell = try await startSSHShell(
+                using: session,
                 cols: cols,
                 rows: rows,
                 startupCommand: startupCommand,
@@ -433,7 +467,8 @@ actor SSHClient {
 
         guard environment.platform != .windows && environment.shellProfile.family == .posix else {
             logger.warning("Mosh requested, but remote environment does not support Mosh runtime. Falling back to SSH.")
-            let fallbackShell = try await session.startShell(
+            let fallbackShell = try await startSSHShell(
+                using: session,
                 cols: cols,
                 rows: rows,
                 startupCommand: startupCommand,
@@ -459,7 +494,8 @@ actor SSHClient {
             logger.warning("Mosh startup failed, using SSH fallback: \(moshError.localizedDescription)")
 
             do {
-                let fallbackShell = try await session.startShell(
+                let fallbackShell = try await startSSHShell(
+                    using: session,
                     cols: cols,
                     rows: rows,
                     startupCommand: startupCommand,
@@ -480,8 +516,33 @@ actor SSHClient {
         }
     }
 
+    private func startSSHShell(
+        using session: SSHSession,
+        cols: Int,
+        rows: Int,
+        startupCommand: String?,
+        environment: RemoteEnvironment,
+        terminalType: RemoteTerminalType
+    ) async throws -> ShellHandle {
+        try await SSHClient.runWithTimeout(
+            shellStartTimeout,
+            operation: {
+                try await session.startShell(
+                    cols: cols,
+                    rows: rows,
+                    startupCommand: startupCommand,
+                    environment: environment,
+                    terminalType: terminalType
+                )
+            },
+            onTimeout: {
+                session.abort()
+            }
+        )
+    }
+
     func write(_ data: Data, to shellId: UUID) async throws {
-        guard !_isAborted else {
+        guard !abortState.isAborted else {
             throw SSHError.notConnected
         }
 
@@ -695,9 +756,10 @@ actor SSHClient {
         )
     }
 
-    private nonisolated static func runWithTimeout<T: Sendable>(
+    nonisolated static func runWithTimeout<T: Sendable>(
         _ timeout: Duration,
-        operation: @escaping @Sendable () async throws -> T
+        operation: @escaping @Sendable () async throws -> T,
+        onTimeout: (@Sendable () async -> Void)? = nil
     ) async throws -> T {
         try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask {
@@ -705,14 +767,22 @@ actor SSHClient {
             }
             group.addTask {
                 try await Task.sleep(for: timeout)
+                if let onTimeout {
+                    await onTimeout()
+                }
                 throw SSHError.timeout
             }
 
-            guard let result = try await group.next() else {
-                throw SSHError.timeout
+            do {
+                guard let result = try await group.next() else {
+                    throw SSHError.timeout
+                }
+                group.cancelAll()
+                return result
+            } catch {
+                group.cancelAll()
+                throw error
             }
-            group.cancelAll()
-            return result
         }
     }
 
