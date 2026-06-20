@@ -28,6 +28,7 @@ struct LibSSH2ConnectedSocket: Sendable, Equatable {
 
 struct LibSSH2RawError: Error, Sendable, Equatable {
     enum Operation: String, Sendable {
+        case authentication
         case handshake
         case sessionDisconnect
         case sessionFree
@@ -38,6 +39,23 @@ struct LibSSH2RawError: Error, Sendable, Equatable {
     let message: String?
 }
 
+enum LibSSH2AuthenticationMethodDiscoveryResult: Sendable, Equatable {
+    case methods(String)
+    case unavailable
+    case failure(LibSSH2RawError)
+}
+
+typealias LibSSH2KeyboardInteractiveCallback = @convention(c) (
+    UnsafePointer<CChar>?,
+    Int32,
+    UnsafePointer<CChar>?,
+    Int32,
+    Int32,
+    UnsafePointer<LIBSSH2_USERAUTH_KBDINT_PROMPT>?,
+    UnsafeMutablePointer<LIBSSH2_USERAUTH_KBDINT_RESPONSE>?,
+    UnsafeMutablePointer<UnsafeMutableRawPointer?>?
+) -> Void
+
 protocol LibSSH2SessionDriving: Sendable {
     nonisolated func ensureRuntimeInitialized() throws
     nonisolated func connectSocket(host: String, port: Int) throws -> LibSSH2ConnectedSocket
@@ -47,6 +65,25 @@ protocol LibSSH2SessionDriving: Sendable {
     nonisolated func setMethodPreference(session: OpaquePointer, method: Int32, preferences: String)
     nonisolated func setBlocking(session: OpaquePointer, isBlocking: Bool)
     nonisolated func handshake(session: OpaquePointer, socket: Int32) -> Int32
+    nonisolated func hostKeyFingerprint(session: OpaquePointer) throws -> (fingerprint: String, keyType: Int)
+    nonisolated func supportedAuthenticationMethods(
+        session: OpaquePointer,
+        username: String
+    ) -> LibSSH2AuthenticationMethodDiscoveryResult
+    nonisolated func isAuthenticated(session: OpaquePointer) -> Bool
+    nonisolated func authenticateWithPassword(session: OpaquePointer, username: String, password: String) -> Int32
+    nonisolated func authenticateWithKeyboardInteractive(
+        session: OpaquePointer,
+        username: String,
+        callback: LibSSH2KeyboardInteractiveCallback
+    ) -> Int32
+    nonisolated func authenticateWithPublicKey(
+        session: OpaquePointer,
+        username: String,
+        keyData: Data,
+        publicKeyData: Data?,
+        passphrase: String?
+    ) -> Int32
     nonisolated func lastError(
         session: OpaquePointer,
         operation: LibSSH2RawError.Operation,
@@ -140,6 +177,107 @@ struct LibSSH2SessionDriver: LibSSH2SessionDriving {
 
     nonisolated func handshake(session: OpaquePointer, socket: Int32) -> Int32 {
         libssh2_session_handshake(session, socket)
+    }
+
+    nonisolated func hostKeyFingerprint(session: OpaquePointer) throws -> (fingerprint: String, keyType: Int) {
+        guard let hashPtr = libssh2_hostkey_hash(session, Int32(LIBSSH2_HOSTKEY_HASH_SHA256)) else {
+            throw SSHError.hostKeyVerificationFailed
+        }
+
+        let hash = Data(bytes: hashPtr, count: 32)
+        let base64 = hash.base64EncodedString().trimmingCharacters(in: CharacterSet(charactersIn: "="))
+        let fingerprint = "SHA256:\(base64)"
+
+        var keyLen: size_t = 0
+        var keyType: Int32 = 0
+        _ = libssh2_session_hostkey(session, &keyLen, &keyType)
+
+        return (fingerprint, Int(keyType))
+    }
+
+    nonisolated func supportedAuthenticationMethods(
+        session: OpaquePointer,
+        username: String
+    ) -> LibSSH2AuthenticationMethodDiscoveryResult {
+        guard let authList = libssh2_userauth_list(session, username, UInt32(username.utf8.count)) else {
+            let rawError = lastError(session: session, operation: .authentication, fallbackCode: 0)
+            if rawError.code != 0, rawError.code != LIBSSH2_ERROR_AUTHENTICATION_FAILED {
+                return .failure(rawError)
+            }
+            return .unavailable
+        }
+        return .methods(String(cString: authList))
+    }
+
+    nonisolated func isAuthenticated(session: OpaquePointer) -> Bool {
+        libssh2_userauth_authenticated(session) != 0
+    }
+
+    nonisolated func authenticateWithPassword(session: OpaquePointer, username: String, password: String) -> Int32 {
+        libssh2_userauth_password_ex(
+            session,
+            username,
+            UInt32(username.utf8.count),
+            password,
+            UInt32(password.utf8.count),
+            nil
+        )
+    }
+
+    nonisolated func authenticateWithKeyboardInteractive(
+        session: OpaquePointer,
+        username: String,
+        callback: LibSSH2KeyboardInteractiveCallback
+    ) -> Int32 {
+        libssh2_userauth_keyboard_interactive_ex(
+            session,
+            username,
+            UInt32(username.utf8.count),
+            callback
+        )
+    }
+
+    nonisolated func authenticateWithPublicKey(
+        session: OpaquePointer,
+        username: String,
+        keyData: Data,
+        publicKeyData: Data?,
+        passphrase: String?
+    ) -> Int32 {
+        keyData.withUnsafeBytes { rawBuffer -> Int32 in
+            guard let baseAddress = rawBuffer.bindMemory(to: CChar.self).baseAddress else {
+                return LIBSSH2_ERROR_ALLOC
+            }
+
+            if let publicKeyData, !publicKeyData.isEmpty {
+                return publicKeyData.withUnsafeBytes { publicBuffer -> Int32 in
+                    guard let publicBase = publicBuffer.bindMemory(to: CChar.self).baseAddress else {
+                        return LIBSSH2_ERROR_ALLOC
+                    }
+                    return libssh2_userauth_publickey_frommemory(
+                        session,
+                        username,
+                        Int(username.utf8.count),
+                        publicBase,
+                        Int(publicKeyData.count),
+                        baseAddress,
+                        Int(keyData.count),
+                        passphrase
+                    )
+                }
+            }
+
+            return libssh2_userauth_publickey_frommemory(
+                session,
+                username,
+                Int(username.utf8.count),
+                nil,
+                0,
+                baseAddress,
+                Int(keyData.count),
+                passphrase
+            )
+        }
     }
 
     nonisolated func lastError(

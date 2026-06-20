@@ -34,6 +34,7 @@ struct TerminalContainerView: View {
     @State private var connectWatchdogToken = UUID()
     @State private var hasEstablishedConnection = false
     @State private var showingRetrustHostConfirmation = false
+    @State private var retrustHostTask: Task<Void, Never>?
     @StateObject private var richPasteUI = TerminalRichPasteUIModel()
     @AppStorage("sshAutoReconnect") private var autoReconnectEnabled = true
 
@@ -659,8 +660,12 @@ struct TerminalContainerView: View {
 
     private func retrustHostAndRetry() {
         guard let server else { return }
-        KnownHostsManager.shared.remove(host: server.host, port: server.port)
-        Task { await retryConnection() }
+        retrustHostTask?.cancel()
+        retrustHostTask = Task {
+            await KnownHostsStore.shared.remove(host: server.host, port: server.port)
+            guard !Task.isCancelled else { return }
+            await retryConnection()
+        }
     }
 
     private func attemptAutoReconnectIfNeeded() {

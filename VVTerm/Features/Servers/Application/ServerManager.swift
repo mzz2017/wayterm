@@ -31,6 +31,11 @@ final class ServerManager: ObservableObject {
         let canReplaceLocalState: Bool
     }
 
+    struct KnownHostRemovalCandidate: Equatable, Sendable {
+        let host: String
+        let port: Int
+    }
+
     private init() {
         // Load local data first (fast)
         loadLocalData()
@@ -432,7 +437,7 @@ final class ServerManager: ObservableObject {
                 "CloudKit returned \(changes.workspaces.count) workspaces, \(changes.servers.count) servers (full fetch: \(changes.isFullFetch))"
             )
 
-            applyCloudKitChanges(changes, canReplaceLocalState: backfillResult.canReplaceLocalState)
+            await applyCloudKitChanges(changes, canReplaceLocalState: backfillResult.canReplaceLocalState)
             reconcilePendingServerAndWorkspaceUpsertsAgainstCloudKit(changes)
             applyPendingSyncOverlay()
             _ = reconcilePendingBootstrapWorkspaceState()
@@ -643,15 +648,10 @@ final class ServerManager: ObservableObject {
         Dictionary(uniqueKeysWithValues: servers.map { ($0.id, $0) })
     }
 
-    private func removeKnownHostIfUnused(for server: Server, excluding deletedServerIDs: Set<UUID> = []) {
-        let isStillUsed = servers.contains {
-            !deletedServerIDs.contains($0.id)
-                && $0.id != server.id
-                && $0.host == server.host
-                && $0.port == server.port
+    private func removeKnownHosts(for candidates: [KnownHostRemovalCandidate]) async {
+        for candidate in candidates {
+            await KnownHostsStore.shared.remove(host: candidate.host, port: candidate.port)
         }
-        guard !isStillUsed else { return }
-        KnownHostsManager.shared.remove(host: server.host, port: server.port)
     }
 
     private func sortedWorkspaces(from workspaceMap: [UUID: Workspace]) -> [Workspace] {
@@ -662,13 +662,34 @@ final class ServerManager: ObservableObject {
         Array(serverMap.values).sorted { $0.name < $1.name }
     }
 
-    private func applyCloudKitChanges(_ changes: CloudKitChanges, canReplaceLocalState: Bool = true) {
+    static func knownHostRemovalCandidates(
+        removedServers: [Server],
+        remainingServers: [Server]
+    ) -> [KnownHostRemovalCandidate] {
+        var candidates: [KnownHostRemovalCandidate] = []
+        var seen = Set<String>()
+
+        for server in removedServers {
+            let isStillUsed = remainingServers.contains {
+                $0.host == server.host && $0.port == server.port
+            }
+            guard !isStillUsed else { continue }
+
+            let key = "\(server.host):\(server.port)"
+            guard seen.insert(key).inserted else { continue }
+            candidates.append(KnownHostRemovalCandidate(host: server.host, port: server.port))
+        }
+
+        return candidates
+    }
+
+    private func applyCloudKitChanges(_ changes: CloudKitChanges, canReplaceLocalState: Bool = true) async {
         if changes.isFullFetch && canReplaceLocalState {
             applyFullFetchCloudKitChanges(changes)
             return
         }
 
-        applyIncrementalCloudKitChanges(changes)
+        await applyIncrementalCloudKitChanges(changes)
     }
 
     private func applyFullFetchCloudKitChanges(_ changes: CloudKitChanges) {
@@ -676,7 +697,7 @@ final class ServerManager: ObservableObject {
         servers = dedupedServers(from: changes.servers)
     }
 
-    private func applyIncrementalCloudKitChanges(_ changes: CloudKitChanges) {
+    private func applyIncrementalCloudKitChanges(_ changes: CloudKitChanges) async {
         if !changes.workspaces.isEmpty {
             upsertWorkspaces(changes.workspaces)
         }
@@ -687,7 +708,7 @@ final class ServerManager: ObservableObject {
             upsertServers(changes.servers)
         }
         if !changes.deletedServerIDs.isEmpty {
-            removeServers(withIDs: changes.deletedServerIDs)
+            await removeServers(withIDs: changes.deletedServerIDs)
         }
     }
 
@@ -732,13 +753,15 @@ final class ServerManager: ObservableObject {
         workspaces.removeAll { idSet.contains($0.id) }
     }
 
-    private func removeServers(withIDs ids: [UUID]) {
+    private func removeServers(withIDs ids: [UUID]) async {
         let idSet = Set(ids)
         let removedServers = servers.filter { idSet.contains($0.id) }
-        for server in removedServers {
-            removeKnownHostIfUnused(for: server, excluding: idSet)
-        }
         servers.removeAll { idSet.contains($0.id) }
+        let candidates = Self.knownHostRemovalCandidates(
+            removedServers: removedServers,
+            remainingServers: servers
+        )
+        await removeKnownHosts(for: candidates)
     }
 
     /// Repairs servers that reference non-existent workspaces by reassigning them to the first available workspace
@@ -930,8 +953,12 @@ final class ServerManager: ObservableObject {
     func deleteServer(_ server: Server) async throws {
         try keychain.deleteCredentials(for: server.id)
 
-        removeKnownHostIfUnused(for: server)
         servers.removeAll { $0.id == server.id }
+        let candidates = Self.knownHostRemovalCandidates(
+            removedServers: [server],
+            remainingServers: servers
+        )
+        await removeKnownHosts(for: candidates)
         enqueuePendingServerDelete(server)
         await persistLocalMutations(logMessage: "Deleted server: \(server.name)")
     }

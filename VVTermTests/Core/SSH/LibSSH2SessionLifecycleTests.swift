@@ -9,6 +9,16 @@ import XCTest
 // libssh2 session ownership contract changes.
 
 final class LibSSH2SessionLifecycleTests: XCTestCase {
+    override func setUp() async throws {
+        try await super.setUp()
+        await KnownHostsStore.shared.remove(host: "ssh.example.com", port: 22)
+    }
+
+    override func tearDown() async throws {
+        await KnownHostsStore.shared.remove(host: "ssh.example.com", port: 22)
+        try await super.tearDown()
+    }
+
     func testSessionInitFailureClosesConfiguredSocketExactlyOnce() async {
         // Given a driver that can open a socket but cannot create a libssh2 session.
         let driver = RecordingLibSSH2SessionDriver(sessionInitResult: nil)
@@ -74,6 +84,86 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
             "Timeout should abort the session socket while handshake is blocked"
         )
     }
+
+    func testPublicKeyAuthFailurePreservesRawLibSSH2Error() async {
+        // Given a fake libssh2 driver that reaches public-key auth and reports
+        // the same callback/protocol failure observed in production logs.
+        let rawAuthError = LibSSH2RawError(
+            operation: .authentication,
+            code: LIBSSH2_ERROR_PUBLICKEY_UNVERIFIED,
+            message: "Callback returned error"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .failure(rawAuthError)
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When authentication fails for a libssh2 callback/protocol reason.
+        do {
+            try await session.connect()
+            XCTFail("Expected raw libssh2 authentication failure")
+        } catch SSHError.libssh2(let rawError) {
+            // Then the internal error keeps the libssh2 operation, raw code,
+            // and message instead of collapsing to generic bad credentials.
+            XCTAssertEqual(rawError.operation, .authentication)
+            XCTAssertEqual(rawError.code, LIBSSH2_ERROR_PUBLICKEY_UNVERIFIED)
+            XCTAssertEqual(rawError.message, "Callback returned error")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+    }
+
+    func testAuthMethodDiscoveryFailurePreservesRawLibSSH2Error() async {
+        // Given libssh2 fails before an auth method can be selected.
+        let rawAuthError = LibSSH2RawError(
+            operation: .authentication,
+            code: LIBSSH2_ERROR_SOCKET_RECV,
+            message: "transport closed while reading auth methods"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .failure(rawAuthError),
+            publicKeyAuthResult: .rejected
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When the connection reaches auth method discovery.
+        do {
+            try await session.connect()
+            XCTFail("Expected raw libssh2 authentication discovery failure")
+        } catch SSHError.libssh2(let rawError) {
+            // Then the raw discovery failure is preserved before any later
+            // auth attempt can overwrite the diagnostic.
+            XCTAssertEqual(rawError.operation, .authentication)
+            XCTAssertEqual(rawError.code, LIBSSH2_ERROR_SOCKET_RECV)
+            XCTAssertEqual(rawError.message, "transport closed while reading auth methods")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+    }
+
+    func testCredentialRejectionRemainsAuthenticationFailed() async {
+        // Given a server that advertises public-key auth but rejects the key as
+        // normal bad credentials.
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .rejected
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When auth is rejected without a lower-level libssh2 failure.
+        do {
+            try await session.connect()
+            XCTFail("Expected generic authentication failure")
+        } catch SSHError.authenticationFailed {
+            // Then user-facing credential rejection behavior is preserved.
+        } catch {
+            XCTFail("Expected SSHError.authenticationFailed, got \(error)")
+        }
+    }
 }
 
 private extension SSHSessionConfig {
@@ -100,6 +190,30 @@ private extension SSHSessionConfig {
             )
         )
     }
+
+    static var libSSH2AuthLifecycleTest: SSHSessionConfig {
+        let serverId = UUID(uuidString: "00000000-0000-0000-0000-000000000011")!
+        return SSHSessionConfig(
+            host: "ssh.example.com",
+            port: 22,
+            dialHost: "ssh.example.com",
+            dialPort: 22,
+            hostKeyHost: "ssh.example.com",
+            hostKeyPort: 22,
+            username: "root",
+            connectionMode: .standard,
+            authMethod: .sshKey,
+            credentials: ServerCredentials(
+                serverId: serverId,
+                password: nil,
+                privateKey: Data("private-key".utf8),
+                publicKey: Data("public-key".utf8),
+                passphrase: nil,
+                cloudflareClientID: nil,
+                cloudflareClientSecret: nil
+            )
+        )
+    }
 }
 
 private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDriving {
@@ -110,9 +224,34 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         case waitForSocketClose
     }
 
+    enum AuthResult {
+        case success
+        case rejected
+        case failure(LibSSH2RawError)
+
+        var code: Int32 {
+            switch self {
+            case .success:
+                return 0
+            case .rejected:
+                return LIBSSH2_ERROR_AUTHENTICATION_FAILED
+            case .failure(let rawError):
+                return rawError.code
+            }
+        }
+    }
+
+    enum AuthMethodsResult {
+        case methods(String)
+        case unavailable
+        case failure(LibSSH2RawError)
+    }
+
     private let sessionInitResult: OpaquePointer?
     private let connectedSocket: Int32
     private let handshakeBehavior: HandshakeBehavior
+    private let authMethodsResult: AuthMethodsResult
+    private let publicKeyAuthResult: AuthResult
     private let lock = NSLock()
     private var closedSocketDescriptors: [Int32] = []
     private var observedSocketAbort = false
@@ -120,11 +259,15 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
     init(
         sessionInitResult: OpaquePointer?,
         connectedSocket: Int32 = testSocket,
-        handshakeBehavior: HandshakeBehavior = .succeed
+        handshakeBehavior: HandshakeBehavior = .succeed,
+        authMethods: AuthMethodsResult = .unavailable,
+        publicKeyAuthResult: AuthResult = .success
     ) {
         self.sessionInitResult = sessionInitResult
         self.connectedSocket = connectedSocket
         self.handshakeBehavior = handshakeBehavior
+        self.authMethodsResult = authMethods
+        self.publicKeyAuthResult = publicKeyAuthResult
     }
 
     func closedSockets() -> [Int32] {
@@ -194,7 +337,59 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         operation: LibSSH2RawError.Operation,
         fallbackCode: Int32
     ) -> LibSSH2RawError {
-        LibSSH2RawError(operation: operation, code: fallbackCode, message: nil)
+        if case .authentication = operation,
+           case .failure(let rawError) = authMethodsResult {
+            return rawError
+        }
+        if case .authentication = operation,
+           case .failure(let rawError) = publicKeyAuthResult {
+            return rawError
+        }
+        return LibSSH2RawError(operation: operation, code: fallbackCode, message: nil)
+    }
+
+    nonisolated func hostKeyFingerprint(session: OpaquePointer) throws -> (fingerprint: String, keyType: Int) {
+        ("SHA256:test-host-key", 1)
+    }
+
+    nonisolated func supportedAuthenticationMethods(
+        session: OpaquePointer,
+        username: String
+    ) -> LibSSH2AuthenticationMethodDiscoveryResult {
+        switch authMethodsResult {
+        case .methods(let methods):
+            return .methods(methods)
+        case .unavailable:
+            return .unavailable
+        case .failure(let rawError):
+            return .failure(rawError)
+        }
+    }
+
+    nonisolated func isAuthenticated(session: OpaquePointer) -> Bool {
+        false
+    }
+
+    nonisolated func authenticateWithPassword(session: OpaquePointer, username: String, password: String) -> Int32 {
+        LIBSSH2_ERROR_AUTHENTICATION_FAILED
+    }
+
+    nonisolated func authenticateWithKeyboardInteractive(
+        session: OpaquePointer,
+        username: String,
+        callback: LibSSH2KeyboardInteractiveCallback
+    ) -> Int32 {
+        LIBSSH2_ERROR_AUTHENTICATION_FAILED
+    }
+
+    nonisolated func authenticateWithPublicKey(
+        session: OpaquePointer,
+        username: String,
+        keyData: Data,
+        publicKeyData: Data?,
+        passphrase: String?
+    ) -> Int32 {
+        publicKeyAuthResult.code
     }
 
     nonisolated func disconnect(

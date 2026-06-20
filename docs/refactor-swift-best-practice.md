@@ -1682,9 +1682,14 @@ git commit -m "refactor: complete remote lease boundary cleanup"
 - Modify: `VVTerm/Core/SSH/SSHClient.swift`
 - Modify: `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
 - Modify: `VVTerm/Core/SSH/KnownHostsManager.swift`
+- Modify: `VVTerm/Features/Servers/Application/ServerManager.swift`
+- Modify: `VVTerm/Features/Settings/UI/TerminalSettingsView.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
 - Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
 - Test: `VVTermTests/SSHErrorRetryableTests.swift`
 - Test: `VVTermTests/KnownHostsManagerTests.swift`
+- Test: `VVTermTests/ServerManagerBootstrapTests.swift`
 
 **Interfaces:**
 - Consumes:
@@ -1698,7 +1703,7 @@ git commit -m "refactor: complete remote lease boundary cleanup"
   - Raw libssh2 failures used by connect/auth/channel/session teardown preserve operation, raw code, and message before translation.
   - Known-host storage has one authoritative actor-backed implementation for new application/infrastructure code; legacy synchronous access is either removed or explicitly documented as a narrow compatibility facade.
 
-- [ ] **Step 1: Run focused Core SSH audit commands**
+- [x] **Step 1: Run focused Core SSH audit commands**
 
 ```bash
 rg -n "nonisolated\\(unsafe\\)|NSLock|DispatchQueue|libssh2_|withUnsafe|UnsafeMutable|UnsafePointer|Darwin\\.close|closeSocket|session_last_error" VVTerm/Core/SSH -g '*.swift'
@@ -1707,7 +1712,7 @@ rg -n "KnownHostsManager|KnownHostsStore|KnownHostVerificationService|libssh2|Li
 
 Classify each hit in the Progress Ledger before editing code. Exemptions must name the owner and invariant, for example "private process-global libssh2 init lock" or "keyboard-interactive callback context lifetime is owned by `SSHSession`".
 
-- [ ] **Step 2: Add RED auth raw-error boundary tests**
+- [x] **Step 2: Add RED auth raw-error boundary tests**
 
 Add focused tests to `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`:
 
@@ -1715,7 +1720,7 @@ Add focused tests to `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`:
 func testPublicKeyAuthFailurePreservesRawLibSSH2Error() async {
     let driver = RecordingLibSSH2SessionDriver(
         sessionInitResult: OpaquePointer(bitPattern: 0x1),
-        authMethods: "publickey",
+        authMethods: .methods("publickey"),
         publicKeyAuthResult: .failure(
             LibSSH2RawError(
                 operation: .authentication,
@@ -1741,7 +1746,7 @@ func testPublicKeyAuthFailurePreservesRawLibSSH2Error() async {
 
 This is intentionally an auth-boundary RED test, not a handshake test. Handshake is already behind `LibSSH2SessionDriving`; the current unprotected behavior to expose is that auth last-error details such as `-19 Callback returned error` can be collapsed into `SSHError.authenticationFailed`. If the auth audit finds a narrower unprotected libssh2 path, use the same RED shape for that path instead. Do not add a broad integration test that needs a real server.
 
-- [ ] **Step 3: Run RED tests**
+- [x] **Step 3: Run RED tests**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/SSHErrorRetryableTests ENABLE_DEBUG_DYLIB=NO
@@ -1749,7 +1754,7 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected: the new auth raw-boundary assertion fails or fails to compile because `LibSSH2SessionDriving` cannot model auth methods, public-key auth, or `.authentication` raw errors yet.
 
-- [ ] **Step 4: Move one raw boundary behind `LibSSH2SessionDriving`**
+- [x] **Step 4: Move one raw boundary behind `LibSSH2SessionDriving`**
 
 Make the minimal production change for the failing test:
 - Add only the driver method needed by the new test, named after the libssh2 auth operation it protects.
@@ -1758,21 +1763,26 @@ Make the minimal production change for the failing test:
 - Log or preserve `LibSSH2RawError` before converting to user-facing `SSHError`.
 - Keep `SSHSession` as the owner of session/channel/socket cleanup; do not let SwiftUI, RemoteFiles, or Stats own this teardown path.
 
-- [ ] **Step 5: Reconcile known-host ownership**
+- [x] **Step 5: Reconcile known-host ownership**
 
 If Step 1 still finds new code paths using `KnownHostsManager.shared` directly, move them to `KnownHostsStore` / `KnownHostVerificationService`. If only settings/test compatibility remains, record the compatibility reason in the Progress Ledger and add or update a test in `KnownHostsManagerTests` that protects the intended store behavior.
 
-- [ ] **Step 6: Run focused Core SSH verification**
+- [x] **Step 6: Run focused Core SSH verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/SSHErrorRetryableTests -only-testing:VVTermTests/KnownHostsManagerTests -only-testing:VVTermTests/SSHAuthenticationGateCancellationTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/SSHErrorRetryableTests -only-testing:VVTermTests/KnownHostsManagerTests -only-testing:VVTermTests/SSHAuthenticationGateCancellationTests -only-testing:VVTermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add docs/refactor-swift-best-practice.md VVTerm/Core/SSH VVTermTests/Core/SSH VVTermTests/SSHErrorRetryableTests.swift VVTermTests/KnownHostsManagerTests.swift
+git add VVTerm/Features/Servers/Application/ServerManager.swift \
+  VVTerm/Features/Settings/UI/TerminalSettingsView.swift \
+  VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift \
+  VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift \
+  VVTermTests/ServerManagerBootstrapTests.swift
 git commit -m "refactor: tighten core SSH FFI boundaries"
 ```
 
@@ -1804,7 +1814,15 @@ git commit -m "refactor: tighten core SSH FFI boundaries"
 - 2026-06-21: Task 20 API/boundary cleanup completed after code review. Reviewer found iOS UI still pulled raw `SSHClient`/`shellId` for resize and raw terminal helpers were still module-internal; fixed by routing iOS refresh resize through `ConnectionSessionManager.resizeSession(...)`, reusing that manager intent in redraw-after-close, and making raw terminal client helpers private. Verification: expanded focused suite passed 24 XCTest tests plus 67 Swift Testing tests; `git diff --check` passed; `xcodebuild build-for-testing -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed; re-review found no remaining issues.
 - 2026-06-21: Post-Task-20 plan audit reconciled historical checklist drift. Tasks 1-13 are now marked complete because their current code/test artifacts exist in-tree: generation-guard shell registration, awaitable close APIs, application-layer runner/runtime/registry, terminal surface registry, cancellation-aware auth gate, libssh2 session driver and abort tests, `RemoteCommandExecuting`, known-host verification service, and `RemoteConnectionLease`.
 - 2026-06-21: Post-Task-20 remaining gap classification selected Core SSH/FFI for the next wave. RemoteFiles/Stats raw lease boundaries are complete from Task 20; broad UI `Task {}` hits are lower priority unless they own lifecycle-critical teardown. The highest-risk remaining area is concentrated in `SSHClient.swift` and `LibSSH2SessionDriver.swift`: direct auth/channel/SFTP libssh2 calls, keyboard-interactive callback lifetime, raw error preservation, and legacy known-host storage compatibility.
-- Next task: Task 21 Core SSH FFI Boundary Final Sweep.
+- 2026-06-21: Task 21 audit classification completed. Exempt low-level boundaries: `LibSSH2Runtime` process-global init lock; `LibSSH2SessionDriver` socket/address/session pointer operations with local pointer lifetimes; `SSHClientAbortState` and `AtomicSocket` locks for emergency fd abort; `KeyboardInteractiveContext` lock and callback context owned by `SSHSession`; test fake locks in `LibSSH2SessionLifecycleTests`. Non-exempt Task 21 slice: auth method discovery, auth status, password/keyboard-interactive/public-key auth, auth last-error mapping, and host-key fingerprint reads still happen directly in `SSHClient.swift` and must move behind `LibSSH2SessionDriving` for the RED auth raw-error test. Deferred follow-up candidates: channel, SCP, SFTP, and keepalive libssh2 calls still live in `SSHClient.swift` and should be split only after the auth boundary is stable.
+- 2026-06-21: Task 21 known-host audit found `SSHClient` already uses `KnownHostVerificationService`, while `KnownHostsManager.shared` remains in terminal trust-reset UI, settings count/clear UI, `ServerManager.deleteServer`, and compatibility tests. Step 5 must either move these app/UI call sites to actor-backed `KnownHostsStore` APIs or document `KnownHostsManager` as a narrow synchronous compatibility facade with tests protecting the chosen contract.
+- 2026-06-21: Task 21 RED completed. Added `testPublicKeyAuthFailurePreservesRawLibSSH2Error`; the first focused run failed to compile because `LibSSH2RawError.Operation.authentication` and auth operations were not yet modeled by `LibSSH2SessionDriving`.
+- 2026-06-21: Task 21 auth/host-key boundary GREEN completed. `LibSSH2SessionDriving` now owns auth method discovery, authenticated-state checks, password/keyboard-interactive/public-key auth calls, auth last-error capture, and host-key fingerprint reads; `SSHClient` preserves non-credential libssh2 auth failures as `SSHError.libssh2` with raw operation/code/message before translation. Verification: `LibSSH2SessionLifecycleTests` and `SSHErrorRetryableTests` passed.
+- 2026-06-21: Task 21 known-host ownership completed. App/UI call sites in terminal trust reset, settings count/clear, and server deletion now call actor-backed `KnownHostsStore` APIs; `KnownHostsManager.shared` remains only in the synchronous compatibility facade and `KnownHostsManagerTests`.
+- 2026-06-21: Task 21 code-review fixes completed. Auth method discovery failures now preserve raw `.authentication` libssh2 errors before later auth attempts can overwrite diagnostics; normal credential rejection remains `SSHError.authenticationFailed`; auth lifecycle tests clean up their shared known-host entry before and after each test; `ServerManager` computes known-host removal candidates from the post-delete server state before awaiting actor-backed cleanup.
+- 2026-06-21: Task 21 final focused verification completed. `LibSSH2SessionLifecycleTests`, `SSHAuthenticationGateCancellationTests`, `SSHErrorRetryableTests`, `KnownHostsManagerTests`, and `ServerManagerBootstrapTests` passed: 7 XCTest tests plus 17 Swift Testing tests. `git diff --check` passed. Boundary scan confirmed direct auth/host-key/last-error libssh2 calls are confined to `LibSSH2SessionDriver.swift`, and `KnownHostsManager.shared` is confined to the compatibility facade and its tests.
+- 2026-06-21: Task 21 re-review completed with no blocking findings. Residual risk accepted for this slice: auth lifecycle tests still use `KnownHostsStore.shared` with per-test cleanup rather than injecting an isolated host-key store.
+- Next task: define the next plan wave for deferred channel, SCP, SFTP, and keepalive libssh2 boundaries.
 
 ## Self-Review
 

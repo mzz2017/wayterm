@@ -390,6 +390,7 @@ struct TerminalPaneView: View {
     @State private var connectWatchdogToken = UUID()
     @State private var hasEstablishedConnection = false
     @State private var showingRetrustHostConfirmation = false
+    @State private var retrustHostTask: Task<Void, Never>?
     @StateObject private var richPasteUI = TerminalRichPasteUIModel()
 
     @AppStorage(CloudKitSyncConstants.terminalThemeNameKey) private var terminalThemeName = "Aizen Dark"
@@ -797,8 +798,14 @@ struct TerminalPaneView: View {
     }
 
     private func retrustHostAndRetry() {
-        KnownHostsManager.shared.remove(host: server.host, port: server.port)
-        retryConnection()
+        retrustHostTask?.cancel()
+        retrustHostTask = Task {
+            await KnownHostsStore.shared.remove(host: server.host, port: server.port)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                retryConnection()
+            }
+        }
     }
 
     private func attemptAutoReconnectIfNeeded() {

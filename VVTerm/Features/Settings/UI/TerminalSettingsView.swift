@@ -184,6 +184,7 @@ struct TerminalSettingsView: View {
     @State private var showingCustomThemeManager = false
     @State private var showingResetKnownHostsConfirmation = false
     @State private var knownHostCount = 0
+    @State private var knownHostsTask: Task<Void, Never>?
 
     private var builtInThemeOptions: [String] {
         Set(builtInThemeNames)
@@ -582,8 +583,7 @@ struct TerminalSettingsView: View {
         .alert("Reset Trusted SSH Hosts", isPresented: $showingResetKnownHostsConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Reset", role: .destructive) {
-                KnownHostsManager.shared.removeAll()
-                refreshKnownHostCount()
+                resetKnownHosts()
             }
         } message: {
             Text("VVTerm will forget all saved SSH host fingerprints on this device. The next connection to each host will trust the key it presents.")
@@ -627,7 +627,27 @@ struct TerminalSettingsView: View {
     }
 
     private func refreshKnownHostCount() {
-        knownHostCount = KnownHostsManager.shared.entries().count
+        knownHostsTask?.cancel()
+        knownHostsTask = Task {
+            let count = await KnownHostsStore.shared.entries().count
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                knownHostCount = count
+            }
+        }
+    }
+
+    private func resetKnownHosts() {
+        knownHostsTask?.cancel()
+        knownHostsTask = Task {
+            await KnownHostsStore.shared.removeAll()
+            guard !Task.isCancelled else { return }
+            let count = await KnownHostsStore.shared.entries().count
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                knownHostCount = count
+            }
+        }
     }
 
     #if os(macOS)

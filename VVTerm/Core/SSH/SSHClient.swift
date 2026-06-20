@@ -1055,17 +1055,24 @@ actor SSHSession {
         let username = config.username
         var authResult: Int32 = -1
 
-        // Query supported auth methods
-        let authList = libssh2_userauth_list(session, username, UInt32(username.utf8.count))
-        if let authListPtr = authList {
-            let methods = String(cString: authListPtr)
+        // Query supported auth methods.
+        let authDiscoveryResult = driver.supportedAuthenticationMethods(session: session, username: username)
+        let authMethods: String?
+        switch authDiscoveryResult {
+        case .methods(let methods):
+            authMethods = methods
             logger.info("Server auth methods [mode: \(self.config.connectionMode.rawValue)]: \(methods)")
-        } else {
+        case .unavailable:
+            authMethods = nil
             logger.warning("Could not get auth methods list")
+        case .failure(let rawError):
+            let errorMsg = rawError.message ?? "Unknown error"
+            logger.error("Auth method discovery failed (\(rawError.code)): \(errorMsg)")
+            throw SSHError.libssh2(rawError)
         }
 
         if config.connectionMode == .tailscale {
-            if libssh2_userauth_authenticated(session) != 0 {
+            if driver.isAuthenticated(session: session) {
                 logger.info("Tailscale SSH authentication accepted by server policy")
                 return
             }
@@ -1074,7 +1081,7 @@ actor SSHSession {
         }
 
         // If authList is nil, check if already authenticated
-        if authList == nil, libssh2_userauth_authenticated(session) != 0 {
+        if authMethods == nil, driver.isAuthenticated(session: session) {
             logger.info("Already authenticated")
             return
         }
@@ -1087,33 +1094,23 @@ actor SSHSession {
             }
             logger.info("Attempting password auth for user: \(username)")
 
-            // Use _ex variant since macros not available in Swift
-            authResult = libssh2_userauth_password_ex(
-                session,
-                username,
-                UInt32(username.utf8.count),
-                password,
-                UInt32(password.utf8.count),
-                nil
-            )
+            authResult = driver.authenticateWithPassword(session: session, username: username, password: password)
 
             // If password auth fails, try keyboard-interactive ONLY if the server lists it.
             // When the method list is unavailable (nil), do not attempt it — guessing only
             // adds another failed-auth event toward sshd's penalty threshold.
             if authResult != 0 {
-                let advertisesKbdInteractive = authList
-                    .map { String(cString: $0).contains("keyboard-interactive") } ?? false
+                let advertisesKbdInteractive = authMethods?.contains("keyboard-interactive") ?? false
                 if advertisesKbdInteractive {
                     logger.info("Password auth failed, trying keyboard-interactive...")
 
                     keyboardInteractiveContext.setPassword(password)
                     defer { keyboardInteractiveContext.setPassword(nil) }
 
-                    authResult = libssh2_userauth_keyboard_interactive_ex(
-                        session,
-                        username,
-                        UInt32(username.utf8.count),
-                        kbdintCallback
+                    authResult = driver.authenticateWithKeyboardInteractive(
+                        session: session,
+                        username: username,
+                        callback: kbdintCallback
                     )
                 }
             }
@@ -1132,7 +1129,7 @@ actor SSHSession {
             logger.info("Waiting for publickey auth slot [serverId: \(serverIdString, privacy: .public), user: \(username, privacy: .public)]")
             authResult = try await SSHAuthenticationGate.shared.withExclusiveAccess(for: authGateKey) {
                 logger.info("Acquired publickey auth slot [serverId: \(serverIdString, privacy: .public), user: \(username, privacy: .public)]")
-                return Self.authenticateWithPublicKey(
+                return driver.authenticateWithPublicKey(
                     session: session,
                     username: username,
                     keyData: keyData,
@@ -1143,59 +1140,16 @@ actor SSHSession {
         }
 
         if authResult != 0 {
-            // Get detailed error message
-            var errmsg: UnsafeMutablePointer<CChar>?
-            var errmsg_len: Int32 = 0
-            libssh2_session_last_error(session, &errmsg, &errmsg_len, 0)
-            let errorMsg = errmsg != nil ? String(cString: errmsg!) : "Unknown error"
-            logger.error("Auth failed (\(authResult)): \(errorMsg)")
+            let rawError = driver.lastError(session: session, operation: .authentication, fallbackCode: authResult)
+            let errorMsg = rawError.message ?? "Unknown error"
+            logger.error("Auth failed (\(rawError.code)): \(errorMsg)")
+            if rawError.code != LIBSSH2_ERROR_AUTHENTICATION_FAILED {
+                throw SSHError.libssh2(rawError)
+            }
             throw SSHError.authenticationFailed
         }
 
         logger.info("Authentication successful")
-    }
-
-    private nonisolated static func authenticateWithPublicKey(
-        session: OpaquePointer,
-        username: String,
-        keyData: Data,
-        publicKeyData: Data?,
-        passphrase: String?
-    ) -> Int32 {
-        keyData.withUnsafeBytes { rawBuffer -> Int32 in
-            guard let baseAddress = rawBuffer.bindMemory(to: CChar.self).baseAddress else {
-                return LIBSSH2_ERROR_ALLOC
-            }
-
-            if let publicKeyData, !publicKeyData.isEmpty {
-                return publicKeyData.withUnsafeBytes { publicBuffer -> Int32 in
-                    guard let publicBase = publicBuffer.bindMemory(to: CChar.self).baseAddress else {
-                        return LIBSSH2_ERROR_ALLOC
-                    }
-                    return libssh2_userauth_publickey_frommemory(
-                        session,
-                        username,
-                        Int(username.utf8.count),
-                        publicBase,
-                        Int(publicKeyData.count),
-                        baseAddress,
-                        Int(keyData.count),
-                        passphrase
-                    )
-                }
-            }
-
-            return libssh2_userauth_publickey_frommemory(
-                session,
-                username,
-                Int(username.utf8.count),
-                nil,
-                0,
-                baseAddress,
-                Int(keyData.count),
-                passphrase
-            )
-        }
     }
 
     private func verifyHostKey() async throws {
@@ -1203,7 +1157,7 @@ actor SSHSession {
             throw SSHError.notConnected
         }
 
-        let (fingerprint, keyType) = try hostKeyFingerprint(for: session)
+        let (fingerprint, keyType) = try driver.hostKeyFingerprint(session: session)
         let host = config.hostKeyHost
         let port = config.hostKeyPort
         let verifier = KnownHostVerificationService()
@@ -1230,22 +1184,6 @@ actor SSHSession {
             logger.error("Host key mismatch for \(host):\(port). Known: \(knownFingerprint), Presented: \(presentedFingerprint)")
             throw SSHError.hostKeyVerificationFailed
         }
-    }
-
-    private func hostKeyFingerprint(for session: OpaquePointer) throws -> (String, Int) {
-        guard let hashPtr = libssh2_hostkey_hash(session, Int32(LIBSSH2_HOSTKEY_HASH_SHA256)) else {
-            throw SSHError.hostKeyVerificationFailed
-        }
-
-        let hash = Data(bytes: hashPtr, count: 32)
-        let base64 = hash.base64EncodedString().trimmingCharacters(in: CharacterSet(charactersIn: "="))
-        let fingerprint = "SHA256:\(base64)"
-
-        var keyLen: size_t = 0
-        var keyType: Int32 = 0
-        _ = libssh2_session_hostkey(session, &keyLen, &keyType)
-
-        return (fingerprint, Int(keyType))
     }
 
     func disconnect() async {

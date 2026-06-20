@@ -2,6 +2,13 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect ServerManager's local bootstrap, backfill, orphan repair,
+// and deletion-side cleanup rules without CloudKit or Keychain I/O. They use
+// value-only Server/Workspace fixtures so failures identify changes to local
+// state invariants rather than sync transport behavior. Update this context
+// only when bootstrap/backfill policy or known-host cleanup ownership changes
+// intentionally.
 @Suite(.serialized)
 @MainActor
 struct ServerManagerBootstrapTests {
@@ -146,5 +153,40 @@ struct ServerManagerBootstrapTests {
         )
 
         #expect(repairWorkspace == nil)
+    }
+
+    @Test
+    func knownHostRemovalCandidatesUsePostDeleteServerState() {
+        let workspaceID = UUID()
+        let deletedSharedHost = Server(
+            id: UUID(),
+            workspaceId: workspaceID,
+            name: "Deleted Shared",
+            host: "shared.example.com",
+            username: "root"
+        )
+        let remainingSharedHost = Server(
+            id: UUID(),
+            workspaceId: workspaceID,
+            name: "Remaining Shared",
+            host: "shared.example.com",
+            username: "root"
+        )
+        let deletedUniqueHost = Server(
+            id: UUID(),
+            workspaceId: workspaceID,
+            name: "Deleted Unique",
+            host: "unique.example.com",
+            username: "root"
+        )
+
+        let candidates = ServerManager.knownHostRemovalCandidates(
+            removedServers: [deletedSharedHost, deletedUniqueHost],
+            remainingServers: [remainingSharedHost]
+        )
+
+        #expect(candidates == [
+            ServerManager.KnownHostRemovalCandidate(host: "unique.example.com", port: 22)
+        ])
     }
 }
