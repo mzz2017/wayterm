@@ -16,9 +16,7 @@ final class ServerStatsCollector: ObservableObject {
     private var collectTask: Task<Void, Never>?
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "Stats")
 
-    // Own SSH client for stats collection
-    private var sshClient: SSHClient?
-    private var ownsClient = false
+    private var connectionLease: RemoteConnectionLease?
 
     // Platform detection and collector
     private var remotePlatform: RemotePlatform = .unknown
@@ -35,15 +33,15 @@ final class ServerStatsCollector: ObservableObject {
 
         // Use shared client if available, otherwise create one
         let client: SSHClient
-        let ownsClient: Bool
+        let lease: RemoteConnectionLease
         if let sharedClient {
             client = sharedClient
-            ownsClient = false
+            lease = RemoteConnectionLease(client: sharedClient, ownership: .borrowed)
         } else {
             client = SSHClient()
-            ownsClient = true
+            lease = RemoteConnectionLease(client: client, ownership: .owned)
         }
-        configureConnectionState(client: client, ownsClient: ownsClient)
+        configureConnectionState(lease: lease)
 
         // Get credentials
         let credentials: ServerCredentials
@@ -63,7 +61,7 @@ final class ServerStatsCollector: ObservableObject {
                     using: client,
                     server: server,
                     credentials: credentials,
-                    disconnectWhenDone: ownsClient
+                    disconnectWhenDone: false
                 ) { connectedClient in
                     await MainActor.run {
                         self.connectionError = nil
@@ -82,24 +80,26 @@ final class ServerStatsCollector: ObservableObject {
                     self.finishCollection(withError: error.localizedDescription)
                 }
             }
+            await lease.close()
             await MainActor.run { [weak self] in
                 self?.finishCollection()
             }
         }
     }
 
-    func stopCollecting() {
+    @discardableResult
+    func stopCollecting() -> Task<Void, Never>? {
         isCollecting = false
         collectTask?.cancel()
         collectTask = nil
 
-        // Disconnect SSH only if we own the connection
-        if ownsClient, let client = sshClient {
-            Task.detached {
-                await client.disconnect()
+        let closeTask = connectionLease.map { lease in
+            Task {
+                await lease.close()
             }
         }
         clearConnectionState()
+        return closeTask
     }
 
     // MARK: - Stats Collection
@@ -150,14 +150,12 @@ final class ServerStatsCollector: ObservableObject {
         platformCollector = nil
     }
 
-    private func configureConnectionState(client: SSHClient, ownsClient: Bool) {
-        self.sshClient = client
-        self.ownsClient = ownsClient
+    private func configureConnectionState(lease: RemoteConnectionLease) {
+        connectionLease = lease
     }
 
     private func clearConnectionState() {
-        sshClient = nil
-        ownsClient = false
+        connectionLease = nil
     }
 
     private func finishCollection(withError error: String? = nil) {

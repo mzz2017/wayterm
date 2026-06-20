@@ -206,7 +206,7 @@ protocol TerminalRichPasteContext: AnyObject {
     var sessionId: UUID { get }
     var uiModel: TerminalRichPasteUIModel { get }
 
-    func resolveConnectedSSHClient() async -> SSHClient?
+    func resolveRemoteConnectionLease() async -> RemoteConnectionLease?
     func pasteTextFromClipboard()
     func sendText(_ text: String)
 }
@@ -216,7 +216,7 @@ final class TerminalRichPasteRuntime: TerminalRichPasteContext {
     let sessionId: UUID
     let uiModel: TerminalRichPasteUIModel
 
-    private let resolveConnectedSSHClientHandler: @MainActor () async -> SSHClient?
+    private let resolveRemoteConnectionLeaseHandler: @MainActor () async -> RemoteConnectionLease?
     private let pasteTextFromClipboardHandler: @MainActor () -> Void
     private let sendTextHandler: @MainActor (String) -> Void
     private lazy var controller = TerminalRichPasteController(
@@ -227,13 +227,13 @@ final class TerminalRichPasteRuntime: TerminalRichPasteContext {
     init(
         sessionId: UUID,
         uiModel: TerminalRichPasteUIModel,
-        resolveConnectedSSHClient: @escaping @MainActor () async -> SSHClient?,
+        resolveRemoteConnectionLease: @escaping @MainActor () async -> RemoteConnectionLease?,
         pasteTextFromClipboard: @escaping @MainActor () -> Void,
         sendText: @escaping @MainActor (String) -> Void
     ) {
         self.sessionId = sessionId
         self.uiModel = uiModel
-        self.resolveConnectedSSHClientHandler = resolveConnectedSSHClient
+        self.resolveRemoteConnectionLeaseHandler = resolveRemoteConnectionLease
         self.pasteTextFromClipboardHandler = pasteTextFromClipboard
         self.sendTextHandler = sendText
     }
@@ -245,8 +245,10 @@ final class TerminalRichPasteRuntime: TerminalRichPasteContext {
         TerminalRichPasteRuntime(
             sessionId: sessionId,
             uiModel: uiModel,
-            resolveConnectedSSHClient: {
-                ConnectionSessionManager.shared.sshClient(forSessionId: sessionId)
+            resolveRemoteConnectionLease: {
+                ConnectionSessionManager.shared.sshClient(forSessionId: sessionId).map {
+                    RemoteConnectionLease(client: $0, ownership: .borrowed)
+                }
             },
             pasteTextFromClipboard: {
                 ConnectionSessionManager.shared.peekTerminal(for: sessionId)?.pasteTextFromClipboard()
@@ -264,8 +266,10 @@ final class TerminalRichPasteRuntime: TerminalRichPasteContext {
         TerminalRichPasteRuntime(
             sessionId: paneId,
             uiModel: uiModel,
-            resolveConnectedSSHClient: {
-                TerminalTabManager.shared.getSSHClient(for: paneId)
+            resolveRemoteConnectionLease: {
+                TerminalTabManager.shared.getSSHClient(for: paneId).map {
+                    RemoteConnectionLease(client: $0, ownership: .borrowed)
+                }
             },
             pasteTextFromClipboard: {
                 TerminalTabManager.shared.getTerminal(for: paneId)?.pasteTextFromClipboard()
@@ -282,8 +286,8 @@ final class TerminalRichPasteRuntime: TerminalRichPasteContext {
         }
     }
 
-    func resolveConnectedSSHClient() async -> SSHClient? {
-        await resolveConnectedSSHClientHandler()
+    func resolveRemoteConnectionLease() async -> RemoteConnectionLease? {
+        await resolveRemoteConnectionLeaseHandler()
     }
 
     func pasteTextFromClipboard() {
@@ -406,7 +410,7 @@ final class TerminalRichPasteController {
             "Uploading clipboard image [session: \(self.context.sessionId.uuidString, privacy: .public)] [bytes: \(image.sizeBytes)] [format: \(image.suggestedExtension, privacy: .public)]"
         )
 
-        guard let activeSSHClient = await self.context.resolveConnectedSSHClient() else {
+        guard let lease = await self.context.resolveRemoteConnectionLease() else {
             logger.warning(
                 "Rich paste skipped because no active SSH client is available [session: \(self.context.sessionId.uuidString, privacy: .public)]"
             )
@@ -421,17 +425,26 @@ final class TerminalRichPasteController {
         self.context.uiModel.setProgress(String(localized: "Uploading image to remote host..."))
         defer { self.context.uiModel.setProgress(nil) }
 
+        let uploadResult: Result<RichPasteUploadResult, Error>
         do {
-            let result = try await self.coordinator.performRichPaste(
+            uploadResult = .success(try await self.coordinator.performRichPaste(
                 image: image,
                 settings: settings,
-                sshClient: activeSSHClient
-            )
+                client: lease.client
+            ))
+        } catch {
+            uploadResult = .failure(error)
+        }
+
+        await lease.close()
+
+        switch uploadResult {
+        case .success(let result):
             self.handleResult(result)
-        } catch is CancellationError {
+        case .failure(let error) where error is CancellationError:
             logger.info("Rich paste cancelled [session: \(self.context.sessionId.uuidString, privacy: .public)]")
             return
-        } catch {
+        case .failure(let error):
             logger.error(
                 "Rich paste failed [session: \(self.context.sessionId.uuidString, privacy: .public)] [error: \(error.localizedDescription, privacy: .public)]"
             )

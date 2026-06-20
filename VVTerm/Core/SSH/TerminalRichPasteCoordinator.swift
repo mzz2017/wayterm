@@ -59,7 +59,7 @@ actor TerminalRichPasteCoordinator {
     func performRichPaste(
         image: ClipboardImagePayload,
         settings: RichClipboardSettings,
-        sshClient: SSHClient
+        client: any RemoteConnectionLeaseClient
     ) async throws -> RichPasteUploadResult {
         logger.info(
             "Perform rich paste [session: \(self.sessionId.uuidString, privacy: .public)] [bytes: \(image.sizeBytes)]"
@@ -68,11 +68,11 @@ actor TerminalRichPasteCoordinator {
             throw TerminalRichPasteError.imageTooLarge(maxBytes: settings.maximumImageBytes)
         }
 
-        let upload = try await transferService.uploadImage(image, using: sshClient)
+        let upload = try await transferService.uploadImage(image, using: client)
         logger.info(
             "Attempting remote clipboard seeding [session: \(self.sessionId.uuidString, privacy: .public)] [path: \(upload.remotePath, privacy: .public)]"
         )
-        let seededRemoteClipboard = await seedRemoteClipboardIfSupported(upload: upload, sshClient: sshClient)
+        let seededRemoteClipboard = await seedRemoteClipboardIfSupported(upload: upload, client: client)
 
         return RichPasteUploadResult(
             remotePath: upload.remotePath,
@@ -82,9 +82,9 @@ actor TerminalRichPasteCoordinator {
 
     private func seedRemoteClipboardIfSupported(
         upload: RemoteClipboardUpload,
-        sshClient: SSHClient
+        client: any RemoteConnectionLeaseClient
     ) async -> Bool {
-        let capability = await remoteClipboardSeedCapability(using: sshClient)
+        let capability = await remoteClipboardSeedCapability(using: client)
         logger.info(
             "Remote clipboard seed capability [session: \(self.sessionId.uuidString, privacy: .public)] [capability: \(String(describing: capability), privacy: .public)]"
         )
@@ -98,7 +98,7 @@ actor TerminalRichPasteCoordinator {
         )
 
         do {
-            let output = try await sshClient.execute(
+            let output = try await client.execute(
                 wrappedCommand,
                 timeout: .seconds(3)
             )
@@ -111,19 +111,19 @@ actor TerminalRichPasteCoordinator {
         }
     }
 
-    private func remoteClipboardSeedCapability(using sshClient: SSHClient) async -> RemoteClipboardSeedCapability {
-        let capabilityKey = ObjectIdentifier(sshClient)
+    private func remoteClipboardSeedCapability(using client: any RemoteConnectionLeaseClient) async -> RemoteClipboardSeedCapability {
+        let capabilityKey = ObjectIdentifier(client)
         if let cachedCapability = remoteClipboardCapabilities[capabilityKey] {
             return cachedCapability
         }
 
-        let environment = await sshClient.remoteEnvironment()
+        let environment = await client.remoteEnvironment()
         let capability: RemoteClipboardSeedCapability
         switch environment.platform {
         case .linux, .freebsd, .openbsd, .netbsd:
-            capability = await probeUnixClipboardCapability(using: sshClient)
+            capability = await probeUnixClipboardCapability(using: client)
         case .darwin:
-            capability = await probeDarwinClipboardCapability(using: sshClient)
+            capability = await probeDarwinClipboardCapability(using: client)
         case .windows, .unknown:
             capability = .unavailable
         }
@@ -135,7 +135,7 @@ actor TerminalRichPasteCoordinator {
         return capability
     }
 
-    private func probeUnixClipboardCapability(using sshClient: SSHClient) async -> RemoteClipboardSeedCapability {
+    private func probeUnixClipboardCapability(using client: any RemoteConnectionLeaseClient) async -> RemoteClipboardSeedCapability {
         let command = RemoteTerminalBootstrap.wrapPOSIXShellCommand(
             """
             if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wl-copy >/dev/null 2>&1; then
@@ -149,7 +149,7 @@ actor TerminalRichPasteCoordinator {
         )
 
         do {
-            let output = try await sshClient.execute(command)
+            let output = try await client.execute(command)
                 .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
             switch output {
             case "wayland":
@@ -164,7 +164,7 @@ actor TerminalRichPasteCoordinator {
         }
     }
 
-    private func probeDarwinClipboardCapability(using sshClient: SSHClient) async -> RemoteClipboardSeedCapability {
+    private func probeDarwinClipboardCapability(using client: any RemoteConnectionLeaseClient) async -> RemoteClipboardSeedCapability {
         let command = RemoteTerminalBootstrap.wrapPOSIXShellCommand(
             """
             if command -v osascript >/dev/null 2>&1 && launchctl print "gui/$(id -u)" >/dev/null 2>&1; then
@@ -176,7 +176,7 @@ actor TerminalRichPasteCoordinator {
         )
 
         do {
-            let output = try await sshClient.execute(command)
+            let output = try await client.execute(command)
                 .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
             return output == "darwin" ? .macOS : .unavailable
         } catch {

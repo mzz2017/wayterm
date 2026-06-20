@@ -392,7 +392,8 @@ final class RemoteFileBrowserStore: ObservableObject {
         }
     }
 
-    func disconnect(serverId: UUID) {
+    @discardableResult
+    func disconnect(serverId: UUID) -> Task<Void, Never> {
         let affectedTabIDs = Set(
             states.compactMap { tabId, state in
                 state.serverId == serverId ? tabId : nil
@@ -403,7 +404,9 @@ final class RemoteFileBrowserStore: ObservableObject {
             removeRuntimeState(for: tabId)
         }
 
-        remoteFileServiceAdapter.disconnect(serverId: serverId)
+        return Task { [remoteFileServiceAdapter] in
+            await remoteFileServiceAdapter.disconnect(serverId: serverId)
+        }
     }
 
     func goUp(in tab: RemoteFileTab, server: Server) async {

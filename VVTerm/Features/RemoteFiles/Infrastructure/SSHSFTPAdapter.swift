@@ -4,14 +4,9 @@ import Foundation
 final class SSHSFTPAdapter {
     typealias BorrowedClientProvider = @MainActor (UUID) -> SSHClient?
 
-    private enum ClientOwnership {
-        case borrowed
-        case owned
-    }
-
     private struct ClientRegistration {
         let client: SSHClient
-        let ownership: ClientOwnership
+        let lease: RemoteConnectionLease
     }
 
     private var clients: [UUID: ClientRegistration] = [:]
@@ -43,20 +38,16 @@ final class SSHSFTPAdapter {
                 try await operation(SFTPRemoteFileService(client: client))
             }
         } catch {
-            if registration.ownership == .borrowed {
+            if registration.lease.ownership == .borrowed {
                 clients.removeValue(forKey: server.id)
             }
             throw error
         }
     }
 
-    func disconnect(serverId: UUID) {
+    func disconnect(serverId: UUID) async {
         guard let registration = clients.removeValue(forKey: serverId) else { return }
-        guard registration.ownership == .owned else { return }
-
-        Task.detached(priority: .utility) {
-            await registration.client.disconnect()
-        }
+        await registration.lease.close()
     }
 
     private func borrowedClient(for serverId: UUID) -> SSHClient? {
@@ -69,16 +60,23 @@ final class SSHSFTPAdapter {
                 return existing
             }
 
-            let registration = ClientRegistration(client: borrowedClient, ownership: .borrowed)
+            let registration = ClientRegistration(
+                client: borrowedClient,
+                lease: RemoteConnectionLease(client: borrowedClient, ownership: .borrowed)
+            )
             clients[server.id] = registration
             return registration
         }
 
-        if let existing = clients[server.id], existing.ownership == .owned {
+        if let existing = clients[server.id], existing.lease.ownership == .owned {
             return existing
         }
 
-        let registration = ClientRegistration(client: SSHClient(), ownership: .owned)
+        let client = SSHClient()
+        let registration = ClientRegistration(
+            client: client,
+            lease: RemoteConnectionLease(client: client, ownership: .owned)
+        )
         clients[server.id] = registration
         return registration
     }
