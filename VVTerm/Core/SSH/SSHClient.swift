@@ -1678,6 +1678,29 @@ actor SSHSession {
 
     // MARK: - Shell
 
+    private func logChannelFailure(
+        session: OpaquePointer,
+        operation: LibSSH2RawError.Operation,
+        fallbackCode: Int32
+    ) {
+        let rawError = driver.lastError(session: session, operation: operation, fallbackCode: fallbackCode)
+        logger.debug(
+            "libssh2 \(operation.rawValue) returned \(rawError.code) [message: \(rawError.message ?? "none", privacy: .public)]"
+        )
+    }
+
+    private func closeAndFreeChannel(_ channel: OpaquePointer) {
+        let closeResult = driver.closeChannel(channel)
+        if closeResult != 0, closeResult != LIBSSH2_ERROR_EAGAIN {
+            logger.debug("libssh2 channel close returned \(closeResult)")
+        }
+
+        let freeResult = driver.freeChannel(channel)
+        if freeResult != 0, freeResult != LIBSSH2_ERROR_EAGAIN {
+            logger.debug("libssh2 channel free returned \(freeResult)")
+        }
+    }
+
     func startShell(
         cols: Int,
         rows: Int,
@@ -1690,32 +1713,21 @@ actor SSHSession {
         }
 
         // Set blocking for channel setup
-        libssh2_session_set_blocking(session, 1)
-        defer { libssh2_session_set_blocking(session, 0) }
+        driver.setBlocking(session: session, isBlocking: true)
+        defer { driver.setBlocking(session: session, isBlocking: false) }
 
-        // Open channel (use _ex variant since macros not available in Swift)
-        // LIBSSH2_CHANNEL_WINDOW_DEFAULT = 2*1024*1024, LIBSSH2_CHANNEL_PACKET_DEFAULT = 32768
-        guard let channel = libssh2_channel_open_ex(
-            session,
-            "session",
-            UInt32("session".utf8.count),
-            2 * 1024 * 1024,  // window size
-            32768,             // packet size
-            nil,
-            0
-        ) else {
+        guard let channel = driver.openSessionChannel(session: session) else {
+            logChannelFailure(session: session, operation: .channelOpen, fallbackCode: 0)
             throw SSHError.channelOpenFailed
         }
 
         // Mirror Ghostty's SSH behavior so remote prompts/themes can detect
         // 24-bit color support without changing TERM compatibility.
         for variable in RemoteTerminalBootstrap.terminalEnvironment() {
-            let result = libssh2_channel_setenv_ex(
-                channel,
-                variable.name,
-                UInt32(variable.name.utf8.count),
-                variable.value,
-                UInt32(variable.value.utf8.count)
+            let result = driver.setChannelEnvironment(
+                channel: channel,
+                name: variable.name,
+                value: variable.value
             )
 
             // Many SSH servers gate env forwarding via AcceptEnv; continue when
@@ -1726,20 +1738,15 @@ actor SSHSession {
         }
 
         // Request PTY
-        let ptyResult = libssh2_channel_request_pty_ex(
-            channel,
-            terminalType.rawValue,
-            UInt32(terminalType.rawValue.utf8.count),
-            nil,
-            0,
-            Int32(cols),
-            Int32(rows),
-            0,
-            0
+        let ptyResult = driver.requestPty(
+            channel: channel,
+            terminalType: terminalType,
+            cols: cols,
+            rows: rows
         )
         guard ptyResult == 0 else {
-            libssh2_channel_close(channel)
-            libssh2_channel_free(channel)
+            logChannelFailure(session: session, operation: .channelRequestPty, fallbackCode: ptyResult)
+            closeAndFreeChannel(channel)
             throw SSHError.shellRequestFailed
         }
 
@@ -1747,20 +1754,17 @@ actor SSHSession {
         // and mosh share the same environment and quoting behavior.
         switch RemoteTerminalBootstrap.launchPlan(startupCommand: startupCommand, environment: environment) {
         case .shell:
-            let shellResult = libssh2_channel_process_startup(channel, "shell", 5, nil, 0)
+            let shellResult = driver.startShell(channel: channel)
             guard shellResult == 0 else {
-                libssh2_channel_close(channel)
-                libssh2_channel_free(channel)
+                logChannelFailure(session: session, operation: .channelProcessStartup, fallbackCode: shellResult)
+                closeAndFreeChannel(channel)
                 throw SSHError.shellRequestFailed
             }
         case .exec(let command):
-            let commandLength = UInt32(command.utf8.count)
-            let execResult: Int32 = command.withCString { ptr in
-                libssh2_channel_process_startup(channel, "exec", 4, ptr, commandLength)
-            }
+            let execResult = driver.startExec(channel: channel, command: command)
             guard execResult == 0 else {
-                libssh2_channel_close(channel)
-                libssh2_channel_free(channel)
+                logChannelFailure(session: session, operation: .channelProcessStartup, fallbackCode: execResult)
+                closeAndFreeChannel(channel)
                 throw SSHError.shellRequestFailed
             }
         }
@@ -1940,8 +1944,7 @@ actor SSHSession {
         if !state.batchBuffer.isEmpty {
             state.continuation.yield(state.batchBuffer)
         }
-        libssh2_channel_close(state.channel)
-        libssh2_channel_free(state.channel)
+        closeAndFreeChannel(state.channel)
         state.continuation.finish()
     }
 
@@ -1952,8 +1955,7 @@ actor SSHSession {
             if !state.batchBuffer.isEmpty {
                 state.continuation.yield(state.batchBuffer)
             }
-            libssh2_channel_close(state.channel)
-            libssh2_channel_free(state.channel)
+            closeAndFreeChannel(state.channel)
             state.continuation.finish()
         }
     }
@@ -1961,8 +1963,7 @@ actor SSHSession {
     private func closeAllExecChannels() {
         for request in execRequests.values {
             if let channel = request.channel {
-                libssh2_channel_close(channel)
-                libssh2_channel_free(channel)
+                closeAndFreeChannel(channel)
                 request.channel = nil
             }
         }
@@ -1974,8 +1975,7 @@ actor SSHSession {
         execRequests.removeAll()
         for request in requests.values {
             if let channel = request.channel {
-                libssh2_channel_close(channel)
-                libssh2_channel_free(channel)
+                closeAndFreeChannel(channel)
                 request.channel = nil
             }
             request.continuation.resume(throwing: error)
@@ -2040,8 +2040,7 @@ actor SSHSession {
         guard let request = execRequests.removeValue(forKey: requestId) else { return }
 
         if let channel = request.channel {
-            libssh2_channel_close(channel)
-            libssh2_channel_free(channel)
+            closeAndFreeChannel(channel)
             request.channel = nil
         }
 

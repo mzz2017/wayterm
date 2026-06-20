@@ -164,6 +164,37 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
             XCTFail("Expected SSHError.authenticationFailed, got \(error)")
         }
     }
+
+    func testShellPtyFailureClosesAndFreesOpenedChannel() async {
+        // Given a fake libssh2 driver that opens a shell channel but rejects
+        // the PTY request before any shell process starts.
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x22),
+            ptyResult: LIBSSH2_ERROR_CHANNEL_REQUEST_DENIED
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When shell startup fails after channel open.
+        do {
+            try await session.connect()
+            _ = try await session.startShell(cols: 80, rows: 24)
+            XCTFail("Expected PTY request failure")
+        } catch SSHError.shellRequestFailed {
+            // Then the existing user-facing shell error is preserved.
+        } catch {
+            XCTFail("Expected SSHError.shellRequestFailed, got \(error)")
+        }
+
+        // And the opened channel is closed and freed exactly once.
+        XCTAssertEqual(
+            driver.channelEvents(),
+            [.openSession, .requestPty, .close, .free],
+            "PTY failure must close and free the channel that startShell opened"
+        )
+    }
 }
 
 private extension SSHSessionConfig {
@@ -247,33 +278,76 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         case failure(LibSSH2RawError)
     }
 
+    enum ChannelEvent: Equatable {
+        case openSession
+        case setEnvironment(String)
+        case requestPty
+        case startShell
+        case startExec(String)
+        case close
+        case free
+    }
+
     private let sessionInitResult: OpaquePointer?
     private let connectedSocket: Int32
     private let handshakeBehavior: HandshakeBehavior
     private let authMethodsResult: AuthMethodsResult
     private let publicKeyAuthResult: AuthResult
+    private let channelOpenResult: OpaquePointer?
+    private let ptyResult: Int32
+    private let shellStartResult: Int32
+    private let execStartResult: Int32
     private let lock = NSLock()
     private var closedSocketDescriptors: [Int32] = []
     private var observedSocketAbort = false
+    private var channelEventLog: [ChannelEvent] = []
 
     init(
         sessionInitResult: OpaquePointer?,
         connectedSocket: Int32 = testSocket,
         handshakeBehavior: HandshakeBehavior = .succeed,
         authMethods: AuthMethodsResult = .unavailable,
-        publicKeyAuthResult: AuthResult = .success
+        publicKeyAuthResult: AuthResult = .success,
+        channelOpenResult: OpaquePointer? = nil,
+        ptyResult: Int32 = 0,
+        shellStartResult: Int32 = 0,
+        execStartResult: Int32 = 0
     ) {
         self.sessionInitResult = sessionInitResult
         self.connectedSocket = connectedSocket
         self.handshakeBehavior = handshakeBehavior
         self.authMethodsResult = authMethods
         self.publicKeyAuthResult = publicKeyAuthResult
+        self.channelOpenResult = channelOpenResult
+        self.ptyResult = ptyResult
+        self.shellStartResult = shellStartResult
+        self.execStartResult = execStartResult
     }
 
     func closedSockets() -> [Int32] {
         lock.lock()
         defer { lock.unlock() }
         return closedSocketDescriptors
+    }
+
+    func channelEvents(includeEnvironment: Bool = false) -> [ChannelEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard includeEnvironment else {
+            return channelEventLog.filter { event in
+                if case .setEnvironment = event {
+                    return false
+                }
+                return true
+            }
+        }
+        return channelEventLog
+    }
+
+    private func recordChannelEvent(_ event: ChannelEvent) {
+        lock.lock()
+        defer { lock.unlock() }
+        channelEventLog.append(event)
     }
 
     func waitForObservedSocketAbort(timeout: Duration) -> Bool {
@@ -390,6 +464,46 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         passphrase: String?
     ) -> Int32 {
         publicKeyAuthResult.code
+    }
+
+    nonisolated func openSessionChannel(session: OpaquePointer) -> OpaquePointer? {
+        recordChannelEvent(.openSession)
+        return channelOpenResult
+    }
+
+    nonisolated func setChannelEnvironment(channel: OpaquePointer, name: String, value: String) -> Int32 {
+        recordChannelEvent(.setEnvironment(name))
+        return 0
+    }
+
+    nonisolated func requestPty(
+        channel: OpaquePointer,
+        terminalType: RemoteTerminalType,
+        cols: Int,
+        rows: Int
+    ) -> Int32 {
+        recordChannelEvent(.requestPty)
+        return ptyResult
+    }
+
+    nonisolated func startShell(channel: OpaquePointer) -> Int32 {
+        recordChannelEvent(.startShell)
+        return shellStartResult
+    }
+
+    nonisolated func startExec(channel: OpaquePointer, command: String) -> Int32 {
+        recordChannelEvent(.startExec(command))
+        return execStartResult
+    }
+
+    nonisolated func closeChannel(_ channel: OpaquePointer) -> Int32 {
+        recordChannelEvent(.close)
+        return 0
+    }
+
+    nonisolated func freeChannel(_ channel: OpaquePointer) -> Int32 {
+        recordChannelEvent(.free)
+        return 0
     }
 
     nonisolated func disconnect(

@@ -29,6 +29,12 @@ struct LibSSH2ConnectedSocket: Sendable, Equatable {
 struct LibSSH2RawError: Error, Sendable, Equatable {
     enum Operation: String, Sendable {
         case authentication
+        case channelClose
+        case channelFree
+        case channelOpen
+        case channelProcessStartup
+        case channelRequestPty
+        case channelSetEnvironment
         case handshake
         case sessionDisconnect
         case sessionFree
@@ -84,6 +90,18 @@ protocol LibSSH2SessionDriving: Sendable {
         publicKeyData: Data?,
         passphrase: String?
     ) -> Int32
+    nonisolated func openSessionChannel(session: OpaquePointer) -> OpaquePointer?
+    nonisolated func setChannelEnvironment(channel: OpaquePointer, name: String, value: String) -> Int32
+    nonisolated func requestPty(
+        channel: OpaquePointer,
+        terminalType: RemoteTerminalType,
+        cols: Int,
+        rows: Int
+    ) -> Int32
+    nonisolated func startShell(channel: OpaquePointer) -> Int32
+    nonisolated func startExec(channel: OpaquePointer, command: String) -> Int32
+    nonisolated func closeChannel(_ channel: OpaquePointer) -> Int32
+    nonisolated func freeChannel(_ channel: OpaquePointer) -> Int32
     nonisolated func lastError(
         session: OpaquePointer,
         operation: LibSSH2RawError.Operation,
@@ -278,6 +296,71 @@ struct LibSSH2SessionDriver: LibSSH2SessionDriving {
                 passphrase
             )
         }
+    }
+
+    nonisolated func openSessionChannel(session: OpaquePointer) -> OpaquePointer? {
+        libssh2_channel_open_ex(
+            session,
+            "session",
+            UInt32("session".utf8.count),
+            2 * 1024 * 1024,
+            32768,
+            nil,
+            0
+        )
+    }
+
+    nonisolated func setChannelEnvironment(channel: OpaquePointer, name: String, value: String) -> Int32 {
+        libssh2_channel_setenv_ex(
+            channel,
+            name,
+            UInt32(name.utf8.count),
+            value,
+            UInt32(value.utf8.count)
+        )
+    }
+
+    nonisolated func requestPty(
+        channel: OpaquePointer,
+        terminalType: RemoteTerminalType,
+        cols: Int,
+        rows: Int
+    ) -> Int32 {
+        libssh2_channel_request_pty_ex(
+            channel,
+            terminalType.rawValue,
+            UInt32(terminalType.rawValue.utf8.count),
+            nil,
+            0,
+            Int32(cols),
+            Int32(rows),
+            0,
+            0
+        )
+    }
+
+    nonisolated func startShell(channel: OpaquePointer) -> Int32 {
+        libssh2_channel_process_startup(channel, "shell", 5, nil, 0)
+    }
+
+    nonisolated func startExec(channel: OpaquePointer, command: String) -> Int32 {
+        command.withCString { commandPointer in
+            libssh2_channel_process_startup(
+                channel,
+                "exec",
+                4,
+                commandPointer,
+                UInt32(command.utf8.count)
+            )
+        }
+    }
+
+    nonisolated func closeChannel(_ channel: OpaquePointer) -> Int32 {
+        libssh2_channel_close(channel)
+    }
+
+    nonisolated func freeChannel(_ channel: OpaquePointer) -> Int32 {
+        libssh2_channel_free(channel)
     }
 
     nonisolated func lastError(

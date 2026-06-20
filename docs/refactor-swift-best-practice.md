@@ -1815,7 +1815,7 @@ git commit -m "refactor: tighten core SSH FFI boundaries"
     - `closeChannel(_:) -> Int32`
     - `freeChannel(_:) -> Int32`
 
-- [ ] **Step 1: Add RED channel setup cleanup tests**
+- [x] **Step 1: Add RED channel setup cleanup tests**
 
 Add tests to `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`:
 
@@ -1862,7 +1862,7 @@ enum ChannelEvent: Equatable {
 }
 ```
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests ENABLE_DEBUG_DYLIB=NO
@@ -1870,7 +1870,7 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected: compile failure because `LibSSH2SessionDriving` does not yet expose channel setup/teardown methods or channel raw-error operations.
 
-- [ ] **Step 3: Move shell channel setup/teardown C calls into the driver**
+- [x] **Step 3: Move shell channel setup/teardown C calls into the driver**
 
 Make the minimal production change for the shared shell/exec channel setup and teardown boundary:
 - Replace direct `libssh2_session_set_blocking`, `libssh2_channel_open_ex`, `libssh2_channel_setenv_ex`, `libssh2_channel_request_pty_ex`, `libssh2_channel_process_startup`, `libssh2_channel_close`, and `libssh2_channel_free` calls in `startShell`, `closeShellInternal`, `closeAllShellChannels`, `closeAllExecChannels`, `failAllExecRequests`, and `finishExecRequest` with driver methods.
@@ -1878,13 +1878,13 @@ Make the minimal production change for the shared shell/exec channel setup and t
 - Preserve existing user-facing errors for normal shell startup failures.
 - When a channel setup call fails with a raw libssh2 error distinct from the existing user-facing error, log or preserve the `LibSSH2RawError` before mapping to the existing `SSHError`.
 
-- [ ] **Step 4: Run GREEN tests**
+- [x] **Step 4: Run GREEN tests**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
 ```
 
-- [ ] **Step 5: API and boundary cleanup**
+- [x] **Step 5: API and boundary cleanup**
 
 Before committing:
 - Verify `SSHClient.swift` no longer calls `libssh2_session_set_blocking`, `libssh2_channel_setenv_ex`, `libssh2_channel_request_pty_ex`, `libssh2_channel_process_startup`, `libssh2_channel_close`, or `libssh2_channel_free` directly in shell setup/teardown paths.
@@ -1892,7 +1892,7 @@ Before committing:
 - Verify test fake channel event names describe behavior, not implementation-only line numbers.
 - Record any direct channel I/O calls still deferred to Task 23 in the Progress Ledger.
 
-- [ ] **Step 6: Run focused verification and review**
+- [x] **Step 6: Run focused verification and review**
 
 ```bash
 rg -n "libssh2_session_set_blocking|libssh2_channel_open_ex|libssh2_channel_setenv_ex|libssh2_channel_request_pty_ex|libssh2_channel_process_startup|libssh2_channel_close|libssh2_channel_free" VVTerm/Core/SSH/SSHClient.swift VVTerm/Core/SSH/LibSSH2SessionDriver.swift
@@ -2088,7 +2088,11 @@ git commit -m "refactor: complete core SSH FFI boundary sweep"
 - 2026-06-21: Task 21 final focused verification completed. `LibSSH2SessionLifecycleTests`, `SSHAuthenticationGateCancellationTests`, `SSHErrorRetryableTests`, `KnownHostsManagerTests`, and `ServerManagerBootstrapTests` passed: 7 XCTest tests plus 17 Swift Testing tests. `git diff --check` passed. Boundary scan confirmed direct auth/host-key/last-error libssh2 calls are confined to `LibSSH2SessionDriver.swift`, and `KnownHostsManager.shared` is confined to the compatibility facade and its tests.
 - 2026-06-21: Task 21 re-review completed with no blocking findings. Residual risk accepted for this slice: auth lifecycle tests still use `KnownHostsStore.shared` with per-test cleanup rather than injecting an isolated host-key store.
 - 2026-06-21: Post-Task-21 Core SSH FFI wave planning completed. Remaining direct libssh2 calls are split into four reviewable tasks: shell channel setup/teardown (Task 22), channel I/O plus exec/upload/resize/SCP open (Task 23), SFTP session and handle operations including seek (Task 24), and keepalive plus final FFI audit (Task 25). This keeps `SSHSession` as the channel/SFTP state owner while moving unsafe C calls into `LibSSH2SessionDriver`.
-- Next task: Task 22 Move Shell Channel Setup and Teardown Behind the libssh2 Driver.
+- 2026-06-21: Task 22 RED completed. Added `testShellPtyFailureClosesAndFreesOpenedChannel`; the first focused run failed to compile because the fake/driver did not yet expose `channelOpenResult`, `ptyResult`, `channelEvents()`, or channel lifecycle event cases.
+- 2026-06-21: Task 22 GREEN completed. `LibSSH2SessionDriving` now owns shell channel open, environment setup, PTY request, shell/exec startup for `startShell`, and channel close/free teardown used by shell and exec cleanup paths. `SSHSession` remains the owner of shell ids, `ShellChannelState`, `ExecRequest`, continuations, and cleanup ordering. Verification: `LibSSH2SessionLifecycleTests` and `TerminalSurfaceTeardownTests` passed.
+- 2026-06-21: Task 22 boundary scan completed. Task 22 direct C calls are confined to `LibSSH2SessionDriver.swift` lines 193 and 302-363. Remaining `SSHClient.swift` direct channel hits are deferred to Task 23: exec request open/startup at lines 1992 and 2014; SCP/exec upload close/free/open/startup at lines 2205-2304; upload finish close/free at lines 2345 and 2370.
+- 2026-06-21: Task 22 final verification completed. `LibSSH2SessionLifecycleTests` passed 6 XCTest tests; `ConnectionLifecycleIntegrationTests` and `TerminalSurfaceTeardownTests` passed 49 Swift Testing tests; `git diff --check` passed. Review found no blocking issues. Accepted residual risk: close/free diagnostics currently log return codes only; Task 23/25 may tighten teardown raw-error diagnostics.
+- Next task: Task 23 Move Channel I/O, Exec, Upload, and Resize Calls Behind the Driver.
 
 ## Self-Review
 
