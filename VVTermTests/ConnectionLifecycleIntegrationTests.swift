@@ -337,6 +337,34 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func tabManagerReportsLiveRuntimeFromRegistryNotPaneStateSnapshot() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tabId = UUID()
+            let paneId = UUID()
+            var stalePane = TerminalPaneState(paneId: paneId, tabId: tabId, serverId: server.id)
+            stalePane.connectionState = .disconnected
+            manager.paneStates[paneId] = stalePane
+
+            // Given a pane whose domain snapshot still says disconnected.
+            #expect(
+                !manager.hasLiveRuntime(forPaneId: paneId),
+                "A pane without registry opening/streaming state should not be considered live."
+            )
+
+            // When the application-layer registry records the runtime as opening.
+            manager.updatePaneState(paneId, connectionState: .connecting)
+
+            // Then liveness comes from the registry, not the stale pane snapshot
+            // value used for display.
+            #expect(
+                manager.hasLiveRuntime(forPaneId: paneId),
+                "Pane runtime liveness should be true when the registry is opening or streaming."
+            )
+        }
+    }
+
+    @Test
     func connectionManagerOtherActiveSessionsComeFromRegistryNotDomainState() async {
         await withCleanConnectionManager { manager in
             let server = makeServer()

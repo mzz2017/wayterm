@@ -88,6 +88,10 @@ final class TerminalTabManager: ObservableObject {
         terminalConnectionRegistry.hasStreamingEntity
     }
 
+    func hasLiveRuntime(forPaneId paneId: UUID) -> Bool {
+        terminalConnectionRegistry.isOpeningOrStreaming(.pane(paneId))
+    }
+
     /// Selected view type per server (stats/terminal)
     @Published var selectedViewByServer: [UUID: String] = [:] {
         didSet { schedulePersist() }
