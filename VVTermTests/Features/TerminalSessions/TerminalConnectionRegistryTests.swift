@@ -55,6 +55,24 @@ final class TerminalConnectionRegistryTests: XCTestCase {
         XCTAssertTrue(registry.hasActiveEntity(for: serverId, excluding: excludedEntityId))
     }
 
+    @MainActor
+    func testIsOpeningOrStreamingIncludesOpeningAndStreamingStates() {
+        let registry = TerminalConnectionRegistry()
+        let serverId = UUID()
+        let entityId = TerminalEntityID.session(UUID())
+
+        XCTAssertFalse(registry.isOpeningOrStreaming(entityId))
+
+        registry.updateState(.connecting, for: entityId, serverId: serverId)
+        XCTAssertTrue(registry.isOpeningOrStreaming(entityId))
+
+        registry.updateState(.streaming, for: entityId, serverId: serverId)
+        XCTAssertTrue(registry.isOpeningOrStreaming(entityId))
+
+        registry.updateState(.disconnected, for: entityId, serverId: serverId)
+        XCTAssertFalse(registry.isOpeningOrStreaming(entityId))
+    }
+
     func testClosedEntityRejectsLateShellRegistrationFromSameClient() {
         // Given an entity that began starting a shell and then closed before
         // the runner registered its shell.

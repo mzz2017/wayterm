@@ -25,6 +25,11 @@ final class TerminalConnectionRegistry {
         }
     }
 
+    func isOpeningOrStreaming(_ entityId: TerminalEntityID) -> Bool {
+        guard let state = statesByEntity[entityId] else { return false }
+        return state.isConnected || state.isOpening
+    }
+
     func register(
         _ runtime: TerminalConnectionRuntime,
         for entityId: TerminalEntityID,

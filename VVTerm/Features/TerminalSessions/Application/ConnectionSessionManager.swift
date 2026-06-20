@@ -643,7 +643,7 @@ final class ConnectionSessionManager: ObservableObject {
         var unregisterResults: [SSHUnregisterResult] = []
         unregisterResults.reserveCapacity(sessionsToSuspend.count)
         for session in sessionsToSuspend {
-            if session.connectionState.isConnected || session.connectionState.isConnecting {
+            if terminalConnectionRegistry.isOpeningOrStreaming(.session(session.id)) {
                 updateSessionState(session.id, to: .disconnected)
                 markTerminalForReconnectReset(for: session.id)
             }

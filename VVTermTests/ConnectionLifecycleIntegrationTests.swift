@@ -338,7 +338,7 @@ struct ConnectionLifecycleIntegrationTests {
             )
             manager.sessions = [session]
             manager.selectedSessionId = session.id
-            manager.connectedServerIds = [serverId]
+            manager.updateSessionState(session.id, to: .connected)
 
             manager.registerSSHClient(
                 SSHClient(),
@@ -616,11 +616,11 @@ struct ConnectionLifecycleIntegrationTests {
             let session = ConnectionSession(
                 serverId: serverId,
                 title: "Background Session",
-                connectionState: .connected
+                connectionState: .disconnected
             )
             manager.sessions = [session]
             manager.selectedSessionId = session.id
-            manager.connectedServerIds = [serverId]
+            manager.updateSessionState(session.id, to: .connected)
 
             let client = SSHClient()
             manager.registerSSHClient(
@@ -646,6 +646,43 @@ struct ConnectionLifecycleIntegrationTests {
             #expect(manager.connectedServerIds.isEmpty)
             #expect(suspendCalls == 1)
             #expect(!manager.isSuspendingForBackground)
+        }
+    }
+
+    @Test
+    func connectionManagerBackgroundSuspendUsesRegistryActiveStateForReconnectReset() async {
+        await withCleanConnectionManager { manager in
+            // Given an open tab whose registry runtime state is newer than the
+            // domain snapshot retained for UI projection.
+            let serverId = UUID()
+            let session = ConnectionSession(
+                serverId: serverId,
+                title: "Registry Active",
+                connectionState: .disconnected
+            )
+            manager.sessions = [session]
+            manager.selectedSessionId = session.id
+
+            manager.updateSessionState(session.id, to: .connected)
+            manager.sessions[0].connectionState = .disconnected
+
+            // When background suspend runs before foreground reconnect.
+            await manager.suspendAllForBackground()
+
+            // Then registry state drives reconnect cleanup even if the
+            // persisted tab snapshot already reads disconnected.
+            #expect(
+                manager.sessions.first?.connectionState == .disconnected,
+                "Background suspend should leave the open tab disconnected for foreground reconnect."
+            )
+            #expect(
+                manager.consumeTerminalReconnectReset(for: session.id),
+                "A registry-active session must reset its preserved terminal even if the domain state is stale."
+            )
+            #expect(
+                manager.connectedServerIds.isEmpty,
+                "Background suspend must clear live server state through the registry."
+            )
         }
     }
 
