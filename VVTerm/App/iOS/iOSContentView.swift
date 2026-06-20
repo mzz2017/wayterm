@@ -635,8 +635,9 @@ struct iOSServerListView: View {
     }
 
     private func disconnectActiveConnection(_ connection: ActiveConnection) {
-        fileBrowser.disconnect(serverId: connection.id)
+        let remoteFileDisconnectTask = fileBrowser.disconnect(serverId: connection.id)
         Task {
+            await remoteFileDisconnectTask.value
             await sessionManager.disconnectServerAndWait(connection.id)
         }
     }
@@ -1778,9 +1779,10 @@ struct iOSTerminalView: View {
             onBack()
             return
         }
-        fileBrowser.disconnect(serverId: serverId)
+        let remoteFileDisconnectTask = fileBrowser.disconnect(serverId: serverId)
         fileTabs.disconnect(serverId: serverId)
         Task {
+            await remoteFileDisconnectTask.value
             await sessionManager.disconnectServerAndWait(serverId)
             onBack()
         }

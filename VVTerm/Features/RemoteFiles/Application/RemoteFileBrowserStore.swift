@@ -99,6 +99,11 @@ final class RemoteFileBrowserStore: ObservableObject {
         let filesystemStatus: RemoteFileFilesystemStatus?
     }
 
+    private struct PendingDisconnect {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
+
     @Published private(set) var states: [UUID: BrowserState] = [:]
     @Published var pendingToolbarCommand: ToolbarCommand?
 
@@ -116,6 +121,10 @@ final class RemoteFileBrowserStore: ObservableObject {
     var persistedStates: [String: RemoteFileBrowserPersistedState] = [:]
     var directoryRequestIDs: [UUID: UUID] = [:]
     var viewerRequestIDs: [UUID: UUID] = [:]
+    private var pendingDisconnects: [UUID: PendingDisconnect] = [:]
+    #if DEBUG
+    private var pendingDisconnectWaitDidFinishForTesting: (@MainActor (UUID) async -> Void)?
+    #endif
 
     static let directoryEntryLimit = 2_000
     static let defaultPreviewBytes = 512 * 1_024
@@ -382,9 +391,19 @@ final class RemoteFileBrowserStore: ObservableObject {
             removeRuntimeState(for: tabId)
         }
 
-        return Task { [remoteFileServiceAdapter] in
-            await remoteFileServiceAdapter.disconnect(serverId: serverId)
+        if let pending = pendingDisconnects[serverId] {
+            return pending.task
         }
+
+        let disconnectID = UUID()
+        let task = Task { @MainActor [weak self, remoteFileServiceAdapter] in
+            await remoteFileServiceAdapter.disconnect(serverId: serverId)
+            if self?.pendingDisconnects[serverId]?.id == disconnectID {
+                self?.pendingDisconnects.removeValue(forKey: serverId)
+            }
+        }
+        pendingDisconnects[serverId] = PendingDisconnect(id: disconnectID, task: task)
+        return task
     }
 
     func goUp(in tab: RemoteFileTab, server: Server) async {
@@ -504,8 +523,29 @@ final class RemoteFileBrowserStore: ObservableObject {
         for server: Server,
         operation: @escaping (any RemoteFileService) async throws -> T
     ) async throws -> T {
-        try await remoteFileServiceAdapter.withService(for: server, operation: operation)
+        await waitForPendingDisconnect(serverId: server.id)
+        return try await remoteFileServiceAdapter.withService(for: server, operation: operation)
     }
+
+    private func waitForPendingDisconnect(serverId: UUID) async {
+        while let pending = pendingDisconnects[serverId] {
+            await pending.task.value
+            if pendingDisconnects[serverId]?.id == pending.id {
+                pendingDisconnects.removeValue(forKey: serverId)
+            }
+            #if DEBUG
+            await pendingDisconnectWaitDidFinishForTesting?(serverId)
+            #endif
+        }
+    }
+
+    #if DEBUG
+    func setPendingDisconnectWaitDidFinishForTesting(
+        _ action: (@MainActor (UUID) async -> Void)?
+    ) {
+        pendingDisconnectWaitDidFinishForTesting = action
+    }
+    #endif
 
     func bestWorkingDirectory(for serverId: UUID) -> String? {
         workingDirectoryProvider(serverId)

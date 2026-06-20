@@ -2744,32 +2744,32 @@ git commit -m "refactor: move terminal reconnect orchestration to application"
 - Produces:
   - iOS server/session disconnect flows either await returned RemoteFiles teardown tasks or the store internally tracks pending disconnects so later opens wait.
 
-- [ ] **Step 1: Add RED disconnect tracking test**
+- [x] **Step 1: Add RED disconnect tracking test**
 
 Add a RemoteFiles store test proving disconnect work is trackable/awaitable and that a later same-server operation waits for pending disconnect when the caller cannot await immediately.
 
-- [ ] **Step 2: Run RED verification**
+- [x] **Step 2: Run RED verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
 ```
 
-- [ ] **Step 3: Await or track iOS RemoteFiles disconnect**
+- [x] **Step 3: Await or track iOS RemoteFiles disconnect**
 
 Prefer awaiting returned disconnect tasks in iOS flows that already run inside async `Task`s. If a call site cannot await, move pending-disconnect tracking into the store and make later operations wait.
 
-- [ ] **Step 4: Run focused verification**
+- [x] **Step 4: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 5: API and boundary cleanup**
+- [x] **Step 5: API and boundary cleanup**
 
 Verify RemoteFiles teardown is not dropped by iOS composition and no UI code directly closes SFTP resources.
 
-- [ ] **Step 6: Request review and commit**
+- [x] **Step 6: Request review and commit**
 
 ```bash
 git add VVTerm/App/iOS/iOSContentView.swift VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift docs/refactor-swift-best-practice.md
@@ -2894,6 +2894,7 @@ Commit each split sub-task atomically.
 - 2026-06-21: Task 37 slice 1 RED/GREEN completed. Application-layer APIs now own root auto/manual reconnect decisions, split-pane manual reconnect decisions, watchdog scheduling predicates, iOS selected-session foreground reconnect action, and retrust/mosh install-then-reconnect sequencing. SwiftUI terminal views still own `reconnectInFlight`, rebuild tokens, and the 20-second watchdog sleep bridge, so Task 37 remains open for the full coordinator/timing move. Verification: focused Task 37 suite passed 64 Swift Testing tests, and `git diff --check` passed.
 - 2026-06-21: Task 37 slice 2 RED/GREEN completed. `ConnectionSessionManager` and `TerminalTabManager` now own connect watchdog timer tasks and generation cancellation; root and split SwiftUI views no longer store watchdog tokens, sleep for the 20-second timeout, or call timeout handlers directly. Task 37 remains open for moving remaining credential-loading and `reconnectInFlight` retry-state orchestration out of the views. Verification: focused Task 37 suite passed 67 Swift Testing tests, and `git diff --check` passed.
 - 2026-06-21: Task 37 final RED/GREEN, API cleanup, and review fixes completed. Root, split, and iOS terminal views no longer own retry in-flight state, call Keychain directly, execute reconnect directly, or derive foreground reconnect from registry state in SwiftUI. Managers now load credentials through application-layer providers, gate duplicate retry intent, revalidate liveness after awaited credential loading, execute foreground/open-active reconnect intent, return wrapper credentials or UI actions to views, and keep reconnect/watchdog/retrust/mosh sequencing in TerminalSessions Application. Boundary scan found no `reconnectInFlight`, direct `KeychainManager.shared.getCredentials`, old watchdog token/sleep, direct `reconnect(session:)`, direct live-runtime lookup, direct known-host reset, or direct reconnect policy calls in the target SwiftUI files. Verification: focused Task 37 suite passed 74 Swift Testing tests, and `git diff --check` passed.
+- 2026-06-21: Task 38 RED/GREEN and review fix completed. RED proved a same-server RemoteFiles operation could start while a dropped disconnect task was still closing the previous SFTP lease, and review added coverage for a second disconnect registered after the first wait. `RemoteFileBrowserStore` now tracks pending disconnect tasks and loops until no same-server disconnect remains before later service work; iOS active-connection and current-server disconnect flows now await the returned RemoteFiles disconnect task before terminal session teardown/navigation. Verification: `RemoteFileBrowserStoreTests` passed 6 Swift Testing tests, and `git diff --check` passed.
 - 2026-06-21: Task 31 completed, with Task 36 ledger correction. Terminal runtime/client factory ownership is centralized in `TerminalConnectionRuntime`; session and tab managers still hold temporary application-boundary bridge maps and shell registry leases for runtime lookup/registration, but runner finish ordering is protected by awaitable runtime close paths and late/missing shell registrations are rejected before runner follow-up callbacks mutate closed state.
 - 2026-06-21: Task 32 RED/GREEN and API cleanup completed. `TerminalConnectionRunner` now depends on `TerminalConnectionSurface` and abstract connection operations instead of `GhosttyTerminalView`; `GhosttyTerminalView` adaptation lives at the surface registry/application boundary, and runner tests cover fake-surface size reads, stream writes, and process-exit notification without constructing a UI surface.
 - 2026-06-21: Final audit after Task 32 found repo-wide drift against the Swift test context rule: multiple older `VVTermTests/**/*.swift` files still lack `Test Context` headers. Task 33 is added to close this rule before final ready-for-merge review.
