@@ -484,6 +484,103 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerDisconnectAllAndWaitWaitsForEverySessionTeardown() async {
+        await withCleanConnectionManager { manager in
+            let serverId = UUID()
+            let first = ConnectionSession(
+                serverId: serverId,
+                title: "Termination A",
+                connectionState: .connected
+            )
+            let second = ConnectionSession(
+                serverId: serverId,
+                title: "Termination B",
+                connectionState: .connected
+            )
+            manager.sessions = [first, second]
+            manager.selectedSessionId = first.id
+
+            for session in [first, second] {
+                manager.registerSSHClient(
+                    SSHClient(),
+                    shellId: UUID(),
+                    for: session.id,
+                    serverId: serverId,
+                    skipTmuxLifecycle: true
+                )
+            }
+
+            var finishedTeardowns: Set<UUID> = []
+            for session in [first, second] {
+                manager.registerShellCancelHandler({ _ in
+                    try? await Task.sleep(for: .milliseconds(50))
+                    finishedTeardowns.insert(session.id)
+                }, for: session.id)
+            }
+
+            await manager.disconnectAllAndWait()
+
+            #expect(
+                finishedTeardowns == [first.id, second.id],
+                "App termination cleanup must wait for every session shell teardown before reporting completion."
+            )
+            #expect(manager.sessions.isEmpty)
+            #expect(manager.shellId(for: first.id) == nil)
+            #expect(manager.shellId(for: second.id) == nil)
+        }
+    }
+
+    @Test
+    func connectionManagerLruEvictionTracksShellCleanupBeforeSameServerReopen() async throws {
+        try await withCleanConnectionManager { manager in
+            let wasPro = StoreManager.shared.isPro
+            StoreManager.shared.isPro = true
+            defer { StoreManager.shared.isPro = wasPro }
+
+            let server = makeServer(name: "Tencent", connectionMode: .standard)
+            let evictedSession = ConnectionSession(
+                serverId: server.id,
+                title: "Evicted",
+                connectionState: .connected
+            )
+            manager.sessions = [evictedSession]
+            manager.selectedSessionId = nil
+
+            manager.registerSSHClient(
+                SSHClient(),
+                shellId: UUID(),
+                for: evictedSession.id,
+                serverId: server.id,
+                skipTmuxLifecycle: true
+            )
+
+            var evictionTeardownFinished = false
+            manager.registerShellCancelHandler({ _ in
+                try? await Task.sleep(for: .milliseconds(100))
+                evictionTeardownFinished = true
+            }, for: evictedSession.id)
+
+            manager.registerTerminalForTesting(sessionId: evictedSession.id)
+            for index in 0..<20 {
+                let cachedSession = ConnectionSession(
+                    serverId: UUID(),
+                    title: "Cached \(index)",
+                    connectionState: .connected
+                )
+                manager.sessions.append(cachedSession)
+                manager.registerTerminalForTesting(sessionId: cachedSession.id)
+            }
+
+            _ = try await manager.openConnection(to: server, forceNew: true)
+
+            #expect(
+                evictionTeardownFinished,
+                "Opening the same server after LRU eviction must wait for the evicted session cleanup task."
+            )
+        }
+    }
+
+    @Test
     func tabManagerRejectsStaleRegistrationFromDifferentClient() async {
         await withCleanTabManager { manager in
             let serverId = UUID()
@@ -647,6 +744,55 @@ struct ConnectionLifecycleIntegrationTests {
             #expect(manager.shellId(for: tab.rootPaneId) == nil)
             #expect(manager.tabs(for: serverId).isEmpty)
             #expect(manager.paneStates[tab.rootPaneId] == nil)
+        }
+    }
+
+    @Test
+    func tabManagerDisconnectAllAndWaitWaitsForEveryPaneUnregister() async {
+        await withCleanTabManager { manager in
+            let firstServerId = UUID()
+            let secondServerId = UUID()
+            let firstTab = TerminalTab(serverId: firstServerId, title: "Termination Pane A")
+            let secondTab = TerminalTab(serverId: secondServerId, title: "Termination Pane B")
+
+            manager.tabsByServer[firstServerId] = [firstTab]
+            manager.tabsByServer[secondServerId] = [secondTab]
+            manager.selectedTabByServer[firstServerId] = firstTab.id
+            manager.selectedTabByServer[secondServerId] = secondTab.id
+            manager.paneStates[firstTab.rootPaneId] = TerminalPaneState(
+                paneId: firstTab.rootPaneId,
+                tabId: firstTab.id,
+                serverId: firstServerId
+            )
+            manager.paneStates[secondTab.rootPaneId] = TerminalPaneState(
+                paneId: secondTab.rootPaneId,
+                tabId: secondTab.id,
+                serverId: secondServerId
+            )
+
+            manager.registerSSHClient(
+                SSHClient(),
+                shellId: UUID(),
+                for: firstTab.rootPaneId,
+                serverId: firstServerId,
+                skipTmuxLifecycle: true
+            )
+            manager.registerSSHClient(
+                SSHClient(),
+                shellId: UUID(),
+                for: secondTab.rootPaneId,
+                serverId: secondServerId,
+                skipTmuxLifecycle: true
+            )
+
+            await manager.disconnectAllAndWait()
+
+            #expect(manager.tabs(for: firstServerId).isEmpty)
+            #expect(manager.tabs(for: secondServerId).isEmpty)
+            #expect(manager.shellId(for: firstTab.rootPaneId) == nil)
+            #expect(manager.shellId(for: secondTab.rootPaneId) == nil)
+            #expect(manager.paneStates[firstTab.rootPaneId] == nil)
+            #expect(manager.paneStates[secondTab.rootPaneId] == nil)
         }
     }
 

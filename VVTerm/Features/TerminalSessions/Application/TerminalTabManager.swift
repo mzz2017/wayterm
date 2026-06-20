@@ -325,6 +325,15 @@ final class TerminalTabManager: ObservableObject {
         }
     }
 
+    /// Disconnect all tabs for every server and wait for SSH teardown to finish.
+    func disconnectAllAndWait() async {
+        await waitForAllServerTeardownTasks()
+        for serverId in Array(tabsByServer.keys) {
+            await disconnectServerAndWait(serverId)
+        }
+        await waitForAllServerTeardownTasks()
+    }
+
     /// Disconnect all tabs for a server and wait for SSH teardown to finish.
     func disconnectServerAndWait(_ serverId: UUID) async {
         await waitForServerTeardownTasks(serverId)
@@ -1207,6 +1216,14 @@ final class TerminalTabManager: ObservableObject {
         while let tasksById = serverTeardownTasks[serverId], !tasksById.isEmpty {
             for task in tasksById.values {
                 await task.value
+            }
+        }
+    }
+
+    private func waitForAllServerTeardownTasks() async {
+        while !serverTeardownTasks.isEmpty {
+            for serverId in Array(serverTeardownTasks.keys) {
+                await waitForServerTeardownTasks(serverId)
             }
         }
     }

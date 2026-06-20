@@ -8,6 +8,24 @@ import SwiftUI
 import AppKit
 #endif
 
+@MainActor
+private func awaitTerminalManagersTeardownBeforeExit(timeout: TimeInterval = 2) {
+    let semaphore = DispatchSemaphore(value: 0)
+    Task { @MainActor in
+        await ConnectionSessionManager.shared.disconnectAllAndWait()
+        await TerminalTabManager.shared.disconnectAllAndWait()
+        semaphore.signal()
+    }
+
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if semaphore.wait(timeout: .now()) == .success {
+            return
+        }
+        _ = RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.01))
+    }
+}
+
 @main
 struct VVTermApp: App {
     init() {
@@ -276,14 +294,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // Close all connections synchronously to ensure cleanup before exit
-        let semaphore = DispatchSemaphore(value: 0)
-        Task {
-            ConnectionSessionManager.shared.disconnectAll()
-            semaphore.signal()
-        }
-        // Wait up to 2 seconds for cleanup
-        _ = semaphore.wait(timeout: .now() + 2)
+        awaitTerminalManagersTeardownBeforeExit()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -346,14 +357,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func applicationWillTerminate(_ application: UIApplication) {
-        // Close all connections synchronously to ensure cleanup before exit
-        let semaphore = DispatchSemaphore(value: 0)
-        Task {
-            ConnectionSessionManager.shared.disconnectAll()
-            semaphore.signal()
-        }
-        // Wait up to 2 seconds for cleanup
-        _ = semaphore.wait(timeout: .now() + 2)
+        awaitTerminalManagersTeardownBeforeExit()
     }
 
     // Handle app going to background - suspend connections to save resources

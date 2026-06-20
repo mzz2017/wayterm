@@ -704,6 +704,17 @@ final class ConnectionSessionManager: ObservableObject {
         logger.info("Disconnected all sessions")
     }
 
+    /// Closes every session and waits for SSH and shell teardown to finish.
+    func disconnectAllAndWait() async {
+        await waitForAllServerTeardownTasks()
+        let sessionsToClose = sessions
+        for session in sessionsToClose {
+            await closeSessionAndWait(session, notingSessionEnd: false)
+        }
+        await waitForAllServerTeardownTasks()
+        logger.info("Disconnected all sessions after awaiting teardown")
+    }
+
     /// Disconnects all sessions without removing tabs (used when app backgrounds)
     func suspendAllForBackground() async {
         guard !isSuspendingForBackground else { return }
@@ -1126,8 +1137,14 @@ final class ConnectionSessionManager: ObservableObject {
             guard let self else { return }
             guard case .session(let oldestId) = entityId else { return }
             logger.info("Evicting oldest terminal to free memory (count: \(self.terminalSurfaceRegistry.count))")
-            scheduleSSHUnregister(for: oldestId)
-            _ = cancelAndClearShellHandlers(for: oldestId)
+            let unregisterTask = scheduleSSHUnregister(for: oldestId)
+            let shellTeardownTask = cancelAndClearShellHandlers(for: oldestId)
+            guard let serverId = sessionWithID(oldestId)?.serverId else { return }
+            let teardownTask = Task(priority: .utility) {
+                await unregisterTask.value
+                await shellTeardownTask?.value
+            }
+            trackServerTeardownTask(teardownTask, for: serverId)
         }
     }
 
@@ -1211,10 +1228,19 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func waitForServerTeardownTasks(_ serverId: UUID) async {
-        guard let tasksById = serverTeardownTasks[serverId], !tasksById.isEmpty else { return }
-        logger.info("Open waiting for tab teardown cleanup [serverId: \(serverId.uuidString, privacy: .public), count: \(tasksById.count)]")
-        for task in tasksById.values {
-            await task.value
+        while let tasksById = serverTeardownTasks[serverId], !tasksById.isEmpty {
+            logger.info("Open waiting for tab teardown cleanup [serverId: \(serverId.uuidString, privacy: .public), count: \(tasksById.count)]")
+            for task in tasksById.values {
+                await task.value
+            }
+        }
+    }
+
+    private func waitForAllServerTeardownTasks() async {
+        while !serverTeardownTasks.isEmpty {
+            for serverId in Array(serverTeardownTasks.keys) {
+                await waitForServerTeardownTasks(serverId)
+            }
         }
     }
 
@@ -2197,6 +2223,7 @@ extension ConnectionSessionManager {
     func resetForTesting() async {
         persistTask?.cancel()
         persistTask = nil
+        await waitForAllServerTeardownTasks()
 
         let allSessionIds = Set(sessions.map(\.id))
             .union(shellRegistry.startsInFlight.keys)
@@ -2269,6 +2296,15 @@ extension ConnectionSessionManager {
         _ operation: (@MainActor @Sendable () async -> Void)?
     ) {
         tmuxKillOperationForTesting = operation
+    }
+
+    func registerTerminalForTesting(sessionId: UUID) {
+        evictOldTerminalsIfNeeded()
+        terminalSurfaceRegistry.registerForTesting(
+            entityId: .session(sessionId),
+            pause: {},
+            cleanup: {}
+        )
     }
 
     func beginShellStartForTesting(

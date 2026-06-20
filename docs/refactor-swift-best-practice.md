@@ -2225,15 +2225,15 @@ git commit -m "fix: await server deletion teardown"
   - Awaitable all-terminal teardown for app termination.
   - LRU terminal eviction cleanup tracked per server so same-server reopen waits for unregister/disconnect.
 
-- [ ] **Step 1: Add RED app termination teardown test**
+- [x] **Step 1: Add RED app termination teardown test**
 
 Add a manager-level test proving a new `disconnectAllAndWait()` waits for each session cleanup task before returning. Include a pane equivalent for `TerminalTabManager` if the manager has open panes.
 
-- [ ] **Step 2: Add RED LRU eviction cleanup test**
+- [x] **Step 2: Add RED LRU eviction cleanup test**
 
 Add a test that forces terminal-surface eviction, injects a registered SSH client, and asserts the evicted server's teardown task is tracked so an immediate reopen waits for unregister completion.
 
-- [ ] **Step 3: Run RED tests**
+- [x] **Step 3: Run RED tests**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
@@ -2241,26 +2241,30 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected before implementation: FAIL because `disconnectAll()` is synchronous/non-awaiting and LRU eviction discards returned unregister tasks.
 
-- [ ] **Step 4: Implement awaitable termination APIs**
+RED result: `xcodebuild test ... -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO` failed to build because `ConnectionSessionManager.disconnectAllAndWait()`, `ConnectionSessionManager.registerTerminalForTesting(sessionId:)`, and `TerminalTabManager.disconnectAllAndWait()` did not exist.
+
+- [x] **Step 4: Implement awaitable termination APIs**
 
 Add `disconnectAllAndWait()` to session and tab managers. Update macOS and iOS app termination paths to wait for session and pane cleanup, with the existing timeout preserved as an outer guard rather than as proof that cleanup completed.
 
-- [ ] **Step 5: Track LRU eviction cleanup**
+- [x] **Step 5: Track LRU eviction cleanup**
 
 When a terminal surface is evicted, route the returned unregister task through the same server teardown tracking used by stale shell cleanup and managed tmux cleanup. Ensure shell handler cancellation is either awaited or explicitly part of the tracked cleanup task.
 
-- [ ] **Step 6: Run focused verification**
+- [x] **Step 6: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 7: API and boundary cleanup**
+GREEN result: focused `xcodebuild test` passed 52 Swift Testing tests in `ConnectionLifecycleIntegrationTests` and `TerminalSurfaceTeardownTests`; `git diff --check` passed.
+
+- [x] **Step 7: API and boundary cleanup**
 
 Verify app delegates call application-layer teardown APIs only; no SwiftUI or app delegate code manually unregisters shell/client resources. Verify no cleanup task handles are dropped in LRU eviction.
 
-- [ ] **Step 8: Request review and commit**
+- [x] **Step 8: Request review and commit**
 
 ```bash
 git add VVTerm/App/VVTermApp.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift VVTermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift docs/refactor-swift-best-practice.md
