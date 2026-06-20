@@ -1,6 +1,10 @@
 import Foundation
 
 struct SSHShellRegistry {
+    struct Generation: Hashable, Sendable {
+        fileprivate let rawValue: UInt64
+    }
+
     struct Registration: Sendable {
         let serverId: UUID
         let client: SSHClient
@@ -13,17 +17,20 @@ struct SSHShellRegistry {
         let startedAt: Date
         let client: SSHClient
         let serverId: UUID
+        let generation: Generation
     }
 
     struct RegisterResult: Sendable {
         let accepted: Bool
         let staleIncomingShell: (client: SSHClient, shellId: UUID)?
         let replacedShell: (client: SSHClient, shellId: UUID)?
+        let rejectedShellToClose: (client: SSHClient, shellId: UUID)?
     }
 
     struct StartResult: Sendable {
         let started: Bool
         let staleContext: StartContext?
+        let generation: Generation
     }
 
     struct InFlightResult: Sendable {
@@ -31,8 +38,14 @@ struct SSHShellRegistry {
         let staleContext: StartContext?
     }
 
+    struct CloseResult: Sendable {
+        let registration: Registration?
+        let pendingStart: StartContext?
+    }
+
     private(set) var registrations: [UUID: Registration] = [:]
     private(set) var startsInFlight: [UUID: StartContext] = [:]
+    private var generations: [UUID: Generation] = [:]
     private let staleThreshold: TimeInterval
 
     init(staleThreshold: TimeInterval) {
@@ -45,14 +58,29 @@ struct SSHShellRegistry {
         for entityId: UUID,
         serverId: UUID,
         transport: ShellTransport,
-        fallbackReason: MoshFallbackReason?
+        fallbackReason: MoshFallbackReason?,
+        generation: Generation? = nil
     ) -> RegisterResult {
-        if let context = startsInFlight[entityId],
-           ObjectIdentifier(context.client) != ObjectIdentifier(client) {
+        let shellToReject = (client: client, shellId: shellId)
+
+        if let generation {
+            guard let context = startsInFlight[entityId],
+                  context.generation == generation,
+                  ObjectIdentifier(context.client) == ObjectIdentifier(client) else {
+                return RegisterResult(
+                    accepted: false,
+                    staleIncomingShell: shellToReject,
+                    replacedShell: nil,
+                    rejectedShellToClose: shellToReject
+                )
+            }
+        } else if let context = startsInFlight[entityId],
+                  ObjectIdentifier(context.client) != ObjectIdentifier(client) {
             return RegisterResult(
                 accepted: false,
-                staleIncomingShell: (client: client, shellId: shellId),
-                replacedShell: nil
+                staleIncomingShell: shellToReject,
+                replacedShell: nil,
+                rejectedShellToClose: shellToReject
             )
         }
 
@@ -68,14 +96,20 @@ struct SSHShellRegistry {
         return RegisterResult(
             accepted: true,
             staleIncomingShell: nil,
-            replacedShell: replaced.map { (client: $0.client, shellId: $0.shellId) }
+            replacedShell: replaced.map { (client: $0.client, shellId: $0.shellId) },
+            rejectedShellToClose: nil
         )
     }
 
-    mutating func unregister(for entityId: UUID) -> (registration: Registration?, pendingStart: StartContext?) {
+    mutating func closeEntity(_ entityId: UUID) -> CloseResult {
+        generations[entityId] = Generation(rawValue: currentGeneration(for: entityId).rawValue &+ 1)
         let pendingStart = startsInFlight.removeValue(forKey: entityId)
         let registration = registrations.removeValue(forKey: entityId)
-        return (registration, pendingStart)
+        return CloseResult(registration: registration, pendingStart: pendingStart)
+    }
+
+    mutating func unregister(for entityId: UUID) -> CloseResult {
+        closeEntity(entityId)
     }
 
     mutating func tryBeginStart(
@@ -84,34 +118,41 @@ struct SSHShellRegistry {
         client: SSHClient,
         now: Date = Date()
     ) -> StartResult {
+        let generation = currentGeneration(for: entityId)
+
         if registrations[entityId] != nil {
-            return StartResult(started: false, staleContext: nil)
+            return StartResult(started: false, staleContext: nil, generation: generation)
         }
 
         if let context = startsInFlight[entityId] {
             if now.timeIntervalSince(context.startedAt) < staleThreshold {
-                return StartResult(started: false, staleContext: nil)
+                return StartResult(started: false, staleContext: nil, generation: generation)
             }
             startsInFlight.removeValue(forKey: entityId)
             startsInFlight[entityId] = StartContext(
                 startedAt: now,
                 client: client,
-                serverId: serverId
+                serverId: serverId,
+                generation: generation
             )
-            return StartResult(started: true, staleContext: context)
+            return StartResult(started: true, staleContext: context, generation: generation)
         }
 
         startsInFlight[entityId] = StartContext(
             startedAt: now,
             client: client,
-            serverId: serverId
+            serverId: serverId,
+            generation: generation
         )
-        return StartResult(started: true, staleContext: nil)
+        return StartResult(started: true, staleContext: nil, generation: generation)
     }
 
-    mutating func finishStart(for entityId: UUID, client: SSHClient) {
+    mutating func finishStart(for entityId: UUID, client: SSHClient, generation: Generation? = nil) {
         guard let context = startsInFlight[entityId] else { return }
         guard ObjectIdentifier(context.client) == ObjectIdentifier(client) else { return }
+        if let generation {
+            guard context.generation == generation else { return }
+        }
         startsInFlight.removeValue(forKey: entityId)
     }
 
@@ -172,5 +213,10 @@ struct SSHShellRegistry {
     mutating func removeAll() {
         registrations.removeAll()
         startsInFlight.removeAll()
+        generations.removeAll()
+    }
+
+    private func currentGeneration(for entityId: UUID) -> Generation {
+        generations[entityId] ?? Generation(rawValue: 0)
     }
 }

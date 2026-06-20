@@ -406,13 +406,36 @@ final class TerminalTabManager: ObservableObject {
         fallbackReason: MoshFallbackReason? = nil,
         skipTmuxLifecycle: Bool = false
     ) {
+        registerSSHClient(
+            client,
+            shellId: shellId,
+            for: paneId,
+            serverId: serverId,
+            transport: transport,
+            fallbackReason: fallbackReason,
+            generation: nil,
+            skipTmuxLifecycle: skipTmuxLifecycle
+        )
+    }
+
+    func registerSSHClient(
+        _ client: SSHClient,
+        shellId: UUID,
+        for paneId: UUID,
+        serverId: UUID,
+        transport: ShellTransport = .ssh,
+        fallbackReason: MoshFallbackReason? = nil,
+        generation: SSHShellRegistry.Generation?,
+        skipTmuxLifecycle: Bool = false
+    ) {
         let registerResult = shellRegistry.register(
             client: client,
             shellId: shellId,
             for: paneId,
             serverId: serverId,
             transport: transport,
-            fallbackReason: fallbackReason
+            fallbackReason: fallbackReason,
+            generation: generation
         )
 
         if let stale = registerResult.staleIncomingShell {
@@ -487,8 +510,12 @@ final class TerminalTabManager: ObservableObject {
 
     /// Returns true only for the first caller while no live shell exists for the pane.
     func tryBeginShellStart(for paneId: UUID, client: SSHClient) -> Bool {
+        beginShellStart(for: paneId, client: client)?.started == true
+    }
+
+    func beginShellStart(for paneId: UUID, client: SSHClient) -> SSHShellRegistry.StartResult? {
         guard let serverId = paneStates[paneId]?.serverId else {
-            return false
+            return nil
         }
 
         let startResult = shellRegistry.tryBeginStart(
@@ -502,11 +529,11 @@ final class TerminalTabManager: ObservableObject {
             logMessage: "Recovered stale pane shell-start lock for",
             paneId: paneId
         )
-        return startResult.started
+        return startResult
     }
 
-    func finishShellStart(for paneId: UUID, client: SSHClient) {
-        shellRegistry.finishStart(for: paneId, client: client)
+    func finishShellStart(for paneId: UUID, client: SSHClient, generation: SSHShellRegistry.Generation? = nil) {
+        shellRegistry.finishStart(for: paneId, client: client, generation: generation)
     }
 
     func isShellStartInFlight(for paneId: UUID) -> Bool {

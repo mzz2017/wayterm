@@ -746,13 +746,36 @@ final class ConnectionSessionManager: ObservableObject {
         fallbackReason: MoshFallbackReason? = nil,
         skipTmuxLifecycle: Bool = false
     ) {
+        registerSSHClient(
+            client,
+            shellId: shellId,
+            for: sessionId,
+            serverId: serverId,
+            transport: transport,
+            fallbackReason: fallbackReason,
+            generation: nil,
+            skipTmuxLifecycle: skipTmuxLifecycle
+        )
+    }
+
+    func registerSSHClient(
+        _ client: SSHClient,
+        shellId: UUID,
+        for sessionId: UUID,
+        serverId: UUID,
+        transport: ShellTransport = .ssh,
+        fallbackReason: MoshFallbackReason? = nil,
+        generation: SSHShellRegistry.Generation?,
+        skipTmuxLifecycle: Bool = false
+    ) {
         let registerResult = shellRegistry.register(
             client: client,
             shellId: shellId,
             for: sessionId,
             serverId: serverId,
             transport: transport,
-            fallbackReason: fallbackReason
+            fallbackReason: fallbackReason,
+            generation: generation
         )
 
         if let stale = registerResult.staleIncomingShell {
@@ -816,8 +839,12 @@ final class ConnectionSessionManager: ObservableObject {
 
     /// Returns true only for the first caller while no live shell exists for the session.
     func tryBeginShellStart(for sessionId: UUID, client: SSHClient) -> Bool {
+        beginShellStart(for: sessionId, client: client)?.started == true
+    }
+
+    func beginShellStart(for sessionId: UUID, client: SSHClient) -> SSHShellRegistry.StartResult? {
         guard let serverId = sessionWithID(sessionId)?.serverId else {
-            return false
+            return nil
         }
 
         let startResult = shellRegistry.tryBeginStart(
@@ -831,11 +858,11 @@ final class ConnectionSessionManager: ObservableObject {
             logMessage: "Recovered stale session shell-start lock for",
             sessionId: sessionId
         )
-        return startResult.started
+        return startResult
     }
 
-    func finishShellStart(for sessionId: UUID, client: SSHClient) {
-        shellRegistry.finishStart(for: sessionId, client: client)
+    func finishShellStart(for sessionId: UUID, client: SSHClient, generation: SSHShellRegistry.Generation? = nil) {
+        shellRegistry.finishStart(for: sessionId, client: client, generation: generation)
     }
 
     func isShellStartInFlight(for sessionId: UUID) -> Bool {

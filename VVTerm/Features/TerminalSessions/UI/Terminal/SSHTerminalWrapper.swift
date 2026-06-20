@@ -218,10 +218,10 @@ extension SSHTerminalCoordinator {
             return
         }
 
-        guard ConnectionSessionManager.shared.tryBeginShellStart(
+        guard let startResult = ConnectionSessionManager.shared.beginShellStart(
             for: sessionId,
             client: sshClient
-        ) else {
+        ), startResult.started else {
             if ConnectionSessionManager.shared.shellId(for: sessionId) != nil {
                 deferSessionStateUpdate(.connected)
             }
@@ -237,11 +237,16 @@ extension SSHTerminalCoordinator {
         let sessionId = self.sessionId
         let onProcessExit = self.onProcessExit
         let logger = self.logger
+        let shellGeneration = startResult.generation
 
         shellTask = Task.detached(priority: .userInitiated) { [weak self, weak terminal] in
             defer {
                 Task { @MainActor [weak self] in
-                    ConnectionSessionManager.shared.finishShellStart(for: sessionId, client: sshClient)
+                    ConnectionSessionManager.shared.finishShellStart(
+                        for: sessionId,
+                        client: sshClient,
+                        generation: shellGeneration
+                    )
                     self?.shellTask = nil
                 }
             }
@@ -275,6 +280,7 @@ extension SSHTerminalCoordinator {
                         serverId: server.id,
                         transport: shell.transport,
                         fallbackReason: shell.fallbackReason,
+                        generation: shellGeneration,
                         skipTmuxLifecycle: skipTmuxLifecycle
                     )
                     ConnectionSessionManager.shared.updateSessionState(sessionId, to: .connected)

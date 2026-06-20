@@ -1182,10 +1182,10 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
                 return
             }
 
-            guard TerminalTabManager.shared.tryBeginShellStart(
+            guard let startResult = TerminalTabManager.shared.beginShellStart(
                 for: paneId,
                 client: sshClient
-            ) else {
+            ), startResult.started else {
                 if TerminalTabManager.shared.shellId(for: paneId) != nil {
                     TerminalTabManager.shared.updatePaneState(paneId, connectionState: .connected)
                 }
@@ -1198,11 +1198,16 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
             let credentials = self.credentials
             let onProcessExit = self.onProcessExit
             let logger = self.logger
+            let shellGeneration = startResult.generation
 
             shellTask = Task.detached(priority: .userInitiated) { [weak self, weak terminal, sshClient, server, credentials, paneId, onProcessExit, logger] in
                 defer {
                     Task { @MainActor [weak self] in
-                        TerminalTabManager.shared.finishShellStart(for: paneId, client: sshClient)
+                        TerminalTabManager.shared.finishShellStart(
+                            for: paneId,
+                            client: sshClient,
+                            generation: shellGeneration
+                        )
                         self?.shellTask = nil
                     }
                 }
@@ -1236,6 +1241,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
                             serverId: server.id,
                             transport: shell.transport,
                             fallbackReason: shell.fallbackReason,
+                            generation: shellGeneration,
                             skipTmuxLifecycle: skipTmuxLifecycle
                         )
                         TerminalTabManager.shared.updatePaneState(paneId, connectionState: .connected)
