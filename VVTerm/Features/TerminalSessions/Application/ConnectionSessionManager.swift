@@ -79,8 +79,10 @@ final class ConnectionSessionManager: ObservableObject {
         }
     }
 
-    /// Servers with live terminal transports. Open-but-restored sessions are tracked by `openServerIds`.
-    @Published var connectedServerIds: Set<UUID> = []
+    /// Legacy alias for servers with live terminal transports. Open-but-restored sessions are tracked by `openServerIds`.
+    var connectedServerIds: Set<UUID> {
+        activeServerIds
+    }
 
     /// Per-server view state (stats/terminal) - persists when switching servers
     @Published var selectedViewByServer: [UUID: String] = [:] {
@@ -101,14 +103,7 @@ final class ConnectionSessionManager: ObservableObject {
 
     /// Legacy single server ID for backward compatibility
     var connectedServerId: UUID? {
-        get { connectedServerIds.first }
-        set {
-            if let id = newValue {
-                connectedServerIds.insert(id)
-            } else {
-                connectedServerIds.removeAll()
-            }
-        }
+        connectedServerIds.first
     }
 
     var openServerIds: Set<UUID> {
@@ -384,7 +379,6 @@ final class ConnectionSessionManager: ObservableObject {
             serverId: serverId
         )
         sessions[index] = updatedSession
-        connectedServerIds = activeServerIds
 
         switch state {
         case .connected:
@@ -516,6 +510,11 @@ final class ConnectionSessionManager: ObservableObject {
         )
 
         let shellTeardownTask = clearRuntimeStateForClosedSession(sessionId)
+        terminalConnectionRegistry.updateState(
+            .disconnected,
+            for: .session(sessionId),
+            serverId: session.serverId
+        )
 
         // Remove from UI immediately
         sessions.removeAll { $0.id == sessionId }
@@ -646,7 +645,6 @@ final class ConnectionSessionManager: ObservableObject {
         for session in sessionsToClose {
             closeSession(session, notingSessionEnd: false)
         }
-        connectedServerId = nil
         logger.info("Disconnected all sessions")
     }
 
@@ -698,10 +696,6 @@ final class ConnectionSessionManager: ObservableObject {
         for session in sessionsToClose {
             closeSession(session)
         }
-        connectedServerIds.remove(serverId)
-        if connectedServerIds.isEmpty {
-            connectedServerId = nil
-        }
         logger.info("Disconnected all sessions for server \(serverId)")
     }
 
@@ -733,11 +727,6 @@ final class ConnectionSessionManager: ObservableObject {
             if let closeResult = closeSessionUI(session, notingSessionEnd: true) {
                 closeResults.append(closeResult)
             }
-        }
-
-        connectedServerIds.remove(serverId)
-        if connectedServerIds.isEmpty {
-            connectedServerId = nil
         }
 
         for closeResult in closeResults {
@@ -1631,7 +1620,6 @@ extension ConnectionSessionManager {
                 return (snapshot.serverId, view)
             }
         )
-        connectedServerIds = activeServerIds
     }
 
     private func schedulePersist() {
@@ -2083,7 +2071,6 @@ extension ConnectionSessionManager {
         liveActivityRefresh = { LiveActivityManager.shared.refresh(with: $0) }
         sessions = []
         selectedSessionId = nil
-        connectedServerIds = []
         selectedViewByServer = [:]
         selectedSessionByServer = [:]
         tmuxAttachPrompt = nil

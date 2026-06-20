@@ -71,8 +71,10 @@ final class TerminalTabManager: ObservableObject {
         }
     }
 
-    /// Servers with live terminal transports. Open tabs are tracked by `openServerIds`.
-    @Published var connectedServerIds: Set<UUID> = []
+    /// Legacy alias for servers with live terminal transports. Open tabs are tracked by `openServerIds`.
+    var connectedServerIds: Set<UUID> {
+        activeServerIds
+    }
 
     var openServerIds: Set<UUID> {
         Set(tabsByServer.keys)
@@ -315,7 +317,6 @@ final class TerminalTabManager: ObservableObject {
     func disconnectServerAndWait(_ serverId: UUID) async {
         await waitForServerTeardownTasks(serverId)
         let closeResults = tabs(for: serverId).compactMap { closeTabUI($0) }
-        connectedServerIds.remove(serverId)
         selectedViewByServer.removeValue(forKey: serverId)
         for closeResult in closeResults {
             await finishTabClose(closeResult)
@@ -1074,9 +1075,17 @@ final class TerminalTabManager: ObservableObject {
 
     /// Remove pane UI/runtime state and return the SSH teardown that must be awaited.
     private func preparePaneClose(_ paneId: UUID) -> PaneCloseResult {
+        let serverId = paneStates[paneId]?.serverId
         let tmuxSessionToKill = paneTmuxStatus(for: paneId)
             .flatMap { managedTmuxSessionNameToKill(for: paneId, status: $0) }
 
+        if let serverId {
+            terminalConnectionRegistry.updateState(
+                .disconnected,
+                for: .pane(paneId),
+                serverId: serverId
+            )
+        }
         clearTmuxRuntimeState(for: paneId)
         unregisterTerminal(for: paneId)
         paneStates.removeValue(forKey: paneId)
@@ -1147,7 +1156,6 @@ final class TerminalTabManager: ObservableObject {
                 for: .pane(paneId),
                 serverId: serverId
             )
-            connectedServerIds = activeServerIds
         }
         switch connectionState {
         case .connecting, .reconnecting:
@@ -1642,7 +1650,6 @@ final class TerminalTabManager: ObservableObject {
             from: restoredTabsByServer,
             snapshotsByTabId: snapshotsByTabId
         )
-        connectedServerIds = activeServerIds
     }
 
     private func schedulePersist() {
@@ -1762,7 +1769,6 @@ extension TerminalTabManager {
         isRestoring = true
         tabsByServer = [:]
         selectedTabByServer = [:]
-        connectedServerIds = []
         selectedViewByServer = [:]
         paneStates = [:]
         tmuxAttachPrompt = nil

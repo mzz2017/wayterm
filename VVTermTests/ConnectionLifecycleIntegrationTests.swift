@@ -485,7 +485,6 @@ struct ConnectionLifecycleIntegrationTests {
             let tab = TerminalTab(serverId: serverId, title: "Awaited Tab")
             manager.tabsByServer[serverId] = [tab]
             manager.selectedTabByServer[serverId] = tab.id
-            manager.connectedServerIds = [serverId]
             manager.paneStates[tab.rootPaneId] = TerminalPaneState(
                 paneId: tab.rootPaneId,
                 tabId: tab.id,
@@ -519,7 +518,6 @@ struct ConnectionLifecycleIntegrationTests {
             let fake = RecordingPaneRuntimeClient()
             manager.tabsByServer[serverId] = [tab]
             manager.selectedTabByServer[serverId] = tab.id
-            manager.connectedServerIds = [serverId]
             manager.paneStates[tab.rootPaneId] = TerminalPaneState(
                 paneId: tab.rootPaneId,
                 tabId: tab.id,
@@ -654,7 +652,8 @@ struct ConnectionLifecycleIntegrationTests {
 
             manager.sessions = [first, second]
             manager.selectedSessionId = first.id
-            manager.connectedServerIds = [firstServerId, secondServerId]
+            manager.updateSessionState(first.id, to: .connected)
+            manager.updateSessionState(second.id, to: .connected)
 
             manager.disconnectServer(firstServerId)
 
@@ -752,7 +751,7 @@ struct ConnectionLifecycleIntegrationTests {
                 connectionState: .connected
             )
             manager.sessions = [session]
-            manager.connectedServerIds = [serverId]
+            manager.updateSessionState(session.id, to: .connected)
 
             let client = SSHClient()
             manager.registerSSHClient(
