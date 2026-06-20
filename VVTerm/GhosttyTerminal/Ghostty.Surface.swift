@@ -1,10 +1,75 @@
 import Foundation
 
+nonisolated struct TerminalSurfaceTeardownQueue: Sendable {
+    static let shared = TerminalSurfaceTeardownQueue(
+        queue: DispatchQueue(label: "app.vivy.VVTerm.GhosttySurfaceTeardown", qos: .userInitiated)
+    )
+
+    private let enqueueOperation: @Sendable (@escaping @Sendable () -> Void) -> Void
+
+    init(enqueue: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void) {
+        self.enqueueOperation = enqueue
+    }
+
+    private init(queue: DispatchQueue) {
+        self.enqueueOperation = { operation in
+            queue.async(execute: operation)
+        }
+    }
+
+    func async(_ operation: @escaping @Sendable () -> Void) {
+        enqueueOperation(operation)
+    }
+}
+
 extension Ghostty {
     /// Represents a single surface within Ghostty.
     ///
     /// Wraps a `ghostty_surface_t`
-    final class Surface: @unchecked Sendable {
+    nonisolated final class Surface: @unchecked Sendable {
+        nonisolated final class NativeHandle: @unchecked Sendable {
+            let rawValue: ghostty_surface_t?
+            private let callbackContext: GhosttySurfaceCallbackContext?
+            private let freeNativeSurface: () -> Void
+            private let lock = NSLock()
+            private var hasFreed = false
+
+            init(
+                rawValue: ghostty_surface_t?,
+                callbackContext: GhosttySurfaceCallbackContext?,
+                freeNativeSurface: (() -> Void)? = nil
+            ) {
+                self.rawValue = rawValue
+                self.callbackContext = callbackContext
+                self.freeNativeSurface = freeNativeSurface ?? {
+                    if let rawValue {
+                        ghostty_surface_free(rawValue)
+                    }
+                }
+            }
+
+            func scheduleFree(on queue: TerminalSurfaceTeardownQueue = .shared) {
+                queue.async { [self] in
+                    free()
+                }
+            }
+
+            func free() {
+                lock.lock()
+                guard !hasFreed else {
+                    lock.unlock()
+                    return
+                }
+                hasFreed = true
+                let callbackContext = callbackContext
+                let freeNativeSurface = freeNativeSurface
+                lock.unlock()
+
+                callbackContext?.invalidate()
+                freeNativeSurface()
+            }
+        }
+
         private var surface: ghostty_surface_t?
         private var callbackContext: GhosttySurfaceCallbackContext?
         private let lock = NSLock()
@@ -34,14 +99,11 @@ extension Ghostty {
             context?.invalidate()
         }
 
-        /// Explicitly free the surface. Call this from cleanup() on main actor.
-        /// This is preferred over relying on deinit since Task.detached may not run.
-        @MainActor
-        func free() {
+        nonisolated func detachForTeardown() -> NativeHandle? {
             lock.lock()
             guard !hasBeenFreed, let surf = surface else {
                 lock.unlock()
-                return
+                return nil
             }
             let context = callbackContext
             hasBeenFreed = true
@@ -50,29 +112,18 @@ extension Ghostty {
             lock.unlock()
 
             context?.invalidate()
-            ghostty_surface_free(surf)
+            return NativeHandle(rawValue: surf, callbackContext: context)
+        }
+
+        /// Explicitly schedule surface teardown. Call this from cleanup() on main actor.
+        /// Native teardown can block while joining Ghostty threads, so it runs off the UI thread.
+        @MainActor
+        func free() {
+            detachForTeardown()?.scheduleFree()
         }
 
         deinit {
-            // If free() was already called, do nothing
-            lock.lock()
-            guard !hasBeenFreed, let surf = surface else {
-                lock.unlock()
-                return
-            }
-            let context = callbackContext
-            hasBeenFreed = true
-            surface = nil
-            callbackContext = nil
-            lock.unlock()
-
-            // Fallback: schedule free on main actor
-            // This is a safety net - prefer calling free() explicitly
-            // MainActor.run used to avoid Sendable warning on raw pointer
-            DispatchQueue.main.async {
-                context?.invalidate()
-                ghostty_surface_free(surf)
-            }
+            detachForTeardown()?.scheduleFree()
         }
 
         /// Send text to the terminal as if it was typed. This doesn't send the key events so keyboard

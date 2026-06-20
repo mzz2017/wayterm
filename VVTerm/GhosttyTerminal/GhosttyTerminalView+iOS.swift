@@ -1257,8 +1257,7 @@ class GhosttyTerminalView: UIView {
         }
         surfaceReference = nil
 
-        // CRITICAL: Explicitly free the surface to release Metal resources
-        // Do not rely on deinit - Task.detached may never run
+        // Detach immediately, then release native resources off the UI thread.
         surface?.free()
         surface = nil
     }

@@ -6,9 +6,9 @@ struct TerminalFontSettingsTests {
 
     // MARK: - Fresh default source
 
+    #if os(macOS)
     @Test
-    func freshMacOSDefaultsResolveToMenlo() throws {
-        #if os(macOS)
+    func freshMacOSDefaultsResolveToMenlo() {
         let defaults = UserDefaults(suiteName: #function)!
         defaults.removePersistentDomain(forName: #function)
 
@@ -21,19 +21,15 @@ struct TerminalFontSettingsTests {
         // as its in-memory default, so even before applyIfNeeded runs it would
         // resolve to "Menlo" on macOS.
         #expect(TerminalDefaults.defaultFontName == "Menlo")
-        #else
-        throw Skip("macOS-only fresh default source check")
-        #endif
     }
+    #endif
 
+    #if os(macOS)
     @Test
-    func freshMacOSFontSizeIsTwelvePoints() throws {
-        #if os(macOS)
+    func freshMacOSFontSizeIsTwelvePoints() {
         #expect(TerminalDefaults.defaultFontSize == 12.0)
-        #else
-        throw Skip("macOS-only default font size check")
-        #endif
     }
+    #endif
 
     // MARK: - Missing-font injection
 
@@ -105,9 +101,9 @@ struct TerminalFontSettingsTests {
 
     // MARK: - Fallback families are not forced as primary
 
+    #if os(macOS)
     @Test
-    func fallbackFamiliesAreNotDefaultPrimaryFont() throws {
-        #if os(macOS)
+    func fallbackFamiliesAreNotDefaultPrimaryFont() {
         let fallbacks = TerminalDefaults.macOSFallbackFontFamilies
 
         // The default primary font must not be any of the fallback families
@@ -116,20 +112,16 @@ struct TerminalFontSettingsTests {
         // The fallbacks themselves are "Apple SD Gothic Neo" and the legacy default
         #expect(fallbacks.contains("Apple SD Gothic Neo"))
         #expect(fallbacks.contains("JetBrainsMono Nerd Font"))
-        #else
-        throw Skip("macOS-only fallback family check")
-        #endif
     }
+    #endif
 
+    #if os(macOS)
     @Test
-    func settingsDefaultFontIsNotAFallbackFamily() throws {
-        #if os(macOS)
+    func settingsDefaultFontIsNotAFallbackFamily() {
         // Verify that the Settings picker default is "Menlo", not a fallback
         #expect(TerminalDefaults.defaultFontName == "Menlo")
         #expect(TerminalDefaults.defaultFontName != "Apple SD Gothic Neo")
         #expect(TerminalDefaults.defaultFontName != "JetBrainsMono Nerd Font")
-        #else
-        throw Skip("macOS-only primary vs fallback check")
-        #endif
     }
+    #endif
 }

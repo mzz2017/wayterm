@@ -67,6 +67,7 @@ require_cmd() {
 
 check_deps_ghostty() {
     require_cmd git
+    require_cmd python3
     require_cmd zig
     require_cmd xcodebuild
     require_cmd perl
@@ -131,6 +132,18 @@ prepare_ghostty_source() {
         git -C "${workdir}/ghostty" fetch --depth 1 origin "${GHOSTTY_REF}"
         git -C "${workdir}/ghostty" checkout --detach FETCH_HEAD
     fi
+}
+
+prepare_ghostty_dependencies() {
+    local ghostty_root="$1"
+    local patch_script="${ghostty_root}/scripts/apply-dependency-patches.sh"
+
+    if [ ! -f "${patch_script}" ]; then
+        return
+    fi
+
+    log_info "Preparing Ghostty dependencies..."
+    (cd "${ghostty_root}" && bash "${patch_script}")
 }
 
 check_ghostty_vendor() {
@@ -225,6 +238,7 @@ build_ghosttykit() {
     local workdir="$GHOSTTY_WORKDIR"
 
     prepare_ghostty_source "${workdir}"
+    prepare_ghostty_dependencies "${workdir}/ghostty"
 
     local embedded_path="${workdir}/ghostty/src/apprt/embedded.zig"
     if [ -f "${embedded_path}" ]; then
