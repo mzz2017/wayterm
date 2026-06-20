@@ -621,6 +621,11 @@ struct iOSServerListView: View {
             guard let server = server(for: connection.id) else { return }
             guard await AppLockManager.shared.ensureServerUnlocked(server) else { return }
 
+            if !connection.session.connectionState.isConnected,
+               !connection.session.connectionState.isConnecting {
+                try? await sessionManager.reconnect(session: connection.session)
+            }
+
             await MainActor.run {
                 sessionManager.selectSession(connection.session)
                 sessionManager.selectedViewByServer[server.id] = targetViewId

@@ -724,7 +724,7 @@ struct TerminalContainerView: View {
         defer { reconnectInFlight = false }
         isReady = false
         operationNotice = nil
-        loadCredentialsIfNeeded(force: false)
+        loadCredentialsIfNeeded(force: true)
         guard credentials != nil else { return }
         ghosttyApp.startIfNeeded()
         try? await ConnectionSessionManager.shared.reconnect(session: session)
