@@ -2040,28 +2040,8 @@ private extension ConnectionSession {
     var iosTerminalSessionSnapshot: IOSTerminalSessionSnapshot {
         IOSTerminalSessionSnapshot(
             id: id,
-            serverId: serverId,
-            connectionState: connectionState.iosTerminalConnectionState
+            serverId: serverId
         )
-    }
-}
-
-private extension ConnectionState {
-    var iosTerminalConnectionState: IOSTerminalConnectionState {
-        switch self {
-        case .disconnected:
-            return .disconnected
-        case .connecting:
-            return .connecting
-        case .connected:
-            return .connected
-        case .reconnecting:
-            return .reconnecting
-        case .failed:
-            return .failed
-        case .idle:
-            return .idle
-        }
     }
 }
 

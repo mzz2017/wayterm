@@ -17,8 +17,7 @@ struct IOSTerminalViewPolicyTests {
         let sessionId = UUID()
         let session = IOSTerminalSessionSnapshot(
             id: sessionId,
-            serverId: UUID(),
-            connectionState: .connected
+            serverId: UUID()
         )
 
         // Given a terminal tab is selected and auto-reconnect is enabled, but
@@ -49,8 +48,7 @@ struct IOSTerminalViewPolicyTests {
         let sessionId = UUID()
         let session = IOSTerminalSessionSnapshot(
             id: sessionId,
-            serverId: UUID(),
-            connectionState: .disconnected
+            serverId: UUID()
         )
 
         // Given a terminal tab is selected and auto-reconnect is enabled, but

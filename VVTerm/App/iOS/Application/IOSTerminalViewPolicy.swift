@@ -1,18 +1,8 @@
 import Foundation
 
-enum IOSTerminalConnectionState: Equatable {
-    case disconnected
-    case connecting
-    case connected
-    case reconnecting
-    case failed
-    case idle
-}
-
 struct IOSTerminalSessionSnapshot: Equatable, Identifiable {
     let id: UUID
     let serverId: UUID
-    let connectionState: IOSTerminalConnectionState
 }
 
 enum IOSTerminalPreparationAction: Equatable {
