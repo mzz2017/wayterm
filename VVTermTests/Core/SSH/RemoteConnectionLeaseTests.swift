@@ -83,6 +83,7 @@ struct RemoteConnectionLeaseTests {
 
     @Test
     func closeWaitsForExclusiveOperationBeforeDisconnectingOwnedClient() async throws {
+        // Given an owned lease with one exclusive operation already in flight.
         let client = RecordingRemoteConnectionClient()
         let lease = RemoteConnectionLease(client: client, ownership: .owned)
         let blocker = BlockingOperationProbe()
@@ -96,6 +97,7 @@ struct RemoteConnectionLeaseTests {
 
         await blocker.waitUntilStarted()
 
+        // When close starts while the operation is still active.
         let closeTask = Task {
             await lease.close()
         }
@@ -110,6 +112,56 @@ struct RemoteConnectionLeaseTests {
 
         let disconnectsAfterRelease = await client.disconnectCount()
         #expect(disconnectsAfterRelease == 1, "Owned close should disconnect once after the protected operation completes")
+    }
+
+    @Test
+    func closeRejectsQueuedOperationsAfterCloseBegins() async throws {
+        // Given an owned lease with one operation in flight and another operation waiting for exclusivity.
+        let client = RecordingRemoteConnectionClient()
+        let lease = RemoteConnectionLease(client: client, ownership: .owned)
+        let blocker = BlockingOperationProbe()
+        let queuedProbe = QueuedOperationProbe()
+
+        let activeTask = Task {
+            try await lease.withExclusiveClient { _ in
+                await blocker.markStarted()
+                await blocker.waitUntilReleased()
+            }
+        }
+
+        await blocker.waitUntilStarted()
+
+        let queuedTask = Task {
+            try await lease.withExclusiveClient { _ in
+                await queuedProbe.markRan()
+            }
+        }
+
+        try await Task.sleep(for: .milliseconds(20))
+
+        // When close begins before the queued operation has acquired the lease.
+        let closeTask = Task {
+            await lease.close()
+        }
+
+        try await Task.sleep(for: .milliseconds(20))
+        await blocker.release()
+        try await activeTask.value
+
+        do {
+            try await queuedTask.value
+            Issue.record("Queued exclusive operations must be rejected once close begins")
+        } catch is CancellationError {
+            // Then the queued operation observes lifecycle cancellation instead of running against a closing client.
+        }
+
+        await closeTask.value
+
+        let didRunQueuedOperation = await queuedProbe.didRun()
+        #expect(!didRunQueuedOperation, "Queued operations must not run after lease close has started")
+
+        let disconnectCount = await client.disconnectCount()
+        #expect(disconnectCount == 1, "Owned close should still disconnect once after the active operation completes")
     }
 }
 
@@ -196,5 +248,17 @@ private actor BlockingOperationProbe {
         await withCheckedContinuation { continuation in
             releaseWaiters.append(continuation)
         }
+    }
+}
+
+private actor QueuedOperationProbe {
+    private var didRunOperation = false
+
+    func markRan() {
+        didRunOperation = true
+    }
+
+    func didRun() -> Bool {
+        didRunOperation
     }
 }

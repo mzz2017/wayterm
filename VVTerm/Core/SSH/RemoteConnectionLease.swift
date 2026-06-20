@@ -47,9 +47,14 @@ struct RemoteConnectionLease: Sendable {
 extension SSHClient: RemoteConnectionLeaseClient {}
 
 private actor RemoteConnectionLeaseState {
+    private struct OperationWaiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Void, Error>
+    }
+
     private var didClose = false
     private var isOperationInFlight = false
-    private var operationWaiters: [CheckedContinuation<Void, Never>] = []
+    private var operationWaiters: [OperationWaiter] = []
     private var closeWaiters: [CheckedContinuation<Void, Never>] = []
 
     func withExclusiveClient<T>(
@@ -76,9 +81,10 @@ private actor RemoteConnectionLeaseState {
     ) async {
         guard !didClose else { return }
         didClose = true
+        cancelQueuedOperationWaiters()
         await waitForExclusiveOperationsToFinish()
 
-        guard ownership == .owned else { return }
+        guard case .owned = ownership else { return }
         await client.disconnect()
     }
 
@@ -92,24 +98,41 @@ private actor RemoteConnectionLeaseState {
             return
         }
 
-        await withCheckedContinuation { continuation in
-            operationWaiters.append(continuation)
+        let waiterId = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                guard !didClose else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+
+                operationWaiters.append(
+                    OperationWaiter(id: waiterId, continuation: continuation)
+                )
+            }
+        } onCancel: {
+            Task {
+                await self.cancelOperationWaiter(waiterId)
+            }
         }
     }
 
     private func finishExclusiveOperation() {
+        if didClose {
+            isOperationInFlight = false
+            cancelQueuedOperationWaiters()
+            resumeCloseWaiters()
+            return
+        }
+
         if operationWaiters.isEmpty {
             isOperationInFlight = false
-            let waiters = closeWaiters
-            closeWaiters.removeAll()
-            for waiter in waiters {
-                waiter.resume()
-            }
+            resumeCloseWaiters()
             return
         }
 
         let next = operationWaiters.removeFirst()
-        next.resume()
+        next.continuation.resume()
     }
 
     private func waitForExclusiveOperationsToFinish() async {
@@ -117,6 +140,31 @@ private actor RemoteConnectionLeaseState {
 
         await withCheckedContinuation { continuation in
             closeWaiters.append(continuation)
+        }
+    }
+
+    private func cancelOperationWaiter(_ waiterId: UUID) {
+        guard let index = operationWaiters.firstIndex(where: { $0.id == waiterId }) else {
+            return
+        }
+
+        let waiter = operationWaiters.remove(at: index)
+        waiter.continuation.resume(throwing: CancellationError())
+    }
+
+    private func cancelQueuedOperationWaiters() {
+        let waiters = operationWaiters
+        operationWaiters.removeAll()
+        for waiter in waiters {
+            waiter.continuation.resume(throwing: CancellationError())
+        }
+    }
+
+    private func resumeCloseWaiters() {
+        let waiters = closeWaiters
+        closeWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
         }
     }
 }

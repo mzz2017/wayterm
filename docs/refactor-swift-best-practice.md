@@ -2114,34 +2114,34 @@ git commit -m "test: tighten lifecycle test context"
 - Produces:
   - Close semantics where operations already in flight may finish, but queued operations that have not started are canceled once close begins.
 
-- [ ] **Step 1: Add RED queued-close test**
+- [x] **Step 1: Add RED queued-close test**
 
 Add `closeRejectsQueuedOperationsAfterCloseBegins` to `RemoteConnectionLeaseTests`. Arrange one exclusive operation that blocks, start a second operation that queues, start `lease.close()`, release the first operation, then assert the second operation throws `CancellationError` and does not run its body. For an owned lease, also assert disconnect happens after the first operation finishes.
 
-- [ ] **Step 2: Run RED test**
+- [x] **Step 2: Run RED test**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteConnectionLeaseTests/closeRejectsQueuedOperationsAfterCloseBegins ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteConnectionLeaseTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected before implementation: FAIL because the queued operation resumes and runs after close begins, or because close waits for a queued operation that should have been canceled.
 
-- [ ] **Step 3: Implement queued-operation cancellation**
+- [x] **Step 3: Implement queued-operation cancellation**
 
 Change `RemoteConnectionLeaseState` so close marks the lease closed, waits for the active operation, cancels queued waiters that have not started, and then disconnects owned clients exactly once. Use throwing continuations or an equivalent explicit result so a resumed queued operation observes `CancellationError` and does not leave `isOperationInFlight` stuck.
 
-- [ ] **Step 4: Run focused lease verification**
+- [x] **Step 4: Run focused lease verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteConnectionLeaseTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 5: API and boundary cleanup**
+- [x] **Step 5: API and boundary cleanup**
 
 Verify the lease API remains small: `close()` and `withExclusiveClient(_:)` stay as the public boundary, mutable queue state remains actor-owned, and callers do not need to know whether a lease is owned or borrowed to avoid running after close.
 
-- [ ] **Step 6: Request review and commit**
+- [x] **Step 6: Request review and commit**
 
 ```bash
 git add VVTerm/Core/SSH/RemoteConnectionLease.swift VVTermTests/Core/SSH/RemoteConnectionLeaseTests.swift docs/refactor-swift-best-practice.md
@@ -2505,7 +2505,10 @@ git commit -m "refactor: decouple terminal runner from UI surface"
 - 2026-06-21: Post-Task-25 whole-plan fan-out audit completed. Remaining non-Core lifecycle gaps are split into executable Tasks 26 through 32: test-context tightening, remote lease close semantics, server/workspace delete teardown, app termination and LRU eviction cleanup, RemoteFiles/Stats lease provider boundaries, centralized terminal runtime ownership, and TerminalConnectionRunner surface protocol decoupling.
 - 2026-06-21: Task 26 test-context tightening completed before review. `ConnectionSessionManagerOpenTests.testDisconnectServerAndWaitClearsSSHRegistrationBeforeReturning` and `ServerManagerBootstrapTests.knownHostRemovalCandidatesUsePostDeleteServerState` now include explicit Given/When/Then comments and assertion messages without changing production behavior. Verification: focused Task 26 suite passed 1 XCTest plus 8 Swift Testing tests; plan closure scans confirmed Task 26 Step 5 remains the first active step before commit, stub-language scan has no output, direct lowercase `libssh2_` calls remain confined to `LibSSH2SessionDriver.swift`; `git diff --check` passed.
 - 2026-06-21: Task 26 review completed. Reviewer found no Critical or Important issues; the Minor stale Step 3 expected-result wording was updated before commit.
-- Next task: Task 27.
+- 2026-06-21: Task 27 RED completed. Added `RemoteConnectionLeaseTests.closeRejectsQueuedOperationsAfterCloseBegins` for the close-after-queue lifecycle ordering rule. The first method-level `-only-testing` selector matched 0 Swift Testing tests, so the effective RED command ran `RemoteConnectionLeaseTests` and failed because the queued operation returned normally and its body ran after close began.
+- 2026-06-21: Task 27 GREEN and API cleanup completed before review. `RemoteConnectionLeaseState` now owns throwing operation waiters, cancels queued waiters when close begins, allows the active operation to finish, resumes close waiters, and keeps the public lease boundary to `close()` plus `withExclusiveClient(_:)`. Verification: `RemoteConnectionLeaseTests` passed 7 Swift Testing tests.
+- 2026-06-21: Task 27 review completed. Subagent review was not spawned because the current tool contract permits spawning only when the user explicitly requests subagents; local read-only review found no Critical or Important issues against the Swift lifecycle checklist.
+- Next task: Task 28.
 
 ## Self-Review
 
