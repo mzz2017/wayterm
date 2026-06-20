@@ -14,6 +14,17 @@ final class TerminalConnectionRegistry {
         })
     }
 
+    func hasActiveEntity(
+        for serverId: UUID,
+        excluding excludedEntityId: TerminalEntityID
+    ) -> Bool {
+        statesByEntity.contains { entityId, state in
+            entityId != excludedEntityId
+                && state.isConnected
+                && serverIdsByEntity[entityId] == serverId
+        }
+    }
+
     func register(
         _ runtime: TerminalConnectionRuntime,
         for entityId: TerminalEntityID,

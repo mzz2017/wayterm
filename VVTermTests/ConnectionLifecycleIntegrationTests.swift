@@ -244,6 +244,67 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerOtherActiveSessionsComeFromRegistryNotDomainState() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let staleSession = ConnectionSession(
+                serverId: server.id,
+                title: "Stale",
+                connectionState: .connected
+            )
+            let closingSession = ConnectionSession(
+                serverId: server.id,
+                title: "Closing",
+                connectionState: .disconnected
+            )
+
+            manager.sessions = [staleSession, closingSession]
+
+            #expect(
+                !manager.hasOtherActiveSessions(for: server.id, excluding: closingSession.id),
+                "A stale domain session state must not count as another active session without registry state."
+            )
+
+            manager.updateSessionState(staleSession.id, to: .connected)
+
+            #expect(
+                manager.hasOtherActiveSessions(for: server.id, excluding: closingSession.id),
+                "A registry streaming state should count as another active session."
+            )
+        }
+    }
+
+    @Test
+    func tabManagerOtherActivePanesComeFromRegistryNotDomainState() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tabId = UUID()
+            let stalePaneId = UUID()
+            let closingPaneId = UUID()
+            var stalePane = TerminalPaneState(paneId: stalePaneId, tabId: tabId, serverId: server.id)
+            stalePane.connectionState = .connected
+            let closingPane = TerminalPaneState(paneId: closingPaneId, tabId: tabId, serverId: server.id)
+
+            manager.paneStates = [
+                stalePaneId: stalePane,
+                closingPaneId: closingPane
+            ]
+
+            #expect(
+                !manager.hasOtherActivePanes(for: server.id, excluding: closingPaneId),
+                "A stale domain pane state must not count as another active pane without registry state."
+            )
+
+            manager.updatePaneState(stalePaneId, connectionState: .connected)
+
+            #expect(
+                manager.hasOtherActivePanes(for: server.id, excluding: closingPaneId),
+                "A registry streaming state should count as another active pane."
+            )
+        }
+    }
+
+    @Test
     func connectionManagerUnregisterWithoutShellClearsPendingStart() async {
         await withCleanConnectionManager { manager in
             let session = ConnectionSession(

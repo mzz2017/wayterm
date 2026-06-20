@@ -1019,9 +1019,10 @@ final class TerminalTabManager: ObservableObject {
     }
 
     func hasOtherActivePanes(for serverId: UUID, excluding paneId: UUID) -> Bool {
-        paneStates.contains { entry in
-            entry.key != paneId && entry.value.serverId == serverId && entry.value.connectionState.isConnected
-        }
+        terminalConnectionRegistry.hasActiveEntity(
+            for: serverId,
+            excluding: .pane(paneId)
+        )
     }
 
     /// Returns true when the same SSH client instance is registered to another live pane.

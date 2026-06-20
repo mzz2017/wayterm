@@ -395,11 +395,10 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     func hasOtherActiveSessions(for serverId: UUID, excluding sessionId: UUID) -> Bool {
-        sessions.contains {
-            $0.serverId == serverId
-                && $0.id != sessionId
-                && $0.connectionState.isConnected
-        }
+        terminalConnectionRegistry.hasActiveEntity(
+            for: serverId,
+            excluding: .session(sessionId)
+        )
     }
 
     /// Returns true when the same SSH client instance is registered to another live session.
