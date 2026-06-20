@@ -157,6 +157,8 @@ struct ServerManagerBootstrapTests {
 
     @Test
     func knownHostRemovalCandidatesUsePostDeleteServerState() {
+        // Given two deleted servers where only one host is still used by a
+        // remaining server after deletion.
         let workspaceID = UUID()
         let deletedSharedHost = Server(
             id: UUID(),
@@ -180,13 +182,20 @@ struct ServerManagerBootstrapTests {
             username: "root"
         )
 
+        // When ServerManager computes known-host cleanup candidates using the
+        // post-delete server collection.
         let candidates = ServerManager.knownHostRemovalCandidates(
             removedServers: [deletedSharedHost, deletedUniqueHost],
             remainingServers: [remainingSharedHost]
         )
 
-        #expect(candidates == [
-            ServerManager.KnownHostRemovalCandidate(host: "unique.example.com", port: 22)
-        ])
+        // Then only the unique deleted host is removed; the shared host must
+        // stay trusted for the remaining server.
+        #expect(
+            candidates == [
+                ServerManager.KnownHostRemovalCandidate(host: "unique.example.com", port: 22)
+            ],
+            "Known-host cleanup must preserve hosts still referenced by post-delete server state."
+        )
     }
 }

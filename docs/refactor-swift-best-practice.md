@@ -2066,20 +2066,20 @@ git commit -m "refactor: complete core SSH FFI boundary sweep"
   - Clear Given/When/Then intent and assertion messages for the remaining weak lifecycle tests.
   - A plan ledger entry that records the post-Task-25 whole-plan audit findings and confirms the next executable task.
 
-- [ ] **Step 1: Tighten lifecycle test intent**
+- [x] **Step 1: Tighten lifecycle test intent**
 
 In `ConnectionSessionManagerOpenTests.testDisconnectServerAndWaitClearsSSHRegistrationBeforeReturning`, add Given/When/Then comments and assertion messages for the lease/session/server state assertions so a future failure distinguishes lifecycle regression from a changed API contract.
 
 In `ServerManagerBootstrapTests.knownHostRemovalCandidatesUsePostDeleteServerState`, add Given/When/Then comments and an assertion message explaining that known-host removal must use post-delete server state so shared hosts are preserved.
 
-- [ ] **Step 2: Run focused test-context verification**
+- [x] **Step 2: Run focused test-context verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionSessionManagerOpenTests/testDisconnectServerAndWaitClearsSSHRegistrationBeforeReturning -only-testing:VVTermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 3: Run plan closure audit commands**
+- [x] **Step 3: Run plan closure audit commands**
 
 ```bash
 rg -n "^- \\[ \\]" docs/refactor-swift-best-practice.md
@@ -2087,13 +2087,13 @@ rg -n "TO[D]O|T[B]D|W[I]P" docs/refactor-swift-best-practice.md
 rg -n "libssh2_" VVTerm/Core/SSH/SSHClient.swift VVTerm/Core/SSH/LibSSH2SessionDriver.swift
 ```
 
-Expected results: the first unchecked step is Task 26 Step 1; the stub-language scan has no output; no direct lowercase `libssh2_` calls remain in `SSHClient.swift`; direct lowercase `libssh2_` calls remain confined to `LibSSH2SessionDriver.swift`.
+Expected results: before Step 5 completes, the first unchecked step is Task 26 Step 5; after Task 26 is committed, the first unchecked step is Task 27 Step 1; the stub-language scan has no output; no direct lowercase `libssh2_` calls remain in `SSHClient.swift`; direct lowercase `libssh2_` calls remain confined to `LibSSH2SessionDriver.swift`.
 
-- [ ] **Step 4: API and boundary cleanup**
+- [x] **Step 4: API and boundary cleanup**
 
 Verify this task changes only test explanatory context and plan bookkeeping. Do not change production lifecycle behavior in this task.
 
-- [ ] **Step 5: Request review and commit**
+- [x] **Step 5: Request review and commit**
 
 ```bash
 git add VVTermTests/ConnectionSessionManagerOpenTests.swift VVTermTests/ServerManagerBootstrapTests.swift docs/refactor-swift-best-practice.md
@@ -2503,7 +2503,9 @@ git commit -m "refactor: decouple terminal runner from UI surface"
 - 2026-06-21: Task 25 review completed. Reviewer found no code-level keepalive issue; the only Important finding was the missing classification for the two `SSHClient.swift` `withUnsafe` hits, which is now documented above.
 - 2026-06-21: Post-Task-25 plan consistency audit reconciled stale commit checkboxes for Task 22 and Task 24 against existing commits `cd210e1` and `3590af0`; no code changed in this reconciliation.
 - 2026-06-21: Post-Task-25 whole-plan fan-out audit completed. Remaining non-Core lifecycle gaps are split into executable Tasks 26 through 32: test-context tightening, remote lease close semantics, server/workspace delete teardown, app termination and LRU eviction cleanup, RemoteFiles/Stats lease provider boundaries, centralized terminal runtime ownership, and TerminalConnectionRunner surface protocol decoupling.
-- Next task: Task 26.
+- 2026-06-21: Task 26 test-context tightening completed before review. `ConnectionSessionManagerOpenTests.testDisconnectServerAndWaitClearsSSHRegistrationBeforeReturning` and `ServerManagerBootstrapTests.knownHostRemovalCandidatesUsePostDeleteServerState` now include explicit Given/When/Then comments and assertion messages without changing production behavior. Verification: focused Task 26 suite passed 1 XCTest plus 8 Swift Testing tests; plan closure scans confirmed Task 26 Step 5 remains the first active step before commit, stub-language scan has no output, direct lowercase `libssh2_` calls remain confined to `LibSSH2SessionDriver.swift`; `git diff --check` passed.
+- 2026-06-21: Task 26 review completed. Reviewer found no Critical or Important issues; the Minor stale Step 3 expected-result wording was updated before commit.
+- Next task: Task 27.
 
 ## Self-Review
 
