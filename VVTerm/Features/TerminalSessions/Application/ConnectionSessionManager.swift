@@ -327,7 +327,8 @@ final class ConnectionSessionManager: ObservableObject {
         // Check if already have a session for this server (unless forcing new)
         if !forceNew, let existingSession = firstSession(for: server.id) {
             selectedSessionId = existingSession.id
-            if !existingSession.connectionState.isConnected,
+            let hasLiveOrOpeningRuntime = terminalConnectionRegistry.isOpeningOrStreaming(.session(existingSession.id))
+            if !hasLiveOrOpeningRuntime,
                !existingSession.connectionState.isConnecting {
                 try await reconnect(session: existingSession)
             }
