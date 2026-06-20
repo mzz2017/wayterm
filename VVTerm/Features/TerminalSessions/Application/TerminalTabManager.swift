@@ -963,8 +963,14 @@ final class TerminalTabManager: ObservableObject {
     }
 
     /// Get SSH client for a pane
-    func getSSHClient(for paneId: UUID) -> SSHClient? {
+    private func getSSHClient(for paneId: UUID) -> SSHClient? {
         shellRegistry.client(for: paneId)
+    }
+
+    func remoteConnectionLease(for paneId: UUID) -> RemoteConnectionLease? {
+        getSSHClient(for: paneId).map {
+            RemoteConnectionLease(client: $0, ownership: .borrowed)
+        }
     }
 
     func shellId(for paneId: UUID) -> UUID? {
@@ -1044,12 +1050,12 @@ final class TerminalTabManager: ObservableObject {
     }
 
     /// Returns the best-known client for this server, including pending shell starts.
-    func sshClient(for serverId: UUID) -> SSHClient? {
+    private func sshClient(for serverId: UUID) -> SSHClient? {
         preferredSSHClient(for: serverId, allowPendingStart: true)
     }
 
     /// Returns only clients that already have a registered shell for this server.
-    func activeSSHClient(for serverId: UUID) -> SSHClient? {
+    private func activeSSHClient(for serverId: UUID) -> SSHClient? {
         preferredSSHClient(for: serverId, allowPendingStart: false)
     }
 
@@ -1110,7 +1116,7 @@ final class TerminalTabManager: ObservableObject {
         shellRegistry.hasOtherRegistrations(using: client, excluding: paneId)
     }
 
-    func sharedStatsClient(for serverId: UUID) -> SSHClient? {
+    private func sharedStatsClient(for serverId: UUID) -> SSHClient? {
         if let livePane = registryLivePaneState(for: serverId) {
             guard let registration = shellRegistry.registration(for: livePane.paneId),
                   registration.transport != .mosh else {

@@ -1915,12 +1915,13 @@ struct iOSTerminalView: View {
             terminal.forceRefresh()
 
             // Send resize to force server to redraw prompt
-            if let sshClient = ConnectionSessionManager.shared.sshClient(for: session),
-               let shellId = ConnectionSessionManager.shared.shellId(for: session) {
+            if let size = terminal.terminalSize() {
                 Task {
-                    if let size = terminal.terminalSize() {
-                        try? await sshClient.resize(cols: Int(size.columns), rows: Int(size.rows), for: shellId)
-                    }
+                    await ConnectionSessionManager.shared.resizeSession(
+                        session.id,
+                        cols: Int(size.columns),
+                        rows: Int(size.rows)
+                    )
                 }
             }
         }

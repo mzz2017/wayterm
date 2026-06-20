@@ -246,9 +246,7 @@ final class TerminalRichPasteRuntime: TerminalRichPasteContext {
             sessionId: sessionId,
             uiModel: uiModel,
             resolveRemoteConnectionLease: {
-                ConnectionSessionManager.shared.sshClient(forSessionId: sessionId).map {
-                    RemoteConnectionLease(client: $0, ownership: .borrowed)
-                }
+                ConnectionSessionManager.shared.remoteConnectionLease(forSessionId: sessionId)
             },
             pasteTextFromClipboard: {
                 ConnectionSessionManager.shared.peekTerminal(for: sessionId)?.pasteTextFromClipboard()
@@ -267,9 +265,7 @@ final class TerminalRichPasteRuntime: TerminalRichPasteContext {
             sessionId: paneId,
             uiModel: uiModel,
             resolveRemoteConnectionLease: {
-                TerminalTabManager.shared.getSSHClient(for: paneId).map {
-                    RemoteConnectionLease(client: $0, ownership: .borrowed)
-                }
+                TerminalTabManager.shared.remoteConnectionLease(for: paneId)
             },
             pasteTextFromClipboard: {
                 TerminalTabManager.shared.getTerminal(for: paneId)?.pasteTextFromClipboard()

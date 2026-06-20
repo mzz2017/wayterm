@@ -678,10 +678,9 @@ final class ConnectionSessionManager: ObservableObject {
             terminal.forceRefresh()
 
             if let size = terminal.terminalSize(),
-               let client = self?.sshClient(for: session),
-               let shellId = self?.shellId(for: session) {
+               let self {
                 Task {
-                    try? await client.resize(cols: Int(size.columns), rows: Int(size.rows), for: shellId)
+                    await self.resizeSession(session.id, cols: Int(size.columns), rows: Int(size.rows))
                 }
             }
 
@@ -939,12 +938,18 @@ final class ConnectionSessionManager: ObservableObject {
         await Self.finishSSHCleanup(for: unregisterResult)
     }
 
-    func sshClient(for session: ConnectionSession) -> SSHClient? {
+    private func sshClient(for session: ConnectionSession) -> SSHClient? {
         shellRegistry.client(for: session.id)
     }
 
-    func sshClient(forSessionId sessionId: UUID) -> SSHClient? {
+    private func sshClient(forSessionId sessionId: UUID) -> SSHClient? {
         shellRegistry.client(for: sessionId)
+    }
+
+    func remoteConnectionLease(forSessionId sessionId: UUID) -> RemoteConnectionLease? {
+        sshClient(forSessionId: sessionId).map {
+            RemoteConnectionLease(client: $0, ownership: .borrowed)
+        }
     }
 
     func shellId(for session: ConnectionSession) -> UUID? {
@@ -1021,15 +1026,15 @@ final class ConnectionSessionManager: ObservableObject {
         return shellRegistry.firstRegistration(for: serverId)
     }
 
-    func sshClient(for serverId: UUID) -> SSHClient? {
+    private func sshClient(for serverId: UUID) -> SSHClient? {
         preferredSSHClient(for: serverId, allowPendingStart: true)
     }
 
-    func activeSSHClient(for serverId: UUID) -> SSHClient? {
+    private func activeSSHClient(for serverId: UUID) -> SSHClient? {
         preferredSSHClient(for: serverId, allowPendingStart: false)
     }
 
-    func sharedStatsClient(for serverId: UUID) -> SSHClient? {
+    private func sharedStatsClient(for serverId: UUID) -> SSHClient? {
         if let liveSession = registryLiveSession(for: serverId) {
             guard let registration = shellRegistry.registration(for: liveSession.id),
                   registration.transport != .mosh else {

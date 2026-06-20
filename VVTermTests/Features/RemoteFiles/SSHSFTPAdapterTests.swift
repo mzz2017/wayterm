@@ -16,7 +16,7 @@ struct SSHSFTPAdapterTests {
         let server = makeServer()
         let borrowedClient = RecordingSFTPClient()
         let adapter = SSHSFTPAdapter(
-            borrowedClientProvider: { _ in borrowedClient },
+            borrowedLeaseProvider: { _ in RemoteConnectionLease(client: borrowedClient, ownership: .borrowed) },
             credentialsProvider: { server in makeCredentials(serverId: server.id) },
             ownedClientFactory: { RecordingSFTPClient() }
         )
@@ -31,12 +31,34 @@ struct SSHSFTPAdapterTests {
     }
 
     @Test
+    func borrowedLeaseProviderIsTheRemoteFilesConnectionBoundary() async throws {
+        let server = makeServer()
+        let borrowedClient = RecordingSFTPClient(homeDirectory: "/lease-boundary")
+        var providerCallCount = 0
+        let adapter = SSHSFTPAdapter(
+            borrowedLeaseProvider: { _ in
+                providerCallCount += 1
+                return RemoteConnectionLease(client: borrowedClient, ownership: .borrowed)
+            },
+            credentialsProvider: { server in makeCredentials(serverId: server.id) },
+            ownedClientFactory: { RecordingSFTPClient(homeDirectory: "/owned") }
+        )
+
+        let home = try await adapter.withService(for: server) { service in
+            try await service.resolveHomeDirectory()
+        }
+
+        #expect(providerCallCount == 1, "RemoteFiles should ask for a borrowed lease instead of constructing one from a raw client")
+        #expect(home == "/lease-boundary", "RemoteFiles should use the client carried by the borrowed lease")
+    }
+
+    @Test
     func disconnectWaitsForInFlightOwnedSFTPOperationBeforeClosingClient() async throws {
         let server = makeServer()
         let ownedClient = RecordingSFTPClient()
         let blocker = BlockingOperationProbe()
         let adapter = SSHSFTPAdapter(
-            borrowedClientProvider: { _ in nil },
+            borrowedLeaseProvider: { _ in nil },
             credentialsProvider: { server in makeCredentials(serverId: server.id) },
             ownedClientFactory: { ownedClient }
         )
@@ -71,7 +93,7 @@ struct SSHSFTPAdapterTests {
         let ownedClient = RecordingSFTPClient()
         let probe = ExclusiveOperationProbe()
         let adapter = SSHSFTPAdapter(
-            borrowedClientProvider: { _ in nil },
+            borrowedLeaseProvider: { _ in nil },
             credentialsProvider: { server in makeCredentials(serverId: server.id) },
             ownedClientFactory: { ownedClient }
         )
@@ -97,7 +119,7 @@ struct SSHSFTPAdapterTests {
         let secondClient = RecordingSFTPClient(homeDirectory: "/second")
         let provider = BorrowedClientSequence([firstClient, secondClient])
         let adapter = SSHSFTPAdapter(
-            borrowedClientProvider: { _ in provider.nextClient() },
+            borrowedLeaseProvider: { _ in provider.nextLease() },
             credentialsProvider: { server in makeCredentials(serverId: server.id) },
             ownedClientFactory: { RecordingSFTPClient() }
         )
@@ -152,10 +174,10 @@ private final class BorrowedClientSequence {
         self.clients = clients
     }
 
-    func nextClient() -> RecordingSFTPClient? {
+    func nextLease() -> RemoteConnectionLease? {
         callCount += 1
         guard !clients.isEmpty else { return nil }
-        return clients.removeFirst()
+        return RemoteConnectionLease(client: clients.removeFirst(), ownership: .borrowed)
     }
 }
 

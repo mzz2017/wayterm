@@ -643,7 +643,7 @@ struct ConnectionLifecycleIntegrationTests {
 
             await manager.closeTabAndWait(tab)
 
-            #expect(manager.getSSHClient(for: tab.rootPaneId) == nil)
+            #expect(manager.remoteConnectionLease(for: tab.rootPaneId) == nil)
             #expect(manager.shellId(for: tab.rootPaneId) == nil)
             #expect(manager.tabs(for: serverId).isEmpty)
             #expect(manager.paneStates[tab.rootPaneId] == nil)
@@ -760,7 +760,7 @@ struct ConnectionLifecycleIntegrationTests {
             // runtime state, including close teardown before the close returns.
             let events = await fake.events
             #expect(events == ["connect", "startShell", "write", "resize", "closeShell", "disconnect"])
-            #expect(manager.getSSHClient(for: tab.rootPaneId) == nil)
+            #expect(manager.remoteConnectionLease(for: tab.rootPaneId) == nil)
             #expect(manager.paneStates[tab.rootPaneId] == nil)
         }
     }
@@ -1073,7 +1073,7 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
-    func connectionManagerSharedStatsClientSkipsMoshTransport() async {
+    func connectionManagerSharedStatsLeaseSkipsMoshTransport() async {
         await withCleanConnectionManager { manager in
             let server = makeServer(connectionMode: .mosh)
             let session = ConnectionSession(
@@ -1095,13 +1095,13 @@ struct ConnectionLifecycleIntegrationTests {
                 skipTmuxLifecycle: true
             )
 
-            #expect(manager.sshClient(for: server.id) != nil)
-            #expect(manager.sharedStatsClient(for: server.id) == nil)
+            #expect(manager.remoteConnectionLease(forSessionId: session.id) != nil)
+            #expect(manager.sharedStatsLease(for: server.id) == nil)
         }
     }
 
     @Test
-    func connectionManagerSharedStatsClientUsesRegistryActiveSSHWhenSelectionIsStaleMosh() async {
+    func connectionManagerSharedStatsLeaseUsesRegistryActiveSSHWhenSelectionIsStaleMosh() async {
         await withCleanConnectionManager { manager in
             let server = makeServer(connectionMode: .standard)
             let staleSelected = ConnectionSession(
@@ -1142,14 +1142,14 @@ struct ConnectionLifecycleIntegrationTests {
             manager.updateSessionState(activeSession.id, to: .connected)
 
             #expect(
-                manager.sharedStatsClient(for: server.id).map(ObjectIdentifier.init) == ObjectIdentifier(activeClient),
-                "Stats should use the registry-active SSH session instead of a stale selected Mosh session."
+                manager.sharedStatsLease(for: server.id).map { ObjectIdentifier($0.client) } == ObjectIdentifier(activeClient),
+                "Stats should use the registry-active SSH session lease instead of a stale selected Mosh session."
             )
         }
     }
 
     @Test
-    func connectionManagerSharedStatsClientUsesPendingSSHWhenDomainMoshSnapshotIsStale() async {
+    func connectionManagerSharedStatsLeaseUsesPendingSSHWhenDomainMoshSnapshotIsStale() async {
         await withCleanConnectionManager { manager in
             let server = makeServer(connectionMode: .standard)
             let staleMoshSession = ConnectionSession(
@@ -1170,8 +1170,8 @@ struct ConnectionLifecycleIntegrationTests {
             #expect(manager.tryBeginShellStart(for: pendingSSHSession.id, client: pendingClient))
 
             #expect(
-                manager.sharedStatsClient(for: server.id).map(ObjectIdentifier.init) == ObjectIdentifier(pendingClient),
-                "A stale domain Mosh snapshot must not block a pending SSH stats client."
+                manager.sharedStatsLease(for: server.id).map { ObjectIdentifier($0.client) } == ObjectIdentifier(pendingClient),
+                "A stale domain Mosh snapshot must not block a pending SSH stats lease."
             )
         }
     }
@@ -1252,7 +1252,7 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
-    func tabManagerSharedStatsClientSkipsMoshTransport() async {
+    func tabManagerSharedStatsLeaseSkipsMoshTransport() async {
         await withCleanTabManager { manager in
             let server = makeServer(connectionMode: .mosh)
             let tab = TerminalTab(serverId: server.id, title: server.name)
@@ -1274,13 +1274,13 @@ struct ConnectionLifecycleIntegrationTests {
                 skipTmuxLifecycle: true
             )
 
-            #expect(manager.sshClient(for: server.id) != nil)
-            #expect(manager.sharedStatsClient(for: server.id) == nil)
+            #expect(manager.remoteConnectionLease(for: tab.rootPaneId) != nil)
+            #expect(manager.sharedStatsLease(for: server.id) == nil)
         }
     }
 
     @Test
-    func tabManagerSharedStatsClientUsesRegistryActiveSSHWhenSelectionIsStaleMosh() async {
+    func tabManagerSharedStatsLeaseUsesRegistryActiveSSHWhenSelectionIsStaleMosh() async {
         await withCleanTabManager { manager in
             let server = makeServer(connectionMode: .standard)
             let stalePaneId = UUID()
@@ -1326,14 +1326,14 @@ struct ConnectionLifecycleIntegrationTests {
             manager.updatePaneState(activePaneId, connectionState: .connected)
 
             #expect(
-                manager.sharedStatsClient(for: server.id).map(ObjectIdentifier.init) == ObjectIdentifier(activeClient),
-                "Stats should use the registry-active SSH pane instead of a stale selected Mosh pane."
+                manager.sharedStatsLease(for: server.id).map { ObjectIdentifier($0.client) } == ObjectIdentifier(activeClient),
+                "Stats should use the registry-active SSH pane lease instead of a stale selected Mosh pane."
             )
         }
     }
 
     @Test
-    func tabManagerSharedStatsClientUsesPendingSSHWhenDomainMoshSnapshotIsStale() async {
+    func tabManagerSharedStatsLeaseUsesPendingSSHWhenDomainMoshSnapshotIsStale() async {
         await withCleanTabManager { manager in
             let server = makeServer(connectionMode: .standard)
             let stalePaneId = UUID()
@@ -1360,8 +1360,8 @@ struct ConnectionLifecycleIntegrationTests {
             #expect(manager.tryBeginShellStart(for: pendingPaneId, client: pendingClient))
 
             #expect(
-                manager.sharedStatsClient(for: server.id).map(ObjectIdentifier.init) == ObjectIdentifier(pendingClient),
-                "A stale domain Mosh pane snapshot must not block a pending SSH stats client."
+                manager.sharedStatsLease(for: server.id).map { ObjectIdentifier($0.client) } == ObjectIdentifier(pendingClient),
+                "A stale domain Mosh pane snapshot must not block a pending SSH stats lease."
             )
         }
     }

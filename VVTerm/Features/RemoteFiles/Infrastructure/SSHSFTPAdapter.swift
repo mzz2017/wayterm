@@ -2,7 +2,7 @@ import Foundation
 
 @MainActor
 final class SSHSFTPAdapter {
-    typealias BorrowedClientProvider = @MainActor (UUID) -> (any SFTPRemoteFileClient)?
+    typealias BorrowedLeaseProvider = @MainActor (UUID) -> RemoteConnectionLease?
     typealias CredentialsProvider = @MainActor (Server) throws -> ServerCredentials
     typealias OwnedClientFactory = @MainActor () -> any SFTPRemoteFileClient
 
@@ -16,14 +16,14 @@ final class SSHSFTPAdapter {
     }
 
     private var clients: [UUID: ClientRegistration] = [:]
-    private let borrowedClientProvider: BorrowedClientProvider
+    private let borrowedLeaseProvider: BorrowedLeaseProvider
     private let credentialsProvider: CredentialsProvider
     private let ownedClientFactory: OwnedClientFactory
 
     init(
-        borrowedClientProvider: @escaping BorrowedClientProvider = { serverId in
-            ConnectionSessionManager.shared.sharedStatsClient(for: serverId)
-                ?? TerminalTabManager.shared.sharedStatsClient(for: serverId)
+        borrowedLeaseProvider: @escaping BorrowedLeaseProvider = { serverId in
+            ConnectionSessionManager.shared.sharedStatsLease(for: serverId)
+                ?? TerminalTabManager.shared.sharedStatsLease(for: serverId)
         },
         credentialsProvider: @escaping CredentialsProvider = { server in
             try KeychainManager.shared.getCredentials(for: server)
@@ -32,7 +32,7 @@ final class SSHSFTPAdapter {
             SSHClient()
         }
     ) {
-        self.borrowedClientProvider = borrowedClientProvider
+        self.borrowedLeaseProvider = borrowedLeaseProvider
         self.credentialsProvider = credentialsProvider
         self.ownedClientFactory = ownedClientFactory
     }
@@ -65,12 +65,13 @@ final class SSHSFTPAdapter {
         await registration.lease.close()
     }
 
-    private func borrowedClient(for serverId: UUID) -> (any SFTPRemoteFileClient)? {
-        borrowedClientProvider(serverId)
+    private func borrowedLease(for serverId: UUID) -> RemoteConnectionLease? {
+        borrowedLeaseProvider(serverId)
     }
 
     private func clientRegistration(for server: Server) -> ClientRegistration {
-        if let borrowedClient = borrowedClient(for: server.id) {
+        if let borrowedLease = borrowedLease(for: server.id),
+           let borrowedClient = borrowedLease.client as? any SFTPRemoteFileClient {
             if let existing = clients[server.id],
                existing.clientID == ObjectIdentifier(borrowedClient) {
                 return existing
@@ -78,7 +79,7 @@ final class SSHSFTPAdapter {
 
             let registration = ClientRegistration(
                 client: borrowedClient,
-                lease: RemoteConnectionLease(client: borrowedClient, ownership: .borrowed)
+                lease: borrowedLease
             )
             clients[server.id] = registration
             return registration
