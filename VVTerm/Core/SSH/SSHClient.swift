@@ -602,9 +602,15 @@ actor SSHClient {
     private func disconnectSSHSession(_ activeSession: SSHSession?) async {
         guard let activeSession else { return }
         do {
-            try await SSHClient.runWithTimeout(disconnectTimeout) {
-                await activeSession.disconnect()
-            }
+            try await SSHClient.runWithTimeout(
+                disconnectTimeout,
+                operation: {
+                    await activeSession.disconnect()
+                },
+                onTimeout: {
+                    activeSession.abort()
+                }
+            )
         } catch {
             logger.warning("Timed out while disconnecting SSH session; aborting socket")
             activeSession.abort()
@@ -1239,7 +1245,14 @@ actor SSHSession {
             }
             let freeResult = driver.free(session: session)
             if freeResult != 0, freeResult != LIBSSH2_ERROR_EAGAIN {
-                logger.debug("libssh2 session free returned \(freeResult)")
+                let rawError = driver.lastError(
+                    session: session,
+                    operation: .sessionFree,
+                    fallbackCode: freeResult
+                )
+                logger.debug(
+                    "libssh2 session free returned \(rawError.code) [message: \(rawError.message ?? "none", privacy: .public)]"
+                )
             }
             libssh2Session = nil
         }
@@ -1628,12 +1641,20 @@ actor SSHSession {
     private func closeAndFreeChannel(_ channel: OpaquePointer) {
         let closeResult = driver.closeChannel(channel)
         if closeResult != 0, closeResult != LIBSSH2_ERROR_EAGAIN {
-            logger.debug("libssh2 channel close returned \(closeResult)")
+            if let session = libssh2Session {
+                logChannelFailure(session: session, operation: .channelClose, fallbackCode: closeResult)
+            } else {
+                logger.debug("libssh2 channel close returned \(closeResult) [message: no active session]")
+            }
         }
 
         let freeResult = driver.freeChannel(channel)
         if freeResult != 0, freeResult != LIBSSH2_ERROR_EAGAIN {
-            logger.debug("libssh2 channel free returned \(freeResult)")
+            if let session = libssh2Session {
+                logChannelFailure(session: session, operation: .channelFree, fallbackCode: freeResult)
+            } else {
+                logger.debug("libssh2 channel free returned \(freeResult) [message: no active session]")
+            }
         }
     }
 
@@ -2014,6 +2035,7 @@ actor SSHSession {
         var offset = 0
 
         while remaining > 0 {
+            try Task.checkCancellation()
             let written = driver.writeChannel(
                 state.channel,
                 stream: 0,
@@ -2028,6 +2050,7 @@ actor SSHSession {
             } else if written == Int(LIBSSH2_ERROR_EAGAIN) {
                 // Would block - actually wait for socket to be ready
                 await waitForSocket()
+                try Task.checkCancellation()
             } else {
                 throw SSHError.socketError("Write failed: \(written)")
             }
@@ -2548,7 +2571,21 @@ actor SSHSession {
 
     private func closeSFTPSession() {
         guard let sftpSession else { return }
-        _ = driver.shutdownSFTPSession(sftpSession)
+        let shutdownResult = driver.shutdownSFTPSession(sftpSession)
+        if shutdownResult != 0, shutdownResult != LIBSSH2_ERROR_EAGAIN {
+            if let session = libssh2Session {
+                let rawError = driver.lastError(
+                    session: session,
+                    operation: .sftpShutdown,
+                    fallbackCode: shutdownResult
+                )
+                logger.debug(
+                    "libssh2 sftp shutdown returned \(rawError.code) [message: \(rawError.message ?? "none", privacy: .public)]"
+                )
+            } else {
+                logger.debug("libssh2 sftp shutdown returned \(shutdownResult) [message: no active session]")
+            }
+        }
         self.sftpSession = nil
     }
 

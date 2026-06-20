@@ -2799,34 +2799,42 @@ git commit -m "fix: await remote file disconnects on ios"
 
 Add a fake-driver or injectable-session test proving disconnect timeout triggers abort while teardown is still blocked.
 
-- [ ] **Step 2: Add RED shell write cancellation test**
+Status: not added in this slice. `SSHClient.disconnectSSHSession(_:)` is still a private actor helper without an injectable session seam; the production fix uses the existing `SSHClient.runWithTimeout(_:operation:onTimeout:)` hook that is already covered by `LibSSH2SessionLifecycleTests.testTimeoutAbortClosesSocketDuringBlockingHandshake`. Add a direct disconnect test when Core SSH grows an internal lifecycle helper seam instead of exposing one only for this case.
+
+- [x] **Step 2: Add RED shell write cancellation test**
 
 Add a test for repeated `LIBSSH2_ERROR_EAGAIN` write results that cancels the write task and expects cancellation instead of indefinite retry.
 
-- [ ] **Step 3: Run RED verification**
+- [x] **Step 3: Run RED verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests ENABLE_DEBUG_DYLIB=NO
 ```
 
-- [ ] **Step 4: Implement cancellation and timeout fixes**
+RED evidence: `LibSSH2SessionLifecycleTests.testShellWriteEAGAINLoopStopsWhenTaskIsCancelled` failed with `Expected cancelled shell write to throw CancellationError` before the write retry loop checked cancellation.
+
+- [x] **Step 4: Implement cancellation and timeout fixes**
 
 Use the existing timeout `onTimeout` hook or an equivalent structured boundary for disconnect abort. Add cancellation checks to channel write retry loops without changing successful write semantics.
 
-- [ ] **Step 5: Tighten teardown diagnostics or classify exemption**
+- [x] **Step 5: Tighten teardown diagnostics or classify exemption**
 
 Prefer raw `LibSSH2RawError` logging for close/free/shutdown failures where a session pointer is available. If the raw message cannot be queried safely, document the owner and invariant in the Progress Ledger.
 
-- [ ] **Step 6: Run focused verification**
+- [x] **Step 6: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/SSHErrorRetryableTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 7: API and boundary cleanup**
+Focused test evidence: `LibSSH2SessionLifecycleTests` passed 12 XCTest tests and `SSHErrorRetryableTests` passed 6 Swift Testing tests with the command above.
+
+- [x] **Step 7: API and boundary cleanup**
 
 Verify Core SSH remains the only low-level owner of libssh2 teardown, unsafe pointer lifetimes stay local, and cancellation is not surfaced as a user-facing authentication/network failure.
+
+Review note: no UI/application boundary changes were introduced; SSHClient/SSHSession remain the Core SSH lifecycle owners, raw C pointers stay inside `SSHSession`, and cancellation now leaves the write path as `CancellationError` rather than being translated to auth/network errors.
 
 - [ ] **Step 8: Request review and commit**
 

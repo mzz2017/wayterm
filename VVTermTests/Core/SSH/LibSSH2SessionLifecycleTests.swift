@@ -254,6 +254,46 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         )
     }
 
+    func testShellWriteEAGAINLoopStopsWhenTaskIsCancelled() async throws {
+        // Given a connected shell whose channel write keeps reporting EAGAIN.
+        // This reproduces lifecycle cancellation while libssh2 asks the caller
+        // to wait and retry instead of completing the write.
+        let bytes = Data("cancel-me".utf8)
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x22),
+            channelWriteDelayMicroseconds: 5_000,
+            channelWriteResults: Array(repeating: Int(LIBSSH2_ERROR_EAGAIN), count: 1_000)
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When the write task is cancelled while it is retrying EAGAIN.
+        try await session.connect()
+        let shell = try await session.startShell(cols: 80, rows: 24)
+        let writeTask = Task {
+            try await session.write(bytes, to: shell.id)
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        writeTask.cancel()
+
+        // Then the write exits as cancellation, not as a later successful write
+        // or a timeout caused by ignoring the cancellation request.
+        do {
+            try await SSHClient.runWithTimeout(.milliseconds(200)) {
+                try await writeTask.value
+            }
+            XCTFail("Expected cancelled shell write to throw CancellationError")
+        } catch is CancellationError {
+            // Expected cancellation behavior.
+        } catch {
+            XCTFail("Expected CancellationError, got \(error)")
+        }
+
+        await session.closeShell(shell.id)
+    }
+
     func testExecuteRetriesStartupEAGAINReadsStdoutAndClosesChannel() async throws {
         // Given an exec request whose process startup would block once, then
         // produces stdout and reaches EOF.
@@ -530,6 +570,8 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
     private let sftpSessionResult: OpaquePointer?
     private let sftpOpenResult: OpaquePointer?
     private let sftpLastErrorResult: UInt
+    private let sessionBlockDirectionsResult: Int32
+    private let channelWriteDelayMicroseconds: useconds_t
     private let lock = NSLock()
     private var closedSocketDescriptors: [Int32] = []
     private var observedSocketAbort = false
@@ -558,6 +600,8 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         sftpOpenResult: OpaquePointer? = nil,
         sftpReadDirectoryResults: [SFTPReadDirectoryResult] = [],
         sftpLastErrorResult: UInt = 0,
+        sessionBlockDirectionsResult: Int32 = 0,
+        channelWriteDelayMicroseconds: useconds_t = 0,
         execStartResults: [Int32] = [],
         channelReadResults: [ChannelReadResult] = [],
         channelEOFResults: [Bool] = [],
@@ -576,6 +620,8 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         self.sftpSessionResult = sftpSessionResult
         self.sftpOpenResult = sftpOpenResult
         self.sftpLastErrorResult = sftpLastErrorResult
+        self.sessionBlockDirectionsResult = sessionBlockDirectionsResult
+        self.channelWriteDelayMicroseconds = channelWriteDelayMicroseconds
         self.execStartResultQueue = execStartResults
         self.channelReadResultQueue = channelReadResults
         self.channelEOFResultQueue = channelEOFResults
@@ -864,6 +910,9 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         offset: Int,
         remaining: Int
     ) -> Int {
+        if channelWriteDelayMicroseconds > 0 {
+            usleep(channelWriteDelayMicroseconds)
+        }
         recordChannelEvent(.write(stream: stream, offset: offset, remaining: remaining))
         recordChannelWriteCall(
             ChannelWriteCall(stream: stream, bytes: bytes, offset: offset, remaining: remaining)
@@ -910,7 +959,7 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
     }
 
     nonisolated func sessionBlockDirections(session: OpaquePointer) -> Int32 {
-        0
+        sessionBlockDirectionsResult
     }
 
     nonisolated func initSFTPSession(session: OpaquePointer) -> OpaquePointer? {
