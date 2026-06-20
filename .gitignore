@@ -40,4 +40,5 @@ iOSInjectionProject/
 
 # Agent
 docs/superpowers/
+.codex/state/
 .worktrees/

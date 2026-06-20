@@ -223,6 +223,7 @@ xcodebuild test \
 ## Swift Lifecycle Rules
 
 - For Swift, SwiftUI, iOS, macOS, SSH/resource lifecycle, concurrency, teardown, reconnect, or Apple platform bugfix/review work, use the repo skill `$swift-apple-lifecycle`.
+- Before editing Swift or Swift test files, read `docs/engineering/swift-best-practices.md` in the current session and say so in the first work update. After reading it, run `python3 .codex/hooks/swift_lifecycle_guard.py --mark-best-practices-read`; the Codex hook resets this marker at session start and blocks Swift diffs without it.
 - SwiftUI `View`, `UIViewRepresentable`, `NSViewRepresentable`, and Coordinator must not be the sole owner of critical long-lived resources.
 - UI sends intent; the application layer owns lifecycle, teardown, reconnect, and retry orchestration.
 - Lifecycle-critical work such as disconnect, close, save, delete, sync, authentication, and cleanup must be awaited or tracked.

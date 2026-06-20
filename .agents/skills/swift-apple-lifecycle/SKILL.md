@@ -9,11 +9,11 @@ Use this skill to keep Swift and SwiftUI changes aligned with VVTerm's ownership
 
 ## References
 
-- Read `docs/engineering/swift-best-practices.md` before editing Swift code that touches lifecycle, concurrency, SwiftUI ownership, C/FFI, SSH/session/resource cleanup, reconnect, or authentication behavior.
 - Read `references/review-checklist.md` before the final response for Swift changes.
 
 ## Workflow
 
+0. Before editing Swift or Swift test files, read `docs/engineering/swift-best-practices.md`, say in the first work update that it was read, then run `python3 .codex/hooks/swift_lifecycle_guard.py --mark-best-practices-read`.
 1. Identify the stable owner of every long-lived resource touched by the change.
 2. Trace lifecycle intent from UI to application/infrastructure layers. UI should send intent; managers, actors, services, or stores should own orchestration.
 3. Check every close/disconnect/retry/reconnect/auth/save/delete path for awaitable or tracked critical work.

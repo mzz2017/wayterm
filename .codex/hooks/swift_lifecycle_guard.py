@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Warn about Swift lifecycle risk patterns in the current diff.
+"""Guard Swift edits with VVTerm lifecycle review prompts.
 
-This hook is intentionally non-blocking. It prints review prompts for patterns
-that often need human/agent judgment instead of trying to enforce architecture.
+Swift edits must happen after the agent has read
+docs/engineering/swift-best-practices.md. The read itself is a human/agent
+workflow action; this hook enforces the auditable marker that records it.
 """
 
 from __future__ import annotations
 
+import argparse
+import pathlib
 import re
 import subprocess
 import sys
@@ -23,6 +26,40 @@ def run_git(args: list[str]) -> str:
         return ""
 
 
+def repo_root() -> pathlib.Path:
+    root = run_git(["rev-parse", "--show-toplevel"]).strip()
+    return pathlib.Path(root) if root else pathlib.Path.cwd()
+
+
+STATE_DIR = repo_root() / ".codex" / "state"
+BEST_PRACTICES_MARKER = "swift-best-practices-read"
+
+
+def best_practices_marker_path() -> pathlib.Path:
+    return STATE_DIR / BEST_PRACTICES_MARKER
+
+
+def has_best_practices_marker() -> bool:
+    return best_practices_marker_path().exists()
+
+
+def mark_best_practices_read() -> int:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    best_practices_marker_path().write_text(
+        "docs/engineering/swift-best-practices.md\n",
+        encoding="utf-8",
+    )
+    return 0
+
+
+def reset_best_practices_marker() -> int:
+    try:
+        best_practices_marker_path().unlink()
+    except FileNotFoundError:
+        pass
+    return 0
+
+
 def swift_diff() -> str:
     unstaged = run_git(["diff", "--", "*.swift"])
     staged = run_git(["diff", "--cached", "--", "*.swift"])
@@ -37,10 +74,43 @@ def added_lines(diff: str) -> list[str]:
     ]
 
 
-def main() -> int:
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--mark-best-practices-read",
+        action="store_true",
+        help="Record that docs/engineering/swift-best-practices.md was read.",
+    )
+    parser.add_argument(
+        "--reset-best-practices-marker",
+        action="store_true",
+        help="Clear the Swift best-practices read marker for a new session.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    if args.mark_best_practices_read:
+        return mark_best_practices_read()
+    if args.reset_best_practices_marker:
+        return reset_best_practices_marker()
+
     diff = swift_diff()
     if not diff:
         return 0
+
+    if not has_best_practices_marker():
+        print("\nSwift best-practices guard:", file=sys.stderr)
+        print(
+            "- Swift files changed, but this session has not recorded reading docs/engineering/swift-best-practices.md.",
+            file=sys.stderr,
+        )
+        print(
+            "- Read the document, then run: python3 .codex/hooks/swift_lifecycle_guard.py --mark-best-practices-read",
+            file=sys.stderr,
+        )
+        return 1
 
     added = "\n".join(added_lines(diff))
     warnings: list[str] = []
