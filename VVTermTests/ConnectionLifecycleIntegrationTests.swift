@@ -2,6 +2,14 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These integration tests protect terminal connection lifecycle ordering across
+// app-level managers. They intentionally use real manager singletons but avoid
+// real network I/O; registered SSHClient instances are never connected. A
+// failure usually means a lifecycle invariant changed, such as stale shell
+// registration rejection, close/open ordering, or teardown completion semantics.
+// Update these tests only when the intended lifecycle contract changes.
+
 @Suite(.serialized)
 @MainActor
 struct ConnectionLifecycleIntegrationTests {
@@ -131,6 +139,41 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerCloseSessionAndWaitWaitsForShellTeardownAndUnregister() async {
+        await withCleanConnectionManager { manager in
+            let serverId = UUID()
+            let session = ConnectionSession(
+                serverId: serverId,
+                title: "Awaited Close",
+                connectionState: .connected
+            )
+            manager.sessions = [session]
+            manager.selectedSessionId = session.id
+            manager.connectedServerIds = [serverId]
+
+            manager.registerSSHClient(
+                SSHClient(),
+                shellId: UUID(),
+                for: session.id,
+                serverId: serverId,
+                skipTmuxLifecycle: true
+            )
+
+            var teardownFinished = false
+            manager.registerShellCancelHandler({ _ in
+                try? await Task.sleep(for: .milliseconds(50))
+                teardownFinished = true
+            }, for: session.id)
+
+            await manager.closeSessionAndWait(session, notingSessionEnd: false)
+
+            #expect(teardownFinished)
+            #expect(manager.shellId(for: session.id) == nil)
+            #expect(!manager.sessions.contains { $0.id == session.id })
+        }
+    }
+
+    @Test
     func tabManagerRejectsStaleRegistrationFromDifferentClient() async {
         await withCleanTabManager { manager in
             let serverId = UUID()
@@ -187,6 +230,37 @@ struct ConnectionLifecycleIntegrationTests {
             let nextClient = SSHClient()
             #expect(manager.tryBeginShellStart(for: paneId, client: nextClient))
             manager.finishShellStart(for: paneId, client: nextClient)
+        }
+    }
+
+    @Test
+    func tabManagerCloseTabAndWaitWaitsForPaneUnregister() async {
+        await withCleanTabManager { manager in
+            let serverId = UUID()
+            let tab = TerminalTab(serverId: serverId, title: "Awaited Tab")
+            manager.tabsByServer[serverId] = [tab]
+            manager.selectedTabByServer[serverId] = tab.id
+            manager.connectedServerIds = [serverId]
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: serverId
+            )
+
+            manager.registerSSHClient(
+                SSHClient(),
+                shellId: UUID(),
+                for: tab.rootPaneId,
+                serverId: serverId,
+                skipTmuxLifecycle: true
+            )
+
+            await manager.closeTabAndWait(tab)
+
+            #expect(manager.getSSHClient(for: tab.rootPaneId) == nil)
+            #expect(manager.shellId(for: tab.rootPaneId) == nil)
+            #expect(manager.tabs(for: serverId).isEmpty)
+            #expect(manager.paneStates[tab.rootPaneId] == nil)
         }
     }
 

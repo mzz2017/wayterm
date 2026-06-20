@@ -434,6 +434,17 @@ final class ConnectionSessionManager: ObservableObject {
         trackServerTeardownTask(teardownTask, for: closeResult.serverId)
     }
 
+    /// Closes a terminal session and waits for shell cancellation and SSH teardown to finish.
+    func closeSessionAndWait(_ session: ConnectionSession, notingSessionEnd: Bool = true) async {
+        await waitForServerTeardownTasks(session.serverId)
+        guard let closeResult = closeSessionUI(session, notingSessionEnd: notingSessionEnd) else { return }
+        await unregisterSSHClient(
+            for: closeResult.sessionId,
+            killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
+        )
+        await closeResult.shellTeardownTask?.value
+    }
+
     private func closeSessionUI(_ session: ConnectionSession, notingSessionEnd: Bool) -> SessionCloseResult? {
         let sessionId = session.id
         let title = session.title
