@@ -1904,7 +1904,7 @@ Expected scan result: `LibSSH2SessionDriver.swift` owns the Task 22 shell channe
 
 Request code review for Task 22 before committing.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add VVTerm/Core/SSH/LibSSH2SessionDriver.swift \
@@ -2006,7 +2006,7 @@ git diff --check
 
 Verify RemoteFiles application/UI code still depends on `SSHSFTPAdapter` or leases, not raw `SSHClient`; `SSHSession` remains the owner of cached SFTP state; `LibSSH2SessionDriver` does not store SFTP pointers; path and buffer unsafe pointers stay inside non-escaping driver calls. Request code review before committing.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add VVTerm/Core/SSH/LibSSH2SessionDriver.swift VVTerm/Core/SSH/SSHClient.swift VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift VVTermTests/Features/RemoteFiles docs/refactor-swift-best-practice.md
@@ -2049,6 +2049,402 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 ```bash
 git add VVTerm/Core/SSH/LibSSH2SessionDriver.swift VVTerm/Core/SSH/SSHClient.swift VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift docs/refactor-swift-best-practice.md
 git commit -m "refactor: complete core SSH FFI boundary sweep"
+```
+
+## Task 26: Whole-Plan Closure Audit and Test Context Tightening
+
+**Files:**
+- Modify: `VVTermTests/ConnectionSessionManagerOpenTests.swift`
+- Modify: `VVTermTests/ServerManagerBootstrapTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Test-context rule in `docs/engineering/swift-best-practices.md`
+  - Task 25 final Core SSH FFI scan classification.
+- Produces:
+  - Clear Given/When/Then intent and assertion messages for the remaining weak lifecycle tests.
+  - A plan ledger entry that records the post-Task-25 whole-plan audit findings and confirms the next executable task.
+
+- [ ] **Step 1: Tighten lifecycle test intent**
+
+In `ConnectionSessionManagerOpenTests.testDisconnectServerAndWaitClearsSSHRegistrationBeforeReturning`, add Given/When/Then comments and assertion messages for the lease/session/server state assertions so a future failure distinguishes lifecycle regression from a changed API contract.
+
+In `ServerManagerBootstrapTests.knownHostRemovalCandidatesUsePostDeleteServerState`, add Given/When/Then comments and an assertion message explaining that known-host removal must use post-delete server state so shared hosts are preserved.
+
+- [ ] **Step 2: Run focused test-context verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionSessionManagerOpenTests/testDisconnectServerAndWaitClearsSSHRegistrationBeforeReturning -only-testing:VVTermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 3: Run plan closure audit commands**
+
+```bash
+rg -n "^- \\[ \\]" docs/refactor-swift-best-practice.md
+rg -n "TO[D]O|T[B]D|W[I]P" docs/refactor-swift-best-practice.md
+rg -n "libssh2_" VVTerm/Core/SSH/SSHClient.swift VVTerm/Core/SSH/LibSSH2SessionDriver.swift
+```
+
+Expected results: the first unchecked step is Task 26 Step 1; the stub-language scan has no output; no direct lowercase `libssh2_` calls remain in `SSHClient.swift`; direct lowercase `libssh2_` calls remain confined to `LibSSH2SessionDriver.swift`.
+
+- [ ] **Step 4: API and boundary cleanup**
+
+Verify this task changes only test explanatory context and plan bookkeeping. Do not change production lifecycle behavior in this task.
+
+- [ ] **Step 5: Request review and commit**
+
+```bash
+git add VVTermTests/ConnectionSessionManagerOpenTests.swift VVTermTests/ServerManagerBootstrapTests.swift docs/refactor-swift-best-practice.md
+git commit -m "test: tighten lifecycle test context"
+```
+
+## Task 27: RemoteConnectionLease Close Rejects Queued Work
+
+**Files:**
+- Modify: `VVTerm/Core/SSH/RemoteConnectionLease.swift`
+- Test: `VVTermTests/Core/SSH/RemoteConnectionLeaseTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `RemoteConnectionLease.withExclusiveClient(_:)`
+  - `RemoteConnectionLease.close()`
+- Produces:
+  - Close semantics where operations already in flight may finish, but queued operations that have not started are canceled once close begins.
+
+- [ ] **Step 1: Add RED queued-close test**
+
+Add `closeRejectsQueuedOperationsAfterCloseBegins` to `RemoteConnectionLeaseTests`. Arrange one exclusive operation that blocks, start a second operation that queues, start `lease.close()`, release the first operation, then assert the second operation throws `CancellationError` and does not run its body. For an owned lease, also assert disconnect happens after the first operation finishes.
+
+- [ ] **Step 2: Run RED test**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteConnectionLeaseTests/closeRejectsQueuedOperationsAfterCloseBegins ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected before implementation: FAIL because the queued operation resumes and runs after close begins, or because close waits for a queued operation that should have been canceled.
+
+- [ ] **Step 3: Implement queued-operation cancellation**
+
+Change `RemoteConnectionLeaseState` so close marks the lease closed, waits for the active operation, cancels queued waiters that have not started, and then disconnects owned clients exactly once. Use throwing continuations or an equivalent explicit result so a resumed queued operation observes `CancellationError` and does not leave `isOperationInFlight` stuck.
+
+- [ ] **Step 4: Run focused lease verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteConnectionLeaseTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Verify the lease API remains small: `close()` and `withExclusiveClient(_:)` stay as the public boundary, mutable queue state remains actor-owned, and callers do not need to know whether a lease is owned or borrowed to avoid running after close.
+
+- [ ] **Step 6: Request review and commit**
+
+```bash
+git add VVTerm/Core/SSH/RemoteConnectionLease.swift VVTermTests/Core/SSH/RemoteConnectionLeaseTests.swift docs/refactor-swift-best-practice.md
+git commit -m "fix: reject queued remote lease work after close"
+```
+
+## Task 28: Server and Workspace Delete Await Runtime Teardown
+
+**Files:**
+- Modify: `VVTerm/Features/Servers/Application/ServerManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Test: `VVTermTests/ServerManagerBootstrapTests.swift`
+- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `ConnectionSessionManager.disconnectServerAndWait(_:)`
+  - `TerminalTabManager.disconnectServerAndWait(_:)`
+  - `RemoteFileBrowserStore.disconnect(serverId:)`
+  - `ServerStatsCollector.stopCollectingAndWait()`
+- Produces:
+  - An application-layer deletion lifecycle hook so server/workspace deletion can await live terminal teardown before deleting credentials and metadata.
+
+- [ ] **Step 1: Add RED deletion ordering tests**
+
+Add tests proving `ServerManager.deleteServer(_:)` invokes an injected teardown hook before keychain credential deletion and local metadata removal. Add a workspace deletion test proving each workspace server is torn down before the workspace is removed.
+
+- [ ] **Step 2: Run RED tests**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected before implementation: FAIL because `ServerManager.deleteServer(_:)` has no injected awaitable teardown boundary.
+
+- [ ] **Step 3: Add deletion teardown boundary**
+
+Add a narrow `ServerDeletionTeardown` closure or small protocol to `ServerManager` with a default production implementation that awaits terminal session and pane disconnect for the server. Keep RemoteFiles and Stats teardown wired at the app/screen boundary if their owning stores are view-owned; do not make `ServerManager` own view-scoped stores.
+
+- [ ] **Step 4: Wire UI deletion intents through the boundary**
+
+Keep UI button tasks as intent wrappers only. Server deletion must await the application-layer teardown boundary before credentials are removed. Workspace deletion must use the same path for each contained server.
+
+- [ ] **Step 5: Run focused deletion verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 6: API and boundary cleanup**
+
+Verify the Servers feature sends deletion intent and does not directly orchestrate TerminalSessions internals from UI. Verify teardown is awaitable, test-injectable, and idempotent.
+
+- [ ] **Step 7: Request review and commit**
+
+```bash
+git add VVTerm/Features/Servers/Application/ServerManager.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/ServerManagerBootstrapTests.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift docs/refactor-swift-best-practice.md
+git commit -m "fix: await server deletion teardown"
+```
+
+## Task 29: App Termination and LRU Eviction Await Cleanup
+
+**Files:**
+- Modify: `VVTerm/App/VVTermApp.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `VVTermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `closeSessionAndWait(_:)`
+  - `disconnectServerAndWait(_:)`
+  - `scheduleSSHUnregister(for:)`
+  - `trackServerTeardownTask(_:for:)`
+- Produces:
+  - Awaitable all-terminal teardown for app termination.
+  - LRU terminal eviction cleanup tracked per server so same-server reopen waits for unregister/disconnect.
+
+- [ ] **Step 1: Add RED app termination teardown test**
+
+Add a manager-level test proving a new `disconnectAllAndWait()` waits for each session cleanup task before returning. Include a pane equivalent for `TerminalTabManager` if the manager has open panes.
+
+- [ ] **Step 2: Add RED LRU eviction cleanup test**
+
+Add a test that forces terminal-surface eviction, injects a registered SSH client, and asserts the evicted server's teardown task is tracked so an immediate reopen waits for unregister completion.
+
+- [ ] **Step 3: Run RED tests**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected before implementation: FAIL because `disconnectAll()` is synchronous/non-awaiting and LRU eviction discards returned unregister tasks.
+
+- [ ] **Step 4: Implement awaitable termination APIs**
+
+Add `disconnectAllAndWait()` to session and tab managers. Update macOS and iOS app termination paths to wait for session and pane cleanup, with the existing timeout preserved as an outer guard rather than as proof that cleanup completed.
+
+- [ ] **Step 5: Track LRU eviction cleanup**
+
+When a terminal surface is evicted, route the returned unregister task through the same server teardown tracking used by stale shell cleanup and managed tmux cleanup. Ensure shell handler cancellation is either awaited or explicitly part of the tracked cleanup task.
+
+- [ ] **Step 6: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 7: API and boundary cleanup**
+
+Verify app delegates call application-layer teardown APIs only; no SwiftUI or app delegate code manually unregisters shell/client resources. Verify no cleanup task handles are dropped in LRU eviction.
+
+- [ ] **Step 8: Request review and commit**
+
+```bash
+git add VVTerm/App/VVTermApp.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift VVTermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift docs/refactor-swift-best-practice.md
+git commit -m "fix: await terminal cleanup on termination"
+```
+
+## Task 30: RemoteFiles and Stats Lease Provider Boundaries
+
+**Files:**
+- Modify: `VVTerm/Core/SSH/RemoteConnectionLease.swift`
+- Modify: `VVTerm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift`
+- Modify: `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
+- Modify: `VVTerm/Features/Stats/Application/ServerStatsCollector.swift`
+- Modify: `VVTerm/App/VVTermApp.swift`
+- Test: `VVTermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift`
+- Test: `VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `RemoteConnectionLease`
+  - `RemoteCommandExecuting`
+  - existing app composition lease providers.
+- Produces:
+  - A named `RemoteConnectionLeaseProviding` boundary or equivalent closure type injected from composition roots.
+  - RemoteFiles defaults that do not reach into `ConnectionSessionManager.shared` or `TerminalTabManager.shared`.
+  - Stats owned-client creation moved behind an injected factory/provider.
+
+- [ ] **Step 1: Add RED RemoteFiles default-boundary test**
+
+Add a test proving `SSHSFTPAdapter` without an injected borrowed provider does not consult TerminalSessions singletons. The adapter should use only injected dependencies and create owned infrastructure clients when no borrowed lease is provided.
+
+- [ ] **Step 2: Add RED Stats owned-factory boundary test**
+
+Add a `ServerStatsCollectorLifecycleTests` case that uses a named Stats owned-connection factory boundary rather than `ServerStatsCollector.makeConnection`. The test should fail to compile until the production code exposes an injectable factory for owned stats connections outside Stats Application, proving default raw `SSHClient()` creation has moved out of `ServerStatsCollector`.
+
+- [ ] **Step 3: Run RED tests**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected before implementation: FAIL because RemoteFiles still has hidden TerminalSessions singleton defaults and Stats does not yet expose the owned-connection factory boundary needed to move default raw `SSHClient()` creation out of Stats Application.
+
+- [ ] **Step 4: Introduce explicit lease provider boundary**
+
+Add the narrow provider type in Core SSH or the consuming feature boundary. Inject the app-level provider from `VVTermApp.makeRemoteFileBrowserStore()` and Stats screen composition. Remove RemoteFiles infrastructure default access to TerminalSessions singletons.
+
+- [ ] **Step 5: Move Stats raw SSH fallback behind factory**
+
+Make `ServerStatsCollector` depend on an injected connection factory/provider for owned leases. Keep the default factory in infrastructure/composition-level code, not in Stats Application policy, and keep collection code operating on `RemoteCommandExecuting`. Remove the Stats Application default that directly constructs `SSHClient()`, and move any SSH-specific `SSHConnectionOperationService` setup behind the injected owned-connection boundary.
+
+- [ ] **Step 6: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 7: API and boundary cleanup**
+
+Verify RemoteFiles Application/UI depends on RemoteFiles abstractions, not TerminalSessions singletons. Verify Stats Application does not cast `RemoteConnectionLeaseClient` to `SSHClient`. Verify production defaults live at composition or infrastructure boundaries.
+
+- [ ] **Step 8: Request review and commit**
+
+```bash
+git add VVTerm/Core/SSH/RemoteConnectionLease.swift VVTerm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift VVTerm/Features/Stats/Application/ServerStatsCollector.swift VVTerm/App/VVTermApp.swift VVTermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift docs/refactor-swift-best-practice.md
+git commit -m "refactor: inject remote lease providers"
+```
+
+## Task 31: Terminal Runtime Ownership Final Cutover
+
+**Files:**
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `VVTermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `TerminalConnectionRuntime`
+  - `TerminalConnectionRegistry`
+  - existing generation guards for shell registration.
+- Produces:
+  - Runtime/client factory ownership centralized through `TerminalConnectionRuntime` or a single runtime factory.
+  - Stored runner tasks whose cancellation/finish ordering is explicit and tested.
+
+- [ ] **Step 1: Add RED stale-runner callback test**
+
+Add a test that starts a runtime runner, closes or reconnects the same entity before the runner finishes, and asserts late callbacks cannot update state or register a shell for the old generation.
+
+- [ ] **Step 2: Add RED runtime factory ownership test**
+
+Add a test proving session and pane managers can use an injected runtime/client factory rather than constructing raw `SSHClient()` directly in manager-local runtime state.
+
+- [ ] **Step 3: Run RED tests**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
+```
+
+- [ ] **Step 4: Move raw client construction behind runtime factory**
+
+Replace manager-local `SSHClient()` construction with an injected runtime/client factory. Keep runtime identity, shell id, shell task, and cleanup state under one owner per session or pane.
+
+- [ ] **Step 5: Make runner cancellation/finish ordering explicit**
+
+Ensure canceling a stored runner task either awaits its finish path or routes all late callbacks through generation checks that cannot mutate closed/replaced runtime state. Keep teardown idempotent.
+
+- [ ] **Step 6: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests -only-testing:VVTermTests/RemoteTerminalBootstrapTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 7: API and boundary cleanup**
+
+Verify TerminalSessions Application has one runtime owner per terminal entity; `sharedStatsLease`, `remoteConnectionLease`, resize, retry, and close decisions use registry/runtime state rather than stale domain snapshots.
+
+- [ ] **Step 8: Request review and commit**
+
+```bash
+git add VVTerm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift VVTermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift docs/refactor-swift-best-practice.md
+git commit -m "refactor: centralize terminal runtime ownership"
+```
+
+## Task 32: TerminalConnectionRunner Surface Protocol Boundary
+
+**Files:**
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalSurfaceRegistry.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Test: `VVTermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift`
+- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Task 31 centralized runtime ownership.
+  - Existing terminal surface attach/detach behavior.
+- Produces:
+  - A small terminal surface I/O protocol owned by TerminalSessions Application.
+  - `TerminalConnectionRunner` no longer depends on concrete `GhosttyTerminalView`.
+
+- [ ] **Step 1: Add RED runner surface-boundary tests**
+
+Add tests that run `TerminalConnectionRunner` with a fake terminal surface and assert it reads terminal size, writes stream data, and reports process exit without requiring `GhosttyTerminalView`.
+
+- [ ] **Step 2: Run RED tests**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSurfaceTeardownTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected before implementation: FAIL because `TerminalConnectionRunner.run` currently requires `GhosttyTerminalView`.
+
+- [ ] **Step 3: Introduce terminal surface I/O protocol**
+
+Define a protocol with only the operations the runner needs: terminal size, stream data handling, external exit notification, and identity checks required by generation guards. Adapt `GhosttyTerminalView` at the boundary rather than passing it through the runner API.
+
+- [ ] **Step 4: Update managers to pass the protocol boundary**
+
+`ConnectionSessionManager` and `TerminalTabManager` should attach concrete surfaces at the UI/application boundary and pass the protocol abstraction into the runner. SwiftUI representables remain surface owners only, not SSH lifecycle owners.
+
+- [ ] **Step 5: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSurfaceTeardownTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/RemoteTerminalBootstrapTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 6: API and boundary cleanup**
+
+Verify `TerminalConnectionRunner.swift` imports no UI-specific terminal type and that UI lifecycle callbacks still only attach/detach surfaces or send manager intent.
+
+- [ ] **Step 7: Request review and commit**
+
+```bash
+git add VVTerm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift VVTerm/Features/TerminalSessions/Application/TerminalSurfaceRegistry.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift docs/refactor-swift-best-practice.md
+git commit -m "refactor: decouple terminal runner from UI surface"
 ```
 
 ## Progress Ledger
@@ -2105,11 +2501,13 @@ git commit -m "refactor: complete core SSH FFI boundary sweep"
 - 2026-06-21: Task 25 final Core SSH FFI scan completed. Direct `libssh2_` calls are confined to `LibSSH2SessionDriver.swift`; `SSHClient.swift` has no remaining direct `libssh2_` function calls. Remaining allowed low-level hits are: `LibSSH2Runtime` process-global init `NSLock`; `LibSSH2SessionDriver` socket/address, auth, channel, SFTP, keepalive, and last-error pointer lifetimes; `KnownHostsManager` synchronous compatibility-facade lock; `SSHClientAbortState` and `AtomicSocket` emergency socket-abort locks; keyboard-interactive callback context `UnsafePointer` / `UnsafeMutablePointer` / `nonisolated(unsafe)` boundaries owned by `SSHSession`; `SSHSession.downloadFile` local Swift buffer-to-`Data` copy after driver SFTP reads; and `fdSet` local `fd_set` bit mutation for C `select` compatibility.
 - 2026-06-21: Task 25 final verification completed. `rg -n "libssh2_|withUnsafe|UnsafeMutable|UnsafePointer|NSLock|nonisolated\\(unsafe\\)" VVTerm/Core/SSH -g '*.swift'` produced only the classified Core SSH low-level boundaries; `git diff --check` passed; the documented focused suite passed 11 XCTest tests plus 15 Swift Testing tests.
 - 2026-06-21: Task 25 review completed. Reviewer found no code-level keepalive issue; the only Important finding was the missing classification for the two `SSHClient.swift` `withUnsafe` hits, which is now documented above.
-- Next task: Whole-plan review and any remaining non-Core-SSH lifecycle gaps.
+- 2026-06-21: Post-Task-25 plan consistency audit reconciled stale commit checkboxes for Task 22 and Task 24 against existing commits `cd210e1` and `3590af0`; no code changed in this reconciliation.
+- 2026-06-21: Post-Task-25 whole-plan fan-out audit completed. Remaining non-Core lifecycle gaps are split into executable Tasks 26 through 32: test-context tightening, remote lease close semantics, server/workspace delete teardown, app termination and LRU eviction cleanup, RemoteFiles/Stats lease provider boundaries, centralized terminal runtime ownership, and TerminalConnectionRunner surface protocol decoupling.
+- Next task: Task 26.
 
 ## Self-Review
 
 - Spec coverage: This plan covers stable owners, UI intent boundaries, explicit lifecycle state, awaitable teardown, C/FFI boundaries, typed errors, cancellation, tests, logging, and commit granularity.
-- Placeholder scan: This file avoids unresolved placeholder language and vague implementation instructions.
+- Plan hygiene scan: This file avoids unresolved stub language and vague implementation instructions.
 - Type consistency: `TerminalEntityID`, `TerminalEntityConnectionState`, `TerminalConnectionRuntime`, `TerminalConnectionRegistry`, `TerminalSurfaceRegistry`, `RemoteCommandExecuting`, and `RemoteConnectionLease` are defined before later tasks consume them.
-- Scope check: The plan is large but phased. Task 1 through Task 8 address the current SSH tab/pane lifecycle bug class before broader Core SSH and cross-feature cleanup.
+- Scope check: The plan is large but phased. Tasks 1 through 25 completed the initial terminal lifecycle, RemoteFiles/Stats lease, known-host, and Core SSH FFI waves; Tasks 26 through 32 now cover the remaining non-Core lifecycle and boundary gaps found by the post-Task-25 audit.
