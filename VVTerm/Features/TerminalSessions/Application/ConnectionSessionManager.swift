@@ -61,9 +61,12 @@ final class ConnectionSessionManager: ObservableObject {
 
     @Published var sessions: [ConnectionSession] = [] {
         didSet {
-            LiveActivityManager.shared.refresh(with: sessions)
+            liveActivityRefresh(activeSessions)
             schedulePersist()
         }
+    }
+    var liveActivityRefresh: @MainActor ([ConnectionSession]) -> Void = {
+        LiveActivityManager.shared.refresh(with: $0)
     }
     @Published var selectedSessionId: UUID? {
         didSet {
@@ -381,13 +384,15 @@ final class ConnectionSessionManager: ObservableObject {
     func updateSessionState(_ sessionId: UUID, to state: ConnectionState) {
         guard let index = indexOfSession(sessionId) else { return }
 
-        sessions[index].connectionState = state
-        let serverId = sessions[index].serverId
+        var updatedSession = sessions[index]
+        updatedSession.connectionState = state
+        let serverId = updatedSession.serverId
         terminalConnectionRegistry.updateState(
             TerminalEntityConnectionState(connectionState: state),
             for: .session(sessionId),
             serverId: serverId
         )
+        sessions[index] = updatedSession
         connectedServerIds = activeServerIds
 
         switch state {
@@ -2087,6 +2092,7 @@ extension ConnectionSessionManager {
 
         let terminals = terminalSurfaceRegistry.removeAll(cleanup: false)
         isRestoring = true
+        liveActivityRefresh = { LiveActivityManager.shared.refresh(with: $0) }
         sessions = []
         selectedSessionId = nil
         connectedServerIds = []

@@ -252,6 +252,36 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerRefreshesLiveActivityWithRegistryActiveSessionsOnly() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let staleDomainSession = ConnectionSession(
+                serverId: server.id,
+                title: "Stale Domain Connected",
+                connectionState: .connected
+            )
+            var refreshedSessionIds: [[UUID]] = []
+            manager.liveActivityRefresh = { sessions in
+                refreshedSessionIds.append(sessions.map(\.id))
+            }
+
+            manager.sessions = [staleDomainSession]
+
+            #expect(
+                refreshedSessionIds.last == [],
+                "Live Activity refreshes must ignore stale domain connected snapshots without registry runtime."
+            )
+
+            manager.updateSessionState(staleDomainSession.id, to: .connected)
+
+            #expect(
+                refreshedSessionIds.last == [staleDomainSession.id],
+                "Live Activity refreshes should include the session after the registry records streaming runtime."
+            )
+        }
+    }
+
+    @Test
     func tabManagerActiveServersComeFromRegistryNotDomainPaneState() async {
         await withCleanTabManager { manager in
             let server = makeServer()
