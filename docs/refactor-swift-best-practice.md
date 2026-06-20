@@ -2615,8 +2615,281 @@ git add VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.sw
 git commit -m "fix: clear completed teardown waits synchronously"
 ```
 
+## Task 36: Await Terminal Runner Finish on Close
+
+**Files:**
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `VVTermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `closeSessionAndWait(_:)`
+  - `TerminalTabManager.closePaneAndWait(_:)`
+  - `TerminalConnectionRuntime.cancelRunner()`
+  - `TerminalConnectionRuntime.close()`
+  - manager-owned runner task storage.
+- Produces:
+  - Awaitable close paths that do not return until the stored runner task and its main-actor finish path have completed or been explicitly classified as impossible to await.
+  - A corrected Progress Ledger statement for Task 31: any remaining manager/runtime bridge state must be named and tested rather than claimed gone.
+
+- [ ] **Step 1: Add RED runner-close ordering tests**
+
+Add tests proving `closeSessionAndWait(_:)` and `closePaneAndWait(_:)` wait for a delayed production runner cleanup path before returning. The test should fail because current close paths cancel/drop the stored runner task rather than awaiting its completion.
+
+- [ ] **Step 2: Run RED verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalConnectionRuntimeTests ENABLE_DEBUG_DYLIB=NO
+```
+
+- [ ] **Step 3: Make runner cancellation awaitable**
+
+Move runner-task cancellation/finish ordering behind the runtime owner or expose an explicit awaitable manager path. Any nested main-actor cleanup scheduled from a runner `defer` must complete before close-and-wait reports completion.
+
+- [ ] **Step 4: Reconcile runtime ownership ledger**
+
+Update Task 31 ledger wording so it does not overclaim that managers no longer own raw SSH client, shell id, or runner task bridge state unless the code now proves that. Remaining bridge state must be documented as a temporary boundary with an invariant and follow-up task.
+
+- [ ] **Step 5: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalConnectionRuntimeTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 6: API and boundary cleanup**
+
+Verify close/reconnect APIs name side effects clearly, no stored runner task is dropped before its finish path is observed, and same-server reopen waits for prior runner teardown through existing server teardown gates.
+
+- [ ] **Step 7: Request review and commit**
+
+```bash
+git add VVTerm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift VVTermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift docs/refactor-swift-best-practice.md
+git commit -m "fix: await terminal runner finish on close"
+```
+
+## Task 37: Move Terminal Reconnect Orchestration Out of SwiftUI
+
+**Files:**
+- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Modify: `VVTerm/App/iOS/iOSContentView.swift`
+- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `VVTermTests/IOSTerminalViewPolicyTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `TerminalAutoReconnectPolicy`
+  - `TerminalManualReconnectPolicy`
+  - `handleConnectWatchdogTimeout(...)`
+  - known-host reset APIs
+  - Mosh install/retry APIs.
+- Produces:
+  - SwiftUI terminal containers send one lifecycle intent for foreground/visibility/retry/retrust/install events.
+  - Application-layer coordinators own credential loading, reconnect policy execution, watchdog timing, known-host reset, Mosh install sequencing, and retry state.
+
+- [ ] **Step 1: Add RED UI-intent boundary tests**
+
+Add tests that prove root and split-pane reconnect/watchdog decisions can run from an application-layer API without constructing SwiftUI views. Include iOS foreground resume policy as a pure or manager-owned decision test.
+
+- [ ] **Step 2: Move root-session reconnect orchestration into Application**
+
+Extract root terminal reconnect/watchdog/retrust/install sequencing from `TerminalContainerView` into `ConnectionSessionManager` or a narrow application coordinator. The view should call intent methods and render state only.
+
+- [ ] **Step 3: Move split-pane reconnect orchestration into Application**
+
+Apply the same boundary to `TerminalView` and `TerminalTabManager`.
+
+- [ ] **Step 4: Move iOS foreground reconnect orchestration into Application**
+
+`iOSContentView` should not decide whether to reconnect by combining scene phase, selected session, reconnect tokens, and terminal visibility. It should send foreground/selection intent to an application-layer API.
+
+- [ ] **Step 5: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/IOSTerminalViewPolicyTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 6: API and boundary cleanup**
+
+Verify SwiftUI lifecycle callbacks only attach/detach surfaces or send intent, and that application APIs expose clear side-effectful names.
+
+- [ ] **Step 7: Request review and commit**
+
+```bash
+git add VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTerm/App/iOS/iOSContentView.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift VVTermTests/IOSTerminalViewPolicyTests.swift docs/refactor-swift-best-practice.md
+git commit -m "refactor: move terminal reconnect orchestration to application"
+```
+
+## Task 38: Await RemoteFiles Disconnect from iOS Server Flows
+
+**Files:**
+- Modify: `VVTerm/App/iOS/iOSContentView.swift`
+- Modify: `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
+- Test: `VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `RemoteFileBrowserStore.disconnect(serverId:)`
+  - iOS active-connection disconnect and server close flows.
+- Produces:
+  - iOS server/session disconnect flows either await returned RemoteFiles teardown tasks or the store internally tracks pending disconnects so later opens wait.
+
+- [ ] **Step 1: Add RED disconnect tracking test**
+
+Add a RemoteFiles store test proving disconnect work is trackable/awaitable and that a later same-server operation waits for pending disconnect when the caller cannot await immediately.
+
+- [ ] **Step 2: Run RED verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
+```
+
+- [ ] **Step 3: Await or track iOS RemoteFiles disconnect**
+
+Prefer awaiting returned disconnect tasks in iOS flows that already run inside async `Task`s. If a call site cannot await, move pending-disconnect tracking into the store and make later operations wait.
+
+- [ ] **Step 4: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Verify RemoteFiles teardown is not dropped by iOS composition and no UI code directly closes SFTP resources.
+
+- [ ] **Step 6: Request review and commit**
+
+```bash
+git add VVTerm/App/iOS/iOSContentView.swift VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift docs/refactor-swift-best-practice.md
+git commit -m "fix: await remote file disconnects on ios"
+```
+
+## Task 39: Tighten Core SSH Cancellation and Teardown Diagnostics
+
+**Files:**
+- Modify: `VVTerm/Core/SSH/SSHClient.swift`
+- Modify: `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
+- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `SSHClient.runWithTimeout(_:operation:onTimeout:)`
+  - `SSHSession.disconnect()`
+  - channel write retry loops
+  - channel/SFTP teardown driver APIs.
+- Produces:
+  - Disconnect timeout abort happens from the timeout branch, not only after the timed-out operation returns.
+  - Shell channel write retry loops check cancellation.
+  - Close/free/shutdown failures either log raw driver operation/code/message consistently or are classified as accepted teardown diagnostics.
+
+- [ ] **Step 1: Add RED disconnect timeout abort test**
+
+Add a fake-driver or injectable-session test proving disconnect timeout triggers abort while teardown is still blocked.
+
+- [ ] **Step 2: Add RED shell write cancellation test**
+
+Add a test for repeated `LIBSSH2_ERROR_EAGAIN` write results that cancels the write task and expects cancellation instead of indefinite retry.
+
+- [ ] **Step 3: Run RED verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests ENABLE_DEBUG_DYLIB=NO
+```
+
+- [ ] **Step 4: Implement cancellation and timeout fixes**
+
+Use the existing timeout `onTimeout` hook or an equivalent structured boundary for disconnect abort. Add cancellation checks to channel write retry loops without changing successful write semantics.
+
+- [ ] **Step 5: Tighten teardown diagnostics or classify exemption**
+
+Prefer raw `LibSSH2RawError` logging for close/free/shutdown failures where a session pointer is available. If the raw message cannot be queried safely, document the owner and invariant in the Progress Ledger.
+
+- [ ] **Step 6: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/SSHErrorRetryableTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 7: API and boundary cleanup**
+
+Verify Core SSH remains the only low-level owner of libssh2 teardown, unsafe pointer lifetimes stay local, and cancellation is not surfaced as a user-facing authentication/network failure.
+
+- [ ] **Step 8: Request review and commit**
+
+```bash
+git add VVTerm/Core/SSH/SSHClient.swift VVTerm/Core/SSH/LibSSH2SessionDriver.swift VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift docs/refactor-swift-best-practice.md
+git commit -m "fix: tighten ssh teardown cancellation"
+```
+
+## Task 40: Cross-Feature Lifecycle Ownership Sweep
+
+**Files:**
+- Modify: `VVTerm/Features/Servers/Application/ServerManager.swift`
+- Modify: `VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift`
+- Modify: `VVTerm/App/VVTermApp.swift`
+- Modify: `VVTerm/Core/Sync/CloudKitSyncCoordinator.swift`
+- Modify: `VVTerm/Features/VoiceInput/Application/*` or create application owner if needed.
+- Modify: `VVTerm/Features/Settings/UI/AboutView.swift`
+- Modify: `VVTerm/Features/Store/UI/ProUpgradeSheet.swift`
+- Test: targeted tests for each touched feature.
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Server metadata and Keychain save/delete APIs.
+  - CloudKit foreground/notification/settings sync paths.
+  - Voice model download/cancel APIs.
+  - AppKit window presentation helpers.
+- Produces:
+  - Server edit save is one application-layer operation that keeps metadata and credentials consistent.
+  - Destructive server/workspace/environment UI actions report or track lifecycle task results.
+  - Sync work is serialized/tracked by an app/application coordinator.
+  - Voice model downloads are owned by an application/service object, not a leaf settings view.
+  - AppKit singleton windows live in Application-style managers, not UI views.
+
+- [ ] **Step 1: Split this sweep into reviewable sub-tasks**
+
+Before editing, break this broad sweep into smaller Tasks if more than one feature requires production changes. Each sub-task must have its own RED/GREEN tests and commit boundary.
+
+- [ ] **Step 2: Run boundary scans**
+
+```bash
+rg -n "try\\?|Task \\{|Task\\.detached|URLSession|NSWindow|save|delete|sync" VVTerm/App VVTerm/Core VVTerm/Features -g '*.swift'
+```
+
+- [ ] **Step 3: Implement the first selected cross-feature sub-task with TDD**
+
+Start with the highest-risk lifecycle-critical operation found by the scan, likely Server edit credential consistency or sync task tracking.
+
+- [ ] **Step 4: Run focused verification**
+
+Run feature-specific tests plus `git diff --check`.
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Verify each feature keeps Domain/Application/Infrastructure/UI boundaries intact and that no UI owns critical long-lived resources.
+
+- [ ] **Step 6: Request review and commit**
+
+Commit each split sub-task atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-35 closure audit found the plan was not actually ready for final merge review. Current non-exempt gaps are now tracked as Tasks 36-40: terminal runner close must await the stored runner finish path, terminal reconnect orchestration still lives in SwiftUI, iOS RemoteFiles disconnect drops returned teardown tasks, Core SSH needs tighter disconnect timeout/cancellation diagnostics, and cross-feature save/delete/sync/download/window ownership still needs a scoped sweep.
 - 2026-06-21: Task 31 completed. Terminal runtime/client factory ownership is centralized in `TerminalConnectionRuntime`; session and tab managers no longer own raw SSH client, shell id, or runner task state directly, and late/missing shell registrations are rejected before runner follow-up callbacks mutate closed state.
 - 2026-06-21: Task 32 RED/GREEN and API cleanup completed. `TerminalConnectionRunner` now depends on `TerminalConnectionSurface` and abstract connection operations instead of `GhosttyTerminalView`; `GhosttyTerminalView` adaptation lives at the surface registry/application boundary, and runner tests cover fake-surface size reads, stream writes, and process-exit notification without constructing a UI surface.
 - 2026-06-21: Final audit after Task 32 found repo-wide drift against the Swift test context rule: multiple older `VVTermTests/**/*.swift` files still lack `Test Context` headers. Task 33 is added to close this rule before final ready-for-merge review.
