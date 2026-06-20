@@ -84,6 +84,12 @@ final class TerminalConnectionRegistry {
         trackTeardownTask(task, for: serverId)
     }
 
+    func discardRuntime(for entityId: TerminalEntityID) {
+        runtimes.removeValue(forKey: entityId)
+        serverIdsByEntity.removeValue(forKey: entityId)
+        statesByEntity.removeValue(forKey: entityId)
+    }
+
     func waitForServerTeardown(_ serverId: UUID) async {
         while let tasksById = teardownTasksByServer[serverId], !tasksById.isEmpty {
             for task in tasksById.values {

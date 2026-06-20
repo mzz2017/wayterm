@@ -2346,6 +2346,8 @@ git commit -m "refactor: inject remote lease providers"
 
 **Files:**
 - Modify: `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRegistry.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift`
 - Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
 - Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
 - Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
@@ -2361,43 +2363,43 @@ git commit -m "refactor: inject remote lease providers"
   - Runtime/client factory ownership centralized through `TerminalConnectionRuntime` or a single runtime factory.
   - Stored runner tasks whose cancellation/finish ordering is explicit and tested.
 
-- [ ] **Step 1: Add RED stale-runner callback test**
+- [x] **Step 1: Add RED stale-runner callback test**
 
 Add a test that starts a runtime runner, closes or reconnects the same entity before the runner finishes, and asserts late callbacks cannot update state or register a shell for the old generation.
 
-- [ ] **Step 2: Add RED runtime factory ownership test**
+- [x] **Step 2: Add RED runtime factory ownership test**
 
 Add a test proving session and pane managers can use an injected runtime/client factory rather than constructing raw `SSHClient()` directly in manager-local runtime state.
 
-- [ ] **Step 3: Run RED tests**
+- [x] **Step 3: Run RED tests**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
 ```
 
-- [ ] **Step 4: Move raw client construction behind runtime factory**
+- [x] **Step 4: Move raw client construction behind runtime factory**
 
 Replace manager-local `SSHClient()` construction with an injected runtime/client factory. Keep runtime identity, shell id, shell task, and cleanup state under one owner per session or pane.
 
-- [ ] **Step 5: Make runner cancellation/finish ordering explicit**
+- [x] **Step 5: Make runner cancellation/finish ordering explicit**
 
 Ensure canceling a stored runner task either awaits its finish path or routes all late callbacks through generation checks that cannot mutate closed/replaced runtime state. Keep teardown idempotent.
 
-- [ ] **Step 6: Run focused verification**
+- [x] **Step 6: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests -only-testing:VVTermTests/RemoteTerminalBootstrapTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 7: API and boundary cleanup**
+- [x] **Step 7: API and boundary cleanup**
 
 Verify TerminalSessions Application has one runtime owner per terminal entity; `sharedStatsLease`, `remoteConnectionLease`, resize, retry, and close decisions use registry/runtime state rather than stale domain snapshots.
 
-- [ ] **Step 8: Request review and commit**
+- [x] **Step 8: Request review and commit**
 
 ```bash
-git add VVTerm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift VVTermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift docs/refactor-swift-best-practice.md
+git add VVTerm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift VVTerm/Features/TerminalSessions/Application/TerminalConnectionRegistry.swift VVTerm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift VVTermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift docs/refactor-swift-best-practice.md
 git commit -m "refactor: centralize terminal runtime ownership"
 ```
 

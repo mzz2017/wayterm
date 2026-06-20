@@ -912,11 +912,196 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerConfiguredRuntimeUsesInjectedFactory() async {
+        await withCleanConnectionManager { manager in
+            // Given a session whose runtime is configured through the
+            // application manager and a fake client factory.
+            let server = makeServer(connectionMode: .standard)
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .connecting
+            )
+            let fake = RecordingPaneRuntimeClient()
+            manager.sessions = [session]
+            manager.setTerminalConnectionClientFactoryForTesting { entityId, factoryServer in
+                #expect(entityId == .session(session.id))
+                #expect(factoryServer?.id == server.id)
+                return fake
+            }
+
+            // When the production configure path prepares and starts a runtime.
+            manager.configureRuntime(
+                for: session.id,
+                server: server,
+                credentials: makeCredentials(serverId: server.id),
+                onProcessExit: {}
+            )
+
+            // Then the manager exposes a centralized runtime for that session
+            // and the runtime uses the injected factory rather than constructing
+            // a manager-local SSHClient.
+            #expect(
+                manager.hasTerminalConnectionRuntimeForTesting(.session(session.id)),
+                "Configured sessions should be represented by TerminalConnectionRuntime."
+            )
+            await manager.startRuntimeForTesting(sessionId: session.id)
+
+            let events = await fake.events
+            #expect(events == ["connect", "startShell"])
+            #expect(manager.sessionState(for: session.id) == .connected)
+        }
+    }
+
+    @Test
+    func connectionManagerLateRuntimeShellCallbackCannotUpdateClosedGeneration() async {
+        await withCleanConnectionManager { manager in
+            // Given a shell start that belongs to an older session generation.
+            let server = makeServer(connectionMode: .standard)
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .connecting
+            )
+            let staleClient = SSHClient()
+            let staleShellId = UUID()
+            manager.sessions = [session]
+            let staleGeneration = manager.beginShellStartForTesting(
+                sessionId: session.id,
+                serverId: server.id,
+                client: staleClient
+            )
+            manager.closeShellRegistrationForTesting(sessionId: session.id)
+
+            // When the old runner reports a late shell callback.
+            let accepted = manager.completeRuntimeShellStartForTesting(
+                sessionId: session.id,
+                client: staleClient,
+                shellId: staleShellId,
+                serverId: server.id,
+                generation: staleGeneration
+            )
+
+            // Then the stale callback cannot register a shell or move UI state
+            // back to connected for the closed generation.
+            #expect(!accepted)
+            #expect(manager.shellId(for: session.id) == nil)
+            #expect(manager.sessionState(for: session.id) == .connecting)
+        }
+    }
+
+    @Test
+    func tabManagerConfiguredRuntimeUsesInjectedFactory() async {
+        await withCleanTabManager { manager in
+            // Given a pane whose runtime is configured through the application
+            // manager and a fake client factory.
+            let server = makeServer(connectionMode: .standard)
+            let tab = TerminalTab(serverId: server.id, title: server.name)
+            let fake = RecordingPaneRuntimeClient()
+            manager.tabsByServer[server.id] = [tab]
+            manager.selectedTabByServer[server.id] = tab.id
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+            manager.setTerminalConnectionClientFactoryForTesting { entityId, factoryServer in
+                #expect(entityId == .pane(tab.rootPaneId))
+                #expect(factoryServer?.id == server.id)
+                return fake
+            }
+
+            // When the production configure path prepares and starts a runtime.
+            manager.configureRuntime(
+                forPane: tab.rootPaneId,
+                server: server,
+                credentials: makeCredentials(serverId: server.id),
+                onProcessExit: {}
+            )
+
+            // Then the manager exposes a centralized runtime for that pane and
+            // the runtime uses the injected factory.
+            #expect(
+                manager.hasTerminalConnectionRuntimeForTesting(.pane(tab.rootPaneId)),
+                "Configured panes should be represented by TerminalConnectionRuntime."
+            )
+            await manager.startRuntimeForTesting(paneId: tab.rootPaneId)
+
+            let events = await fake.events
+            #expect(events == ["connect", "startShell"])
+            #expect(manager.paneStates[tab.rootPaneId]?.connectionState == .connected)
+        }
+    }
+
+    @Test
+    func tabManagerLateRuntimeShellCallbackCannotUpdateClosedGeneration() async {
+        await withCleanTabManager { manager in
+            // Given a shell start that belongs to an older pane generation.
+            let server = makeServer(connectionMode: .standard)
+            let tab = TerminalTab(serverId: server.id, title: server.name)
+            let staleClient = SSHClient()
+            let staleShellId = UUID()
+            manager.tabsByServer[server.id] = [tab]
+            manager.selectedTabByServer[server.id] = tab.id
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+            let staleGeneration = manager.beginShellStartForTesting(
+                paneId: tab.rootPaneId,
+                serverId: server.id,
+                client: staleClient
+            )
+            manager.closeShellRegistrationForTesting(paneId: tab.rootPaneId)
+
+            // When the old runner reports a late shell callback.
+            let accepted = manager.completeRuntimeShellStartForTesting(
+                paneId: tab.rootPaneId,
+                client: staleClient,
+                shellId: staleShellId,
+                serverId: server.id,
+                generation: staleGeneration
+            )
+
+            // Then the stale callback cannot register a shell or move UI state
+            // back to connected for the closed generation.
+            #expect(!accepted)
+            #expect(manager.shellId(for: tab.rootPaneId) == nil)
+            #expect(
+                manager.paneStates[tab.rootPaneId]?.connectionState != .connected,
+                "A stale pane runner callback must not move the pane back to connected."
+            )
+        }
+    }
+
+    @Test
     func connectionManagerTryBeginShellStartFailsWhenSessionIsMissing() async {
         await withCleanConnectionManager { manager in
             let missingSessionId = UUID()
             #expect(!manager.tryBeginShellStart(for: missingSessionId, client: SSHClient()))
             #expect(!manager.isShellStartInFlight(for: missingSessionId))
+        }
+    }
+
+    @Test
+    func connectionManagerRejectsShellRegistrationWhenSessionIsMissing() async {
+        await withCleanConnectionManager { manager in
+            // Given a late shell callback for a session that no longer exists.
+            let missingSessionId = UUID()
+
+            // When the callback attempts to register without a valid entity.
+            let accepted = manager.registerSSHClient(
+                SSHClient(),
+                shellId: UUID(),
+                for: missingSessionId,
+                serverId: UUID(),
+                skipTmuxLifecycle: true
+            )
+
+            // Then no orphan shell registration is retained.
+            #expect(!accepted)
+            #expect(manager.shellId(for: missingSessionId) == nil)
         }
     }
 
@@ -1192,6 +1377,27 @@ struct ConnectionLifecycleIntegrationTests {
             let missingPaneId = UUID()
             #expect(!manager.tryBeginShellStart(for: missingPaneId, client: SSHClient()))
             #expect(!manager.isShellStartInFlight(for: missingPaneId))
+        }
+    }
+
+    @Test
+    func tabManagerRejectsShellRegistrationWhenPaneIsMissing() async {
+        await withCleanTabManager { manager in
+            // Given a late shell callback for a pane that no longer exists.
+            let missingPaneId = UUID()
+
+            // When the callback attempts to register without a valid entity.
+            let accepted = manager.registerSSHClient(
+                SSHClient(),
+                shellId: UUID(),
+                for: missingPaneId,
+                serverId: UUID(),
+                skipTmuxLifecycle: true
+            )
+
+            // Then no orphan shell registration is retained.
+            #expect(!accepted)
+            #expect(manager.shellId(for: missingPaneId) == nil)
         }
     }
 

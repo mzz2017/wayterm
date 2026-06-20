@@ -17,7 +17,7 @@ enum TerminalConnectionRunner {
         logger: Logger,
         onAttempt: @MainActor @escaping (_ attempt: Int) -> Void,
         startupPlan: @MainActor @escaping () async -> (command: String?, skipTmuxLifecycle: Bool),
-        registerShell: @MainActor @escaping (_ shell: ShellHandle, _ skipTmuxLifecycle: Bool) async -> Void,
+        registerShell: @MainActor @escaping (_ shell: ShellHandle, _ skipTmuxLifecycle: Bool) async -> Bool,
         onBeforeShellStart: @MainActor @escaping (_ cols: Int, _ rows: Int) async -> Void,
         onShellStarted: @MainActor @escaping (_ terminal: GhosttyTerminalView, _ shellId: UUID) async -> Void,
         onTitleChange: @MainActor @escaping (_ title: String) -> Void,
@@ -57,7 +57,8 @@ enum TerminalConnectionRunner {
                     return
                 }
 
-                await registerShell(shell, startup.skipTmuxLifecycle)
+                let accepted = await registerShell(shell, startup.skipTmuxLifecycle)
+                guard accepted else { return }
                 await onShellStarted(terminal, shell.id)
 
                 try Task.checkCancellation()
