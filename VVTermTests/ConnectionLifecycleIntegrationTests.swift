@@ -697,6 +697,42 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func tabManagerOpenTabWaitsForManagedTmuxKillBeforeCreatingTab() async throws {
+        try await withCleanTabManager { manager in
+            let server = makeServer(name: "Tencent", connectionMode: .standard)
+            let tab = TerminalTab(serverId: server.id, title: "Managed Tmux")
+            manager.tabsByServer[server.id] = [tab]
+            manager.selectedTabByServer[server.id] = tab.id
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+            manager.registerSSHClient(
+                SSHClient(),
+                shellId: UUID(),
+                for: tab.rootPaneId,
+                serverId: server.id,
+                skipTmuxLifecycle: true
+            )
+
+            var killFinished = false
+            manager.setTmuxKillOperationForTesting {
+                try? await Task.sleep(for: .milliseconds(100))
+                killFinished = true
+            }
+
+            manager.killTmuxIfNeeded(for: tab.rootPaneId)
+            _ = try await manager.openTab(for: server)
+
+            #expect(
+                killFinished,
+                "Opening another tab must wait for a managed tmux kill task on the same server."
+            )
+        }
+    }
+
+    @Test
     func tabManagerPaneInputResizeAndCloseUseManagerOwnedRuntime() async {
         await withCleanTabManager { manager in
             // Given a split-pane tab and a fake runtime client owned by the

@@ -1328,6 +1328,7 @@ git commit -m "refactor: complete Swift lifecycle cleanup"
 - 2026-06-21: Task 15 non-exempt SwiftUI lifecycle hits requiring tests before implementation: `SSHTerminalWrapper` macOS/iOS coordinator `deinit` and iOS `dismantleUIView` can still initiate business teardown through `trackShellTeardownForClosedSession`; split-pane `TerminalView` coordinator `deinit` and `cancelShell()` still call manager detach through untracked `Task` from UI lifecycle code.
 - 2026-06-21: Task 15 deferred cross-feature ownership hits: `SSHSFTPAdapter` and `ServerStatsCollector` still create owned `SSHClient` instances through `RemoteConnectionLease`; they are not SwiftUI-owned, but they remain broader RemoteFiles/Stats lease-boundary cleanup candidates after the terminal lifecycle sweep.
 - 2026-06-21: Task 15 shell cleanup slice completed. Rejected, stale, and replaced shell cleanup in `ConnectionSessionManager` and `TerminalTabManager` now enters per-server teardown tracking so immediate reopen waits for cleanup instead of racing a detached disconnect. Remaining non-exempt hits: managed tmux kill fire-and-forget and SwiftUI lifecycle teardown calls.
+- 2026-06-21: Task 15 tmux kill slice completed. `killTmuxIfNeeded` in both terminal managers now tracks managed remote tmux kill tasks per server, so immediate open waits for the kill operation instead of racing a fire-and-forget remote command. Remaining non-exempt hits: SwiftUI lifecycle teardown calls in `SSHTerminalWrapper` and split-pane `TerminalView`.
 - Next task: Task 15, Final Lifecycle Sweep.
 
 ## Self-Review

@@ -145,6 +145,7 @@ final class ConnectionSessionManager: ObservableObject {
     #if DEBUG
     private var testingTerminalConnectionClientFactory: (@MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient)?
     private var rejectedShellCleanupOperationForTesting: (@MainActor @Sendable () async -> Void)?
+    private var tmuxKillOperationForTesting: (@MainActor @Sendable () async -> Void)?
     #endif
     @Published private(set) var isSuspendingForBackground = false
 
@@ -1247,6 +1248,31 @@ final class ConnectionSessionManager: ObservableObject {
         trackServerTeardownTask(task, for: serverId)
     }
 
+    private func trackTmuxKill(
+        for serverId: UUID,
+        sessionName: String,
+        client: SSHClient,
+        preferred: TerminalMultiplexer
+    ) {
+#if DEBUG
+        let testingOperation = tmuxKillOperationForTesting
+#endif
+        let task = Task.detached(priority: .utility) { [logger] in
+            logger.info("Managed tmux kill started [serverId: \(serverId.uuidString, privacy: .public), sessionName: \(sessionName, privacy: .public)]")
+#if DEBUG
+            if let testingOperation {
+                await testingOperation()
+            } else {
+                await RemoteTmuxManager.shared.killSession(named: sessionName, using: client, preferred: preferred)
+            }
+#else
+            await RemoteTmuxManager.shared.killSession(named: sessionName, using: client, preferred: preferred)
+#endif
+            logger.info("Managed tmux kill finished [serverId: \(serverId.uuidString, privacy: .public), sessionName: \(sessionName, privacy: .public)]")
+        }
+        trackServerTeardownTask(task, for: serverId)
+    }
+
     @discardableResult
     private func scheduleSSHUnregister(
         for sessionId: UUID,
@@ -2115,9 +2141,12 @@ extension ConnectionSessionManager {
 
         let sessionName = tmuxResolver.sessionName(for: sessionId)
         let preferred = tmuxResolver.multiplexer(for: registration.serverId)
-        Task.detached { [client = registration.client, sessionName, preferred] in
-            await RemoteTmuxManager.shared.killSession(named: sessionName, using: client, preferred: preferred)
-        }
+        trackTmuxKill(
+            for: registration.serverId,
+            sessionName: sessionName,
+            client: registration.client,
+            preferred: preferred
+        )
     }
 
     func disableTmux(for serverId: UUID) {
@@ -2171,6 +2200,7 @@ extension ConnectionSessionManager {
         terminalConnectionRegistry.removeAll()
         testingTerminalConnectionClientFactory = nil
         rejectedShellCleanupOperationForTesting = nil
+        tmuxKillOperationForTesting = nil
         isRestoring = false
 
         UserDefaults.standard.removeObject(forKey: persistenceKey)
@@ -2200,6 +2230,12 @@ extension ConnectionSessionManager {
         _ operation: (@MainActor @Sendable () async -> Void)?
     ) {
         rejectedShellCleanupOperationForTesting = operation
+    }
+
+    func setTmuxKillOperationForTesting(
+        _ operation: (@MainActor @Sendable () async -> Void)?
+    ) {
+        tmuxKillOperationForTesting = operation
     }
 
     func beginShellStartForTesting(
