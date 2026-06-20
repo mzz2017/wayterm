@@ -63,7 +63,10 @@ struct iOSContentView: View {
                         }
 
                         do {
-                            let session = try await sessionManager.openConnection(to: server)
+                            let session = try await sessionManager.openConnection(
+                                to: server,
+                                forceNew: IOSServerListPolicy.shouldForceNewConnectionFromServerList
+                            )
                             await MainActor.run {
                                 sessionManager.selectedViewByServer[server.id] = preferredConnectViewId
                                 sessionManager.selectedSessionId = session.id

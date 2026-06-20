@@ -24,6 +24,8 @@ struct IOSActiveConnectionSnapshot: Equatable, Identifiable {
 }
 
 enum IOSServerListPolicy {
+    static let shouldForceNewConnectionFromServerList = true
+
     static func filteredServers(
         _ servers: [IOSServerListServerSnapshot],
         selectedWorkspaceId: UUID?,
