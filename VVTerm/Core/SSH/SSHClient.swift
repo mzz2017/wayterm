@@ -3,27 +3,6 @@ import os.log
 import MoshCore
 import MoshBootstrap
 
-// MARK: - libssh2 Runtime
-
-/// libssh2 has process-global lifecycle (`libssh2_init`/`libssh2_exit`).
-/// Initialize once and keep alive for the app lifetime to avoid tearing down
-/// the library while other SSH sessions are still active.
-private enum LibSSH2Runtime {
-    private static let lock = NSLock()
-    private static var initialized = false
-
-    static func ensureInitialized() throws {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !initialized else { return }
-        let rc = libssh2_init(0)
-        guard rc == 0 else {
-            throw SSHError.unknown("libssh2_init failed: \(rc)")
-        }
-        initialized = true
-    }
-}
-
 // MARK: - SSH Client using libssh2
 
 struct ShellHandle {
@@ -196,8 +175,9 @@ actor SSHClient {
             self.resolvedRemoteTerminalType = nil
             await disconnectCloudflareTransport(reason: "connect failure")
             if server.connectionMode == .cloudflare,
-               case SSHError.connectionFailed(let message) = error,
-               message.contains("SSH handshake failed: -13") {
+               case SSHError.libssh2(let rawError) = error,
+               rawError.operation == .handshake,
+               rawError.code == LIBSSH2_ERROR_SOCKET_RECV {
                 throw SSHError.cloudflareTunnelFailed(
                     String(
                         localized: "Cloudflare tunnel connected, but SSH handshake was closed by the upstream target. Verify Access policy and service token scope."
@@ -896,6 +876,7 @@ actor SSHSession {
     }
 
     let config: SSHSessionConfig
+    private let driver: any LibSSH2SessionDriving
     private var libssh2Session: OpaquePointer?
     private var sftpSession: OpaquePointer?
     private var shellChannels: [UUID: ShellChannelState] = [:]
@@ -915,8 +896,9 @@ actor SSHSession {
     /// Track if cleanup has been performed
     private var hasBeenCleaned = false
 
-    init(config: SSHSessionConfig) {
+    init(config: SSHSessionConfig, driver: any LibSSH2SessionDriving = LibSSH2SessionDriver()) {
         self.config = config
+        self.driver = driver
     }
 
     var isConnected: Bool {
@@ -932,106 +914,49 @@ actor SSHSession {
 
     func connect() async throws {
         try Task.checkCancellation()
-        try LibSSH2Runtime.ensureInitialized()
+        try driver.ensureRuntimeInitialized()
         socket = -1
         connectedPeerAddress = nil
 
-        // Resolve host
-        var hints = addrinfo()
-        hints.ai_family = AF_UNSPEC
-        hints.ai_socktype = SOCK_STREAM
-        hints.ai_protocol = IPPROTO_TCP
-        var result: UnsafeMutablePointer<addrinfo>?
-
-        let portString = String(config.dialPort)
-        let resolveResult = getaddrinfo(config.dialHost, portString, &hints, &result)
-        guard resolveResult == 0, let addrInfo = result else {
-            throw SSHError.connectionFailed("Failed to resolve host: \(config.dialHost)")
-        }
-        defer { freeaddrinfo(result) }
-
-        // Connect socket (try all resolved addresses so IPv6-only MagicDNS hosts work)
-        var lastConnectError: Int32 = 0
-        var candidate: UnsafeMutablePointer<addrinfo>? = addrInfo
-
-        while let current = candidate {
-            try Task.checkCancellation()
-            let family = current.pointee.ai_family
-            let sockType = current.pointee.ai_socktype == 0 ? SOCK_STREAM : current.pointee.ai_socktype
-            let protocolNumber = current.pointee.ai_protocol
-
-            let candidateSocket = Darwin.socket(family, sockType, protocolNumber)
-            if candidateSocket < 0 {
-                lastConnectError = errno
-                candidate = current.pointee.ai_next
-                continue
-            }
-
-            let connectResult = Darwin.connect(candidateSocket, current.pointee.ai_addr, current.pointee.ai_addrlen)
-            if connectResult == 0 {
-                socket = candidateSocket
-                break
-            }
-
-            lastConnectError = errno
-            Darwin.close(candidateSocket)
-            candidate = current.pointee.ai_next
-        }
-
-        guard socket >= 0 else {
-            let message = lastConnectError == 0 ? "Unknown connect failure" : String(cString: strerror(lastConnectError))
-            throw SSHError.connectionFailed("Failed to connect: \(message)")
-        }
-
-        // Disable Nagle's algorithm for low-latency interactive typing
-        // Without this, small packets (keystrokes) are batched causing 40-200ms delays
-        var noDelay: Int32 = 1
-        setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, &noDelay, socklen_t(MemoryLayout<Int32>.size))
-
-        // Optimize socket buffers for interactive SSH:
-        // - Small send buffer (8KB) reduces buffering delay for keystrokes
-        // - Larger receive buffer (64KB) improves throughput for command output
-        var sendBufSize: Int32 = 8192
-        var recvBufSize: Int32 = 65536
-        setsockopt(socket, SOL_SOCKET, SO_SNDBUF, &sendBufSize, socklen_t(MemoryLayout<Int32>.size))
-        setsockopt(socket, SOL_SOCKET, SO_RCVBUF, &recvBufSize, socklen_t(MemoryLayout<Int32>.size))
-
-        // Prevent SIGPIPE on broken connections (handle errors in code instead)
-        var noSigPipe: Int32 = 1
-        setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
-
-        // Store in atomic storage for emergency abort
-        atomicSocket.socket = socket
-        connectedPeerAddress = resolveNumericPeerAddress(for: socket)
+        let connectedSocket = try driver.connectSocket(host: config.dialHost, port: config.dialPort)
+        socket = connectedSocket.descriptor
+        connectedPeerAddress = connectedSocket.peerAddress
+        driver.configureInteractiveSocket(socket)
 
         // Create libssh2 session (use _ex variant since macros not available in Swift)
         let sessionAbstract = Unmanaged.passUnretained(keyboardInteractiveContext).toOpaque()
-        libssh2Session = libssh2_session_init_ex(nil, nil, nil, sessionAbstract)
+        libssh2Session = driver.makeSession(abstract: sessionAbstract)
         guard let session = libssh2Session else {
-            Darwin.close(socket)
+            driver.closeSocket(socket)
+            socket = -1
+            connectedPeerAddress = nil
             throw SSHError.unknown("Failed to create libssh2 session")
         }
+
+        // Store in atomic storage only after libssh2 has a session owner.
+        atomicSocket.socket = socket
 
         // Prefer fast ciphers - AES-GCM and ChaCha20 are hardware-accelerated on Apple Silicon
         // This reduces CPU overhead for encryption/decryption
         let fastCiphers = "aes128-gcm@openssh.com,aes256-gcm@openssh.com,chacha20-poly1305@openssh.com,aes128-ctr,aes256-ctr"
-        libssh2_session_method_pref(session, LIBSSH2_METHOD_CRYPT_CS, fastCiphers)
-        libssh2_session_method_pref(session, LIBSSH2_METHOD_CRYPT_SC, fastCiphers)
+        driver.setMethodPreference(session: session, method: LIBSSH2_METHOD_CRYPT_CS, preferences: fastCiphers)
+        driver.setMethodPreference(session: session, method: LIBSSH2_METHOD_CRYPT_SC, preferences: fastCiphers)
 
         // Prefer fast MACs (message authentication codes)
         let fastMACs = "hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,hmac-sha2-256,hmac-sha2-512"
-        libssh2_session_method_pref(session, LIBSSH2_METHOD_MAC_CS, fastMACs)
-        libssh2_session_method_pref(session, LIBSSH2_METHOD_MAC_SC, fastMACs)
+        driver.setMethodPreference(session: session, method: LIBSSH2_METHOD_MAC_CS, preferences: fastMACs)
+        driver.setMethodPreference(session: session, method: LIBSSH2_METHOD_MAC_SC, preferences: fastMACs)
 
         // Set blocking mode for handshake
-        libssh2_session_set_blocking(session, 1)
+        driver.setBlocking(session: session, isBlocking: true)
 
         // Perform SSH handshake
         try Task.checkCancellation()
-        let handshakeResult = libssh2_session_handshake(session, socket)
+        let handshakeResult = driver.handshake(session: session, socket: socket)
         guard handshakeResult == 0 else {
+            let rawError = driver.lastError(session: session, operation: .handshake, fallbackCode: handshakeResult)
             cleanup()
-            throw SSHError.connectionFailed("SSH handshake failed: \(handshakeResult)")
+            throw SSHError.libssh2(rawError)
         }
 
         do {
@@ -1046,7 +971,7 @@ actor SSHSession {
         try await authenticate()
 
         // Set non-blocking for I/O
-        libssh2_session_set_blocking(session, 0)
+        driver.setBlocking(session: session, isBlocking: false)
 
         isActive = true
         logger.info("SSH session established")
@@ -1285,8 +1210,26 @@ actor SSHSession {
         closeAllExecChannels()
 
         if let session = libssh2Session {
-            libssh2_session_disconnect_ex(session, 11, "Normal shutdown", "")
-            libssh2_session_free(session)
+            let disconnectResult = driver.disconnect(
+                session: session,
+                reasonCode: 11,
+                description: "Normal shutdown",
+                language: ""
+            )
+            if disconnectResult != 0 {
+                let rawError = driver.lastError(
+                    session: session,
+                    operation: .sessionDisconnect,
+                    fallbackCode: disconnectResult
+                )
+                logger.debug(
+                    "libssh2 disconnect returned \(rawError.code) [message: \(rawError.message ?? "none", privacy: .public)]"
+                )
+            }
+            let freeResult = driver.free(session: session)
+            if freeResult != 0, freeResult != LIBSSH2_ERROR_EAGAIN {
+                logger.debug("libssh2 session free returned \(freeResult)")
+            }
             libssh2Session = nil
         }
     }
@@ -2128,35 +2071,6 @@ actor SSHSession {
         _ = poll(&pfd, 1, 5)
     }
 
-    private func resolveNumericPeerAddress(for socket: Int32) -> String? {
-        var storage = sockaddr_storage()
-        var storageLen = socklen_t(MemoryLayout<sockaddr_storage>.size)
-
-        let peerResult = withUnsafeMutablePointer(to: &storage) { storagePtr in
-            storagePtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
-                getpeername(socket, sockaddrPtr, &storageLen)
-            }
-        }
-        guard peerResult == 0 else { return nil }
-
-        var hostBuffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-        let nameResult = withUnsafePointer(to: &storage) { storagePtr in
-            storagePtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
-                getnameinfo(
-                    sockaddrPtr,
-                    storageLen,
-                    &hostBuffer,
-                    socklen_t(hostBuffer.count),
-                    nil,
-                    0,
-                    NI_NUMERICHOST
-                )
-            }
-        }
-        guard nameResult == 0 else { return nil }
-        return String(cString: hostBuffer)
-    }
-
     // MARK: - Write
 
     func write(_ data: Data, to shellId: UUID) async throws {
@@ -2855,6 +2769,7 @@ enum SSHError: LocalizedError {
     case shellRequestFailed
     case hostKeyVerificationFailed
     case socketError(String)
+    case libssh2(LibSSH2RawError)
     case unknown(String)
 
     var errorDescription: String? {
@@ -2882,6 +2797,9 @@ enum SSHError: LocalizedError {
         case .hostKeyVerificationFailed:
             return "Host key verification failed. The saved SSH host fingerprint does not match the server's current key."
         case .socketError(let msg): return "Socket error: \(msg)"
+        case .libssh2(let error):
+            let detail = error.message ?? "code \(error.code)"
+            return "libssh2 \(error.operation.rawValue) failed: \(detail)"
         case .unknown(let msg): return "Unknown error: \(msg)"
         }
     }

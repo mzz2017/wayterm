@@ -732,7 +732,7 @@ final class TerminalTabManager: ObservableObject {
                 },
                 shouldResetClient: { sshError in
                     switch sshError {
-                    case .notConnected, .connectionFailed, .socketError, .timeout:
+                    case .notConnected, .connectionFailed, .socketError, .timeout, .libssh2:
                         return true
                     case .channelOpenFailed, .shellRequestFailed:
                         let hasOtherRegistrations = await TerminalTabManager.shared.hasOtherRegistrations(
