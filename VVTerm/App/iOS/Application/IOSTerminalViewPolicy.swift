@@ -77,10 +77,7 @@ enum IOSTerminalViewPolicy {
 
         let canReconnect = autoReconnectEnabled
             && !isSuspendingForBackground
-            && (
-                selectedSession.connectionState.shouldReconnectOnForeground
-                    || !selectedSessionHasLiveRuntime
-            )
+            && !selectedSessionHasLiveRuntime
 
         return IOSTerminalForegroundReconnectAction(
             sessionId: selectedSession.id,
@@ -109,16 +106,5 @@ enum IOSTerminalViewPolicy {
             requestedTerminalDismissal: false,
             shouldCallBack: false
         )
-    }
-}
-
-private extension IOSTerminalConnectionState {
-    var shouldReconnectOnForeground: Bool {
-        switch self {
-        case .disconnected, .failed:
-            return true
-        case .connecting, .connected, .reconnecting, .idle:
-            return false
-        }
     }
 }
