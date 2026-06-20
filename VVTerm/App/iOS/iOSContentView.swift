@@ -624,8 +624,12 @@ struct iOSServerListView: View {
             guard let server = server(for: connection.id) else { return }
             guard await AppLockManager.shared.ensureServerUnlocked(server) else { return }
 
-            if !connection.session.connectionState.isConnected,
-               !connection.session.connectionState.isConnecting {
+            let sessionHasLiveRuntime = await MainActor.run {
+                sessionManager.hasLiveRuntime(forSessionId: connection.session.id)
+            }
+            if IOSServerListPolicy.shouldReconnectActiveConnection(
+                sessionHasLiveRuntime: sessionHasLiveRuntime
+            ) {
                 try? await sessionManager.reconnect(session: connection.session)
             }
 
