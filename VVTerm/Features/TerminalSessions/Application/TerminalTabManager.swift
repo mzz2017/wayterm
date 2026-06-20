@@ -983,26 +983,8 @@ final class TerminalTabManager: ObservableObject {
     }
 
     private func preferredSSHClient(for serverId: UUID, allowPendingStart: Bool) -> SSHClient? {
-        if let selectedTab = selectedTab(for: serverId) {
-            let preferredPaneIds = [selectedTab.focusedPaneId, selectedTab.rootPaneId] + selectedTab.allPaneIds
-            for paneId in preferredPaneIds {
-                if let client = shellRegistry.client(for: paneId) {
-                    return client
-                }
-            }
-        }
-
-        let serverTabs = tabs(for: serverId)
-        for tab in serverTabs {
-            for paneId in tab.allPaneIds {
-                if let client = shellRegistry.client(for: paneId) {
-                    return client
-                }
-            }
-        }
-
-        if let client = shellRegistry.firstRegisteredClient(for: serverId) {
-            return client
+        if let registration = preferredSSHRegistration(for: serverId) {
+            return registration.client
         }
 
         if allowPendingStart, let client = shellRegistry.firstPendingClient(for: serverId) {
@@ -1010,6 +992,28 @@ final class TerminalTabManager: ObservableObject {
         }
 
         return nil
+    }
+
+    private func preferredSSHRegistration(for serverId: UUID) -> SSHShellRegistry.Registration? {
+        if let selectedTab = selectedTab(for: serverId) {
+            let preferredPaneIds = [selectedTab.focusedPaneId, selectedTab.rootPaneId] + selectedTab.allPaneIds
+            for paneId in preferredPaneIds {
+                if let registration = shellRegistry.registration(for: paneId) {
+                    return registration
+                }
+            }
+        }
+
+        let serverTabs = tabs(for: serverId)
+        for tab in serverTabs {
+            for paneId in tab.allPaneIds {
+                if let registration = shellRegistry.registration(for: paneId) {
+                    return registration
+                }
+            }
+        }
+
+        return shellRegistry.firstRegistration(for: serverId)
     }
 
     /// Returns the best-known client for this server, including pending shell starts.
@@ -1037,14 +1041,19 @@ final class TerminalTabManager: ObservableObject {
 
     func sharedStatsClient(for serverId: UUID) -> SSHClient? {
         if let livePane = registryLivePaneState(for: serverId) {
-            guard livePane.activeTransport != .mosh else { return nil }
-            return shellRegistry.client(for: livePane.paneId)
+            guard let registration = shellRegistry.registration(for: livePane.paneId),
+                  registration.transport != .mosh else {
+                return nil
+            }
+            return registration.client
         }
 
-        if selectedTransport(for: serverId) == .mosh {
-            return nil
+        if let registration = preferredSSHRegistration(for: serverId) {
+            guard registration.transport != .mosh else { return nil }
+            return registration.client
         }
-        return sshClient(for: serverId)
+
+        return shellRegistry.firstPendingClient(for: serverId)
     }
 
     private func registryLivePaneState(for serverId: UUID) -> TerminalPaneState? {
@@ -1061,19 +1070,6 @@ final class TerminalTabManager: ObservableObject {
         return paneStates.values.first {
             $0.serverId == serverId && liveEntityIDs.contains(.pane($0.paneId))
         }
-    }
-
-    private func selectedTransport(for serverId: UUID) -> ShellTransport {
-        if let selectedTab = selectedTab(for: serverId),
-           let state = paneStates[selectedTab.focusedPaneId] {
-            return state.activeTransport
-        }
-
-        if let connectedPane = paneStates.values.first(where: { $0.serverId == serverId && $0.connectionState.isConnected }) {
-            return connectedPane.activeTransport
-        }
-
-        return paneStates.values.first(where: { $0.serverId == serverId })?.activeTransport ?? .ssh
     }
 
     /// Remove pane UI/runtime state and return the SSH teardown that must be awaited.

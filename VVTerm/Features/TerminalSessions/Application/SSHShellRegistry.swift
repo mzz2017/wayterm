@@ -206,6 +206,10 @@ struct SSHShellRegistry {
         registrations.values.first(where: { $0.serverId == serverId })?.client
     }
 
+    func firstRegistration(for serverId: UUID) -> Registration? {
+        registrations.values.first { $0.serverId == serverId }
+    }
+
     func firstPendingClient(for serverId: UUID) -> SSHClient? {
         startsInFlight.values.first(where: { $0.serverId == serverId })?.client
     }

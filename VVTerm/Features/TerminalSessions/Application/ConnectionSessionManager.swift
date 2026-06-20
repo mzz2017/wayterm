@@ -174,10 +174,6 @@ final class ConnectionSessionManager: ObservableObject {
         sessions.first { $0.serverId == serverId }
     }
 
-    private func firstConnectedSession(for serverId: UUID) -> ConnectionSession? {
-        sessions.first { $0.serverId == serverId && $0.connectionState.isConnected }
-    }
-
     private func registryLiveSession(for serverId: UUID) -> ConnectionSession? {
         let liveEntityIDs = terminalConnectionRegistry.openingOrStreamingEntityIDs(for: serverId)
         if let selected = selectedSession(for: serverId),
@@ -188,11 +184,6 @@ final class ConnectionSessionManager: ObservableObject {
         return sessions.first {
             $0.serverId == serverId && liveEntityIDs.contains(.session($0.id))
         }
-    }
-
-    private func registryLiveSSHClient(for serverId: UUID) -> SSHClient? {
-        guard let session = registryLiveSession(for: serverId) else { return nil }
-        return shellRegistry.client(for: session.id)
     }
 
     private func selectedSession(for serverId: UUID) -> ConnectionSession? {
@@ -951,20 +942,8 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func preferredSSHClient(for serverId: UUID, allowPendingStart: Bool) -> SSHClient? {
-        if let selectedId = selectedSessionId,
-           let selectedSession = sessionWithID(selectedId),
-           selectedSession.serverId == serverId,
-           let client = shellRegistry.client(for: selectedSession.id) {
-            return client
-        }
-
-        if let anySession = firstSession(for: serverId),
-           let client = shellRegistry.client(for: anySession.id) {
-            return client
-        }
-
-        if let client = shellRegistry.firstRegisteredClient(for: serverId) {
-            return client
+        if let registration = preferredSSHRegistration(for: serverId) {
+            return registration.client
         }
 
         if allowPendingStart, let client = shellRegistry.firstPendingClient(for: serverId) {
@@ -972,6 +951,22 @@ final class ConnectionSessionManager: ObservableObject {
         }
 
         return nil
+    }
+
+    private func preferredSSHRegistration(for serverId: UUID) -> SSHShellRegistry.Registration? {
+        if let selectedId = selectedSessionId,
+           let selectedSession = sessionWithID(selectedId),
+           selectedSession.serverId == serverId,
+           let registration = shellRegistry.registration(for: selectedSession.id) {
+            return registration
+        }
+
+        if let anySession = firstSession(for: serverId),
+           let registration = shellRegistry.registration(for: anySession.id) {
+            return registration
+        }
+
+        return shellRegistry.firstRegistration(for: serverId)
     }
 
     func sshClient(for serverId: UUID) -> SSHClient? {
@@ -984,26 +979,19 @@ final class ConnectionSessionManager: ObservableObject {
 
     func sharedStatsClient(for serverId: UUID) -> SSHClient? {
         if let liveSession = registryLiveSession(for: serverId) {
-            guard liveSession.activeTransport != .mosh else { return nil }
-            return registryLiveSSHClient(for: serverId)
+            guard let registration = shellRegistry.registration(for: liveSession.id),
+                  registration.transport != .mosh else {
+                return nil
+            }
+            return registration.client
         }
 
-        if selectedTransport(for: serverId) == .mosh {
-            return nil
-        }
-        return sshClient(for: serverId)
-    }
-
-    private func selectedTransport(for serverId: UUID) -> ShellTransport {
-        if let session = selectedSession(for: serverId) {
-            return session.activeTransport
+        if let registration = preferredSSHRegistration(for: serverId) {
+            guard registration.transport != .mosh else { return nil }
+            return registration.client
         }
 
-        if let connected = firstConnectedSession(for: serverId) {
-            return connected.activeTransport
-        }
-
-        return firstSession(for: serverId)?.activeTransport ?? .ssh
+        return shellRegistry.firstPendingClient(for: serverId)
     }
 
     // MARK: - Terminal Registration (with LRU caching)

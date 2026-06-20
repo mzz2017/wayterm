@@ -880,6 +880,34 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerSharedStatsClientUsesPendingSSHWhenDomainMoshSnapshotIsStale() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer(connectionMode: .standard)
+            let staleMoshSession = ConnectionSession(
+                serverId: server.id,
+                title: "Stale Domain Mosh",
+                connectionState: .connected,
+                activeTransport: .mosh
+            )
+            let pendingSSHSession = ConnectionSession(
+                serverId: server.id,
+                title: "Pending SSH",
+                connectionState: .disconnected,
+                activeTransport: .ssh
+            )
+            manager.sessions = [staleMoshSession, pendingSSHSession]
+
+            let pendingClient = SSHClient()
+            #expect(manager.tryBeginShellStart(for: pendingSSHSession.id, client: pendingClient))
+
+            #expect(
+                manager.sharedStatsClient(for: server.id).map(ObjectIdentifier.init) == ObjectIdentifier(pendingClient),
+                "A stale domain Mosh snapshot must not block a pending SSH stats client."
+            )
+        }
+    }
+
+    @Test
     func tabManagerSharedStatsClientSkipsMoshTransport() async {
         await withCleanTabManager { manager in
             let server = makeServer(connectionMode: .mosh)
@@ -956,6 +984,40 @@ struct ConnectionLifecycleIntegrationTests {
             #expect(
                 manager.sharedStatsClient(for: server.id).map(ObjectIdentifier.init) == ObjectIdentifier(activeClient),
                 "Stats should use the registry-active SSH pane instead of a stale selected Mosh pane."
+            )
+        }
+    }
+
+    @Test
+    func tabManagerSharedStatsClientUsesPendingSSHWhenDomainMoshSnapshotIsStale() async {
+        await withCleanTabManager { manager in
+            let server = makeServer(connectionMode: .standard)
+            let stalePaneId = UUID()
+            let pendingPaneId = UUID()
+            let tab = TerminalTab(
+                serverId: server.id,
+                title: server.name,
+                rootPaneId: stalePaneId,
+                focusedPaneId: stalePaneId
+            )
+            manager.tabsByServer[server.id] = [tab]
+
+            var stalePane = TerminalPaneState(paneId: stalePaneId, tabId: tab.id, serverId: server.id)
+            stalePane.connectionState = .connected
+            stalePane.activeTransport = .mosh
+            manager.paneStates[stalePaneId] = stalePane
+
+            var pendingPane = TerminalPaneState(paneId: pendingPaneId, tabId: tab.id, serverId: server.id)
+            pendingPane.connectionState = .disconnected
+            pendingPane.activeTransport = .ssh
+            manager.paneStates[pendingPaneId] = pendingPane
+
+            let pendingClient = SSHClient()
+            #expect(manager.tryBeginShellStart(for: pendingPaneId, client: pendingClient))
+
+            #expect(
+                manager.sharedStatsClient(for: server.id).map(ObjectIdentifier.init) == ObjectIdentifier(pendingClient),
+                "A stale domain Mosh pane snapshot must not block a pending SSH stats client."
             )
         }
     }
