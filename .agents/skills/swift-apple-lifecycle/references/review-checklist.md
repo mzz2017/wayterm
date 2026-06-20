@@ -15,4 +15,6 @@ Before finishing Swift changes, verify:
 - Sensitive C/FFI paths are serialized when thread-safety is uncertain.
 - Expected failures remain internally distinguishable.
 - Regression tests cover lifecycle ordering when feasible.
+- Unit test files include test context: protected behavior, target invariant, fake assumptions, and the condition under which the test should be updated rather than treated as a regression.
+- Individual test methods have clear intent via descriptive names plus Given/When/Then comments or equivalent display names and assertion messages.
 - Verification commands actually completed; otherwise, report the limitation.

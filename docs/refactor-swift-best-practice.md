@@ -21,6 +21,7 @@
 - C/FFI pointer lifetimes must stay local and obvious; raw C error codes must be logged before translation.
 - libssh2 handles must not be shared simultaneously. `libssh2_init` uses process-global state and must remain serialized.
 - Bug fixes and refactors require regression tests when feasible. Test lifecycle ordering, not only UI symptoms.
+- Unit test files must include test context: protected behavior, target invariant, fake assumptions, and when the test should be updated instead of treated as a regression.
 - iOS simulator focused tests use `ENABLE_DEBUG_DYLIB=NO`, `-parallel-testing-enabled NO`, and `-skip-testing:VVTermUITests`.
 - Do not claim tests pass unless the test command actually completed.
 - Commit atomically. Each commit must represent one invariant, boundary move, or documentation update.

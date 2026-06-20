@@ -166,6 +166,14 @@ Applies to all Swift, SwiftUI, and Apple-platform code. Unless the user explicit
 - Bug fixes require regression tests when feasible.
   - Test the lifecycle/state rule that failed, not only the final UI symptom.
 
+- Unit test files must carry enough context for future failure triage.
+  - At the top of each test file, include a short `Test Context` comment that states the production behavior or user workflow being protected, the invariant or rule under test, and when the test should be updated instead of treated as a product regression.
+  - For regression tests, name the original failure mode in product terms, not only the implementation detail. Do not include secrets, hostnames, credentials, or private user data.
+  - Document important fake, clock, scheduler, actor, keychain, network, and C/FFI assumptions in the test file before the tests that depend on them.
+  - Each test method must make its goal clear through a descriptive name plus Given/When/Then comments, or an equivalent `@Test` display name and assertion messages.
+  - Non-obvious assertions must include a message explaining what behavior would have broken if the assertion fails.
+  - If a product or architecture decision changes the intended behavior, update the test context in the same change as the assertion update.
+
 - Async lifecycle code needs ordering tests.
   - Test that close waits for teardown.
   - Test that open waits for pending close.

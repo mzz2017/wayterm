@@ -231,6 +231,7 @@ xcodebuild test \
 - Mutable shared state should be actor-isolated or `@MainActor`; keep heavy parsing, crypto, file IO, and network IO off the main actor.
 - C/FFI calls must keep pointer lifetimes local, preserve raw error codes in logs, and serialize sensitive paths when thread-safety is uncertain.
 - Bug fixes need regression tests when feasible, especially async ordering tests for close/open/reconnect behavior.
+- Unit test files must include enough context for future triage: protected behavior, test target/invariant, fake assumptions, and when the test should be updated instead of treated as a regression. Individual tests should have descriptive names plus Given/When/Then comments or equivalent assertion messages.
 - Do not claim tests pass unless they ran and completed. If only `build-for-testing` passed or XCTest hung, state that explicitly.
 
 ## Data Models
