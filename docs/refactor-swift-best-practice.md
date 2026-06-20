@@ -1786,6 +1786,271 @@ git add VVTerm/Features/Servers/Application/ServerManager.swift \
 git commit -m "refactor: tighten core SSH FFI boundaries"
 ```
 
+## Task 22: Move Shell Channel Setup and Teardown Behind the libssh2 Driver
+
+**Files:**
+- Modify: `VVTerm/Core/SSH/SSHClient.swift`
+- Modify: `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
+- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+
+**Interfaces:**
+- Consumes:
+  - `LibSSH2SessionDriving`
+  - `LibSSH2RawError`
+  - `SSHSession.startShell(cols:rows:startupCommand:environment:terminalType:)`
+  - `SSHSession.closeShell(_:)`
+- Produces:
+  - `LibSSH2RawError.Operation.channelOpen`
+  - `LibSSH2RawError.Operation.channelSetEnvironment`
+  - `LibSSH2RawError.Operation.channelRequestPty`
+  - `LibSSH2RawError.Operation.channelProcessStartup`
+  - `LibSSH2RawError.Operation.channelClose`
+  - `LibSSH2RawError.Operation.channelFree`
+  - Driver-owned channel setup methods, with unsafe C calls confined to `LibSSH2SessionDriver`:
+    - `openSessionChannel(session:) -> OpaquePointer?`
+    - `setChannelEnvironment(channel:name:value:) -> Int32`
+    - `requestPty(channel:terminalType:cols:rows:) -> Int32`
+    - `startShell(channel:) -> Int32`
+    - `startExec(channel:command:) -> Int32`
+    - `closeChannel(_:) -> Int32`
+    - `freeChannel(_:) -> Int32`
+
+- [ ] **Step 1: Add RED channel setup cleanup tests**
+
+Add tests to `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`:
+
+```swift
+func testShellPtyFailureClosesAndFreesOpenedChannel() async {
+    let driver = RecordingLibSSH2SessionDriver(
+        sessionInitResult: OpaquePointer(bitPattern: 0x1),
+        authMethods: .methods("publickey"),
+        publicKeyAuthResult: .success,
+        channelOpenResult: OpaquePointer(bitPattern: 0x22),
+        ptyResult: LIBSSH2_ERROR_CHANNEL_REQUEST_DENIED
+    )
+    let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+    do {
+        try await session.connect()
+        _ = try await session.startShell(cols: 80, rows: 24)
+        XCTFail("Expected PTY request failure")
+    } catch SSHError.shellRequestFailed {
+        // Expected.
+    } catch {
+        XCTFail("Expected SSHError.shellRequestFailed, got \(error)")
+    }
+
+    XCTAssertEqual(
+        driver.channelEvents(),
+        [.openSession, .requestPty, .close, .free],
+        "PTY failure must close and free the channel that startShell opened"
+    )
+}
+```
+
+Add the fake support locally in `RecordingLibSSH2SessionDriver`:
+
+```swift
+enum ChannelEvent: Equatable {
+    case openSession
+    case setEnvironment(String)
+    case requestPty
+    case startShell
+    case startExec(String)
+    case close
+    case free
+}
+```
+
+- [ ] **Step 2: Run RED tests**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected: compile failure because `LibSSH2SessionDriving` does not yet expose channel setup/teardown methods or channel raw-error operations.
+
+- [ ] **Step 3: Move shell channel setup/teardown C calls into the driver**
+
+Make the minimal production change for the shared shell/exec channel setup and teardown boundary:
+- Replace direct `libssh2_session_set_blocking`, `libssh2_channel_open_ex`, `libssh2_channel_setenv_ex`, `libssh2_channel_request_pty_ex`, `libssh2_channel_process_startup`, `libssh2_channel_close`, and `libssh2_channel_free` calls in `startShell`, `closeShellInternal`, `closeAllShellChannels`, `closeAllExecChannels`, `failAllExecRequests`, and `finishExecRequest` with driver methods.
+- Keep `SSHSession` as the owner of `ShellChannelState`, `ExecRequest`, shell ids, continuations, and cleanup ordering.
+- Preserve existing user-facing errors for normal shell startup failures.
+- When a channel setup call fails with a raw libssh2 error distinct from the existing user-facing error, log or preserve the `LibSSH2RawError` before mapping to the existing `SSHError`.
+
+- [ ] **Step 4: Run GREEN tests**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
+```
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Before committing:
+- Verify `SSHClient.swift` no longer calls `libssh2_session_set_blocking`, `libssh2_channel_setenv_ex`, `libssh2_channel_request_pty_ex`, `libssh2_channel_process_startup`, `libssh2_channel_close`, or `libssh2_channel_free` directly in shell setup/teardown paths.
+- Verify channel ownership remains in `SSHSession`; `LibSSH2SessionDriver` must not store channel pointers.
+- Verify test fake channel event names describe behavior, not implementation-only line numbers.
+- Record any direct channel I/O calls still deferred to Task 23 in the Progress Ledger.
+
+- [ ] **Step 6: Run focused verification and review**
+
+```bash
+rg -n "libssh2_session_set_blocking|libssh2_channel_open_ex|libssh2_channel_setenv_ex|libssh2_channel_request_pty_ex|libssh2_channel_process_startup|libssh2_channel_close|libssh2_channel_free" VVTerm/Core/SSH/SSHClient.swift VVTerm/Core/SSH/LibSSH2SessionDriver.swift
+git diff --check
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected scan result: `LibSSH2SessionDriver.swift` owns the Task 22 shell channel setup/teardown C calls. `SSHClient.swift` may still show channel I/O, exec request, SCP upload, exec upload, resize, and upload finish/drain hits assigned to Task 23; record those exact remaining ranges in the Progress Ledger before committing Task 22.
+
+Request code review for Task 22 before committing.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add VVTerm/Core/SSH/LibSSH2SessionDriver.swift \
+  VVTerm/Core/SSH/SSHClient.swift \
+  VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift \
+  docs/refactor-swift-best-practice.md
+git commit -m "refactor: move shell channel setup behind libssh2 driver"
+```
+
+## Task 23: Move Channel I/O, Exec, Upload, and Resize Calls Behind the Driver
+
+**Files:**
+- Modify: `VVTerm/Core/SSH/SSHClient.swift`
+- Modify: `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
+- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Test: `VVTermTests/RemoteTerminalBootstrapTests.swift`
+
+**Interfaces:**
+- Consumes:
+  - Task 22 channel setup/teardown driver methods.
+- Produces:
+  - Driver-owned channel I/O methods:
+    - `readChannel(_:, stream:into:) -> Int`
+    - `writeChannel(_:, stream:bytes:offset:remaining:) -> Int`
+    - `isChannelEOF(_:) -> Bool`
+    - `sendChannelEOF(_:) -> Int32`
+    - `waitChannelEOF(_:) -> Int32`
+    - `waitChannelClosed(_:) -> Int32`
+    - `channelExitStatus(_:) -> Int32`
+    - `requestPtySize(channel:cols:rows:) -> Int32`
+    - `handleExtendedData(channel:mode:) -> Int32`
+    - `openSCPChannel(session:path:permissions:size:) -> OpaquePointer?`
+    - `sessionBlockDirections(session:) -> Int32`
+  - `SSHSession` remains the only owner of I/O tasks, shell state, exec request state, upload retry strategy, and cancellation.
+
+- [ ] **Step 1: Add RED channel write/EAGAIN tests**
+
+Add a fake-driver test that starts a shell, configures `writeChannel` to return `LIBSSH2_ERROR_EAGAIN` once and then a positive byte count, calls `session.write(_:to:)`, and asserts the driver receives the expected copied bytes and retry offsets. The production driver method owns the non-escaping pointer conversion from that byte slice to `libssh2_channel_write_ex`.
+
+- [ ] **Step 2: Add RED exec startup/read tests**
+
+Add a fake-driver test for `execute(_:)` where channel open succeeds, exec startup returns `EAGAIN` once then success, stdout returns data, EOF becomes true, and the continuation returns the expected output.
+
+- [ ] **Step 3: Move channel read/write/EOF/resize calls**
+
+Move direct `libssh2_channel_read_ex`, `libssh2_channel_write_ex`, `libssh2_channel_eof`, `libssh2_channel_request_pty_size_ex`, `libssh2_channel_send_eof`, `libssh2_channel_wait_eof`, `libssh2_channel_wait_closed`, `libssh2_channel_get_exit_status`, `libssh2_channel_handle_extended_data2`, `libssh2_scp_send64`, and `libssh2_session_block_directions` calls from `SSHClient.swift` into `LibSSH2SessionDriver`.
+
+- [ ] **Step 4: Run focused tests**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/RemoteTerminalBootstrapTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Verify no channel I/O C calls remain in `SSHClient.swift`; raw channel pointers are still stored only in `SSHSession` state objects; upload and exec cancellation still resume continuations exactly once. Record remaining SCP/SFTP-specific calls in the Progress Ledger.
+
+- [ ] **Step 6: Request review and commit**
+
+```bash
+git add VVTerm/Core/SSH/LibSSH2SessionDriver.swift VVTerm/Core/SSH/SSHClient.swift VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift docs/refactor-swift-best-practice.md
+git commit -m "refactor: route channel IO through libssh2 driver"
+```
+
+## Task 24: Move SFTP Session and Handle Operations Behind the Driver
+
+**Files:**
+- Modify: `VVTerm/Core/SSH/SSHClient.swift`
+- Modify: `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
+- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Test: `VVTermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift`
+- Test: `VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
+
+**Interfaces:**
+- Consumes:
+  - `RemoteConnectionLease.withExclusiveClient`
+  - Existing RemoteFiles SFTP adapter tests.
+- Produces:
+  - Driver-owned SFTP methods for init, shutdown, open, close handle, readdir, seek, read, write, stat, symlink, mkdir, setstat, rename, unlink, rmdir, statvfs, and last-error mapping.
+  - `SSHSession` remains the owner of cached `sftpSession` and remote-file async operation ordering.
+
+- [ ] **Step 1: Add RED SFTP cleanup test**
+
+Add a fake-driver test that opens an SFTP directory handle, forces a readdir failure, and asserts the handle is closed exactly once and the error maps through `RemoteFileBrowserError`.
+
+- [ ] **Step 2: Move SFTP C calls into `LibSSH2SessionDriver`**
+
+Move `libssh2_sftp_init`, `libssh2_sftp_shutdown`, `libssh2_sftp_open_ex`, `libssh2_sftp_close_handle`, `libssh2_sftp_readdir_ex`, `libssh2_sftp_seek64`, `libssh2_sftp_read`, `libssh2_sftp_write`, `libssh2_sftp_stat_ex`, `libssh2_sftp_symlink_ex`, `libssh2_sftp_statvfs`, `libssh2_sftp_mkdir_ex`, `libssh2_sftp_rename_ex`, `libssh2_sftp_unlink_ex`, `libssh2_sftp_rmdir_ex`, and `libssh2_sftp_last_error` behind driver methods.
+
+- [ ] **Step 3: Run focused RemoteFiles verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 4: API and boundary cleanup**
+
+Verify RemoteFiles application/UI code still depends on `SSHSFTPAdapter` or leases, not raw `SSHClient`; `SSHSession` remains the owner of cached SFTP state; `LibSSH2SessionDriver` does not store SFTP pointers; path and buffer unsafe pointers stay inside non-escaping driver calls. Request code review before committing.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add VVTerm/Core/SSH/LibSSH2SessionDriver.swift VVTerm/Core/SSH/SSHClient.swift VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift VVTermTests/Features/RemoteFiles docs/refactor-swift-best-practice.md
+git commit -m "refactor: route SFTP operations through libssh2 driver"
+```
+
+## Task 25: Final Core SSH FFI Audit and Keepalive Boundary
+
+**Files:**
+- Modify: `VVTerm/Core/SSH/SSHClient.swift`
+- Modify: `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
+- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Task 22 through Task 24 driver boundaries.
+- Produces:
+  - `sendKeepAlive(session:) -> Int32`
+  - Final Progress Ledger classification of every remaining `libssh2_`, `withUnsafe`, `UnsafePointer`, `NSLock`, and `nonisolated(unsafe)` hit in `Core/SSH`.
+
+- [ ] **Step 1: Add RED keepalive driver test**
+
+Add a fake-driver test that calls `SSHSession.sendKeepAlive()` after connect and asserts the driver method was invoked, without exposing the raw `libssh2_keepalive_send` call to `SSHClient.swift`.
+
+- [ ] **Step 2: Move keepalive and final direct session helpers**
+
+Move `libssh2_keepalive_send` behind `LibSSH2SessionDriving`. If any remaining direct `libssh2_` calls are still in `SSHClient.swift`, either move them or record a named exemption with owner and invariant in the Progress Ledger.
+
+- [ ] **Step 3: Run final Core SSH boundary scan**
+
+```bash
+rg -n "libssh2_|withUnsafe|UnsafeMutable|UnsafePointer|NSLock|nonisolated\\(unsafe\\)" VVTerm/Core/SSH -g '*.swift'
+git diff --check
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/SSHErrorRetryableTests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
+```
+
+- [ ] **Step 4: Request final Core SSH FFI review and commit**
+
+```bash
+git add VVTerm/Core/SSH/LibSSH2SessionDriver.swift VVTerm/Core/SSH/SSHClient.swift VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift docs/refactor-swift-best-practice.md
+git commit -m "refactor: complete core SSH FFI boundary sweep"
+```
+
 ## Progress Ledger
 
 - 2026-06-20: Plan created from local code audit, four read-only explorer audits, and current Swift/libssh2 references.
@@ -1822,7 +2087,8 @@ git commit -m "refactor: tighten core SSH FFI boundaries"
 - 2026-06-21: Task 21 code-review fixes completed. Auth method discovery failures now preserve raw `.authentication` libssh2 errors before later auth attempts can overwrite diagnostics; normal credential rejection remains `SSHError.authenticationFailed`; auth lifecycle tests clean up their shared known-host entry before and after each test; `ServerManager` computes known-host removal candidates from the post-delete server state before awaiting actor-backed cleanup.
 - 2026-06-21: Task 21 final focused verification completed. `LibSSH2SessionLifecycleTests`, `SSHAuthenticationGateCancellationTests`, `SSHErrorRetryableTests`, `KnownHostsManagerTests`, and `ServerManagerBootstrapTests` passed: 7 XCTest tests plus 17 Swift Testing tests. `git diff --check` passed. Boundary scan confirmed direct auth/host-key/last-error libssh2 calls are confined to `LibSSH2SessionDriver.swift`, and `KnownHostsManager.shared` is confined to the compatibility facade and its tests.
 - 2026-06-21: Task 21 re-review completed with no blocking findings. Residual risk accepted for this slice: auth lifecycle tests still use `KnownHostsStore.shared` with per-test cleanup rather than injecting an isolated host-key store.
-- Next task: define the next plan wave for deferred channel, SCP, SFTP, and keepalive libssh2 boundaries.
+- 2026-06-21: Post-Task-21 Core SSH FFI wave planning completed. Remaining direct libssh2 calls are split into four reviewable tasks: shell channel setup/teardown (Task 22), channel I/O plus exec/upload/resize/SCP open (Task 23), SFTP session and handle operations including seek (Task 24), and keepalive plus final FFI audit (Task 25). This keeps `SSHSession` as the channel/SFTP state owner while moving unsafe C calls into `LibSSH2SessionDriver`.
+- Next task: Task 22 Move Shell Channel Setup and Teardown Behind the libssh2 Driver.
 
 ## Self-Review
 
