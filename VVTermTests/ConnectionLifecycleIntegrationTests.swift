@@ -265,6 +265,40 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func tabManagerPaneInputResizeAndCloseUseManagerOwnedRuntime() async {
+        await withCleanTabManager { manager in
+            // Given a split-pane tab and a fake runtime client owned by the
+            // application manager, not by the SwiftUI pane coordinator.
+            let serverId = UUID()
+            let tab = TerminalTab(serverId: serverId, title: "Runtime Pane")
+            let fake = RecordingPaneRuntimeClient()
+            manager.tabsByServer[serverId] = [tab]
+            manager.selectedTabByServer[serverId] = tab.id
+            manager.connectedServerIds = [serverId]
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: serverId
+            )
+            manager.setTerminalConnectionClientFactoryForTesting { _, _ in fake }
+
+            // When the manager starts the pane runtime, forwards terminal I/O,
+            // and closes the pane.
+            await manager.startRuntimeForTesting(paneId: tab.rootPaneId)
+            await manager.sendInput(Data("ls\n".utf8), toPane: tab.rootPaneId)
+            await manager.resizePane(tab.rootPaneId, cols: 100, rows: 32)
+            await manager.closePaneAndWait(tab: tab, paneId: tab.rootPaneId)
+
+            // Then all SSH-facing work is serialized through manager-owned
+            // runtime state, including close teardown before the close returns.
+            let events = await fake.events
+            #expect(events == ["connect", "startShell", "write", "resize", "closeShell", "disconnect"])
+            #expect(manager.getSSHClient(for: tab.rootPaneId) == nil)
+            #expect(manager.paneStates[tab.rootPaneId] == nil)
+        }
+    }
+
+    @Test
     func connectionManagerTryBeginShellStartFailsWhenSessionIsMissing() async {
         await withCleanConnectionManager { manager in
             let missingSessionId = UUID()
@@ -580,5 +614,35 @@ struct ConnectionLifecycleIntegrationTests {
             #expect(paneIds.contains(secondSplitPane))
             #expect(paneIds.count == 3)
         }
+    }
+}
+
+private actor RecordingPaneRuntimeClient: TerminalConnectionClient {
+    private(set) var events: [String] = []
+    private let shellId = UUID()
+
+    func connect() async throws {
+        events.append("connect")
+    }
+
+    func startShell() async throws -> UUID {
+        events.append("startShell")
+        return shellId
+    }
+
+    func closeShell(_ shellId: UUID) async {
+        events.append("closeShell")
+    }
+
+    func disconnect() async {
+        events.append("disconnect")
+    }
+
+    func write(_ data: Data, to shellId: UUID) async throws {
+        events.append("write")
+    }
+
+    func resize(cols: Int, rows: Int, for shellId: UUID) async throws {
+        events.append("resize")
     }
 }

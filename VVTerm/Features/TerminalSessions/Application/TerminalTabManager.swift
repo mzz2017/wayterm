@@ -31,6 +31,31 @@ final class TerminalTabManager: ObservableObject {
         let paneCloseResults: [PaneCloseResult]
     }
 
+    private final class PaneRuntimeState {
+        let paneId: UUID
+        var server: Server
+        var credentials: ServerCredentials
+        let client: SSHClient
+        var shellId: UUID?
+        var shellTask: Task<Void, Never>?
+        var lastSize: (cols: Int, rows: Int) = (0, 0)
+        var onProcessExit: () -> Void
+
+        init(
+            paneId: UUID,
+            server: Server,
+            credentials: ServerCredentials,
+            client: SSHClient,
+            onProcessExit: @escaping () -> Void
+        ) {
+            self.paneId = paneId
+            self.server = server
+            self.credentials = credentials
+            self.client = client
+            self.onProcessExit = onProcessExit
+        }
+    }
+
     // MARK: - Published State
 
     /// All tabs, organized by server
@@ -63,6 +88,12 @@ final class TerminalTabManager: ObservableObject {
     private var tabOpensInFlight: Set<UUID> = []
     /// In-flight SSH teardown tasks by server, used to serialize close/open ordering.
     private var serverTeardownTasks: [UUID: [UUID: Task<Void, Never>]] = [:]
+    /// Application-owned pane SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
+    private var paneRuntimes: [UUID: PaneRuntimeState] = [:]
+    private let terminalConnectionRegistry = TerminalConnectionRegistry()
+    #if DEBUG
+    private var testingTerminalConnectionClientFactory: (@MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient)?
+    #endif
 
     /// Pane state keyed by pane ID
     @Published var paneStates: [UUID: TerminalPaneState] = [:]
@@ -472,6 +503,330 @@ final class TerminalTabManager: ObservableObject {
         terminalViews[paneId]
     }
 
+    func configureRuntime(
+        forPane paneId: UUID,
+        server: Server,
+        credentials: ServerCredentials,
+        onProcessExit: @escaping () -> Void
+    ) {
+        if let runtime = paneRuntimes[paneId] {
+            runtime.server = server
+            runtime.credentials = credentials
+            runtime.onProcessExit = onProcessExit
+            return
+        }
+
+        paneRuntimes[paneId] = PaneRuntimeState(
+            paneId: paneId,
+            server: server,
+            credentials: credentials,
+            client: SSHClient(),
+            onProcessExit: onProcessExit
+        )
+    }
+
+    func attachSurface(_ terminal: GhosttyTerminalView, toPane paneId: UUID) async {
+        if terminalViews[paneId] !== terminal {
+            registerTerminal(terminal, for: paneId)
+        }
+
+        startRuntimeIfNeeded(forPane: paneId, terminal: terminal)
+    }
+
+    func detachSurface(fromPane paneId: UUID, reason: TerminalSurfaceDetachReason) async {
+        switch reason {
+        case .viewDisappeared:
+            terminalViews[paneId]?.pauseRendering()
+        case .sessionClosed:
+            await cancelRuntime(forPane: paneId, mode: .fullDisconnect, cleanupTerminal: true, closeRegisteredShell: false)
+            await unregisterSSHClient(for: paneId)
+            unregisterTerminal(for: paneId)
+        }
+    }
+
+    func sendInput(_ data: Data, toPane paneId: UUID) async {
+        if let runtime = terminalConnectionRegistry.runtime(for: .pane(paneId)) {
+            try? await runtime.send(data)
+            return
+        }
+
+        guard let runtime = paneRuntimes[paneId] else {
+            if let route = registeredShellRoute(forPane: paneId) {
+                try? await route.client.write(data, to: route.shellId)
+            }
+            return
+        }
+
+        if let shellId = runtime.shellId {
+            do {
+                try await runtime.client.write(data, to: shellId)
+            } catch {
+                logger.error("Failed to send to pane SSH: \(error.localizedDescription)")
+            }
+            return
+        }
+
+        if let route = registeredShellRoute(forPane: paneId) {
+            do {
+                try await route.client.write(data, to: route.shellId)
+            } catch {
+                logger.error("Failed to send to pane SSH: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func resizePane(_ paneId: UUID, cols: Int, rows: Int) async {
+        guard cols > 0 && rows > 0 else { return }
+
+        if let runtime = terminalConnectionRegistry.runtime(for: .pane(paneId)) {
+            try? await runtime.resize(cols: cols, rows: rows)
+            return
+        }
+
+        if let runtime = paneRuntimes[paneId] {
+            guard cols != runtime.lastSize.cols || rows != runtime.lastSize.rows else { return }
+            runtime.lastSize = (cols, rows)
+
+            if let shellId = runtime.shellId {
+                do {
+                    try await runtime.client.resize(cols: cols, rows: rows, for: shellId)
+                } catch {
+                    logger.warning("Failed to resize pane PTY: \(error.localizedDescription)")
+                }
+                return
+            }
+        }
+
+        guard let route = registeredShellRoute(forPane: paneId) else { return }
+        do {
+            try await route.client.resize(cols: cols, rows: rows, for: route.shellId)
+        } catch {
+            logger.warning("Failed to resize pane PTY: \(error.localizedDescription)")
+        }
+    }
+
+    private func startRuntimeIfNeeded(forPane paneId: UUID, terminal: GhosttyTerminalView) {
+        guard let runtime = runtimeStateForStarting(paneId: paneId) else { return }
+        startRuntimeIfNeeded(runtime, terminal: terminal)
+    }
+
+    private func runtimeStateForStarting(paneId: UUID) -> PaneRuntimeState? {
+        if let runtime = paneRuntimes[paneId] {
+            return runtime
+        }
+
+        guard let paneState = paneStates[paneId],
+              let server = ServerManager.shared.servers.first(where: { $0.id == paneState.serverId }) else {
+            updatePaneState(paneId, connectionState: .failed("Server not found"))
+            return nil
+        }
+
+        do {
+            let credentials = try KeychainManager.shared.getCredentials(for: server)
+            configureRuntime(forPane: paneId, server: server, credentials: credentials, onProcessExit: {})
+            return paneRuntimes[paneId]
+        } catch {
+            updatePaneState(paneId, connectionState: .failed(error.localizedDescription))
+            return nil
+        }
+    }
+
+    private func startRuntimeIfNeeded(_ runtime: PaneRuntimeState, terminal: GhosttyTerminalView) {
+        let paneId = runtime.paneId
+
+        if runtime.shellTask != nil {
+            logger.debug("Ignoring duplicate start request for pane \(paneId.uuidString, privacy: .public)")
+            return
+        }
+
+        if let existingShellId = shellId(for: paneId) {
+            runtime.shellId = existingShellId
+            updatePaneState(paneId, connectionState: .connected)
+            logger.debug("Reusing existing shell for pane \(paneId.uuidString, privacy: .public)")
+            return
+        }
+
+        if runtime.shellId != nil {
+            updatePaneState(paneId, connectionState: .connected)
+            return
+        }
+
+        guard let startResult = beginShellStart(for: paneId, client: runtime.client),
+              startResult.started else {
+            if shellId(for: paneId) != nil {
+                updatePaneState(paneId, connectionState: .connected)
+            }
+            logger.debug("Shell start already in progress for pane \(paneId.uuidString, privacy: .public)")
+            return
+        }
+
+        let sshClient = runtime.client
+        let server = runtime.server
+        let credentials = runtime.credentials
+        let onProcessExit = runtime.onProcessExit
+        let logger = self.logger
+        let shellGeneration = startResult.generation
+
+        runtime.shellTask = Task.detached(priority: .userInitiated) { [weak terminal] in
+            defer {
+                Task { @MainActor in
+                    TerminalTabManager.shared.finishShellStart(
+                        for: paneId,
+                        client: sshClient,
+                        generation: shellGeneration
+                    )
+                    if TerminalTabManager.shared.paneRuntimes[paneId]?.client === sshClient {
+                        TerminalTabManager.shared.paneRuntimes[paneId]?.shellTask = nil
+                    }
+                }
+            }
+
+            guard let terminal else { return }
+            await TerminalConnectionRunner.run(
+                server: server,
+                credentials: credentials,
+                sshClient: sshClient,
+                terminal: terminal,
+                logger: logger,
+                onAttempt: { attempt in
+                    if attempt == 1 {
+                        TerminalTabManager.shared.updatePaneState(paneId, connectionState: .connecting)
+                    } else {
+                        TerminalTabManager.shared.updatePaneState(paneId, connectionState: .reconnecting(attempt: attempt))
+                    }
+                },
+                startupPlan: {
+                    await TerminalTabManager.shared.tmuxStartupPlan(
+                        for: paneId,
+                        serverId: server.id,
+                        client: sshClient
+                    )
+                },
+                registerShell: { shell, skipTmuxLifecycle in
+                    TerminalTabManager.shared.registerSSHClient(
+                        sshClient,
+                        shellId: shell.id,
+                        for: paneId,
+                        serverId: server.id,
+                        transport: shell.transport,
+                        fallbackReason: shell.fallbackReason,
+                        generation: shellGeneration,
+                        skipTmuxLifecycle: skipTmuxLifecycle
+                    )
+                    TerminalTabManager.shared.paneRuntimes[paneId]?.shellId = shell.id
+                    TerminalTabManager.shared.updatePaneState(paneId, connectionState: .connected)
+                },
+                onBeforeShellStart: { cols, rows in
+                    TerminalTabManager.shared.paneRuntimes[paneId]?.lastSize = (cols, rows)
+                },
+                onShellStarted: { _, shellId in
+                    await TerminalTabManager.shared.applyWorkingDirectoryIfNeeded(
+                        paneId: paneId,
+                        client: sshClient,
+                        shellId: shellId
+                    )
+                },
+                onTitleChange: { title in
+                    TerminalTabManager.shared.updatePaneTitle(paneId, rawTitle: title)
+                },
+                shouldContinueStreaming: { data, terminal in
+                    guard TerminalTabManager.shared.paneStates[paneId] != nil else { return false }
+                    terminal.writeOutput(data)
+                    return true
+                },
+                shouldResetClient: { sshError in
+                    switch sshError {
+                    case .notConnected, .connectionFailed, .socketError, .timeout:
+                        return true
+                    case .channelOpenFailed, .shellRequestFailed:
+                        let hasOtherRegistrations = await TerminalTabManager.shared.hasOtherRegistrations(
+                            using: sshClient,
+                            excluding: paneId
+                        )
+                        return !hasOtherRegistrations
+                    case .authenticationFailed, .tailscaleAuthenticationNotAccepted, .cloudflareConfigurationRequired, .cloudflareAuthenticationFailed, .cloudflareTunnelFailed, .hostKeyVerificationFailed, .moshServerMissing, .moshBootstrapFailed, .moshSessionFailed, .unknown:
+                        return false
+                    }
+                },
+                onProcessExit: {
+                    onProcessExit()
+                },
+                onFailure: { error, terminal in
+                    let errorMsg = "\r\n\u{001B}[31mSSH Error: \(error.localizedDescription)\u{001B}[0m\r\n"
+                    if let data = errorMsg.data(using: .utf8) {
+                        terminal.writeOutput(data)
+                    }
+                    TerminalTabManager.shared.updatePaneState(paneId, connectionState: .failed(error.localizedDescription))
+                }
+            )
+        }
+    }
+
+    private func registeredShellRoute(forPane paneId: UUID) -> (client: SSHClient, shellId: UUID)? {
+        guard let client = getSSHClient(for: paneId),
+              let shellId = shellId(for: paneId) else {
+            return nil
+        }
+        return (client: client, shellId: shellId)
+    }
+
+    private func cancelRuntime(
+        forPane paneId: UUID,
+        mode: ShellTeardownMode,
+        cleanupTerminal: Bool,
+        closeRegisteredShell: Bool
+    ) async {
+        let runtime = paneRuntimes[paneId]
+        runtime?.shellTask?.cancel()
+        runtime?.shellTask = nil
+        let shellId = runtime?.shellId
+        runtime?.shellId = nil
+
+        if cleanupTerminal, let terminal = terminalViews[paneId] {
+            terminal.cleanup()
+        }
+
+        guard let runtime else { return }
+        if closeRegisteredShell, let shellId {
+            await runtime.client.closeShell(shellId)
+        }
+        if mode == .fullDisconnect {
+            if closeRegisteredShell {
+                await runtime.client.disconnect()
+            }
+            paneRuntimes.removeValue(forKey: paneId)
+        }
+    }
+
+    private func closeTestingRuntimeIfNeeded(forPane paneId: UUID) async -> Bool {
+        guard let runtime = terminalConnectionRegistry.runtime(for: .pane(paneId)) else {
+            return false
+        }
+        await runtime.close(mode: .fullDisconnect)
+        return true
+    }
+
+    private func applyWorkingDirectoryIfNeeded(
+        paneId: UUID,
+        client: SSHClient,
+        shellId: UUID
+    ) async {
+        let cwd: String? = await MainActor.run {
+            guard TerminalTabManager.shared.shouldApplyWorkingDirectory(for: paneId) else { return nil }
+            return TerminalTabManager.shared.workingDirectory(for: paneId)
+        }
+        guard let cwd else { return }
+        let environment = await client.remoteEnvironment()
+        guard environment.shellProfile.family != .unknown else { return }
+        guard let payload = RemoteTerminalBootstrap.directoryChangeCommand(
+            for: cwd,
+            environment: environment
+        ).data(using: .utf8) else {
+            return
+        }
+        try? await client.write(payload, to: shellId)
+    }
+
     /// Register SSH shell for a pane
     func registerSSHClient(
         _ client: SSHClient,
@@ -717,6 +1072,17 @@ final class TerminalTabManager: ObservableObject {
     }
 
     private func finishPaneClose(_ closeResult: PaneCloseResult) async {
+        if await closeTestingRuntimeIfNeeded(forPane: closeResult.paneId) {
+            paneRuntimes.removeValue(forKey: closeResult.paneId)
+        } else {
+            await cancelRuntime(
+                forPane: closeResult.paneId,
+                mode: .fullDisconnect,
+                cleanupTerminal: false,
+                closeRegisteredShell: false
+            )
+        }
+
         await unregisterSSHClient(
             for: closeResult.paneId,
             killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
@@ -1374,6 +1740,8 @@ extension TerminalTabManager {
         shellRegistry.removeAll()
         tabOpensInFlight.removeAll()
         serverTeardownTasks.removeAll()
+        paneRuntimes.removeAll()
+        testingTerminalConnectionClientFactory = nil
         tmuxCleanupServers.removeAll()
         isRestoring = false
 
@@ -1384,6 +1752,29 @@ extension TerminalTabManager {
         for client in uniqueClients.values {
             await client.disconnect()
         }
+    }
+
+    func setTerminalConnectionClientFactoryForTesting(
+        _ factory: @escaping @MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient
+    ) {
+        testingTerminalConnectionClientFactory = factory
+    }
+
+    func startRuntimeForTesting(paneId: UUID) async {
+        guard let paneState = paneStates[paneId],
+              let factory = testingTerminalConnectionClientFactory else {
+            return
+        }
+
+        let server = ServerManager.shared.servers.first { $0.id == paneState.serverId }
+        let entityId = TerminalEntityID.pane(paneId)
+        let client = factory(entityId, server)
+        let runtime = TerminalConnectionRuntime(
+            entityId: entityId,
+            clientFactory: { client }
+        )
+        terminalConnectionRegistry.register(runtime, for: entityId, serverId: paneState.serverId)
+        await runtime.open(configuration: .testing)
     }
 }
 #endif
