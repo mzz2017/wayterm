@@ -694,7 +694,7 @@ final class TerminalTabManager: ObservableObject {
         }
     }
 
-    private func startRuntimeIfNeeded(_ runtime: PaneRuntimeState, terminal: GhosttyTerminalView) async {
+    private func startRuntimeIfNeeded(_ runtime: PaneRuntimeState, terminal: any TerminalConnectionSurface) async {
         let paneId = runtime.paneId
 
         if await runtime.runtime.hasShellTask() {
@@ -796,7 +796,7 @@ final class TerminalTabManager: ObservableObject {
                 },
                 shouldContinueStreaming: { data, terminal in
                     guard TerminalTabManager.shared.paneStates[paneId] != nil else { return false }
-                    terminal.writeOutput(data)
+                    terminal.writeConnectionOutput(data)
                     return true
                 },
                 shouldResetClient: { sshError in
@@ -819,7 +819,7 @@ final class TerminalTabManager: ObservableObject {
                 onFailure: { error, terminal in
                     let errorMsg = "\r\n\u{001B}[31mSSH Error: \(error.localizedDescription)\u{001B}[0m\r\n"
                     if let data = errorMsg.data(using: .utf8) {
-                        terminal.writeOutput(data)
+                        terminal.writeConnectionOutput(data)
                     }
                     TerminalTabManager.shared.updatePaneState(paneId, connectionState: .failed(error.localizedDescription))
                 }

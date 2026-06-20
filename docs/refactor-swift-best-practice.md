@@ -2410,6 +2410,7 @@ git commit -m "refactor: centralize terminal runtime ownership"
 - Modify: `VVTerm/Features/TerminalSessions/Application/TerminalSurfaceRegistry.swift`
 - Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
 - Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Test: `VVTermTests/Features/TerminalSessions/TerminalConnectionRunnerTests.swift`
 - Test: `VVTermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift`
 - Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
@@ -2422,45 +2423,50 @@ git commit -m "refactor: centralize terminal runtime ownership"
   - A small terminal surface I/O protocol owned by TerminalSessions Application.
   - `TerminalConnectionRunner` no longer depends on concrete `GhosttyTerminalView`.
 
-- [ ] **Step 1: Add RED runner surface-boundary tests**
+- [x] **Step 1: Add RED runner surface-boundary tests**
 
 Add tests that run `TerminalConnectionRunner` with a fake terminal surface and assert it reads terminal size, writes stream data, and reports process exit without requiring `GhosttyTerminalView`.
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSurfaceTeardownTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalConnectionRunnerTests ENABLE_DEBUG_DYLIB=NO
 ```
 
-Expected before implementation: FAIL because `TerminalConnectionRunner.run` currently requires `GhosttyTerminalView`.
+RED result: failed before implementation because `TerminalConnectionSurface`, `TerminalConnectionSurfaceSize`, and the surface-oriented runner overload did not exist, and the only available `TerminalConnectionRunner.run` still required `GhosttyTerminalView`.
 
-- [ ] **Step 3: Introduce terminal surface I/O protocol**
+- [x] **Step 3: Introduce terminal surface I/O protocol**
 
 Define a protocol with only the operations the runner needs: terminal size, stream data handling, external exit notification, and identity checks required by generation guards. Adapt `GhosttyTerminalView` at the boundary rather than passing it through the runner API.
 
-- [ ] **Step 4: Update managers to pass the protocol boundary**
+- [x] **Step 4: Update managers to pass the protocol boundary**
 
 `ConnectionSessionManager` and `TerminalTabManager` should attach concrete surfaces at the UI/application boundary and pass the protocol abstraction into the runner. SwiftUI representables remain surface owners only, not SSH lifecycle owners.
 
-- [ ] **Step 5: Run focused verification**
+- [x] **Step 5: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSurfaceTeardownTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/RemoteTerminalBootstrapTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSurfaceTeardownTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalConnectionRunnerTests -only-testing:VVTermTests/RemoteTerminalBootstrapTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 6: API and boundary cleanup**
+GREEN result: focused `xcodebuild test` succeeded; `ConnectionLifecycleIntegrationTests`, `RemoteTerminalBootstrapTests`, `TerminalSurfaceTeardownTests`, and `TerminalConnectionRunnerTests` all completed with 0 failures. `git diff --check` passed.
+
+- [x] **Step 6: API and boundary cleanup**
 
 Verify `TerminalConnectionRunner.swift` imports no UI-specific terminal type and that UI lifecycle callbacks still only attach/detach surfaces or send manager intent.
 
-- [ ] **Step 7: Request review and commit**
+- [x] **Step 7: Request review and commit**
 
 ```bash
-git add VVTerm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift VVTerm/Features/TerminalSessions/Application/TerminalSurfaceRegistry.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift docs/refactor-swift-best-practice.md
+git add VVTerm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift VVTerm/Features/TerminalSessions/Application/TerminalSurfaceRegistry.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/Features/TerminalSessions/TerminalConnectionRunnerTests.swift docs/refactor-swift-best-practice.md
 git commit -m "refactor: decouple terminal runner from UI surface"
 ```
 
 ## Progress Ledger
+
+- 2026-06-21: Task 31 completed. Terminal runtime/client factory ownership is centralized in `TerminalConnectionRuntime`; session and tab managers no longer own raw SSH client, shell id, or runner task state directly, and late/missing shell registrations are rejected before runner follow-up callbacks mutate closed state.
+- 2026-06-21: Task 32 RED/GREEN and API cleanup completed. `TerminalConnectionRunner` now depends on `TerminalConnectionSurface` and abstract connection operations instead of `GhosttyTerminalView`; `GhosttyTerminalView` adaptation lives at the surface registry/application boundary, and runner tests cover fake-surface size reads, stream writes, and process-exit notification without constructing a UI surface.
 
 - 2026-06-20: Plan created from local code audit, four read-only explorer audits, and current Swift/libssh2 references.
 - 2026-06-21: Task 14 completed in commit-sized slices. Runtime/live transport truth now comes from `TerminalConnectionRegistry`, `activeServerIds`, `openServerIds`, and `hasLiveRuntime`; `ConnectionState` is explicitly treated as a user-facing display snapshot and is no longer persisted or used for high-risk open/retry/watchdog lifecycle decisions.

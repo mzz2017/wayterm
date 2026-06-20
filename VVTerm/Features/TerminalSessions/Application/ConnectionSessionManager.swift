@@ -1528,7 +1528,7 @@ final class ConnectionSessionManager: ObservableObject {
         }
     }
 
-    private func startRuntimeIfNeeded(_ runtime: SessionRuntimeState, terminal: GhosttyTerminalView) async {
+    private func startRuntimeIfNeeded(_ runtime: SessionRuntimeState, terminal: any TerminalConnectionSurface) async {
         let sessionId = runtime.sessionId
 
         if await runtime.runtime.hasShellTask() {
@@ -1631,7 +1631,7 @@ final class ConnectionSessionManager: ObservableObject {
                 shouldContinueStreaming: { data, terminal in
                     let sessionExists = ConnectionSessionManager.shared.sessions.contains { $0.id == sessionId }
                     guard sessionExists else { return false }
-                    terminal.writeOutput(data)
+                    terminal.writeConnectionOutput(data)
                     return true
                 },
                 shouldResetClient: { sshError in
@@ -1654,7 +1654,7 @@ final class ConnectionSessionManager: ObservableObject {
                 onFailure: { error, terminal in
                     let errorMsg = "\r\n\u{001B}[31mSSH Error: \(error.localizedDescription)\u{001B}[0m\r\n"
                     if let data = errorMsg.data(using: .utf8) {
-                        terminal.writeOutput(data)
+                        terminal.writeConnectionOutput(data)
                     }
                     ConnectionSessionManager.shared.updateSessionState(sessionId, to: .failed(error.localizedDescription))
                 }

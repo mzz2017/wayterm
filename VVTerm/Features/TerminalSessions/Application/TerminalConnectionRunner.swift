@@ -13,47 +13,98 @@ enum TerminalConnectionRunner {
         server: Server,
         credentials: ServerCredentials,
         sshClient: SSHClient,
-        terminal: GhosttyTerminalView,
+        terminal: any TerminalConnectionSurface,
         logger: Logger,
         onAttempt: @MainActor @escaping (_ attempt: Int) -> Void,
         startupPlan: @MainActor @escaping () async -> (command: String?, skipTmuxLifecycle: Bool),
         registerShell: @MainActor @escaping (_ shell: ShellHandle, _ skipTmuxLifecycle: Bool) async -> Bool,
         onBeforeShellStart: @MainActor @escaping (_ cols: Int, _ rows: Int) async -> Void,
-        onShellStarted: @MainActor @escaping (_ terminal: GhosttyTerminalView, _ shellId: UUID) async -> Void,
+        onShellStarted: @MainActor @escaping (_ terminal: any TerminalConnectionSurface, _ shellId: UUID) async -> Void,
         onTitleChange: @MainActor @escaping (_ title: String) -> Void,
-        shouldContinueStreaming: @MainActor @escaping (_ data: Data, _ terminal: GhosttyTerminalView) -> Bool,
+        shouldContinueStreaming: @MainActor @escaping (_ data: Data, _ terminal: any TerminalConnectionSurface) -> Bool,
         shouldResetClient: @escaping (_ error: SSHError) async -> Bool,
         onProcessExit: @MainActor @escaping () -> Void,
-        onFailure: @MainActor @escaping (_ error: Error, _ terminal: GhosttyTerminalView) -> Void
+        onFailure: @MainActor @escaping (_ error: Error, _ terminal: any TerminalConnectionSurface) -> Void
+    ) async {
+        await run(
+            terminal: terminal,
+            logger: logger,
+            onAttempt: { attempt in
+                logger.info("Connecting to \(server.host)... (attempt \(attempt))")
+                await onAttempt(attempt)
+            },
+            connect: {
+                _ = try await sshClient.connect(to: server, credentials: credentials)
+            },
+            startShell: { cols, rows, startupCommand in
+                try await sshClient.startShell(
+                    cols: cols,
+                    rows: rows,
+                    startupCommand: startupCommand
+                )
+            },
+            closeShell: { shellId in
+                await sshClient.closeShell(shellId)
+            },
+            startupPlan: startupPlan,
+            registerShell: registerShell,
+            onBeforeShellStart: onBeforeShellStart,
+            onShellStarted: onShellStarted,
+            onTitleChange: onTitleChange,
+            shouldContinueStreaming: shouldContinueStreaming,
+            shouldResetClient: shouldResetClient,
+            resetConnection: {
+                logger.warning("Resetting SSH client before retrying connection")
+                await sshClient.disconnect()
+            },
+            onProcessExit: {
+                onProcessExit()
+            },
+            onFailure: onFailure
+        )
+    }
+
+    static func run(
+        terminal: any TerminalConnectionSurface,
+        logger: Logger? = nil,
+        maxAttempts: Int = 3,
+        onAttempt: @MainActor @escaping (_ attempt: Int) async -> Void,
+        connect: @escaping () async throws -> Void,
+        startShell: @escaping (_ cols: Int, _ rows: Int, _ startupCommand: String?) async throws -> ShellHandle,
+        closeShell: @escaping (_ shellId: UUID) async -> Void,
+        startupPlan: @MainActor @escaping () async -> (command: String?, skipTmuxLifecycle: Bool),
+        registerShell: @MainActor @escaping (_ shell: ShellHandle, _ skipTmuxLifecycle: Bool) async -> Bool,
+        onBeforeShellStart: @MainActor @escaping (_ cols: Int, _ rows: Int) async -> Void,
+        onShellStarted: @MainActor @escaping (_ terminal: any TerminalConnectionSurface, _ shellId: UUID) async -> Void,
+        onTitleChange: @MainActor @escaping (_ title: String) -> Void,
+        shouldContinueStreaming: @MainActor @escaping (_ data: Data, _ terminal: any TerminalConnectionSurface) -> Bool,
+        shouldResetClient: @escaping (_ error: SSHError) async -> Bool = { _ in false },
+        resetConnection: @escaping () async -> Void = {},
+        onProcessExit: @MainActor @escaping () async -> Void,
+        onFailure: @MainActor @escaping (_ error: Error, _ terminal: any TerminalConnectionSurface) -> Void
     ) async {
         var titleParser = TerminalTitleSequenceParser()
 
         await runForTesting(
             logger: logger,
+            maxAttempts: maxAttempts,
             onAttempt: { attempt in
                 await onAttempt(attempt)
             },
-            performAttempt: { attempt in
-                logger.info("Connecting to \(server.host)... (attempt \(attempt))")
-                _ = try await sshClient.connect(to: server, credentials: credentials)
+            performAttempt: { _ in
+                try await connect()
                 try Task.checkCancellation()
 
-                let size = await MainActor.run {
-                    terminal.terminalSize()
-                }
-                let cols = Int(size?.columns ?? 80)
-                let rows = Int(size?.rows ?? 24)
+                let size = await terminal.connectionSurfaceSize()
+                let cols = size?.columns ?? 80
+                let rows = size?.rows ?? 24
 
                 await onBeforeShellStart(cols, rows)
                 let startup = await startupPlan()
-                let shell = try await sshClient.startShell(
-                    cols: cols,
-                    rows: rows,
-                    startupCommand: startup.command
-                )
+                let shell = try await startShell(cols, rows, startup.command)
 
                 guard !Task.isCancelled else {
-                    await sshClient.closeShell(shell.id)
+                    await closeShell(shell.id)
                     return
                 }
 
@@ -72,17 +123,12 @@ enum TerminalConnectionRunner {
                 }
 
                 try Task.checkCancellation()
-                logger.info("SSH shell ended")
-                // External backend: tell ghostty the session ended so it shows the
-                // real "session ended" UI (same as a local process exit).
-                await MainActor.run { terminal.externalExited(0) }
+                logger?.info("SSH shell ended")
+                await terminal.connectionSurfaceExited(0)
                 await onProcessExit()
             },
             shouldResetClient: shouldResetClient,
-            resetClient: {
-                logger.warning("Resetting SSH client before retrying connection")
-                await sshClient.disconnect()
-            },
+            resetClient: resetConnection,
             onFailure: { error in
                 await onFailure(error, terminal)
             }

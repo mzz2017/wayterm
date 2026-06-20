@@ -1,5 +1,35 @@
 import Foundation
 
+struct TerminalConnectionSurfaceSize: Equatable, Sendable {
+    let columns: Int
+    let rows: Int
+}
+
+@MainActor
+protocol TerminalConnectionSurface: AnyObject {
+    func connectionSurfaceSize() -> TerminalConnectionSurfaceSize?
+    func writeConnectionOutput(_ data: Data)
+    func connectionSurfaceExited(_ exitCode: UInt32)
+}
+
+extension GhosttyTerminalView: TerminalConnectionSurface {
+    func connectionSurfaceSize() -> TerminalConnectionSurfaceSize? {
+        guard let size = terminalSize() else { return nil }
+        return TerminalConnectionSurfaceSize(
+            columns: Int(size.columns),
+            rows: Int(size.rows)
+        )
+    }
+
+    func writeConnectionOutput(_ data: Data) {
+        writeOutput(data)
+    }
+
+    func connectionSurfaceExited(_ exitCode: UInt32) {
+        externalExited(exitCode)
+    }
+}
+
 @MainActor
 final class TerminalSurfaceRegistry {
     private struct TestSurface {
