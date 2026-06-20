@@ -1490,7 +1490,7 @@ Before Task 18, check that RemoteFiles application/UI code does not reason about
   - Existing `RemoteConnectionLease.close()`.
   - Existing `ServerStatsCollector.stopCollecting()` may remain as a synchronous intent helper only if it stores a task that a later start waits on.
 
-- [ ] **Step 1: Add RED Stats lifecycle tests**
+- [x] **Step 1: Add RED Stats lifecycle tests**
 
 Create `ServerStatsCollectorLifecycleTests` with a `Test Context` comment and these tests:
 
@@ -1506,6 +1506,14 @@ func startCollectingWaitsForPendingStopBeforeReplacingOwnedLease() async throws
 @MainActor
 @Test
 func stopCollectingDoesNotDisconnectBorrowedSharedClient() async throws
+
+@MainActor
+@Test
+func startCollectingWaitsForFailedCollectionLeaseCloseBeforeRetry() async throws
+
+@MainActor
+@Test
+func cancelledCollectionDoesNotPublishConnectionError() async throws
 ```
 
 Expected RED command:
@@ -1516,26 +1524,26 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected failure: `stopCollectingAndWait()` and the needed lease/test seams do not exist.
 
-- [ ] **Step 2: Add injectable lease and collection seams**
+- [x] **Step 2: Add injectable lease and collection seams**
 
 Add narrow internal test seams for creating a `RemoteConnectionLease` and running one collection loop without real network. Keep user-facing initialization unchanged.
 
-- [ ] **Step 3: Make stop awaitable**
+- [x] **Step 3: Make stop awaitable**
 
 Cancel the stored collection task, await its completion or close task, close the current lease exactly once, then clear collector state. Cancellation should not surface as a connection error.
 
-- [ ] **Step 4: Track stop from SwiftUI**
+- [x] **Step 4: Track stop from SwiftUI**
 
 `ServerStatsView` may use `.task(id:)` and `onDisappear` only to send stop intent into the collector. Any returned lifecycle-critical task must be awaited in a SwiftUI `.task` or stored by the collector so the next start waits on it.
 
-- [ ] **Step 5: Run focused Stats lifecycle tests**
+- [x] **Step 5: Run focused Stats lifecycle tests**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VVTerm/Features/Stats/Application/ServerStatsCollector.swift \
@@ -1544,7 +1552,7 @@ git add VVTerm/Features/Stats/Application/ServerStatsCollector.swift \
 git commit -m "refactor: make stats collection stop awaitable"
 ```
 
-- [ ] **Step 7: API/boundary cleanup**
+- [x] **Step 7: API/boundary cleanup**
 
 Before Task 19, verify stop/start names read as side-effectful lifecycle APIs, `ServerStatsView` no longer drops close tasks, and restart ordering no longer depends on stale `isCollecting` alone. Record the result in the Progress Ledger.
 
@@ -1687,7 +1695,9 @@ git commit -m "refactor: complete remote lease boundary cleanup"
 - 2026-06-21: Task 16 RED/GREEN completed. Added lease-ordering tests for concurrent close, non-overlapping exclusive operations, and close waiting for a protected operation; then implemented `RemoteConnectionLease.withExclusiveClient` with private actor-owned per-lease serialization. API cleanup found no new UI/application raw-client exposure; mutable gate state remains private to `RemoteConnectionLeaseState`. Verification: `RemoteConnectionLeaseTests` passed 6 Swift Testing tests and `git diff --check` passed.
 - 2026-06-21: Task 17 RED/GREEN completed. Added `SSHSFTPAdapterTests` covering borrowed disconnect safety, owned disconnect waiting for in-flight SFTP work, per-server lease serialization, and borrowed registration retry after failure. RED failed on missing `SFTPRemoteFileClient` and adapter seams; GREEN passed 4 `SSHSFTPAdapterTests` after introducing the RemoteFiles SFTP capability protocol and routing adapter work through `RemoteConnectionLease.withExclusiveClient`.
 - 2026-06-21: Task 17 API/boundary cleanup completed. RemoteFiles application code still depends on `SSHSFTPAdapter` rather than raw `SSHClient`; raw `SSHClient` use is confined to RemoteFiles infrastructure default provider/factory and feature-boundary conformance. `SSHSFTPAdapterTests` and `RemoteFileBrowserStoreTests` include Test Context headers. Verification: focused RemoteFiles suite passed 8 Swift Testing tests and `git diff --check` passed.
-- Next task: Task 18 Stats Collector Awaitable Stop.
+- 2026-06-21: Task 18 RED/GREEN completed. Added `ServerStatsCollectorLifecycleTests` for awaited owned stop, restart waiting for pending stop, borrowed shared-client stop safety, failed collection close-before-retry ordering, and cancellation-as-lifecycle behavior. RED failed on missing `StatsConnection`, injectable collector initializer, and `stopCollectingAndWait`; GREEN passed 5 Swift Testing tests after adding pending stop tracking and injectable connection/collection seams.
+- 2026-06-21: Task 18 API/boundary cleanup completed. `stopCollecting()` remains a synchronous UI intent helper but stores the pending stop task; `stopCollectingAndWait()` is the explicit awaitable API; `startCollecting(...)` waits for pending stop before replacing connection state. `ServerStatsView` awaits visibility-driven stop and only sends stored stop intent from `onDisappear`. Verification: focused Stats lifecycle suite passed 5 Swift Testing tests; `git diff --check` passed; code review found no code issues after lifecycle fixes.
+- Next task: Task 19 Stats Command Executor Boundary.
 
 ## Self-Review
 

@@ -152,7 +152,7 @@ struct ServerStatsView: View {
             if isVisible {
                 await statsCollector.startCollecting(for: server, using: sharedClientProvider())
             } else {
-                statsCollector.stopCollecting()
+                await statsCollector.stopCollectingAndWait()
             }
         }
         .onDisappear {
