@@ -82,6 +82,10 @@ final class TerminalTabManager: ObservableObject {
         terminalConnectionRegistry.activeServerIds
     }
 
+    var hasLivePanes: Bool {
+        terminalConnectionRegistry.hasStreamingEntity
+    }
+
     /// Selected view type per server (stats/terminal)
     @Published var selectedViewByServer: [UUID: String] = [:] {
         didSet { schedulePersist() }
@@ -1169,7 +1173,7 @@ final class TerminalTabManager: ObservableObject {
     }
 
     private var hasConnectedPanes: Bool {
-        paneStates.values.contains { $0.connectionState.isConnected }
+        hasLivePanes
     }
 
     func updatePaneWorkingDirectory(_ paneId: UUID, rawDirectory: String) {

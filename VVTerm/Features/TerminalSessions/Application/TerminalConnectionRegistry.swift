@@ -14,6 +14,10 @@ final class TerminalConnectionRegistry {
         })
     }
 
+    var hasStreamingEntity: Bool {
+        statesByEntity.values.contains { $0.isConnected }
+    }
+
     func hasActiveEntity(
         for serverId: UUID,
         excluding excludedEntityId: TerminalEntityID

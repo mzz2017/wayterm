@@ -931,6 +931,44 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func tabManagerLivePaneIndicatorComesFromRegistryNotPaneStateSnapshots() async {
+        await withCleanTabManager { manager in
+            let server = makeServer(connectionMode: .standard)
+            let tab = TerminalTab(serverId: server.id, title: server.name)
+            manager.tabsByServer[server.id] = [tab]
+            manager.selectedTabByServer[server.id] = tab.id
+
+            var stalePaneState = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+            stalePaneState.connectionState = .connected
+            manager.paneStates[tab.rootPaneId] = stalePaneState
+
+            #expect(
+                !manager.hasLivePanes,
+                "A stale pane snapshot must not make the tab manager report live pane runtime."
+            )
+
+            manager.registerSSHClient(
+                SSHClient(),
+                shellId: UUID(),
+                for: tab.rootPaneId,
+                serverId: server.id,
+                transport: .ssh,
+                skipTmuxLifecycle: true
+            )
+            manager.updatePaneState(tab.rootPaneId, connectionState: .connected)
+
+            #expect(
+                manager.hasLivePanes,
+                "Live pane state should turn true only after the registry records streaming runtime."
+            )
+        }
+    }
+
+    @Test
     func splitPaneUsesLatestTabStateWhenViewTabIsStale() async {
         await withCleanTabManager { manager in
             let wasPro = StoreManager.shared.isPro
