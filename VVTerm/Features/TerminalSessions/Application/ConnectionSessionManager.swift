@@ -317,8 +317,7 @@ final class ConnectionSessionManager: ObservableObject {
         if !forceNew, let existingSession = firstSession(for: server.id) {
             selectedSessionId = existingSession.id
             let hasLiveOrOpeningRuntime = terminalConnectionRegistry.isOpeningOrStreaming(.session(existingSession.id))
-            if !hasLiveOrOpeningRuntime,
-               !existingSession.connectionState.isConnecting {
+            if !hasLiveOrOpeningRuntime {
                 try await reconnect(session: existingSession)
             }
             return existingSession
@@ -1521,15 +1520,12 @@ final class ConnectionSessionManager: ObservableObject {
             throw SSHError.connectionFailed("Server not found")
         }
 
-        if let current = sessionWithID(session.id),
-           current.connectionState.isConnecting {
+        if terminalConnectionRegistry.isOpeningOrStreaming(.session(session.id)) {
             return
         }
 
         // Update state
-        if let index = indexOfSession(session.id) {
-            sessions[index].connectionState = .reconnecting(attempt: 1)
-        }
+        updateSessionState(session.id, to: .reconnecting(attempt: 1))
         markTerminalForReconnectReset(for: session.id)
 
         // Cancel in-flight shell work but keep the terminal surface for reuse
