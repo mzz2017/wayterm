@@ -1135,7 +1135,7 @@ actor SSHSession {
             let serverIdString = config.credentials.serverId.uuidString
             let authGateKey = "\(serverIdString):\(username)"
             logger.info("Waiting for publickey auth slot [serverId: \(serverIdString, privacy: .public), user: \(username, privacy: .public)]")
-            authResult = await SSHAuthenticationGate.shared.withExclusiveAccess(for: authGateKey) {
+            authResult = try await SSHAuthenticationGate.shared.withExclusiveAccess(for: authGateKey) {
                 logger.info("Acquired publickey auth slot [serverId: \(serverIdString, privacy: .public), user: \(username, privacy: .public)]")
                 return Self.authenticateWithPublicKey(
                     session: session,

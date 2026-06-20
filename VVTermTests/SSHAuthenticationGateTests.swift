@@ -1,6 +1,12 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect SSHAuthenticationGate's per-server authentication
+// serialization rule. Same-key authentication must not overlap, while unrelated
+// keys may proceed in parallel. Update these tests only if public-key auth no
+// longer needs a per-key serialization gate.
+
 final class SSHAuthenticationGateTests: XCTestCase {
     func testSameKeyOperationsDoNotOverlap() async {
         let gate = SSHAuthenticationGate()
@@ -9,7 +15,7 @@ final class SSHAuthenticationGateTests: XCTestCase {
         await withTaskGroup(of: Void.self) { group in
             for _ in 0..<3 {
                 group.addTask {
-                    await gate.withExclusiveAccess(for: "server-key") {
+                    try? await gate.withExclusiveAccess(for: "server-key") {
                         await probe.enter()
                         try? await Task.sleep(for: .milliseconds(50))
                         await probe.leave()
@@ -29,7 +35,7 @@ final class SSHAuthenticationGateTests: XCTestCase {
         await withTaskGroup(of: Void.self) { group in
             for key in ["server-a", "server-b"] {
                 group.addTask {
-                    await gate.withExclusiveAccess(for: key) {
+                    try? await gate.withExclusiveAccess(for: key) {
                         await probe.enter()
                         try? await Task.sleep(for: .milliseconds(50))
                         await probe.leave()
