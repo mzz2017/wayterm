@@ -1030,7 +1030,7 @@ actor SSHSession {
         }
 
         do {
-            try verifyHostKey()
+            try await verifyHostKey()
         } catch {
             cleanup()
             throw error
@@ -1198,7 +1198,7 @@ actor SSHSession {
         }
     }
 
-    private func verifyHostKey() throws {
+    private func verifyHostKey() async throws {
         guard let session = libssh2Session else {
             throw SSHError.notConnected
         }
@@ -1206,27 +1206,30 @@ actor SSHSession {
         let (fingerprint, keyType) = try hostKeyFingerprint(for: session)
         let host = config.hostKeyHost
         let port = config.hostKeyPort
+        let verifier = KnownHostVerificationService()
 
-        if let entry = KnownHostsManager.shared.entry(for: host, port: port) {
-            if entry.fingerprint != fingerprint {
-                logger.error("Host key mismatch for \(host):\(port). Known: \(entry.fingerprint), Presented: \(fingerprint)")
-                throw SSHError.hostKeyVerificationFailed
-            }
-            KnownHostsManager.shared.updateSeen(host: host, port: port)
-            logger.info("Host key verified for \(host):\(port)")
-            return
-        }
-
-        let entry = KnownHostsManager.Entry(
+        let result = try await verifier.verify(
             host: host,
             port: port,
             fingerprint: fingerprint,
-            keyType: keyType,
-            addedAt: Date(),
-            lastSeenAt: Date()
+            keyType: keyType
         )
-        KnownHostsManager.shared.save(entry: entry)
-        logger.info("Trusted new host key for \(host):\(port) (\(fingerprint))")
+
+        switch result {
+        case .trusted:
+            logger.info("Host key verified for \(host):\(port)")
+        case .newHost:
+            await verifier.trust(
+                host: host,
+                port: port,
+                fingerprint: fingerprint,
+                keyType: keyType
+            )
+            logger.info("Trusted new host key for \(host):\(port) (\(fingerprint))")
+        case .changed(let knownFingerprint, let presentedFingerprint):
+            logger.error("Host key mismatch for \(host):\(port). Known: \(knownFingerprint), Presented: \(presentedFingerprint)")
+            throw SSHError.hostKeyVerificationFailed
+        }
     }
 
     private func hostKeyFingerprint(for session: OpaquePointer) throws -> (String, Int) {
