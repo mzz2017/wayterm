@@ -220,6 +220,19 @@ xcodebuild test \
 
 - The shared `VVTerm` scheme includes both `VVTermTests` and `VVTermUITests`; `-skip-testing:VVTermUITests` prevents running UI tests but Xcode may still prepare/build the UI test target. Prefer a unit-test-only scheme or test plan if this becomes disruptive.
 
+## Swift Lifecycle Rules
+
+- For Swift, SwiftUI, iOS, macOS, SSH/resource lifecycle, concurrency, teardown, reconnect, or Apple platform bugfix/review work, use the repo skill `$swift-apple-lifecycle`.
+- SwiftUI `View`, `UIViewRepresentable`, `NSViewRepresentable`, and Coordinator must not be the sole owner of critical long-lived resources.
+- UI sends intent; the application layer owns lifecycle, teardown, reconnect, and retry orchestration.
+- Lifecycle-critical work such as disconnect, close, save, delete, sync, authentication, and cleanup must be awaited or tracked.
+- Avoid untracked `Task {}` and `Task.detached {}` for lifecycle-critical work. If a call site cannot await, store or return a `Task` and make later operations wait on it.
+- Non-trivial lifecycles should use explicit states such as `idle`, `connecting`, `connected`, `closing`, `disconnected`, and `failed`; do not infer business lifecycle from SwiftUI view existence.
+- Mutable shared state should be actor-isolated or `@MainActor`; keep heavy parsing, crypto, file IO, and network IO off the main actor.
+- C/FFI calls must keep pointer lifetimes local, preserve raw error codes in logs, and serialize sensitive paths when thread-safety is uncertain.
+- Bug fixes need regression tests when feasible, especially async ordering tests for close/open/reconnect behavior.
+- Do not claim tests pass unless they ran and completed. If only `build-for-testing` passed or XCTest hung, state that explicitly.
+
 ## Data Models
 
 ### Server

@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/swift_lifecycle_guard.py\"",
+            "timeout": 30,
+            "statusMessage": "Checking Swift lifecycle risk patterns"
+          }
+        ]
+      }
+    ]
+  }
+}
