@@ -1185,32 +1185,40 @@ git commit -m "refactor: use remote connection leases across features"
 **Files:**
 - Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
 - Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalAutoReconnectPolicy.swift`
 - Modify: `VVTerm/Features/TerminalSessions/Domain/ConnectionSession.swift`
 - Modify: `VVTerm/Features/TerminalSessions/Domain/TerminalTab.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
 - Test: `VVTermTests/Features/TerminalSessions/ConnectionSessionDomainTests.swift`
 - Test: `VVTermTests/Features/TerminalSessions/TerminalSplitNodeTests.swift`
+- Test: `VVTermTests/Features/TerminalSessions/TerminalAutoReconnectPolicyTests.swift`
+- Test: `VVTermTests/ConnectionSessionManagerOpenTests.swift`
 - Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
 
 **Interfaces:**
 - Produces:
-  - One runtime state source via `TerminalConnectionRegistry`.
-  - Session and pane domain models store user-facing metadata only.
+  - One live transport/runtime truth source via `TerminalConnectionRegistry`.
+  - Session and pane domain models may retain `ConnectionState` only as a user-facing display snapshot.
+  - Persisted snapshots omit runtime state; restored sessions/panes reopen as disconnected display snapshots until an application-owned runtime starts.
+  - `openServerIds` represents open workspace UI state; `activeServerIds`/`hasLiveRuntime` represent opening or streaming transport state.
 - Consumes:
   - `TerminalEntityConnectionState`.
+  - `TerminalAutoReconnectPolicy`, `TerminalManualReconnectPolicy`, and `TerminalConnectWatchdogAction`.
 
-- [ ] **Step 1: Write failing consistency tests**
+- [x] **Step 1: Write failing consistency tests**
 
 Add tests that restored disconnected sessions do not make `connectedServerIds` contain the server until a runtime reaches `.streaming`.
 
-- [ ] **Step 2: Run red tests**
+- [x] **Step 2: Run red tests**
 
 Expected: current restore/open semantics mark server connected too early.
 
-- [ ] **Step 3: Move runtime fields out of domain snapshots**
+- [x] **Step 3: Move runtime fields out of persisted snapshots and lifecycle decisions**
 
-Keep persisted session/tab metadata: ids, server ids, title, working directory, tmux preference, presentation overrides. Runtime state derives from registry.
+Keep persisted session/tab metadata: ids, server ids, title, working directory, tmux preference, presentation overrides. Do not persist runtime state. `ConnectionState` remains in session/pane values only as a display snapshot; lifecycle decisions derive from `TerminalConnectionRegistry`, `hasLiveRuntime`, and manager-owned shell registries.
 
-- [ ] **Step 4: Reconcile connected-server semantics**
+- [x] **Step 4: Reconcile connected-server semantics**
 
 Define:
 
@@ -1221,11 +1229,11 @@ var openServerIds: Set<UUID> { sessions.map(\.serverId) union tabsByServer.keys 
 
 Use `openServerIds` for navigation history and `activeServerIds` for live transport indicators.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run domain and lifecycle tests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift \
@@ -1236,6 +1244,25 @@ git add VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.sw
   VVTermTests/Features/TerminalSessions/TerminalSplitNodeTests.swift \
   VVTermTests/ConnectionLifecycleIntegrationTests.swift
 git commit -m "refactor: unify terminal runtime state"
+```
+
+Actual commits were split into smaller reviewable slices:
+
+- `ca53908 refactor: expose pane runtime liveness from registry`
+- `875f5e4 refactor: gate auto reconnect on live runtime`
+- `cf25ffe refactor: route pane reconnect through tab manager`
+- `9c252d6 refactor: handle pane exit in tab manager`
+- `f0f4133 refactor: gate manual retry on runtime liveness`
+- `d8a191e refactor: handle connect watchdog in managers`
+
+Task 14 verification:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,id=6B08CBD5-A6F2-402D-B431-780A0F292BCD' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,id=6B08CBD5-A6F2-402D-B431-780A0F292BCD' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalAutoReconnectPolicyTests -only-testing:VVTermTests/TerminalManualReconnectPolicyTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,id=6B08CBD5-A6F2-402D-B431-780A0F292BCD' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionSessionDomainTests -only-testing:VVTermTests/TerminalSplitNodeTests -only-testing:VVTermTests/ConnectionSessionManagerOpenTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,id=6B08CBD5-A6F2-402D-B431-780A0F292BCD' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO
 ```
 
 ## Task 15: Final Lifecycle Sweep
@@ -1292,7 +1319,10 @@ git commit -m "refactor: complete Swift lifecycle cleanup"
 ## Progress Ledger
 
 - 2026-06-20: Plan created from local code audit, four read-only explorer audits, and current Swift/libssh2 references.
-- Next task: Task 1, reject late shell registration with generation/entity guard.
+- 2026-06-21: Task 14 completed in commit-sized slices. Runtime/live transport truth now comes from `TerminalConnectionRegistry`, `activeServerIds`, `openServerIds`, and `hasLiveRuntime`; `ConnectionState` is explicitly treated as a user-facing display snapshot and is no longer persisted or used for high-risk open/retry/watchdog lifecycle decisions.
+- 2026-06-21: Task 14 API/boundary cleanup completed. New APIs are application-layer intent/policy boundaries: `hasLiveRuntime(forSessionId:)`, `hasLiveRuntime(forPaneId:)`, `TerminalAutoReconnectPolicy`, `TerminalManualReconnectPolicy`, `reconnectPane(_:)`, `handlePaneExit(for:)`, `TerminalConnectWatchdogAction`, and manager-owned `handleConnectWatchdogTimeout(...)` methods.
+- 2026-06-21: Remaining lifecycle-sensitive UI hits are intentionally deferred to Task 15: `SSHTerminalWrapper` and split-pane terminal wrapper attach/start guards still read `shellId` / `isShellStartInFlight` from UI-adjacent code. They are terminal surface attach guards rather than connected-server or retry policy truth, but they should be classified by the Task 15 audit before further changes.
+- Next task: Task 15, Final Lifecycle Sweep.
 
 ## Self-Review
 
