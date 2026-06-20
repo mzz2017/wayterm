@@ -2341,8 +2341,7 @@ actor SSHSession {
 
     func sendKeepAlive() {
         guard let session = libssh2Session else { return }
-        var secondsToNext: Int32 = 0
-        libssh2_keepalive_send(session, &secondsToNext)
+        _ = driver.sendKeepAlive(session: session)
     }
 
     private func ensureSFTPSession() async throws -> OpaquePointer {

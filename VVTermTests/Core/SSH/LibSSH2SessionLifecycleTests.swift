@@ -165,6 +165,28 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         }
     }
 
+    func testKeepAliveUsesDriverBoundary() async throws {
+        // Given a connected session using the fake libssh2 driver.
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When the session sends a keepalive after authentication.
+        try await session.connect()
+        await session.sendKeepAlive()
+
+        // Then keepalive is routed through the injected driver boundary rather
+        // than calling libssh2 directly from SSHSession.
+        XCTAssertEqual(
+            driver.keepAliveCount(),
+            1,
+            "Keepalive must route through the injected libssh2 driver"
+        )
+    }
+
     func testShellPtyFailureClosesAndFreesOpenedChannel() async {
         // Given a fake libssh2 driver that opens a shell channel but rejects
         // the PTY request before any shell process starts.
@@ -519,6 +541,7 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
     private var channelWriteResultQueue: [Int]
     private var sftpReadDirectoryResultQueue: [SFTPReadDirectoryResult]
     private var channelWriteCallLog: [ChannelWriteCall] = []
+    private var keepAliveInvocationCount = 0
 
     init(
         sessionInitResult: OpaquePointer?,
@@ -590,6 +613,12 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         lock.lock()
         defer { lock.unlock() }
         return sftpEventLog
+    }
+
+    func keepAliveCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return keepAliveInvocationCount
     }
 
     private func recordChannelEvent(_ event: ChannelEvent) {
@@ -991,6 +1020,13 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
 
     nonisolated func lastSFTPError(_ sftp: OpaquePointer) -> UInt {
         sftpLastErrorResult
+    }
+
+    nonisolated func sendKeepAlive(session: OpaquePointer) -> Int32 {
+        lock.lock()
+        defer { lock.unlock() }
+        keepAliveInvocationCount += 1
+        return 0
     }
 
     nonisolated func disconnect(

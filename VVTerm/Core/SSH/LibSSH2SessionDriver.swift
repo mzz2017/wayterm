@@ -194,6 +194,7 @@ protocol LibSSH2SessionDriving: Sendable {
     nonisolated func unlinkSFTPFile(sftp: OpaquePointer, path: String) -> Int
     nonisolated func removeSFTPDirectory(sftp: OpaquePointer, path: String) -> Int
     nonisolated func lastSFTPError(_ sftp: OpaquePointer) -> UInt
+    nonisolated func sendKeepAlive(session: OpaquePointer) -> Int32
     nonisolated func lastError(
         session: OpaquePointer,
         operation: LibSSH2RawError.Operation,
@@ -708,6 +709,11 @@ struct LibSSH2SessionDriver: LibSSH2SessionDriving {
 
     nonisolated func lastSFTPError(_ sftp: OpaquePointer) -> UInt {
         UInt(libssh2_sftp_last_error(sftp))
+    }
+
+    nonisolated func sendKeepAlive(session: OpaquePointer) -> Int32 {
+        var secondsToNext: Int32 = 0
+        return libssh2_keepalive_send(session, &secondsToNext)
     }
 
     nonisolated func lastError(

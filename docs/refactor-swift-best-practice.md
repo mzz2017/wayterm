@@ -2028,15 +2028,15 @@ git commit -m "refactor: route SFTP operations through libssh2 driver"
   - `sendKeepAlive(session:) -> Int32`
   - Final Progress Ledger classification of every remaining `libssh2_`, `withUnsafe`, `UnsafePointer`, `NSLock`, and `nonisolated(unsafe)` hit in `Core/SSH`.
 
-- [ ] **Step 1: Add RED keepalive driver test**
+- [x] **Step 1: Add RED keepalive driver test**
 
 Add a fake-driver test that calls `SSHSession.sendKeepAlive()` after connect and asserts the driver method was invoked, without exposing the raw `libssh2_keepalive_send` call to `SSHClient.swift`.
 
-- [ ] **Step 2: Move keepalive and final direct session helpers**
+- [x] **Step 2: Move keepalive and final direct session helpers**
 
 Move `libssh2_keepalive_send` behind `LibSSH2SessionDriving`. If any remaining direct `libssh2_` calls are still in `SSHClient.swift`, either move them or record a named exemption with owner and invariant in the Progress Ledger.
 
-- [ ] **Step 3: Run final Core SSH boundary scan**
+- [x] **Step 3: Run final Core SSH boundary scan**
 
 ```bash
 rg -n "libssh2_|withUnsafe|UnsafeMutable|UnsafePointer|NSLock|nonisolated\\(unsafe\\)" VVTerm/Core/SSH -g '*.swift'
@@ -2044,7 +2044,7 @@ git diff --check
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/SSHErrorRetryableTests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
 ```
 
-- [ ] **Step 4: Request final Core SSH FFI review and commit**
+- [x] **Step 4: Request final Core SSH FFI review and commit**
 
 ```bash
 git add VVTerm/Core/SSH/LibSSH2SessionDriver.swift VVTerm/Core/SSH/SSHClient.swift VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift docs/refactor-swift-best-practice.md
@@ -2100,7 +2100,12 @@ git commit -m "refactor: complete core SSH FFI boundary sweep"
 - 2026-06-21: Task 24 SFTP boundary GREEN completed. `LibSSH2SessionDriving` now owns SFTP init/shutdown, open/close handle, directory read, seek, read/write, stat, symlink, statvfs, mkdir, rename, unlink, rmdir, and last-error calls. `SSHSession` remains the owner of cached `sftpSession`, remote-file async ordering, cancellation checks, and RemoteFiles error mapping. Verification: `LibSSH2SessionLifecycleTests` passed 10 XCTest tests; `SSHSFTPAdapterTests` and `RemoteFileBrowserStoreTests` passed 9 Swift Testing tests; `git diff --check` passed.
 - 2026-06-21: Task 24 API/boundary cleanup completed before review. New SFTP driver APIs are low-level boundary operations; `LibSSH2SessionDriver` does not store SFTP pointers; path and buffer unsafe pointer lifetimes are confined to non-escaping driver methods. Boundary scan shows SFTP C calls are confined to `LibSSH2SessionDriver.swift`; the only remaining direct `SSHClient.swift` `libssh2_` hit is keepalive for Task 25. RemoteFiles still enters through `SSHSFTPAdapter`/leases rather than raw UI-owned clients.
 - 2026-06-21: Task 24 review completed. Review found no Critical, Important, or Minor issues and confirmed the SFTP ownership boundary, injected-driver error mapping, non-escaping pointer lifetime, and RemoteFiles lease/adapter entry point.
-- Next task: Task 24 commit.
+- 2026-06-21: Task 25 RED completed. Added `testKeepAliveUsesDriverBoundary`; the first focused run failed to compile because `RecordingLibSSH2SessionDriver` did not yet expose keepalive invocation tracking, proving keepalive still lacked an injectable driver boundary.
+- 2026-06-21: Task 25 GREEN completed. `LibSSH2SessionDriving.sendKeepAlive(session:)` now owns `libssh2_keepalive_send`; `SSHSession.sendKeepAlive()` only checks that a session exists and delegates to the driver. Verification: focused keepalive test passed.
+- 2026-06-21: Task 25 final Core SSH FFI scan completed. Direct `libssh2_` calls are confined to `LibSSH2SessionDriver.swift`; `SSHClient.swift` has no remaining direct `libssh2_` function calls. Remaining allowed low-level hits are: `LibSSH2Runtime` process-global init `NSLock`; `LibSSH2SessionDriver` socket/address, auth, channel, SFTP, keepalive, and last-error pointer lifetimes; `KnownHostsManager` synchronous compatibility-facade lock; `SSHClientAbortState` and `AtomicSocket` emergency socket-abort locks; keyboard-interactive callback context `UnsafePointer` / `UnsafeMutablePointer` / `nonisolated(unsafe)` boundaries owned by `SSHSession`; `SSHSession.downloadFile` local Swift buffer-to-`Data` copy after driver SFTP reads; and `fdSet` local `fd_set` bit mutation for C `select` compatibility.
+- 2026-06-21: Task 25 final verification completed. `rg -n "libssh2_|withUnsafe|UnsafeMutable|UnsafePointer|NSLock|nonisolated\\(unsafe\\)" VVTerm/Core/SSH -g '*.swift'` produced only the classified Core SSH low-level boundaries; `git diff --check` passed; the documented focused suite passed 11 XCTest tests plus 15 Swift Testing tests.
+- 2026-06-21: Task 25 review completed. Reviewer found no code-level keepalive issue; the only Important finding was the missing classification for the two `SSHClient.swift` `withUnsafe` hits, which is now documented above.
+- Next task: Whole-plan review and any remaining non-Core-SSH lifecycle gaps.
 
 ## Self-Review
 
