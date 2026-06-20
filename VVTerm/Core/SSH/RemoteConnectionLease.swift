@@ -36,12 +36,39 @@ struct RemoteConnectionLease: Sendable {
     func close() async {
         await state.close(client: client, ownership: ownership)
     }
+
+    func withExclusiveClient<T>(
+        _ operation: @Sendable (any RemoteConnectionLeaseClient) async throws -> T
+    ) async throws -> T {
+        try await state.withExclusiveClient(client: client, operation)
+    }
 }
 
 extension SSHClient: RemoteConnectionLeaseClient {}
 
 private actor RemoteConnectionLeaseState {
     private var didClose = false
+    private var isOperationInFlight = false
+    private var operationWaiters: [CheckedContinuation<Void, Never>] = []
+    private var closeWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func withExclusiveClient<T>(
+        client: any RemoteConnectionLeaseClient,
+        _ operation: @Sendable (any RemoteConnectionLeaseClient) async throws -> T
+    ) async throws -> T {
+        try Task.checkCancellation()
+        try await beginExclusiveOperation()
+
+        do {
+            try Task.checkCancellation()
+            let result = try await operation(client)
+            finishExclusiveOperation()
+            return result
+        } catch {
+            finishExclusiveOperation()
+            throw error
+        }
+    }
 
     func close(
         client: any RemoteConnectionLeaseClient,
@@ -49,8 +76,47 @@ private actor RemoteConnectionLeaseState {
     ) async {
         guard !didClose else { return }
         didClose = true
+        await waitForExclusiveOperationsToFinish()
 
         guard ownership == .owned else { return }
         await client.disconnect()
+    }
+
+    private func beginExclusiveOperation() async throws {
+        guard !didClose else {
+            throw CancellationError()
+        }
+
+        if !isOperationInFlight {
+            isOperationInFlight = true
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            operationWaiters.append(continuation)
+        }
+    }
+
+    private func finishExclusiveOperation() {
+        if operationWaiters.isEmpty {
+            isOperationInFlight = false
+            let waiters = closeWaiters
+            closeWaiters.removeAll()
+            for waiter in waiters {
+                waiter.resume()
+            }
+            return
+        }
+
+        let next = operationWaiters.removeFirst()
+        next.resume()
+    }
+
+    private func waitForExclusiveOperationsToFinish() async {
+        guard isOperationInFlight else { return }
+
+        await withCheckedContinuation { continuation in
+            closeWaiters.append(continuation)
+        }
     }
 }

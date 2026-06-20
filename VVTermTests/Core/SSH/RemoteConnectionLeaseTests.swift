@@ -43,6 +43,74 @@ struct RemoteConnectionLeaseTests {
         let disconnectCount = await client.disconnectCount()
         #expect(disconnectCount == 1, "Repeated close calls must not disconnect the same lease more than once")
     }
+
+    @Test
+    func ownedLeaseConcurrentCloseDisconnectsClientOnce() async {
+        let client = RecordingRemoteConnectionClient()
+        let lease = RemoteConnectionLease(client: client, ownership: .owned)
+
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<5 {
+                group.addTask {
+                    await lease.close()
+                }
+            }
+        }
+
+        let disconnectCount = await client.disconnectCount()
+        #expect(disconnectCount == 1, "Concurrent close calls must share the same owned disconnect")
+    }
+
+    @Test
+    func exclusiveOperationsForSameLeaseDoNotOverlap() async throws {
+        let client = RecordingRemoteConnectionClient()
+        let lease = RemoteConnectionLease(client: client, ownership: .borrowed)
+        let probe = ExclusiveOperationProbe()
+
+        async let first: Void = lease.withExclusiveClient { _ in
+            await probe.runOperation()
+        }
+        async let second: Void = lease.withExclusiveClient { _ in
+            await probe.runOperation()
+        }
+
+        try await first
+        try await second
+
+        let maxActiveOperations = await probe.maxActiveOperations()
+        #expect(maxActiveOperations == 1, "Lease-protected operations must not overlap on the same client")
+    }
+
+    @Test
+    func closeWaitsForExclusiveOperationBeforeDisconnectingOwnedClient() async throws {
+        let client = RecordingRemoteConnectionClient()
+        let lease = RemoteConnectionLease(client: client, ownership: .owned)
+        let blocker = BlockingOperationProbe()
+
+        let operationTask = Task {
+            try await lease.withExclusiveClient { _ in
+                await blocker.markStarted()
+                await blocker.waitUntilReleased()
+            }
+        }
+
+        await blocker.waitUntilStarted()
+
+        let closeTask = Task {
+            await lease.close()
+        }
+
+        try await Task.sleep(for: .milliseconds(20))
+        let disconnectsBeforeRelease = await client.disconnectCount()
+        #expect(disconnectsBeforeRelease == 0, "Owned disconnect must wait until the protected operation leaves the lease")
+
+        await blocker.release()
+        try await operationTask.value
+        await closeTask.value
+
+        let disconnectsAfterRelease = await client.disconnectCount()
+        #expect(disconnectsAfterRelease == 1, "Owned close should disconnect once after the protected operation completes")
+    }
 }
 
 private actor RecordingRemoteConnectionClient: RemoteConnectionLeaseClient {
@@ -73,5 +141,60 @@ private actor RecordingRemoteConnectionClient: RemoteConnectionLeaseClient {
 
     func remoteTerminalType(forceRefresh: Bool) async -> RemoteTerminalType {
         .xterm256Color
+    }
+}
+
+private actor ExclusiveOperationProbe {
+    private var activeOperations = 0
+    private var maximumActiveOperations = 0
+
+    func runOperation() async {
+        activeOperations += 1
+        maximumActiveOperations = max(maximumActiveOperations, activeOperations)
+        try? await Task.sleep(for: .milliseconds(20))
+        activeOperations -= 1
+    }
+
+    func maxActiveOperations() -> Int {
+        maximumActiveOperations
+    }
+}
+
+private actor BlockingOperationProbe {
+    private var didStart = false
+    private var didRelease = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func markStarted() {
+        didStart = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func waitUntilStarted() async {
+        if didStart { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        didRelease = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func waitUntilReleased() async {
+        if didRelease { return }
+        await withCheckedContinuation { continuation in
+            releaseWaiters.append(continuation)
+        }
     }
 }

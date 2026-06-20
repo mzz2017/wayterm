@@ -1340,7 +1340,7 @@ git commit -m "refactor: complete Swift lifecycle cleanup"
   - Existing `RemoteConnectionLeaseClient.disconnect()`.
   - Existing `SSHConnectionOperationService.runWithConnection(...)`.
 
-- [ ] **Step 1: Add RED lease-ordering tests**
+- [x] **Step 1: Add RED lease-ordering tests**
 
 Add these tests to `RemoteConnectionLeaseTests`:
 
@@ -1363,15 +1363,15 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected failure: `RemoteConnectionLease` has no `withExclusiveClient` API, and close does not prove it waits behind an in-flight operation.
 
-- [ ] **Step 2: Implement per-lease operation serialization**
+- [x] **Step 2: Implement per-lease operation serialization**
 
 Keep the gate in the lease state actor. Do not add locks or global queues. `withExclusiveClient` must serialize operations on the same lease and must check cancellation before starting the protected operation.
 
-- [ ] **Step 3: Make close wait for the gate**
+- [x] **Step 3: Make close wait for the gate**
 
 `close()` must mark the lease as closing, wait for the exclusive operation gate to drain, and then disconnect only when `ownership == .owned`. Borrowed close remains a no-op after the drain.
 
-- [ ] **Step 4: Run focused tests and diff check**
+- [x] **Step 4: Run focused tests and diff check**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteConnectionLeaseTests ENABLE_DEBUG_DYLIB=NO
@@ -1385,7 +1385,7 @@ git add VVTerm/Core/SSH/RemoteConnectionLease.swift VVTerm/Core/SSH/SSHClient.sw
 git commit -m "refactor: serialize remote connection lease operations"
 ```
 
-- [ ] **Step 6: API/boundary cleanup**
+- [x] **Step 6: API/boundary cleanup**
 
 Before starting Task 17, review whether `withExclusiveClient` names its side effect clearly, whether the lease still exposes only the minimum mutable state, and whether the tests explain borrowed vs owned fake assumptions. Record the result in the Progress Ledger and commit it with Task 16 if not already included.
 
@@ -1684,7 +1684,8 @@ git commit -m "refactor: complete remote lease boundary cleanup"
 - 2026-06-21: Task 15 SwiftUI surface lifecycle slice completed. `SSHTerminalWrapper` and split-pane `TerminalView` no longer perform business teardown from coordinator `deinit`; `dismantleUIView` / `dismantleNSView` now only detach or pause live surfaces, and closed-session cleanup is routed through manager-owned application-layer intent APIs. Verification: `TerminalSurfaceTeardownTests` passed, then the focused connection lifecycle/auth suite passed 16 XCTest tests plus 46 Swift Testing tests.
 - 2026-06-21: Task 15 final verification completed. The documented focused suite passed 16 XCTest tests plus 49 Swift Testing tests, and `xcodebuild build-for-testing -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` succeeded. Remaining architecture work is the previously deferred RemoteFiles/Stats lease-boundary cleanup, not an unresolved TerminalSessions lifecycle hit.
 - 2026-06-21: RemoteFiles/Stats lease-boundary audit completed with three read-only fan-out explorers. Findings: `RemoteConnectionLease.close()` is awaitable and idempotent per lease, but RemoteFiles and Stats still expose raw `SSHClient` at feature boundaries; RemoteFiles needs a per-lease exclusive operation gate before borrowed terminal clients can safely run SFTP; Stats stop/restart must await or track close work instead of dropping returned tasks from SwiftUI.
-- Next task: Task 16, Core Remote Connection Lease Gate.
+- 2026-06-21: Task 16 RED/GREEN completed. Added lease-ordering tests for concurrent close, non-overlapping exclusive operations, and close waiting for a protected operation; then implemented `RemoteConnectionLease.withExclusiveClient` with private actor-owned per-lease serialization. API cleanup found no new UI/application raw-client exposure; mutable gate state remains private to `RemoteConnectionLeaseState`. Verification: `RemoteConnectionLeaseTests` passed 6 Swift Testing tests and `git diff --check` passed.
+- Next task: Task 16 commit, then Task 17 RemoteFiles Lease-Owned SFTP Boundary.
 
 ## Self-Review
 
