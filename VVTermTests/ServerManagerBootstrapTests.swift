@@ -7,8 +7,8 @@ import Testing
 // and deletion-side cleanup rules without CloudKit or Keychain I/O. They use
 // value-only Server/Workspace fixtures so failures identify changes to local
 // state invariants rather than sync transport behavior. Update this context
-// only when bootstrap/backfill policy or known-host cleanup ownership changes
-// intentionally.
+// only when bootstrap/backfill policy, known-host cleanup ownership, or server
+// deletion teardown ownership changes intentionally.
 @Suite(.serialized)
 @MainActor
 struct ServerManagerBootstrapTests {
@@ -197,5 +197,121 @@ struct ServerManagerBootstrapTests {
             ],
             "Known-host cleanup must preserve hosts still referenced by post-delete server state."
         )
+    }
+
+    @Test
+    func deleteServerAwaitsTeardownBeforeCredentialAndMetadataRemoval() async throws {
+        // Given a server manager with injected deletion dependencies that record
+        // the order of lifecycle teardown and credential cleanup.
+        let workspace = Workspace(id: UUID(), name: "Main", order: 0)
+        let server = Server(
+            id: UUID(),
+            workspaceId: workspace.id,
+            name: "Tencent",
+            host: "delete-order.example.com",
+            username: "root"
+        )
+        let probe = ServerDeletionOrderProbe()
+        var manager: ServerManager!
+        manager = ServerManager.makeForTesting(
+            servers: [server],
+            workspaces: [workspace],
+            deletionTeardown: { server in
+                #expect(
+                    manager.servers.contains { $0.id == server.id },
+                    "Server metadata must still exist while deletion teardown runs."
+                )
+                await probe.record("teardown:\(server.id.uuidString)")
+            },
+            deleteCredentials: { serverId in
+                await probe.record("credentials:\(serverId.uuidString)")
+            }
+        )
+
+        // When the server is deleted.
+        try await manager.deleteServer(server)
+
+        // Then teardown completes before credentials are deleted, and metadata
+        // is removed only after the teardown boundary has run.
+        let events = await probe.events()
+        #expect(
+            events == [
+                "teardown:\(server.id.uuidString)",
+                "credentials:\(server.id.uuidString)"
+            ],
+            "Server deletion must await runtime teardown before credential deletion."
+        )
+        #expect(
+            !manager.servers.contains { $0.id == server.id },
+            "Server metadata should be removed after deletion completes."
+        )
+    }
+
+    @Test
+    func deleteWorkspaceAwaitsEachServerTeardownBeforeWorkspaceRemoval() async throws {
+        // Given a workspace with two servers and injected deletion dependencies.
+        let workspace = Workspace(id: UUID(), name: "Main", order: 0)
+        let firstServer = Server(
+            id: UUID(),
+            workspaceId: workspace.id,
+            name: "Tencent 1",
+            host: "workspace-delete-1.example.com",
+            username: "root"
+        )
+        let secondServer = Server(
+            id: UUID(),
+            workspaceId: workspace.id,
+            name: "Tencent 2",
+            host: "workspace-delete-2.example.com",
+            username: "root"
+        )
+        let probe = ServerDeletionOrderProbe()
+        var manager: ServerManager!
+        manager = ServerManager.makeForTesting(
+            servers: [firstServer, secondServer],
+            workspaces: [workspace],
+            deletionTeardown: { server in
+                #expect(
+                    manager.workspaces.contains { $0.id == workspace.id },
+                    "Workspace metadata must remain until all server teardown has completed."
+                )
+                await probe.record("teardown:\(server.id.uuidString)")
+            },
+            deleteCredentials: { serverId in
+                await probe.record("credentials:\(serverId.uuidString)")
+            }
+        )
+
+        // When the workspace is deleted.
+        try await manager.deleteWorkspace(workspace)
+
+        // Then every contained server is torn down before its credentials are
+        // deleted, and the workspace is removed only after server deletion ends.
+        let events = await probe.events()
+        #expect(
+            events == [
+                "teardown:\(firstServer.id.uuidString)",
+                "credentials:\(firstServer.id.uuidString)",
+                "teardown:\(secondServer.id.uuidString)",
+                "credentials:\(secondServer.id.uuidString)"
+            ],
+            "Workspace deletion must reuse the awaitable server deletion path for each server."
+        )
+        #expect(
+            !manager.workspaces.contains { $0.id == workspace.id },
+            "Workspace metadata should be removed after contained server teardown completes."
+        )
+    }
+}
+
+private actor ServerDeletionOrderProbe {
+    private var recordedEvents: [String] = []
+
+    func record(_ event: String) {
+        recordedEvents.append(event)
+    }
+
+    func events() -> [String] {
+        recordedEvents
     }
 }

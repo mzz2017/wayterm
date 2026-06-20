@@ -6,6 +6,9 @@ import os.log
 
 @MainActor
 final class ServerManager: ObservableObject {
+    typealias ServerDeletionTeardown = @MainActor @Sendable (Server) async -> Void
+    typealias ServerCredentialDeletion = @MainActor @Sendable (UUID) async throws -> Void
+
     static let shared = ServerManager()
 
     @Published var servers: [Server] = []
@@ -16,6 +19,10 @@ final class ServerManager: ObservableObject {
     private let cloudKit = CloudKitManager.shared
     private let syncCoordinator = CloudKitSyncCoordinator.shared
     private let keychain = KeychainManager.shared
+    private let deletionTeardown: ServerDeletionTeardown
+    private let deleteCredentials: ServerCredentialDeletion
+    private let persistsLocalData: Bool
+    private let recordsSyncMutations: Bool
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ServerManager")
     private var isSyncEnabled: Bool { SyncSettings.isEnabled }
 
@@ -36,12 +43,52 @@ final class ServerManager: ObservableObject {
         let port: Int
     }
 
-    private init() {
-        // Load local data first (fast)
+    private init(
+        loadLocalDataOnInit: Bool = true,
+        deletionTeardown: @escaping ServerDeletionTeardown = ServerManager.defaultDeletionTeardown,
+        deleteCredentials: @escaping ServerCredentialDeletion = ServerManager.defaultCredentialDeletion,
+        persistsLocalData: Bool = true,
+        recordsSyncMutations: Bool = true
+    ) {
+        self.deletionTeardown = deletionTeardown
+        self.deleteCredentials = deleteCredentials
+        self.persistsLocalData = persistsLocalData
+        self.recordsSyncMutations = recordsSyncMutations
+
+        guard loadLocalDataOnInit else { return }
+
         loadLocalData()
-        // Then sync with CloudKit in background
         Task { await loadData() }
     }
+
+    private static func defaultDeletionTeardown(for server: Server) async {
+        await ConnectionSessionManager.shared.disconnectServerAndWait(server.id)
+        await TerminalTabManager.shared.disconnectServerAndWait(server.id)
+    }
+
+    private static func defaultCredentialDeletion(for serverId: UUID) async throws {
+        try KeychainManager.shared.deleteCredentials(for: serverId)
+    }
+
+    #if DEBUG
+    static func makeForTesting(
+        servers: [Server] = [],
+        workspaces: [Workspace] = [],
+        deletionTeardown: @escaping ServerDeletionTeardown = { _ in },
+        deleteCredentials: @escaping ServerCredentialDeletion = { _ in }
+    ) -> ServerManager {
+        let manager = ServerManager(
+            loadLocalDataOnInit: false,
+            deletionTeardown: deletionTeardown,
+            deleteCredentials: deleteCredentials,
+            persistsLocalData: false,
+            recordsSyncMutations: false
+        )
+        manager.servers = servers
+        manager.workspaces = workspaces
+        return manager
+    }
+    #endif
 
     // MARK: - Local Storage
 
@@ -76,6 +123,8 @@ final class ServerManager: ObservableObject {
     }
 
     private func saveLocalData() {
+        guard persistsLocalData else { return }
+
         storeServers(servers)
         storeWorkspaces(workspaces)
     }
@@ -210,18 +259,22 @@ final class ServerManager: ObservableObject {
     // MARK: - Pending CloudKit Sync
 
     private func enqueuePendingServerUpsert(_ server: Server) {
+        guard recordsSyncMutations else { return }
         syncCoordinator.enqueueServerUpsert(server)
     }
 
     private func enqueuePendingServerDelete(_ server: Server) {
+        guard recordsSyncMutations else { return }
         syncCoordinator.enqueueServerDelete(server)
     }
 
     private func enqueuePendingWorkspaceUpsert(_ workspace: Workspace) {
+        guard recordsSyncMutations else { return }
         syncCoordinator.enqueueWorkspaceUpsert(workspace)
     }
 
     private func enqueuePendingWorkspaceDelete(_ workspace: Workspace) {
+        guard recordsSyncMutations else { return }
         syncCoordinator.enqueueWorkspaceDelete(workspace)
     }
 
@@ -338,7 +391,9 @@ final class ServerManager: ObservableObject {
 
     private func persistLocalMutations(logMessage: String? = nil) async {
         saveLocalData()
-        await drainPendingCloudKitMutations()
+        if persistsLocalData {
+            await drainPendingCloudKitMutations()
+        }
         if let logMessage {
             logger.info("\(logMessage)")
         }
@@ -951,7 +1006,8 @@ final class ServerManager: ObservableObject {
     }
 
     func deleteServer(_ server: Server) async throws {
-        try keychain.deleteCredentials(for: server.id)
+        await deletionTeardown(server)
+        try await deleteCredentials(server.id)
 
         servers.removeAll { $0.id == server.id }
         let candidates = Self.knownHostRemovalCandidates(

@@ -2167,11 +2167,11 @@ git commit -m "fix: reject queued remote lease work after close"
 - Produces:
   - An application-layer deletion lifecycle hook so server/workspace deletion can await live terminal teardown before deleting credentials and metadata.
 
-- [ ] **Step 1: Add RED deletion ordering tests**
+- [x] **Step 1: Add RED deletion ordering tests**
 
 Add tests proving `ServerManager.deleteServer(_:)` invokes an injected teardown hook before keychain credential deletion and local metadata removal. Add a workspace deletion test proving each workspace server is torn down before the workspace is removed.
 
-- [ ] **Step 2: Run RED tests**
+- [x] **Step 2: Run RED tests**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
@@ -2179,26 +2179,26 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected before implementation: FAIL because `ServerManager.deleteServer(_:)` has no injected awaitable teardown boundary.
 
-- [ ] **Step 3: Add deletion teardown boundary**
+- [x] **Step 3: Add deletion teardown boundary**
 
 Add a narrow `ServerDeletionTeardown` closure or small protocol to `ServerManager` with a default production implementation that awaits terminal session and pane disconnect for the server. Keep RemoteFiles and Stats teardown wired at the app/screen boundary if their owning stores are view-owned; do not make `ServerManager` own view-scoped stores.
 
-- [ ] **Step 4: Wire UI deletion intents through the boundary**
+- [x] **Step 4: Wire UI deletion intents through the boundary**
 
 Keep UI button tasks as intent wrappers only. Server deletion must await the application-layer teardown boundary before credentials are removed. Workspace deletion must use the same path for each contained server.
 
-- [ ] **Step 5: Run focused deletion verification**
+- [x] **Step 5: Run focused deletion verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 6: API and boundary cleanup**
+- [x] **Step 6: API and boundary cleanup**
 
 Verify the Servers feature sends deletion intent and does not directly orchestrate TerminalSessions internals from UI. Verify teardown is awaitable, test-injectable, and idempotent.
 
-- [ ] **Step 7: Request review and commit**
+- [x] **Step 7: Request review and commit**
 
 ```bash
 git add VVTerm/Features/Servers/Application/ServerManager.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/ServerManagerBootstrapTests.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift docs/refactor-swift-best-practice.md
@@ -2508,7 +2508,10 @@ git commit -m "refactor: decouple terminal runner from UI surface"
 - 2026-06-21: Task 27 RED completed. Added `RemoteConnectionLeaseTests.closeRejectsQueuedOperationsAfterCloseBegins` for the close-after-queue lifecycle ordering rule. The first method-level `-only-testing` selector matched 0 Swift Testing tests, so the effective RED command ran `RemoteConnectionLeaseTests` and failed because the queued operation returned normally and its body ran after close began.
 - 2026-06-21: Task 27 GREEN and API cleanup completed before review. `RemoteConnectionLeaseState` now owns throwing operation waiters, cancels queued waiters when close begins, allows the active operation to finish, resumes close waiters, and keeps the public lease boundary to `close()` plus `withExclusiveClient(_:)`. Verification: `RemoteConnectionLeaseTests` passed 7 Swift Testing tests.
 - 2026-06-21: Task 27 review completed. Subagent review was not spawned because the current tool contract permits spawning only when the user explicitly requests subagents; local read-only review found no Critical or Important issues against the Swift lifecycle checklist.
-- Next task: Task 28.
+- 2026-06-21: Task 28 RED completed. Added deletion ordering tests for server and workspace deletion. The first focused run failed to compile because `ServerManager.makeForTesting` and an injected awaitable deletion teardown boundary did not exist.
+- 2026-06-21: Task 28 GREEN and API cleanup completed before review. `ServerManager` now has a narrow `ServerDeletionTeardown` boundary and credential deletion closure; production deletion awaits `ConnectionSessionManager.disconnectServerAndWait(_:)` and `TerminalTabManager.disconnectServerAndWait(_:)` before keychain deletion and metadata removal. Test managers skip local persistence and pending sync mutation recording. Verification: `ServerManagerBootstrapTests` plus `ConnectionLifecycleIntegrationTests` passed 56 Swift Testing tests; `git diff --check` passed.
+- 2026-06-21: Task 28 review completed. Subagent review was not spawned because the current tool contract permits spawning only when the user explicitly requests subagents; local read-only review found and fixed stale test-context wording, then found no Critical or Important issues.
+- Next task: Task 29.
 
 ## Self-Review
 
