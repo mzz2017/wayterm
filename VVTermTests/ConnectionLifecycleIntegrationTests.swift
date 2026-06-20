@@ -261,8 +261,8 @@ struct ConnectionLifecycleIntegrationTests {
                 connectionState: .connected
             )
             var refreshedSessionIds: [[UUID]] = []
-            manager.liveActivityRefresh = { sessions in
-                refreshedSessionIds.append(sessions.map(\.id))
+            manager.liveActivityRefresh = { snapshots in
+                refreshedSessionIds.append(snapshots.map(\.sessionId))
             }
 
             manager.sessions = [staleDomainSession]
@@ -277,6 +277,43 @@ struct ConnectionLifecycleIntegrationTests {
             #expect(
                 refreshedSessionIds.last == [staleDomainSession.id],
                 "Live Activity refreshes should include the session after the registry records streaming runtime."
+            )
+        }
+    }
+
+    @Test
+    func connectionManagerRefreshesLiveActivityWithRegistryRuntimeStates() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let staleDomainSession = ConnectionSession(
+                serverId: server.id,
+                title: "Stale Domain Connecting",
+                connectionState: .connecting
+            )
+            var refreshedStates: [[TerminalEntityConnectionState]] = []
+            manager.liveActivityRefresh = { snapshots in
+                refreshedStates.append(snapshots.map(\.state))
+            }
+
+            // Given a restored session whose domain snapshot still says
+            // connecting, while the registry has no live runtime yet.
+            manager.sessions = [staleDomainSession]
+
+            #expect(
+                refreshedStates.last == [],
+                "Live Activity refreshes must ignore opening states that exist only in the domain snapshot."
+            )
+
+            // When the application-layer registry records the terminal runtime
+            // as streaming and the domain snapshot later remains stale.
+            manager.updateSessionState(staleDomainSession.id, to: .connected)
+            manager.sessions[0].connectionState = .connecting
+
+            // Then the Live Activity refresh uses the registry runtime state,
+            // not the stale ConnectionSession.connectionState snapshot.
+            #expect(
+                refreshedStates.last == [.streaming],
+                "Live Activity status should be derived from TerminalConnectionRegistry runtime state."
             )
         }
     }

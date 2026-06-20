@@ -3,6 +3,7 @@ import Foundation
 enum TerminalEntityConnectionState: Hashable, Sendable {
     case idle
     case connecting
+    case reconnecting
     case authenticating
     case verifyingHostKey
     case startingShell
@@ -14,7 +15,7 @@ enum TerminalEntityConnectionState: Hashable, Sendable {
 
     var isOpening: Bool {
         switch self {
-        case .connecting, .authenticating, .verifyingHostKey, .startingShell:
+        case .connecting, .reconnecting, .authenticating, .verifyingHostKey, .startingShell:
             return true
         default:
             return false
@@ -45,7 +46,7 @@ enum TerminalEntityConnectionState: Hashable, Sendable {
         case .connecting:
             self = .connecting
         case .reconnecting:
-            self = .connecting
+            self = .reconnecting
         case .connected:
             self = .streaming
         case .disconnected, .idle:

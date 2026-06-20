@@ -4,6 +4,12 @@ import os.log
 import ActivityKit
 #endif
 
+struct TerminalLiveActivitySnapshot: Equatable, Sendable {
+    let sessionId: UUID
+    let serverId: UUID
+    let state: TerminalEntityConnectionState
+}
+
 @MainActor
 final class LiveActivityManager {
     static let shared = LiveActivityManager()
@@ -12,10 +18,10 @@ final class LiveActivityManager {
 
     private init() {}
 
-    func refresh(with sessions: [ConnectionSession]) {
+    func refresh(with snapshots: [TerminalLiveActivitySnapshot]) {
         #if os(iOS)
         if #available(iOS 16.1, *) {
-            Task { await updateActivity(for: sessions) }
+            Task { await updateActivity(for: snapshots) }
         }
         #endif
     }
@@ -28,13 +34,13 @@ final class LiveActivityManager {
     private var lastState: VVTermActivityAttributes.ContentState?
 
     @available(iOS 16.1, *)
-    private func updateActivity(for sessions: [ConnectionSession]) async {
+    private func updateActivity(for snapshots: [TerminalLiveActivitySnapshot]) async {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             await endAllActivities()
             return
         }
 
-        let activeCount = sessions.filter { $0.connectionState.isConnected || $0.connectionState.isConnecting }.count
+        let activeCount = snapshots.count
         if activeCount == 0 {
             await endAllActivities()
             return
@@ -43,11 +49,11 @@ final class LiveActivityManager {
         await attachToExistingActivityIfNeeded()
 
         let status: VVTermLiveActivityStatus
-        if sessions.contains(where: { if case .reconnecting = $0.connectionState { return true } else { return false } }) {
+        if snapshots.contains(where: { $0.state == .reconnecting }) {
             status = .reconnecting
-        } else if sessions.contains(where: { if case .connecting = $0.connectionState { return true } else { return false } }) {
+        } else if snapshots.contains(where: { $0.state.isOpening }) {
             status = .connecting
-        } else if sessions.contains(where: { $0.connectionState.isConnected }) {
+        } else if snapshots.contains(where: { $0.state.isConnected }) {
             status = .connected
         } else {
             status = .disconnected

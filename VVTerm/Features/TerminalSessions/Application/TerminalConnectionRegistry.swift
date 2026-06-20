@@ -34,6 +34,10 @@ final class TerminalConnectionRegistry {
         return state.isConnected || state.isOpening
     }
 
+    func state(for entityId: TerminalEntityID) -> TerminalEntityConnectionState? {
+        statesByEntity[entityId]
+    }
+
     func openingOrStreamingEntityIDs(for serverId: UUID) -> Set<TerminalEntityID> {
         Set(statesByEntity.compactMap { entityId, state in
             guard state.isConnected || state.isOpening else { return nil }

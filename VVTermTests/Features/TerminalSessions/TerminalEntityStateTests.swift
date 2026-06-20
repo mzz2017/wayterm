@@ -35,6 +35,14 @@ final class TerminalEntityStateTests: XCTestCase {
         XCTAssertTrue(state.isConnected)
     }
 
+    func testConnectionStateBridgePreservesReconnectingAsOpening() {
+        let state = TerminalEntityConnectionState(connectionState: .reconnecting(attempt: 2))
+
+        XCTAssertEqual(state, .reconnecting)
+        XCTAssertTrue(state.isOpening)
+        XCTAssertFalse(state.isConnected)
+    }
+
     func testConnectionStateBridgePreservesFailureMessage() {
         let state = TerminalEntityConnectionState(connectionState: .failed("Authentication failed"))
 

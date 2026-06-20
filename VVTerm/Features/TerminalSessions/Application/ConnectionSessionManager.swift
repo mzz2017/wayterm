@@ -61,11 +61,11 @@ final class ConnectionSessionManager: ObservableObject {
 
     @Published var sessions: [ConnectionSession] = [] {
         didSet {
-            liveActivityRefresh(activeSessions)
+            liveActivityRefresh(liveActivitySnapshots)
             schedulePersist()
         }
     }
-    var liveActivityRefresh: @MainActor ([ConnectionSession]) -> Void = {
+    var liveActivityRefresh: @MainActor ([TerminalLiveActivitySnapshot]) -> Void = {
         LiveActivityManager.shared.refresh(with: $0)
     }
     @Published var selectedSessionId: UUID? {
@@ -276,6 +276,19 @@ final class ConnectionSessionManager: ObservableObject {
             result.formUnion(serverLiveEntityIDs)
         }
         return sessions.filter { liveEntityIDs.contains(.session($0.id)) }
+    }
+
+    private var liveActivitySnapshots: [TerminalLiveActivitySnapshot] {
+        sessions.compactMap { session in
+            let entityId = TerminalEntityID.session(session.id)
+            guard let state = terminalConnectionRegistry.state(for: entityId) else { return nil }
+            guard state.isConnected || state.isOpening else { return nil }
+            return TerminalLiveActivitySnapshot(
+                sessionId: session.id,
+                serverId: session.serverId,
+                state: state
+            )
+        }
     }
 
     var canOpenNewTab: Bool {
