@@ -80,7 +80,7 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         // Check if terminal already exists for this session (reuse to save memory)
         // Each Ghostty surface uses ~50-100MB (font atlas, Metal textures, scrollback)
         if let existingTerminal = ConnectionSessionManager.shared.getTerminal(for: session.id) {
-            // Mark coordinator as reusing existing terminal - don't cleanup on deinit
+            // Mark coordinator as reusing existing terminal so dismantle keeps the surface alive.
             coordinator.isReusingTerminal = true
             coordinator.terminalView = existingTerminal
 
@@ -192,13 +192,11 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         // Check if session still exists - if not, cleanup and return
         let sessionExists = ConnectionSessionManager.shared.sessions.contains { $0.id == session.id }
         if !sessionExists {
-            ConnectionSessionManager.shared.trackShellTeardownForClosedSession(
+            ConnectionSessionManager.shared.handleClosedSessionSurfaceTeardown(
                 sessionId: session.id,
                 serverId: session.serverId,
                 reason: "mac update missing session"
-            ) {
-                await ConnectionSessionManager.shared.detachSurface(from: session.id, reason: .sessionClosed)
-            }
+            )
             return
         }
 
@@ -211,8 +209,29 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         }
     }
 
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        let sessionStillExists = ConnectionSessionManager.shared.sessions.contains { $0.id == coordinator.sessionId }
+
+        if sessionStillExists {
+            if let scrollView = nsView as? TerminalScrollView {
+                scrollView.surfaceView.pauseRendering()
+            }
+            coordinator.isReusingTerminal = true
+            ConnectionSessionManager.shared.detachSurfaceForViewDisappeared(from: coordinator.sessionId)
+            return
+        }
+
+        coordinator.terminalView = nil
+        ConnectionSessionManager.shared.handleClosedSessionSurfaceTeardown(
+            sessionId: coordinator.sessionId,
+            serverId: coordinator.server.id,
+            reason: "mac dismantle closed session"
+        )
+    }
+
     // MARK: - Coordinator
 
+    @MainActor
     class Coordinator: SSHTerminalCoordinator {
         let server: Server
         let credentials: ServerCredentials
@@ -223,7 +242,7 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         private let richPasteRuntime: TerminalRichPasteRuntime
         let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "SSHTerminal")
 
-        /// If true, this coordinator is reusing an existing terminal and should NOT cleanup on deinit
+        /// If true, this coordinator is reusing an existing terminal and should keep the surface alive.
         var isReusingTerminal = false
 
         init(
@@ -246,28 +265,6 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         @MainActor
         func installRichPasteInterception(on terminal: GhosttyTerminalView) {
             richPasteRuntime.install(on: terminal)
-        }
-
-        deinit {
-            // Don't cleanup if we're just reusing an existing terminal (e.g., switching to split view)
-            // isReusingTerminal is set when we find an existing terminal in makeNSView
-            guard !isReusingTerminal else { return }
-
-            // Check if terminal view is still alive (session manager holds strong reference)
-            // If it is, the terminal is being reused by another view (e.g., split view)
-            guard terminalView == nil else { return }
-
-            let sessionId = self.sessionId
-            let serverId = self.server.id
-            Task { @MainActor in
-                ConnectionSessionManager.shared.trackShellTeardownForClosedSession(
-                    sessionId: sessionId,
-                    serverId: serverId,
-                    reason: "mac coordinator deinit"
-                ) {
-                    await ConnectionSessionManager.shared.detachSurface(from: sessionId, reason: .sessionClosed)
-                }
-            }
         }
     }
 }
@@ -474,13 +471,11 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         let sessionExists = ConnectionSessionManager.shared.sessions.contains { $0.id == session.id }
         if !sessionExists {
             // Session was closed externally, cleanup terminal
-            ConnectionSessionManager.shared.trackShellTeardownForClosedSession(
+            ConnectionSessionManager.shared.handleClosedSessionSurfaceTeardown(
                 sessionId: session.id,
                 serverId: session.serverId,
                 reason: "ios update missing session"
-            ) {
-                await ConnectionSessionManager.shared.detachSurface(from: session.id, reason: .sessionClosed)
-            }
+            )
             terminalView.writeCallback = nil
             terminalView.onReady = nil
             terminalView.onProcessExit = nil
@@ -584,26 +579,22 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             terminalView.pauseRendering()
             _ = terminalView.resignFirstResponder()
 
-            // Mark coordinator to not cleanup in deinit
+            // Mark coordinator so dismantle keeps the surface alive.
             // IMPORTANT: Do NOT set terminalView = nil here!
             // The SSH output loop checks terminalView != nil to continue running.
             // Setting it to nil would break the loop and close the connection.
             coordinator.preserveSession = true
-            Task {
-                await ConnectionSessionManager.shared.detachSurface(from: coordinator.sessionId, reason: .viewDisappeared)
-            }
+            ConnectionSessionManager.shared.detachSurfaceForViewDisappeared(from: coordinator.sessionId)
             return
         }
 
         // Session was closed - full cleanup
         coordinator.terminalView = nil
-        ConnectionSessionManager.shared.trackShellTeardownForClosedSession(
+        ConnectionSessionManager.shared.handleClosedSessionSurfaceTeardown(
             sessionId: coordinator.sessionId,
             serverId: coordinator.server.id,
             reason: "ios dismantle closed session"
-        ) {
-            await ConnectionSessionManager.shared.detachSurface(from: coordinator.sessionId, reason: .sessionClosed)
-        }
+        )
     }
 
     private func terminalHostView(for terminalView: GhosttyTerminalView) -> UIView {
@@ -627,6 +618,7 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
 
     // MARK: - Coordinator
 
+    @MainActor
     class Coordinator: SSHTerminalCoordinator {
         let server: Server
         let credentials: ServerCredentials
@@ -640,7 +632,7 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         /// Tracks whether the terminal surface has been created and is ready for interaction
         var isTerminalReady = false
 
-        /// If true, session is still active and we shouldn't cleanup on deinit (user just navigated away)
+        /// If true, session is still active and dismantle should keep the surface alive.
         var preserveSession = false
         var wasActive = false
         var lastReportedSize: CGSize = .zero
@@ -665,22 +657,6 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         @MainActor
         func installRichPasteInterception(on terminal: GhosttyTerminalView) {
             richPasteRuntime.install(on: terminal)
-        }
-
-        deinit {
-            // Don't cleanup if session is still active (user just navigated away)
-            guard !preserveSession else { return }
-            let sessionId = self.sessionId
-            let serverId = self.server.id
-            Task { @MainActor in
-                ConnectionSessionManager.shared.trackShellTeardownForClosedSession(
-                    sessionId: sessionId,
-                    serverId: serverId,
-                    reason: "ios coordinator deinit"
-                ) {
-                    await ConnectionSessionManager.shared.detachSurface(from: sessionId, reason: .sessionClosed)
-                }
-            }
         }
     }
 }

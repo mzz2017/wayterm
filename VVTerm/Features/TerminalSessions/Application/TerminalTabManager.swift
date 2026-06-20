@@ -556,10 +556,18 @@ final class TerminalTabManager: ObservableObject {
     func detachSurface(fromPane paneId: UUID, reason: TerminalSurfaceDetachReason) async {
         switch reason {
         case .viewDisappeared:
-            terminalSurfaceRegistry.detachSurface(for: .pane(paneId), cleanup: false)
+            detachSurfaceForPaneViewDisappeared(paneId)
         case .sessionClosed:
-            unregisterTerminal(for: paneId)
+            detachSurfaceForClosedPane(paneId)
         }
+    }
+
+    func detachSurfaceForPaneViewDisappeared(_ paneId: UUID) {
+        terminalSurfaceRegistry.detachSurface(for: .pane(paneId), cleanup: false)
+    }
+
+    func detachSurfaceForClosedPane(_ paneId: UUID) {
+        unregisterTerminal(for: paneId)
     }
 
     func sendInput(_ data: Data, toPane paneId: UUID) async {

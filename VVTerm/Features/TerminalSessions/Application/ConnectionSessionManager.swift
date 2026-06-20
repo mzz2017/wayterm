@@ -1333,9 +1333,31 @@ final class ConnectionSessionManager: ObservableObject {
     func detachSurface(from sessionId: UUID, reason: TerminalSurfaceDetachReason) async {
         switch reason {
         case .viewDisappeared:
-            terminalSurfaceRegistry.detachSurface(for: .session(sessionId), cleanup: false)
+            detachSurfaceForViewDisappeared(from: sessionId)
         case .sessionClosed:
-            unregisterTerminal(for: sessionId)
+            detachSurfaceForClosedSession(sessionId)
+        }
+    }
+
+    func detachSurfaceForViewDisappeared(from sessionId: UUID) {
+        terminalSurfaceRegistry.detachSurface(for: .session(sessionId), cleanup: false)
+    }
+
+    func detachSurfaceForClosedSession(_ sessionId: UUID) {
+        unregisterTerminal(for: sessionId)
+    }
+
+    func handleClosedSessionSurfaceTeardown(
+        sessionId: UUID,
+        serverId: UUID,
+        reason: String
+    ) {
+        trackShellTeardownForClosedSession(
+            sessionId: sessionId,
+            serverId: serverId,
+            reason: reason
+        ) { [weak self] in
+            self?.detachSurfaceForClosedSession(sessionId)
         }
     }
 
