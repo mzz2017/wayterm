@@ -1043,7 +1043,7 @@ actor SSHSession {
 
         // Authenticate
         try Task.checkCancellation()
-        try authenticate()
+        try await authenticate()
 
         // Set non-blocking for I/O
         libssh2_session_set_blocking(session, 0)
@@ -1052,7 +1052,7 @@ actor SSHSession {
         logger.info("SSH session established")
     }
 
-    private func authenticate() throws {
+    private func authenticate() async throws {
         guard let session = libssh2Session else {
             throw SSHError.notConnected
         }
@@ -1132,38 +1132,17 @@ actor SSHSession {
             let publicKeyData = config.credentials.publicKey
             logger.info("Attempting publickey auth for user: \(username)")
 
-            authResult = keyData.withUnsafeBytes { rawBuffer -> Int32 in
-                guard let baseAddress = rawBuffer.bindMemory(to: CChar.self).baseAddress else {
-                    return LIBSSH2_ERROR_ALLOC
-                }
-
-                if let publicKeyData, !publicKeyData.isEmpty {
-                    return publicKeyData.withUnsafeBytes { publicBuffer -> Int32 in
-                        guard let publicBase = publicBuffer.bindMemory(to: CChar.self).baseAddress else {
-                            return LIBSSH2_ERROR_ALLOC
-                        }
-                        return libssh2_userauth_publickey_frommemory(
-                            session,
-                            username,
-                            Int(username.utf8.count),
-                            publicBase,
-                            Int(publicKeyData.count),
-                            baseAddress,
-                            Int(keyData.count),
-                            passphrase
-                        )
-                    }
-                }
-
-                return libssh2_userauth_publickey_frommemory(
-                    session,
-                    username,
-                    Int(username.utf8.count),
-                    nil,
-                    0,
-                    baseAddress,
-                    Int(keyData.count),
-                    passphrase
+            let serverIdString = config.credentials.serverId.uuidString
+            let authGateKey = "\(serverIdString):\(username)"
+            logger.info("Waiting for publickey auth slot [serverId: \(serverIdString, privacy: .public), user: \(username, privacy: .public)]")
+            authResult = await SSHAuthenticationGate.shared.withExclusiveAccess(for: authGateKey) {
+                logger.info("Acquired publickey auth slot [serverId: \(serverIdString, privacy: .public), user: \(username, privacy: .public)]")
+                return Self.authenticateWithPublicKey(
+                    session: session,
+                    username: username,
+                    keyData: keyData,
+                    publicKeyData: publicKeyData,
+                    passphrase: passphrase
                 )
             }
         }
@@ -1179,6 +1158,49 @@ actor SSHSession {
         }
 
         logger.info("Authentication successful")
+    }
+
+    private nonisolated static func authenticateWithPublicKey(
+        session: OpaquePointer,
+        username: String,
+        keyData: Data,
+        publicKeyData: Data?,
+        passphrase: String?
+    ) -> Int32 {
+        keyData.withUnsafeBytes { rawBuffer -> Int32 in
+            guard let baseAddress = rawBuffer.bindMemory(to: CChar.self).baseAddress else {
+                return LIBSSH2_ERROR_ALLOC
+            }
+
+            if let publicKeyData, !publicKeyData.isEmpty {
+                return publicKeyData.withUnsafeBytes { publicBuffer -> Int32 in
+                    guard let publicBase = publicBuffer.bindMemory(to: CChar.self).baseAddress else {
+                        return LIBSSH2_ERROR_ALLOC
+                    }
+                    return libssh2_userauth_publickey_frommemory(
+                        session,
+                        username,
+                        Int(username.utf8.count),
+                        publicBase,
+                        Int(publicKeyData.count),
+                        baseAddress,
+                        Int(keyData.count),
+                        passphrase
+                    )
+                }
+            }
+
+            return libssh2_userauth_publickey_frommemory(
+                session,
+                username,
+                Int(username.utf8.count),
+                nil,
+                0,
+                baseAddress,
+                Int(keyData.count),
+                passphrase
+            )
+        }
     }
 
     private func verifyHostKey() throws {

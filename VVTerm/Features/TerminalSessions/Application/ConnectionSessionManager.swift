@@ -8,6 +8,11 @@ import AppKit
 import UIKit
 #endif
 
+enum ShellTeardownMode: Equatable, Sendable {
+    case closeShellOnly
+    case fullDisconnect
+}
+
 @MainActor
 final class ConnectionSessionManager: ObservableObject {
     static let shared = ConnectionSessionManager()
@@ -15,6 +20,13 @@ final class ConnectionSessionManager: ObservableObject {
     private struct SSHUnregisterResult: Sendable {
         let shellToClose: (client: SSHClient, shellId: UUID)?
         let clientToDisconnect: SSHClient?
+    }
+
+    private struct SessionCloseResult {
+        let sessionId: UUID
+        let serverId: UUID
+        let tmuxSessionNameToKill: String?
+        let shellTeardownTask: Task<Void, Never>?
     }
 
     @Published var sessions: [ConnectionSession] = [] {
@@ -76,11 +88,15 @@ final class ConnectionSessionManager: ObservableObject {
     private var terminalsNeedingReconnectReset: Set<UUID> = []
 
     /// Shell cancel handlers indexed by session ID - called before closing to cancel async tasks
-    private var shellCancelHandlers: [UUID: () -> Void] = [:]
+    private var shellCancelHandlers: [UUID: @MainActor (_ mode: ShellTeardownMode) async -> Void] = [:]
     /// Shell suspend handlers indexed by session ID - cancel in-flight connects without destroying terminals
     private var shellSuspendHandlers: [UUID: () -> Void] = [:]
     /// Server IDs with an in-flight open request, used to collapse repeated clicks.
     private var sessionOpensInFlight: Set<UUID> = []
+    /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
+    private var serverDisconnectTasks: [UUID: Task<Void, Never>] = [:]
+    /// Per-server teardown work from ordinary tab closes. New opens wait for this too.
+    private var serverTeardownTasks: [UUID: [UUID: Task<Void, Never>]] = [:]
     @Published private(set) var isSuspendingForBackground = false
 
     /// Servers that already ran tmux cleanup (per app launch)
@@ -224,6 +240,12 @@ final class ConnectionSessionManager: ObservableObject {
     ///   - server: The server to connect to
     ///   - forceNew: If true, always creates a new tab even if one exists for this server
     func openConnection(to server: Server, forceNew: Bool = false) async throws -> ConnectionSession {
+        if let disconnectTask = serverDisconnectTasks[server.id] {
+            logger.info("Open waiting for disconnect cleanup [serverId: \(server.id.uuidString, privacy: .public)]")
+            await disconnectTask.value
+        }
+        await waitForServerTeardownTasks(server.id)
+
         // Check if server is locked due to downgrade
         if ServerManager.shared.isServerLocked(server) {
             throw VVTermError.serverLocked(server.name)
@@ -399,9 +421,25 @@ final class ConnectionSessionManager: ObservableObject {
 
     /// Closes a terminal session and removes it from the list
     func closeSession(_ session: ConnectionSession, notingSessionEnd: Bool = true) {
+        guard let closeResult = closeSessionUI(session, notingSessionEnd: notingSessionEnd) else { return }
+        let unregisterTask = scheduleSSHUnregister(
+            for: closeResult.sessionId,
+            priority: .high,
+            killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
+        )
+        let teardownTask = Task {
+            await unregisterTask.value
+            await closeResult.shellTeardownTask?.value
+        }
+        trackServerTeardownTask(teardownTask, for: closeResult.serverId)
+    }
+
+    private func closeSessionUI(_ session: ConnectionSession, notingSessionEnd: Bool) -> SessionCloseResult? {
         let sessionId = session.id
         let title = session.title
         let wasSelected = selectedSessionId == sessionId
+
+        guard sessionWithID(sessionId) != nil else { return nil }
 
         let tmuxSessionToKill = managedTmuxSessionNameToKill(for: sessionId, status: session.tmuxStatus)
 
@@ -411,7 +449,7 @@ final class ConnectionSessionManager: ObservableObject {
             wasSelected: wasSelected
         )
 
-        clearRuntimeStateForClosedSession(sessionId)
+        let shellTeardownTask = clearRuntimeStateForClosedSession(sessionId)
 
         // Remove from UI immediately
         sessions.removeAll { $0.id == sessionId }
@@ -425,13 +463,6 @@ final class ConnectionSessionManager: ObservableObject {
             sessionId: sessionId,
             wasSelected: wasSelected,
             replacementSessionId: replacementSessionId
-        )
-
-        // Disconnect SSH client in background
-        scheduleSSHUnregister(
-            for: sessionId,
-            priority: .high,
-            killingManagedTmuxSessionNamed: tmuxSessionToKill
         )
 
         if let selectedId = replacementSessionId ?? selectedSessionId,
@@ -449,6 +480,12 @@ final class ConnectionSessionManager: ObservableObject {
         }
 
         logger.info("Closed terminal session \(title)")
+        return SessionCloseResult(
+            sessionId: sessionId,
+            serverId: session.serverId,
+            tmuxSessionNameToKill: tmuxSessionToKill,
+            shellTeardownTask: shellTeardownTask
+        )
     }
 
     private func replacementSessionIDAfterClosing(
@@ -471,12 +508,13 @@ final class ConnectionSessionManager: ObservableObject {
         return sessions.first(where: { $0.id != sessionId })?.id
     }
 
-    private func clearRuntimeStateForClosedSession(_ sessionId: UUID) {
-        cancelAndClearShellHandlers(for: sessionId)
+    private func clearRuntimeStateForClosedSession(_ sessionId: UUID) -> Task<Void, Never>? {
+        let shellTeardownTask = cancelAndClearShellHandlers(for: sessionId)
         terminalsNeedingReconnectReset.remove(sessionId)
         terminalBrowseModeBySession.removeValue(forKey: sessionId)
         clearTmuxRuntimeState(for: sessionId)
         runtimeTitleBySession.removeValue(forKey: sessionId)
+        return shellTeardownTask
     }
 
     private func handleTerminalCloseUI(
@@ -601,6 +639,52 @@ final class ConnectionSessionManager: ObservableObject {
         logger.info("Disconnected all sessions for server \(serverId)")
     }
 
+    /// Disconnect all sessions for a server and wait until SSH clients/shells are unregistered.
+    /// Use this for explicit user disconnects that may be followed immediately by a new connect.
+    func disconnectServerAndWait(_ serverId: UUID) async {
+        if let existingTask = serverDisconnectTasks[serverId] {
+            await existingTask.value
+            return
+        }
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performDisconnectServerAndWait(serverId)
+        }
+        serverDisconnectTasks[serverId] = task
+        await task.value
+        serverDisconnectTasks.removeValue(forKey: serverId)
+    }
+
+    private func performDisconnectServerAndWait(_ serverId: UUID) async {
+        await waitForServerTeardownTasks(serverId)
+
+        let sessionsToClose = sessions.filter { $0.serverId == serverId }
+        var closeResults: [SessionCloseResult] = []
+        closeResults.reserveCapacity(sessionsToClose.count)
+
+        for session in sessionsToClose {
+            if let closeResult = closeSessionUI(session, notingSessionEnd: true) {
+                closeResults.append(closeResult)
+            }
+        }
+
+        connectedServerIds.remove(serverId)
+        if connectedServerIds.isEmpty {
+            connectedServerId = nil
+        }
+
+        for closeResult in closeResults {
+            await unregisterSSHClient(
+                for: closeResult.sessionId,
+                killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
+            )
+            await closeResult.shellTeardownTask?.value
+        }
+
+        logger.info("Disconnected all sessions for server \(serverId)")
+    }
+
     // MARK: - Tab Navigation
 
     func selectSession(_ session: ConnectionSession) {
@@ -672,7 +756,7 @@ final class ConnectionSessionManager: ObservableObject {
         )
 
         if let stale = registerResult.staleIncomingShell {
-            logger.warning("Ignoring stale shell registration for session \(sessionId.uuidString, privacy: .public)")
+            logger.warning("Ignoring stale shell registration [sessionId: \(sessionId.uuidString, privacy: .public), serverId: \(serverId.uuidString, privacy: .public)]")
             Task.detached(priority: .utility) { [client = stale.client, shellId = stale.shellId] in
                 await client.closeShell(shellId)
                 await client.disconnect()
@@ -922,7 +1006,7 @@ final class ConnectionSessionManager: ObservableObject {
 
     // MARK: - Shell Cancel Handler Registration
 
-    func registerShellCancelHandler(_ handler: @escaping () -> Void, for sessionId: UUID) {
+    func registerShellCancelHandler(_ handler: @escaping @MainActor (_ mode: ShellTeardownMode) async -> Void, for sessionId: UUID) {
         shellCancelHandlers[sessionId] = handler
     }
 
@@ -976,17 +1060,63 @@ final class ConnectionSessionManager: ObservableObject {
         terminalsNeedingReconnectReset.remove(sessionId) != nil
     }
 
-    private func cancelAndClearShellHandlers(for sessionId: UUID) {
-        shellCancelHandlers[sessionId]?()
-        shellCancelHandlers.removeValue(forKey: sessionId)
+    private func cancelAndClearShellHandlers(for sessionId: UUID) -> Task<Void, Never>? {
+        let handler = shellCancelHandlers.removeValue(forKey: sessionId)
         shellSuspendHandlers.removeValue(forKey: sessionId)
+        guard let handler else {
+            logger.info("No shell cancel handler registered for closed session [sessionId: \(sessionId.uuidString, privacy: .public)]")
+            return nil
+        }
+        logger.info("Running shell cancel handler for closed session [sessionId: \(sessionId.uuidString, privacy: .public)]")
+        return Task(priority: .high) { @MainActor in
+            await handler(.fullDisconnect)
+        }
     }
 
+    func trackShellTeardownForClosedSession(
+        sessionId: UUID,
+        serverId: UUID,
+        reason: String,
+        operation: @escaping @MainActor () async -> Void
+    ) {
+        let task = Task(priority: .high) { @MainActor [logger] in
+            logger.info("External shell teardown started [sessionId: \(sessionId.uuidString, privacy: .public), serverId: \(serverId.uuidString, privacy: .public), reason: \(reason, privacy: .public)]")
+            await operation()
+            logger.info("External shell teardown finished [sessionId: \(sessionId.uuidString, privacy: .public), serverId: \(serverId.uuidString, privacy: .public), reason: \(reason, privacy: .public)]")
+        }
+        trackServerTeardownTask(task, for: serverId)
+    }
+
+    private func waitForServerTeardownTasks(_ serverId: UUID) async {
+        guard let tasksById = serverTeardownTasks[serverId], !tasksById.isEmpty else { return }
+        logger.info("Open waiting for tab teardown cleanup [serverId: \(serverId.uuidString, privacy: .public), count: \(tasksById.count)]")
+        for task in tasksById.values {
+            await task.value
+        }
+    }
+
+    private func trackServerTeardownTask(_ task: Task<Void, Never>, for serverId: UUID) {
+        let taskId = UUID()
+        serverTeardownTasks[serverId, default: [:]][taskId] = task
+        logger.info("Tracking server teardown [serverId: \(serverId.uuidString, privacy: .public), taskId: \(taskId.uuidString, privacy: .public), count: \(self.serverTeardownTasks[serverId]?.count ?? 0)]")
+
+        Task { @MainActor [weak self] in
+            await task.value
+            guard let self else { return }
+            self.serverTeardownTasks[serverId]?.removeValue(forKey: taskId)
+            if self.serverTeardownTasks[serverId]?.isEmpty == true {
+                self.serverTeardownTasks.removeValue(forKey: serverId)
+            }
+            self.logger.info("Finished server teardown [serverId: \(serverId.uuidString, privacy: .public), taskId: \(taskId.uuidString, privacy: .public), remaining: \(self.serverTeardownTasks[serverId]?.count ?? 0)]")
+        }
+    }
+
+    @discardableResult
     private func scheduleSSHUnregister(
         for sessionId: UUID,
         priority: TaskPriority = .utility,
         killingManagedTmuxSessionNamed tmuxSessionName: String? = nil
-    ) {
+    ) -> Task<Void, Never> {
         Task.detached(priority: priority) { [weak self] in
             await self?.unregisterSSHClient(
                 for: sessionId,
@@ -1574,6 +1704,7 @@ extension ConnectionSessionManager {
         shellCancelHandlers.removeAll()
         shellSuspendHandlers.removeAll()
         sessionOpensInFlight.removeAll()
+        serverDisconnectTasks.removeAll()
         terminalsNeedingReconnectReset.removeAll()
         isSuspendingForBackground = false
         tmuxCleanupServers.removeAll()
@@ -1592,6 +1723,10 @@ extension ConnectionSessionManager {
 
     func setBackgroundSuspendInProgressForTesting(_ isSuspending: Bool) {
         isSuspendingForBackground = isSuspending
+    }
+
+    func setServerDisconnectTaskForTesting(_ serverId: UUID, task: Task<Void, Never>?) {
+        serverDisconnectTasks[serverId] = task
     }
 }
 #endif

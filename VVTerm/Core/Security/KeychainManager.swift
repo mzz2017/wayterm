@@ -38,6 +38,7 @@ final class KeychainManager {
             return password
         }
 
+        logger.warning("Password credential missing [serverId: \(serverId.uuidString, privacy: .public)]")
         return nil
     }
 
@@ -80,6 +81,7 @@ final class KeychainManager {
             return (key: keyData, passphrase: passphrase, publicKey: publicKeyData)
         }
 
+        logger.warning("SSH key credential missing [serverId: \(serverId.uuidString, privacy: .public)]")
         return nil
     }
 

@@ -639,7 +639,9 @@ struct iOSServerListView: View {
 
     private func disconnectActiveConnection(_ connection: ActiveConnection) {
         fileBrowser.disconnect(serverId: connection.id)
-        sessionManager.disconnectServer(connection.id)
+        Task {
+            await sessionManager.disconnectServerAndWait(connection.id)
+        }
     }
 
     private func server(for serverId: UUID) -> Server? {
@@ -1781,8 +1783,10 @@ struct iOSTerminalView: View {
         }
         fileBrowser.disconnect(serverId: serverId)
         fileTabs.disconnect(serverId: serverId)
-        sessionManager.disconnectServer(serverId)
-        onBack()
+        Task {
+            await sessionManager.disconnectServerAndWait(serverId)
+            onBack()
+        }
     }
 
     private func synchronizeRecoveredTerminalState() {

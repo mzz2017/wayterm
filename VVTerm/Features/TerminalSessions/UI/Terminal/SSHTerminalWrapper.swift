@@ -169,14 +169,12 @@ extension SSHTerminalCoordinator {
         }
     }
 
-    func cancelShell() {
+    func cancelShell(mode: ShellTeardownMode) async {
         shellTask?.cancel()
         shellTask = nil
-        if let shellId {
-            Task.detached(priority: .high) { [sshClient, shellId] in
-                await sshClient.closeShell(shellId)
-            }
-        }
+        let shellId = self.shellId
+        let sshClient = self.sshClient
+        let shouldDisconnectClient = mode == .fullDisconnect
         self.shellId = nil
 
         // Cleanup terminal to break retain cycles and release resources
@@ -184,6 +182,15 @@ extension SSHTerminalCoordinator {
             terminal.cleanup()
         }
         terminalView = nil
+
+        if let shellId {
+            await sshClient.closeShell(shellId)
+            if shouldDisconnectClient {
+                await sshClient.disconnect()
+            }
+        } else if shouldDisconnectClient {
+            await sshClient.disconnect()
+        }
     }
 
     func suspendShell() {
@@ -469,8 +476,8 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         ConnectionSessionManager.shared.registerTerminal(terminalView, for: session.id)
 
         // Register shell cancel handler so closeSession can cancel the shell task
-        ConnectionSessionManager.shared.registerShellCancelHandler({ [weak coordinator] in
-            coordinator?.cancelShell()
+        ConnectionSessionManager.shared.registerShellCancelHandler({ [weak coordinator] mode in
+            await coordinator?.cancelShell(mode: mode)
         }, for: session.id)
         ConnectionSessionManager.shared.registerShellSuspendHandler({ [weak coordinator] in
             coordinator?.suspendShell()
@@ -499,7 +506,13 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         // Check if session still exists - if not, cleanup and return
         let sessionExists = ConnectionSessionManager.shared.sessions.contains { $0.id == session.id }
         if !sessionExists {
-            context.coordinator.cancelShell()
+            ConnectionSessionManager.shared.trackShellTeardownForClosedSession(
+                sessionId: session.id,
+                serverId: session.serverId,
+                reason: "mac update missing session"
+            ) { [coordinator = context.coordinator] in
+                await coordinator.cancelShell(mode: .fullDisconnect)
+            }
             return
         }
 
@@ -613,10 +626,20 @@ struct SSHTerminalWrapper: NSViewRepresentable {
             guard terminalView == nil else { return }
 
             shellTask?.cancel()
-            if let shellId {
-                let sshClient = self.sshClient
-                Task.detached(priority: .high) {
-                    await sshClient.closeShell(shellId)
+            let shellId = self.shellId
+            let sshClient = self.sshClient
+            let sessionId = self.sessionId
+            let serverId = self.server.id
+            Task { @MainActor in
+                ConnectionSessionManager.shared.trackShellTeardownForClosedSession(
+                    sessionId: sessionId,
+                    serverId: serverId,
+                    reason: "mac coordinator deinit"
+                ) {
+                    if let shellId {
+                        await sshClient.closeShell(shellId)
+                    }
+                    await sshClient.disconnect()
                 }
             }
         }
@@ -794,8 +817,8 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         coordinator.terminalView = terminalView
         coordinator.installRichPasteInterception(on: terminalView)
         ConnectionSessionManager.shared.registerTerminal(terminalView, for: session.id)
-        ConnectionSessionManager.shared.registerShellCancelHandler({ [weak coordinator] in
-            coordinator?.cancelShell()
+        ConnectionSessionManager.shared.registerShellCancelHandler({ [weak coordinator] mode in
+            await coordinator?.cancelShell(mode: mode)
         }, for: session.id)
         ConnectionSessionManager.shared.registerShellSuspendHandler({ [weak coordinator] in
             coordinator?.suspendShell()
@@ -835,7 +858,13 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         let sessionExists = ConnectionSessionManager.shared.sessions.contains { $0.id == session.id }
         if !sessionExists {
             // Session was closed externally, cleanup terminal
-            context.coordinator.cancelShell()
+            ConnectionSessionManager.shared.trackShellTeardownForClosedSession(
+                sessionId: session.id,
+                serverId: session.serverId,
+                reason: "ios update missing session"
+            ) { [coordinator = context.coordinator] in
+                await coordinator.cancelShell(mode: .fullDisconnect)
+            }
             terminalView.writeCallback = nil
             terminalView.onReady = nil
             terminalView.onProcessExit = nil
@@ -953,7 +982,13 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         ConnectionSessionManager.shared.unregisterShellSuspendHandler(for: coordinator.sessionId)
         coordinator.terminalView = nil
         ConnectionSessionManager.shared.unregisterTerminal(for: coordinator.sessionId)
-        coordinator.cancelShell()
+        ConnectionSessionManager.shared.trackShellTeardownForClosedSession(
+            sessionId: coordinator.sessionId,
+            serverId: coordinator.server.id,
+            reason: "ios dismantle closed session"
+        ) { [coordinator] in
+            await coordinator.cancelShell(mode: .fullDisconnect)
+        }
     }
 
     private func terminalHostView(for terminalView: GhosttyTerminalView) -> UIView {
@@ -1050,15 +1085,22 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             // Don't cleanup if session is still active (user just navigated away)
             guard !preserveSession else { return }
             shellTask?.cancel()
-            if let shellId {
-                let sshClient = self.sshClient
-                Task.detached(priority: .high) {
-                    await sshClient.closeShell(shellId)
-                }
-            }
-            if let terminalView {
-                Task { @MainActor in
-                    terminalView.cleanup()
+            let shellId = self.shellId
+            let sshClient = self.sshClient
+            let terminalView = self.terminalView
+            let sessionId = self.sessionId
+            let serverId = self.server.id
+            Task { @MainActor in
+                ConnectionSessionManager.shared.trackShellTeardownForClosedSession(
+                    sessionId: sessionId,
+                    serverId: serverId,
+                    reason: "ios coordinator deinit"
+                ) {
+                    if let shellId {
+                        await sshClient.closeShell(shellId)
+                    }
+                    await sshClient.disconnect()
+                    terminalView?.cleanup()
                 }
             }
         }
