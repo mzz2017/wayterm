@@ -1277,7 +1277,7 @@ xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destinati
   - No `SSHClient()` in SwiftUI representable coordinators.
   - No business close/disconnect in `dismantleUIView`, `dismantleNSView`, or coordinator `deinit`.
 
-- [ ] **Step 1: Run audit commands**
+- [x] **Step 1: Run audit commands**
 
 ```bash
 rg -n "SSHClient\\(" VVTerm/Features VVTerm/App -g '*.swift'
@@ -1285,7 +1285,7 @@ rg -n "Task\\.detached|Task \\{" VVTerm/Features VVTerm/Core VVTerm/App -g '*.sw
 rg -n "deinit|dismantleUIView|dismantleNSView" VVTerm/Features VVTerm/Core VVTerm/App -g '*.swift'
 ```
 
-- [ ] **Step 2: Classify every hit**
+- [x] **Step 2: Classify every hit**
 
 Write classifications into this file under "Progress Ledger". Each lifecycle-critical hit must be tied to a tracked task, awaited operation, or explicit exemption.
 
@@ -1322,6 +1322,11 @@ git commit -m "refactor: complete Swift lifecycle cleanup"
 - 2026-06-21: Task 14 completed in commit-sized slices. Runtime/live transport truth now comes from `TerminalConnectionRegistry`, `activeServerIds`, `openServerIds`, and `hasLiveRuntime`; `ConnectionState` is explicitly treated as a user-facing display snapshot and is no longer persisted or used for high-risk open/retry/watchdog lifecycle decisions.
 - 2026-06-21: Task 14 API/boundary cleanup completed. New APIs are application-layer intent/policy boundaries: `hasLiveRuntime(forSessionId:)`, `hasLiveRuntime(forPaneId:)`, `TerminalAutoReconnectPolicy`, `TerminalManualReconnectPolicy`, `reconnectPane(_:)`, `handlePaneExit(for:)`, `TerminalConnectWatchdogAction`, and manager-owned `handleConnectWatchdogTimeout(...)` methods.
 - 2026-06-21: Remaining lifecycle-sensitive UI hits are intentionally deferred to Task 15: `SSHTerminalWrapper` and split-pane terminal wrapper attach/start guards still read `shellId` / `isShellStartInFlight` from UI-adjacent code. They are terminal surface attach guards rather than connected-server or retry policy truth, but they should be classified by the Task 15 audit before further changes.
+- 2026-06-21: Task 15 audit classification completed. Terminal session `SSHClient()` construction in `ConnectionSessionManager` and `TerminalTabManager` is application-layer runtime construction and remains allowed; no representable coordinator constructs `SSHClient`.
+- 2026-06-21: Task 15 tracked/exempt `Task.detached` hits: `runtime.shellTask` in both terminal managers is stored on runtime state; `scheduleSSHUnregister` returns a task that close paths can store/await; `RemoteFileTransferCoordinator` file-system work awaits `.value`; `ServerStatsCollector.collectTask` is stored and canceled by the collector.
+- 2026-06-21: Task 15 non-exempt lifecycle hits requiring tests before implementation: stale shell cleanup in `ConnectionSessionManager.handleStaleShellStartContext`, `ConnectionSessionManager.registerSSHClient`, `TerminalTabManager.handleStaleShellStartContext`, and `TerminalTabManager.registerSSHClient` still uses untracked `Task.detached`; managed tmux kill in `ConnectionSessionManager.killTmuxIfNeeded` and `TerminalTabManager.killTmuxIfNeeded` is still fire-and-forget.
+- 2026-06-21: Task 15 non-exempt SwiftUI lifecycle hits requiring tests before implementation: `SSHTerminalWrapper` macOS/iOS coordinator `deinit` and iOS `dismantleUIView` can still initiate business teardown through `trackShellTeardownForClosedSession`; split-pane `TerminalView` coordinator `deinit` and `cancelShell()` still call manager detach through untracked `Task` from UI lifecycle code.
+- 2026-06-21: Task 15 deferred cross-feature ownership hits: `SSHSFTPAdapter` and `ServerStatsCollector` still create owned `SSHClient` instances through `RemoteConnectionLease`; they are not SwiftUI-owned, but they remain broader RemoteFiles/Stats lease-boundary cleanup candidates after the terminal lifecycle sweep.
 - Next task: Task 15, Final Lifecycle Sweep.
 
 ## Self-Review
