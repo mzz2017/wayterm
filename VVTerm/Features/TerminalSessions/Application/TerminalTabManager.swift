@@ -89,6 +89,36 @@ final class TerminalTabManager: ObservableObject {
         terminalConnectionRegistry.isOpeningOrStreaming(.pane(paneId))
     }
 
+    func shouldAutoReconnectPane(
+        _ paneId: UUID,
+        isSceneActive: Bool,
+        autoReconnectEnabled: Bool,
+        reconnectInFlight: Bool,
+        isSuspendingForBackground: Bool = false
+    ) -> Bool {
+        guard let state = paneStates[paneId]?.connectionState else { return false }
+        return TerminalAutoReconnectPolicy.shouldAttemptReconnect(
+            isSceneActive: isSceneActive,
+            autoReconnectEnabled: autoReconnectEnabled,
+            reconnectInFlight: reconnectInFlight,
+            isSuspendingForBackground: isSuspendingForBackground,
+            connectionState: state,
+            hasLiveRuntime: hasLiveRuntime(forPaneId: paneId)
+        )
+    }
+
+    func shouldManuallyReconnectPane(
+        _ paneId: UUID,
+        reconnectInFlight: Bool
+    ) -> Bool {
+        guard let state = paneStates[paneId]?.connectionState else { return false }
+        return TerminalManualReconnectPolicy.shouldAttemptReconnect(
+            reconnectInFlight: reconnectInFlight,
+            snapshotState: state,
+            hasLiveRuntime: hasLiveRuntime(forPaneId: paneId)
+        )
+    }
+
     /// Selected view type per server (stats/terminal)
     @Published var selectedViewByServer: [UUID: String] = [:] {
         didSet { schedulePersist() }
@@ -1131,10 +1161,31 @@ final class TerminalTabManager: ObservableObject {
         await unregisterSSHClient(for: paneId)
     }
 
+    func retrustHostAndReconnect(paneId: UUID, server: Server) async -> Bool {
+        await KnownHostsStore.shared.remove(host: server.host, port: server.port)
+        guard !Task.isCancelled else { return false }
+        await reconnectPane(paneId)
+        return true
+    }
+
+    func installMoshServerAndReconnect(for paneId: UUID) async throws {
+        try await installMoshServer(for: paneId)
+        await reconnectPane(paneId)
+    }
+
     func handlePaneExit(for paneId: UUID) async {
         guard paneStates[paneId] != nil else { return }
         updatePaneState(paneId, connectionState: .disconnected)
         await unregisterSSHClient(for: paneId)
+    }
+
+    func shouldScheduleConnectWatchdog(
+        forPaneId paneId: UUID,
+        isReady: Bool,
+        terminalExists: Bool
+    ) -> Bool {
+        guard let state = paneStates[paneId]?.connectionState else { return false }
+        return state.isConnecting || (state.isConnected && !isReady && !terminalExists)
     }
 
     func handleConnectWatchdogTimeout(

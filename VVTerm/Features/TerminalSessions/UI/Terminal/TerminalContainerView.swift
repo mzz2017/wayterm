@@ -34,7 +34,6 @@ struct TerminalContainerView: View {
     @State private var connectWatchdogToken = UUID()
     @State private var hasEstablishedConnection = false
     @State private var showingRetrustHostConfirmation = false
-    @State private var retrustHostTask: Task<Void, Never>?
     @StateObject private var richPasteUI = TerminalRichPasteUIModel()
     @AppStorage("sshAutoReconnect") private var autoReconnectEnabled = true
 
@@ -660,30 +659,32 @@ struct TerminalContainerView: View {
 
     private func retrustHostAndRetry() {
         guard let server else { return }
-        retrustHostTask?.cancel()
-        retrustHostTask = Task {
-            await KnownHostsStore.shared.remove(host: server.host, port: server.port)
-            guard !Task.isCancelled else { return }
-            await retryConnection()
+        Task {
+            let didReconnect = await ConnectionSessionManager.shared.retrustHostAndReconnect(
+                session: session,
+                server: server
+            )
+            guard didReconnect else { return }
+            reconnectToken = UUID()
         }
     }
 
     private func attemptAutoReconnectIfNeeded() {
-        guard TerminalAutoReconnectPolicy.shouldAttemptReconnect(
+        guard ConnectionSessionManager.shared.shouldAutoReconnectSession(
+            session.id,
             isSceneActive: scenePhase == .active,
             autoReconnectEnabled: autoReconnectEnabled,
-            reconnectInFlight: reconnectInFlight,
-            isSuspendingForBackground: ConnectionSessionManager.shared.isSuspendingForBackground,
-            connectionState: session.connectionState,
-            hasLiveRuntime: ConnectionSessionManager.shared.hasLiveRuntime(forSessionId: session.id)
+            reconnectInFlight: reconnectInFlight
         ) else { return }
         Task { await retryConnection() }
     }
 
     private func startConnectWatchdog() {
-        let shouldWatchConnecting = session.connectionState.isConnecting
-        let shouldWatchConnectedNoTerminal = session.connectionState.isConnected && !isReady && !terminalAlreadyExists
-        guard shouldWatchConnecting || shouldWatchConnectedNoTerminal else { return }
+        guard ConnectionSessionManager.shared.shouldScheduleConnectWatchdog(
+            forSessionId: session.id,
+            isReady: isReady,
+            terminalExists: terminalAlreadyExists
+        ) else { return }
         let token = connectWatchdogToken
 
         Task {
@@ -718,10 +719,9 @@ struct TerminalContainerView: View {
 
     @MainActor
     private func retryConnection() async {
-        guard TerminalManualReconnectPolicy.shouldAttemptReconnect(
-            reconnectInFlight: reconnectInFlight,
-            snapshotState: session.connectionState,
-            hasLiveRuntime: ConnectionSessionManager.shared.hasLiveRuntime(forSessionId: session.id)
+        guard ConnectionSessionManager.shared.shouldManuallyReconnectSession(
+            session.id,
+            reconnectInFlight: reconnectInFlight
         ) else { return }
         reconnectInFlight = true
         defer { reconnectInFlight = false }
@@ -743,9 +743,9 @@ struct TerminalContainerView: View {
         defer { isInstallingMosh = false }
 
         do {
-            try await ConnectionSessionManager.shared.installMoshServer(for: session.id)
+            try await ConnectionSessionManager.shared.installMoshServerAndReconnect(session: session)
             operationNotice = nil
-            await retryConnection()
+            reconnectToken = UUID()
         } catch {
             operationNotice = NoticeItem(
                 id: "terminal-mosh-install-error-\(session.id.uuidString)",

@@ -118,6 +118,56 @@ final class ConnectionSessionManager: ObservableObject {
         terminalConnectionRegistry.isOpeningOrStreaming(.session(sessionId))
     }
 
+    func shouldAutoReconnectSession(
+        _ sessionId: UUID,
+        isSceneActive: Bool,
+        autoReconnectEnabled: Bool,
+        reconnectInFlight: Bool
+    ) -> Bool {
+        guard let state = sessionState(for: sessionId) else { return false }
+        return TerminalAutoReconnectPolicy.shouldAttemptReconnect(
+            isSceneActive: isSceneActive,
+            autoReconnectEnabled: autoReconnectEnabled,
+            reconnectInFlight: reconnectInFlight,
+            isSuspendingForBackground: isSuspendingForBackground,
+            connectionState: state,
+            hasLiveRuntime: hasLiveRuntime(forSessionId: sessionId)
+        )
+    }
+
+    func shouldManuallyReconnectSession(
+        _ sessionId: UUID,
+        reconnectInFlight: Bool
+    ) -> Bool {
+        guard let state = sessionState(for: sessionId) else { return false }
+        return TerminalManualReconnectPolicy.shouldAttemptReconnect(
+            reconnectInFlight: reconnectInFlight,
+            snapshotState: state,
+            hasLiveRuntime: hasLiveRuntime(forSessionId: sessionId)
+        )
+    }
+
+    func foregroundReconnectActionForSelectedSession(
+        selectedViewId: String,
+        terminalViewId: String,
+        refreshTerminal: Bool,
+        autoReconnectEnabled: Bool
+    ) -> TerminalForegroundReconnectAction? {
+        guard let sessionId = selectedSessionId,
+              sessionWithID(sessionId) != nil else {
+            return nil
+        }
+        return TerminalForegroundReconnectPolicy.action(
+            selectedViewId: selectedViewId,
+            terminalViewId: terminalViewId,
+            selectedSessionId: sessionId,
+            selectedSessionHasLiveRuntime: hasLiveRuntime(forSessionId: sessionId),
+            refreshTerminal: refreshTerminal,
+            autoReconnectEnabled: autoReconnectEnabled,
+            isSuspendingForBackground: isSuspendingForBackground
+        )
+    }
+
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ConnectionSession")
     private var shellRegistry = SSHShellRegistry(staleThreshold: 120)
 
@@ -430,6 +480,15 @@ final class ConnectionSessionManager: ObservableObject {
 
     func sessionState(for sessionId: UUID) -> ConnectionState? {
         sessionWithID(sessionId)?.connectionState
+    }
+
+    func shouldScheduleConnectWatchdog(
+        forSessionId sessionId: UUID,
+        isReady: Bool,
+        terminalExists: Bool
+    ) -> Bool {
+        guard let state = sessionState(for: sessionId) else { return false }
+        return state.isConnecting || (state.isConnected && !isReady && !terminalExists)
     }
 
     func handleConnectWatchdogTimeout(
@@ -1755,6 +1814,22 @@ final class ConnectionSessionManager: ObservableObject {
 
         // Disconnect existing SSH client
         await unregisterSSHClient(for: session.id)
+    }
+
+    func retrustHostAndReconnect(session: ConnectionSession, server: Server) async -> Bool {
+        await KnownHostsStore.shared.remove(host: server.host, port: server.port)
+        guard !Task.isCancelled else { return false }
+        do {
+            try await reconnect(session: session)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func installMoshServerAndReconnect(session: ConnectionSession) async throws {
+        try await installMoshServer(for: session.id)
+        try await reconnect(session: session)
     }
 
     private func takeSSHClientRegistration(for sessionId: UUID) -> SSHUnregisterResult {

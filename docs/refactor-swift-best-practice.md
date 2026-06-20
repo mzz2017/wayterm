@@ -2695,7 +2695,7 @@ git commit -m "fix: await terminal runner finish on close"
   - SwiftUI terminal containers send one lifecycle intent for foreground/visibility/retry/retrust/install events.
   - Application-layer coordinators own credential loading, reconnect policy execution, watchdog timing, known-host reset, Mosh install sequencing, and retry state.
 
-- [ ] **Step 1: Add RED UI-intent boundary tests**
+- [x] **Step 1: Add RED UI-intent boundary tests**
 
 Add tests that prove root and split-pane reconnect/watchdog decisions can run from an application-layer API without constructing SwiftUI views. Include iOS foreground resume policy as a pure or manager-owned decision test.
 
@@ -2707,7 +2707,7 @@ Extract root terminal reconnect/watchdog/retrust/install sequencing from `Termin
 
 Apply the same boundary to `TerminalView` and `TerminalTabManager`.
 
-- [ ] **Step 4: Move iOS foreground reconnect orchestration into Application**
+- [x] **Step 4: Move iOS foreground reconnect orchestration into Application**
 
 `iOSContentView` should not decide whether to reconnect by combining scene phase, selected session, reconnect tokens, and terminal visibility. It should send foreground/selection intent to an application-layer API.
 
@@ -2891,6 +2891,7 @@ Commit each split sub-task atomically.
 
 - 2026-06-21: Post-Task-35 closure audit found the plan was not actually ready for final merge review. Current non-exempt gaps are now tracked as Tasks 36-40: terminal runner close must await the stored runner finish path, terminal reconnect orchestration still lives in SwiftUI, iOS RemoteFiles disconnect drops returned teardown tasks, Core SSH needs tighter disconnect timeout/cancellation diagnostics, and cross-feature save/delete/sync/download/window ownership still needs a scoped sweep.
 - 2026-06-21: Task 36 RED/GREEN completed. RED verification showed `closeSessionAndWait(_:)` already waited for a delayed stored runner task, while `closePaneAndWait(_:)` returned before a delayed stored runtime shell task finished. `TerminalConnectionRuntime.close(mode:)` now awaits the stored shell task in every close branch, and regression tests cover both session and pane close ordering. Verification: focused lifecycle/runtime suite passed 57 Swift Testing tests, and `git diff --check` passed.
+- 2026-06-21: Task 37 slice 1 RED/GREEN completed. Application-layer APIs now own root auto/manual reconnect decisions, split-pane manual reconnect decisions, watchdog scheduling predicates, iOS selected-session foreground reconnect action, and retrust/mosh install-then-reconnect sequencing. SwiftUI terminal views still own `reconnectInFlight`, rebuild tokens, and the 20-second watchdog sleep bridge, so Task 37 remains open for the full coordinator/timing move. Verification: focused Task 37 suite passed 64 Swift Testing tests, and `git diff --check` passed.
 - 2026-06-21: Task 31 completed, with Task 36 ledger correction. Terminal runtime/client factory ownership is centralized in `TerminalConnectionRuntime`; session and tab managers still hold temporary application-boundary bridge maps and shell registry leases for runtime lookup/registration, but runner finish ordering is protected by awaitable runtime close paths and late/missing shell registrations are rejected before runner follow-up callbacks mutate closed state.
 - 2026-06-21: Task 32 RED/GREEN and API cleanup completed. `TerminalConnectionRunner` now depends on `TerminalConnectionSurface` and abstract connection operations instead of `GhosttyTerminalView`; `GhosttyTerminalView` adaptation lives at the surface registry/application boundary, and runner tests cover fake-surface size reads, stream writes, and process-exit notification without constructing a UI surface.
 - 2026-06-21: Final audit after Task 32 found repo-wide drift against the Swift test context rule: multiple older `VVTermTests/**/*.swift` files still lack `Test Context` headers. Task 33 is added to close this rule before final ready-for-merge review.

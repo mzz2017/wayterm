@@ -252,6 +252,138 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerAutoReconnectIntentUsesManagerRuntimeState() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .disconnected
+            )
+            manager.sessions = [session]
+
+            // Given SwiftUI sends scene/setting intent only and the application
+            // layer owns the session snapshot plus runtime liveness lookup.
+            #expect(
+                manager.shouldAutoReconnectSession(
+                    session.id,
+                    isSceneActive: true,
+                    autoReconnectEnabled: true,
+                    reconnectInFlight: false
+                ),
+                "Disconnected sessions without live runtime should be eligible for app-layer auto reconnect."
+            )
+
+            // When the runtime registry says the session is already opening,
+            // even if the UI display snapshot later appears disconnected.
+            manager.updateSessionState(session.id, to: .connecting)
+            manager.sessions[0].connectionState = .disconnected
+
+            // Then the application-layer intent must suppress a duplicate
+            // reconnect without asking SwiftUI to combine registry state.
+            #expect(
+                !manager.shouldAutoReconnectSession(
+                    session.id,
+                    isSceneActive: true,
+                    autoReconnectEnabled: true,
+                    reconnectInFlight: false
+                ),
+                "Auto reconnect intent should use manager-owned runtime liveness, not stale SwiftUI session snapshots."
+            )
+        }
+    }
+
+    @Test
+    func connectionManagerForegroundReconnectActionUsesSelectedRuntimeState() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .disconnected
+            )
+            manager.sessions = [session]
+            manager.selectedSessionId = session.id
+
+            // Given the iOS shell sends foreground/selection intent to the
+            // application layer instead of deriving runtime liveness in SwiftUI.
+            let reconnectAction = manager.foregroundReconnectActionForSelectedSession(
+                selectedViewId: "terminal",
+                terminalViewId: "terminal",
+                refreshTerminal: true,
+                autoReconnectEnabled: true
+            )
+
+            // Then the manager returns the UI side effects while owning the
+            // reconnect decision and selected-session lookup.
+            #expect(reconnectAction?.sessionId == session.id)
+            #expect(reconnectAction?.shouldRefreshTerminal == true)
+            #expect(reconnectAction?.shouldReconnect == true)
+            #expect(reconnectAction?.shouldForceTerminalVisible == true)
+
+            // When a live runtime exists but the UI display snapshot is stale.
+            manager.updateSessionState(session.id, to: .connected)
+            manager.sessions[0].connectionState = .disconnected
+
+            // Then foreground intent must not create a duplicate reconnect.
+            let liveAction = manager.foregroundReconnectActionForSelectedSession(
+                selectedViewId: "terminal",
+                terminalViewId: "terminal",
+                refreshTerminal: true,
+                autoReconnectEnabled: true
+            )
+            #expect(liveAction?.shouldReconnect == false)
+            #expect(liveAction?.shouldForceTerminalVisible == false)
+        }
+    }
+
+    @Test
+    func connectionManagerWatchdogSchedulingIntentUsesManagerState() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .connecting
+            )
+            manager.sessions = [session]
+
+            // Given the terminal view reports only UI readiness and surface
+            // presence, while the application layer owns connection state.
+            #expect(
+                manager.shouldScheduleConnectWatchdog(
+                    forSessionId: session.id,
+                    isReady: false,
+                    terminalExists: false
+                ),
+                "Connecting sessions should schedule their connect watchdog from the application layer."
+            )
+
+            // When the session is connected but no terminal surface became
+            // ready, the same manager-owned rule should continue watching.
+            manager.updateSessionState(session.id, to: .connected)
+            #expect(
+                manager.shouldScheduleConnectWatchdog(
+                    forSessionId: session.id,
+                    isReady: false,
+                    terminalExists: false
+                ),
+                "Connected sessions without a ready terminal surface should still schedule the watchdog."
+            )
+
+            // Then a ready connected terminal should stop scheduling.
+            #expect(
+                !manager.shouldScheduleConnectWatchdog(
+                    forSessionId: session.id,
+                    isReady: true,
+                    terminalExists: true
+                ),
+                "Ready connected sessions should not schedule another connect watchdog."
+            )
+        }
+    }
+
+    @Test
     func connectionManagerRefreshesLiveActivityWithRegistryActiveSessionsOnly() async {
         await withCleanConnectionManager { manager in
             let server = makeServer()
@@ -360,6 +492,82 @@ struct ConnectionLifecycleIntegrationTests {
             #expect(
                 manager.hasLiveRuntime(forPaneId: paneId),
                 "Pane runtime liveness should be true when the registry is opening or streaming."
+            )
+        }
+    }
+
+    @Test
+    func tabManagerManualReconnectIntentUsesManagerRuntimeState() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tabId = UUID()
+            let paneId = UUID()
+            var paneState = TerminalPaneState(paneId: paneId, tabId: tabId, serverId: server.id)
+            paneState.connectionState = .disconnected
+            manager.paneStates[paneId] = paneState
+
+            // Given split SwiftUI sends only retry intent and the application
+            // layer owns the runtime liveness decision.
+            #expect(
+                manager.shouldManuallyReconnectPane(paneId, reconnectInFlight: false),
+                "Disconnected panes without live runtime should accept manual reconnect intent."
+            )
+
+            // When the registry records an opening runtime while the display
+            // snapshot later appears disconnected.
+            manager.updatePaneState(paneId, connectionState: .connecting)
+            manager.paneStates[paneId]?.connectionState = .disconnected
+
+            // Then the manager suppresses the duplicate retry without SwiftUI
+            // reading registry state directly.
+            #expect(
+                !manager.shouldManuallyReconnectPane(paneId, reconnectInFlight: false),
+                "Manual pane reconnect intent should use manager-owned runtime liveness."
+            )
+        }
+    }
+
+    @Test
+    func tabManagerWatchdogSchedulingIntentUsesManagerState() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tabId = UUID()
+            let paneId = UUID()
+            var paneState = TerminalPaneState(paneId: paneId, tabId: tabId, serverId: server.id)
+            paneState.connectionState = .connecting
+            manager.paneStates[paneId] = paneState
+
+            // Given split-pane SwiftUI sends only UI readiness and terminal
+            // surface presence to the application layer.
+            #expect(
+                manager.shouldScheduleConnectWatchdog(
+                    forPaneId: paneId,
+                    isReady: false,
+                    terminalExists: false
+                ),
+                "Connecting panes should schedule watchdogs through TerminalTabManager."
+            )
+
+            // When the pane is connected but the terminal surface is not ready,
+            // the manager still owns the connected-without-terminal rule.
+            manager.updatePaneState(paneId, connectionState: .connected)
+            #expect(
+                manager.shouldScheduleConnectWatchdog(
+                    forPaneId: paneId,
+                    isReady: false,
+                    terminalExists: false
+                ),
+                "Connected panes without a ready terminal should continue watchdog scheduling."
+            )
+
+            // Then ready connected panes stop scheduling.
+            #expect(
+                !manager.shouldScheduleConnectWatchdog(
+                    forPaneId: paneId,
+                    isReady: true,
+                    terminalExists: true
+                ),
+                "Ready connected panes should not schedule another watchdog."
             )
         }
     }

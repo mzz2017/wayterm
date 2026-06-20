@@ -390,7 +390,6 @@ struct TerminalPaneView: View {
     @State private var connectWatchdogToken = UUID()
     @State private var hasEstablishedConnection = false
     @State private var showingRetrustHostConfirmation = false
-    @State private var retrustHostTask: Task<Void, Never>?
     @StateObject private var richPasteUI = TerminalRichPasteUIModel()
 
     @AppStorage(CloudKitSyncConstants.terminalThemeNameKey) private var terminalThemeName = "Aizen Dark"
@@ -798,33 +797,30 @@ struct TerminalPaneView: View {
     }
 
     private func retrustHostAndRetry() {
-        retrustHostTask?.cancel()
-        retrustHostTask = Task {
-            await KnownHostsStore.shared.remove(host: server.host, port: server.port)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                retryConnection()
-            }
+        Task {
+            let didReconnect = await TerminalTabManager.shared.retrustHostAndReconnect(
+                paneId: paneId,
+                server: server
+            )
+            guard didReconnect else { return }
+            reconnectToken = UUID()
         }
     }
 
     private func attemptAutoReconnectIfNeeded() {
-        guard TerminalAutoReconnectPolicy.shouldAttemptReconnect(
+        guard TerminalTabManager.shared.shouldAutoReconnectPane(
+            paneId,
             isSceneActive: scenePhase == .active,
             autoReconnectEnabled: autoReconnectEnabled,
-            reconnectInFlight: reconnectInFlight,
-            isSuspendingForBackground: false,
-            connectionState: connectionState,
-            hasLiveRuntime: TerminalTabManager.shared.hasLiveRuntime(forPaneId: paneId)
+            reconnectInFlight: reconnectInFlight
         ) else { return }
         retryConnection()
     }
 
     private func retryConnection() {
-        guard TerminalManualReconnectPolicy.shouldAttemptReconnect(
-            reconnectInFlight: reconnectInFlight,
-            snapshotState: connectionState,
-            hasLiveRuntime: TerminalTabManager.shared.hasLiveRuntime(forPaneId: paneId)
+        guard TerminalTabManager.shared.shouldManuallyReconnectPane(
+            paneId,
+            reconnectInFlight: reconnectInFlight
         ) else { return }
         credentialLoadErrorMessage = nil
         operationNotice = nil
@@ -851,9 +847,11 @@ struct TerminalPaneView: View {
     }
 
     private func startConnectWatchdog() {
-        let shouldWatchConnecting = connectionState.isConnecting
-        let shouldWatchConnectedNoTerminal = connectionState.isConnected && !isReady && !terminalExists
-        guard shouldWatchConnecting || shouldWatchConnectedNoTerminal else { return }
+        guard TerminalTabManager.shared.shouldScheduleConnectWatchdog(
+            forPaneId: paneId,
+            isReady: isReady,
+            terminalExists: terminalExists
+        ) else { return }
         let token = connectWatchdogToken
         Task {
             try? await Task.sleep(for: .seconds(20))
@@ -890,9 +888,9 @@ struct TerminalPaneView: View {
         defer { isInstallingMosh = false }
 
         do {
-            try await TerminalTabManager.shared.installMoshServer(for: paneId)
+            try await TerminalTabManager.shared.installMoshServerAndReconnect(for: paneId)
             operationNotice = nil
-            retryConnection()
+            reconnectToken = UUID()
         } catch {
             operationNotice = NoticeItem(
                 id: "pane-mosh-install-error-\(paneId.uuidString)",

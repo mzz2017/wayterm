@@ -1031,17 +1031,15 @@ struct iOSTerminalView: View {
     }
 
     private func attemptForegroundReconnectIfNeeded(refreshTerminal: Bool = false) {
-        guard let session = selectedSession else { return }
-        guard let action = IOSTerminalViewPolicy.foregroundReconnectAction(
+        guard let action = sessionManager.foregroundReconnectActionForSelectedSession(
             selectedViewId: selectedView,
-            selectedSession: session.iosTerminalSessionSnapshot,
-            selectedSessionHasLiveRuntime: sessionManager.hasLiveRuntime(forSessionId: session.id),
+            terminalViewId: ConnectionViewTab.terminal.id,
             refreshTerminal: refreshTerminal,
-            autoReconnectEnabled: autoReconnectEnabled,
-            isSuspendingForBackground: sessionManager.isSuspendingForBackground
+            autoReconnectEnabled: autoReconnectEnabled
         ) else {
             return
         }
+        guard let session = sessionManager.sessions.first(where: { $0.id == action.sessionId }) else { return }
 
         if action.shouldRefreshTerminal {
             activateTerminal(session)
