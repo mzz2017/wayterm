@@ -5,9 +5,9 @@ import Foundation
 /// Stats collector for FreeBSD systems (including TrueNAS, pfSense, OPNsense)
 struct FreeBSDStatsCollector: PlatformStatsCollector {
 
-    func getSystemInfo(client: SSHClient) async throws -> (hostname: String, osInfo: String, cpuCores: Int) {
+    func getSystemInfo(executor: any RemoteCommandExecuting) async throws -> (hostname: String, osInfo: String, cpuCores: Int) {
         let cmd = "uname -srm; echo '---SEP---'; hostname; echo '---SEP---'; sysctl -n hw.ncpu 2>/dev/null || echo 1"
-        let output = try await client.execute(cmd)
+        let output = try await executor.execute(cmd)
         let parts = output.components(separatedBy: "---SEP---")
 
         let osInfo = parts.count > 0 ? parts[0].trimmingCharacters(in: .whitespacesAndNewlines) : ""
@@ -17,7 +17,7 @@ struct FreeBSDStatsCollector: PlatformStatsCollector {
         return (hostname, osInfo, cpuCores)
     }
 
-    func collectStats(client: SSHClient, context: StatsCollectionContext) async throws -> ServerStats {
+    func collectStats(executor: any RemoteCommandExecuting, context: StatsCollectionContext) async throws -> ServerStats {
         var stats = ServerStats()
 
         // Batch commands for FreeBSD
@@ -29,7 +29,7 @@ struct FreeBSDStatsCollector: PlatformStatsCollector {
             netstat -ibn | head -20; echo '---SEP---'; \
             ps -axo pid,pcpu,pmem,comm | head -6
             """
-        let batchOutput = try await client.execute(batchCmd)
+        let batchOutput = try await executor.execute(batchCmd)
         let sections = batchOutput.components(separatedBy: "---SEP---")
 
         // Load average
@@ -50,7 +50,7 @@ struct FreeBSDStatsCollector: PlatformStatsCollector {
 
         // Memory via vmstat and sysctl
         if sections.count > 3 {
-            let mem = try await parseMemory(client: client, vmstatOutput: sections[3], totalMemory: totalMem)
+            let mem = try await parseMemory(executor: executor, vmstatOutput: sections[3], totalMemory: totalMem)
             stats.memoryTotal = mem.total
             stats.memoryUsed = mem.used
             stats.memoryFree = mem.free
@@ -83,7 +83,7 @@ struct FreeBSDStatsCollector: PlatformStatsCollector {
         }
 
         // CPU via vmstat or top
-        let cpuOutput = try await client.execute("vmstat 1 2 | tail -1")
+        let cpuOutput = try await executor.execute("vmstat 1 2 | tail -1")
         let cpu = parseVmstatCpu(cpuOutput)
         stats.cpuUser = cpu.user
         stats.cpuSystem = cpu.system
@@ -93,11 +93,11 @@ struct FreeBSDStatsCollector: PlatformStatsCollector {
         stats.cpuSteal = 0
 
         // Process count
-        let procCount = try await client.execute("ps -ax | wc -l")
+        let procCount = try await executor.execute("ps -ax | wc -l")
         stats.processCount = Int(procCount.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
 
         // Volumes
-        let dfOutput = try await client.execute("df -m 2>/dev/null | grep -E '^/dev' | head -10")
+        let dfOutput = try await executor.execute("df -m 2>/dev/null | grep -E '^/dev' | head -10")
         stats.volumes = parseDf(dfOutput)
 
         stats.timestamp = Date()
@@ -118,7 +118,7 @@ struct FreeBSDStatsCollector: PlatformStatsCollector {
         return 0
     }
 
-    private func parseMemory(client: SSHClient, vmstatOutput: String, totalMemory: UInt64) async throws -> (total: UInt64, used: UInt64, free: UInt64, cached: UInt64, buffers: UInt64) {
+    private func parseMemory(executor: any RemoteCommandExecuting, vmstatOutput: String, totalMemory: UInt64) async throws -> (total: UInt64, used: UInt64, free: UInt64, cached: UInt64, buffers: UInt64) {
         // Get detailed memory info from sysctl
         let memCmd = """
             sysctl -n vm.stats.vm.v_page_size; echo '---M---'; \
@@ -127,7 +127,7 @@ struct FreeBSDStatsCollector: PlatformStatsCollector {
             sysctl -n vm.stats.vm.v_cache_count 2>/dev/null || echo 0; echo '---M---'; \
             sysctl -n vfs.bufspace
             """
-        let memOutput = try await client.execute(memCmd)
+        let memOutput = try await executor.execute(memCmd)
         let parts = memOutput.components(separatedBy: "---M---")
 
         let pageSize = parts.count > 0 ? UInt64(parts[0].trimmingCharacters(in: .whitespacesAndNewlines)) ?? 4096 : 4096

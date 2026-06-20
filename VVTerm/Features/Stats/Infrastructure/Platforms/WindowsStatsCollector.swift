@@ -14,14 +14,14 @@ struct WindowsStatsCollector: PlatformStatsCollector {
     private let topProcessesTimeout: Duration = .seconds(8)
     private let volumesTimeout: Duration = .seconds(6)
 
-    func getSystemInfo(client: SSHClient) async throws -> (hostname: String, osInfo: String, cpuCores: Int) {
-        let environment = await client.remoteEnvironment()
-        let hostname = ((try? await executeCMD("hostname", using: client, timeout: shellInfoTimeout))?
+    func getSystemInfo(executor: any RemoteCommandExecuting) async throws -> (hostname: String, osInfo: String, cpuCores: Int) {
+        let environment = await executor.remoteEnvironment()
+        let hostname = ((try? await executeCMD("hostname", using: executor, timeout: shellInfoTimeout))?
             .trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
-        let osInfo = ((try? await executeCMD("ver", using: client, timeout: shellInfoTimeout))?
+        let osInfo = ((try? await executeCMD("ver", using: executor, timeout: shellInfoTimeout))?
             .trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
 
-        let cpuCoresCMD = (try? await executeCMD("echo %NUMBER_OF_PROCESSORS%", using: client, timeout: shellInfoTimeout))
+        let cpuCoresCMD = (try? await executeCMD("echo %NUMBER_OF_PROCESSORS%", using: executor, timeout: shellInfoTimeout))
             .flatMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) } ?? 1
 
         if environment.shellProfile.family == .cmd {
@@ -29,7 +29,7 @@ struct WindowsStatsCollector: PlatformStatsCollector {
         }
 
         if let cpuCoresOutput = try? await executePowerShell(
-            using: client,
+            using: executor,
             script: "(Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors",
             timeout: shellInfoTimeout,
             probeName: "cpu_cores"
@@ -41,17 +41,17 @@ struct WindowsStatsCollector: PlatformStatsCollector {
         return (hostname, osInfo, cpuCoresCMD)
     }
 
-    func collectStats(client: SSHClient, context: StatsCollectionContext) async throws -> ServerStats {
+    func collectStats(executor: any RemoteCommandExecuting, context: StatsCollectionContext) async throws -> ServerStats {
         var stats = ServerStats()
-        let environment = await client.remoteEnvironment()
+        let environment = await executor.remoteEnvironment()
         let preferCMD = environment.shellProfile.family == .cmd
 
         if preferCMD {
-            if let cpuPercent = try? await collectCPUUsageCMD(client: client) {
+            if let cpuPercent = try? await collectCPUUsageCMD(executor: executor) {
                 applyCPU(cpuPercent, to: &stats)
             }
         } else if let cpuOutput = try? await executePowerShell(
-            using: client,
+            using: executor,
             script: "Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average | Select-Object -ExpandProperty Average",
             timeout: cpuTimeout,
             probeName: "cpu_usage"
@@ -61,13 +61,13 @@ struct WindowsStatsCollector: PlatformStatsCollector {
         }
 
         if preferCMD {
-            if let memory = try? await collectMemoryCMD(client: client) {
+            if let memory = try? await collectMemoryCMD(executor: executor) {
                 stats.memoryTotal = memory.total
                 stats.memoryUsed = memory.used
                 stats.memoryFree = memory.free
             }
         } else if let memoryOutput = try? await executePowerShell(
-            using: client,
+            using: executor,
             script: """
             $os = Get-CimInstance Win32_OperatingSystem;
             Write-Output ($os.TotalVisibleMemorySize * 1024);
@@ -94,11 +94,11 @@ struct WindowsStatsCollector: PlatformStatsCollector {
         stats.memoryBuffers = 0
 
         if preferCMD {
-            if let uptime = try? await collectUptimeCMD(client: client) {
+            if let uptime = try? await collectUptimeCMD(executor: executor) {
                 stats.uptime = uptime
             }
         } else if let uptimeOutput = try? await executePowerShell(
-            using: client,
+            using: executor,
             script: """
             $os = Get-CimInstance Win32_OperatingSystem;
             Write-Output ([int]((Get-Date) - $os.LastBootUpTime).TotalSeconds)
@@ -109,14 +109,14 @@ struct WindowsStatsCollector: PlatformStatsCollector {
             stats.uptime = TimeInterval(uptimeOutput.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
         }
 
-        if preferCMD, let tasklistOutput = try? await executeCMD("tasklist /NH", using: client, timeout: processCountTimeout) {
+        if preferCMD, let tasklistOutput = try? await executeCMD("tasklist /NH", using: executor, timeout: processCountTimeout) {
             stats.processCount = tasklistOutput
                 .components(separatedBy: .newlines)
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty && !$0.hasPrefix("INFO:") }
                 .count
         } else if let processCountOutput = try? await executePowerShell(
-            using: client,
+            using: executor,
             script: "(Get-Process).Count",
             timeout: processCountTimeout,
             probeName: "process_count"
@@ -124,7 +124,7 @@ struct WindowsStatsCollector: PlatformStatsCollector {
             stats.processCount = Int(processCountOutput.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
         }
 
-        if let network = try? await (preferCMD ? collectNetworkStatsCMD(client: client) : collectNetworkStats(client: client)) {
+        if let network = try? await (preferCMD ? collectNetworkStatsCMD(executor: executor) : collectNetworkStats(executor: executor)) {
             let netRx = network.rx
             stats.networkRxTotal = netRx
 
@@ -156,13 +156,13 @@ struct WindowsStatsCollector: PlatformStatsCollector {
         if preferCMD {
             if let processOutput = try? await executeCMD(
                 "wmic path Win32_PerfFormattedData_PerfProc_Process get IDProcess,Name,PercentProcessorTime,WorkingSetPrivate /format:csv",
-                using: client,
+                using: executor,
                 timeout: topProcessesTimeout
             ) {
                 stats.topProcesses = parseWMICProcesses(processOutput, memoryTotal: stats.memoryTotal)
             }
         } else if let processOutput = try? await executePowerShell(
-            using: client,
+            using: executor,
             script: "Get-Process | Sort-Object CPU -Descending | Select-Object -First 5 | ForEach-Object { Write-Output ('{0}|{1}|{2}|{3}' -f $_.Id, $_.ProcessName, [math]::Round($_.CPU,1), [math]::Round($_.WorkingSet64/1MB,1)) }",
             timeout: topProcessesTimeout,
             probeName: "top_processes"
@@ -173,13 +173,13 @@ struct WindowsStatsCollector: PlatformStatsCollector {
         if preferCMD {
             if let volumeOutput = try? await executeCMD(
                 "wmic logicaldisk where \"DriveType=3\" get Caption,FreeSpace,Size /value",
-                using: client,
+                using: executor,
                 timeout: volumesTimeout
             ) {
                 stats.volumes = parseWMICVolumes(volumeOutput)
             }
         } else if let volumeOutput = try? await executePowerShell(
-            using: client,
+            using: executor,
             script: "Get-PSDrive -PSProvider FileSystem | Where-Object {$_.Used -gt 0} | ForEach-Object { Write-Output ('{0}|{1}|{2}' -f $_.Name, $_.Used, ($_.Used + $_.Free)) }",
             timeout: volumesTimeout,
             probeName: "volumes"
@@ -201,9 +201,9 @@ struct WindowsStatsCollector: PlatformStatsCollector {
         stats.cpuSteal = 0
     }
 
-    private func collectNetworkStats(client: SSHClient) async throws -> (rx: UInt64, tx: UInt64) {
+    private func collectNetworkStats(executor: any RemoteCommandExecuting) async throws -> (rx: UInt64, tx: UInt64) {
         let output = try await executePowerShell(
-            using: client,
+            using: executor,
             script: """
             $stats = Get-NetAdapterStatistics -ErrorAction SilentlyContinue | Where-Object {$_.Name -notlike '*Loopback*'};
             $rx = ($stats | Measure-Object -Property ReceivedBytes -Sum).Sum;
@@ -221,10 +221,10 @@ struct WindowsStatsCollector: PlatformStatsCollector {
         return (rx, tx)
     }
 
-    private func collectCPUUsageCMD(client: SSHClient) async throws -> Double {
+    private func collectCPUUsageCMD(executor: any RemoteCommandExecuting) async throws -> Double {
         if let output = try? await executeCMD(
             "typeperf \"\\\\Processor(_Total)\\\\% Processor Time\" -sc 1",
-            using: client,
+            using: executor,
             timeout: cpuTimeout
         ), let value = parseTypeperfValue(output) {
             return value
@@ -232,7 +232,7 @@ struct WindowsStatsCollector: PlatformStatsCollector {
 
         let output = try await executeCMD(
             "wmic cpu get loadpercentage /value",
-            using: client,
+            using: executor,
             timeout: cpuTimeout
         )
         let values = parseWMICKeyValueOutput(output)["LoadPercentage"]?
@@ -240,10 +240,10 @@ struct WindowsStatsCollector: PlatformStatsCollector {
         return values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count)
     }
 
-    private func collectMemoryCMD(client: SSHClient) async throws -> (total: UInt64, used: UInt64, free: UInt64) {
+    private func collectMemoryCMD(executor: any RemoteCommandExecuting) async throws -> (total: UInt64, used: UInt64, free: UInt64) {
         let output = try await executeCMD(
             "wmic OS get FreePhysicalMemory,TotalVisibleMemorySize /value",
-            using: client,
+            using: executor,
             timeout: memoryTimeout
         )
         let values = parseWMICKeyValueOutput(output)
@@ -254,10 +254,10 @@ struct WindowsStatsCollector: PlatformStatsCollector {
         return (total, total >= free ? total - free : 0, free)
     }
 
-    private func collectUptimeCMD(client: SSHClient) async throws -> TimeInterval {
+    private func collectUptimeCMD(executor: any RemoteCommandExecuting) async throws -> TimeInterval {
         let output = try await executeCMD(
             "wmic os get lastbootuptime /value",
-            using: client,
+            using: executor,
             timeout: uptimeTimeout
         )
         let lastBoot = parseWMICKeyValueOutput(output)["LastBootUpTime"]?.first ?? ""
@@ -265,43 +265,43 @@ struct WindowsStatsCollector: PlatformStatsCollector {
         return max(Date().timeIntervalSince(bootDate), 0)
     }
 
-    private func collectNetworkStatsCMD(client: SSHClient) async throws -> (rx: UInt64, tx: UInt64) {
+    private func collectNetworkStatsCMD(executor: any RemoteCommandExecuting) async throws -> (rx: UInt64, tx: UInt64) {
         let output = try await executeCMD(
             "netstat -e",
-            using: client,
+            using: executor,
             timeout: networkTimeout
         )
         return parseNetstatInterfaceStats(output)
     }
 
     private func executePowerShell(
-        using client: SSHClient,
+        using executor: any RemoteCommandExecuting,
         script: String,
         timeout: Duration,
         probeName: String
     ) async throws -> String {
-        let command = try await powerShellCommand(using: client, script: script)
-        return try await execute(command: command, using: client, timeout: timeout)
+        let command = try await powerShellCommand(using: executor, script: script)
+        return try await execute(command: command, using: executor, timeout: timeout)
     }
 
     private func executeCMD(
         _ command: String,
-        using client: SSHClient,
+        using executor: any RemoteCommandExecuting,
         timeout: Duration
     ) async throws -> String {
-        try await execute(command: "cmd.exe /d /c \(command)", using: client, timeout: timeout)
+        try await execute(command: "cmd.exe /d /c \(command)", using: executor, timeout: timeout)
     }
 
     private func execute(
         command: String,
-        using client: SSHClient,
+        using executor: any RemoteCommandExecuting,
         timeout: Duration
     ) async throws -> String {
-        try await client.execute(command, timeout: timeout)
+        try await executor.execute(command, timeout: timeout)
     }
 
-    private func powerShellCommand(using client: SSHClient, script: String) async throws -> String {
-        let environment = await client.remoteEnvironment()
+    private func powerShellCommand(using executor: any RemoteCommandExecuting, script: String) async throws -> String {
+        let environment = await executor.remoteEnvironment()
         if environment.shellProfile.family == .powershell {
             return script
         }

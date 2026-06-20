@@ -4,20 +4,18 @@ import os.log
 
 // MARK: - Server Stats Collector
 
-/// Main stats collector that uses a shared SSH connection when available
+/// Main stats collector that uses a borrowed remote connection lease when available.
 @MainActor
 final class ServerStatsCollector: ObservableObject {
     struct StatsConnection {
-        let client: SSHClient?
         let lease: RemoteConnectionLease
 
-        init(client: SSHClient? = nil, lease: RemoteConnectionLease) {
-            self.client = client
+        init(lease: RemoteConnectionLease) {
             self.lease = lease
         }
     }
 
-    typealias ConnectionFactory = @MainActor (Server, SSHClient?) -> StatsConnection
+    typealias ConnectionFactory = @MainActor (Server, RemoteConnectionLease?) -> StatsConnection
     typealias CredentialsProvider = @MainActor (Server) throws -> ServerCredentials
     typealias CollectionTaskFactory = @MainActor (
         ServerStatsCollector,
@@ -60,7 +58,7 @@ final class ServerStatsCollector: ObservableObject {
 
     // MARK: - Collection Control
 
-    func startCollecting(for server: Server, using sharedClient: SSHClient? = nil) async {
+    func startCollecting(for server: Server, using borrowedLease: RemoteConnectionLease? = nil) async {
         if let pendingStopTask {
             await pendingStopTask.value
             self.pendingStopTask = nil
@@ -76,7 +74,7 @@ final class ServerStatsCollector: ObservableObject {
         connectionError = nil
         resetCollectionState()
 
-        let connection = connectionFactory(server, sharedClient)
+        let connection = connectionFactory(server, borrowedLease)
         configureConnectionState(lease: connection.lease)
 
         // Get credentials
@@ -119,16 +117,16 @@ final class ServerStatsCollector: ObservableObject {
 
     // MARK: - Stats Collection
 
-    private func collectStats(client: SSHClient) async throws {
+    private func collectStats(executor: any RemoteCommandExecuting) async throws {
         // Detect platform and create collector on first run
         if remotePlatform == .unknown {
-            remotePlatform = await client.remotePlatform()
+            remotePlatform = await executor.remoteEnvironment().platform
             platformCollector = remotePlatform.createCollector()
 
             logger.info("Detected remote platform: \(self.remotePlatform.rawValue)")
 
             // Get initial system info
-            let systemInfo = try await platformCollector?.getSystemInfo(client: client)
+            let systemInfo = try await platformCollector?.getSystemInfo(executor: executor)
             await MainActor.run {
                 self.applySystemInfo(systemInfo)
             }
@@ -137,7 +135,7 @@ final class ServerStatsCollector: ObservableObject {
         // Collect stats using platform-specific collector
         guard let collector = platformCollector else { return }
 
-        var newStats = try await collector.collectStats(client: client, context: context)
+        var newStats = try await collector.collectStats(executor: executor, context: context)
 
         // Preserve system info
         let existingStats = await MainActor.run { self.stats }
@@ -213,19 +211,13 @@ final class ServerStatsCollector: ObservableObject {
         if memoryHistory.count > 60 { memoryHistory.removeFirst() }
     }
 
-    private static func makeConnection(server _: Server, sharedClient: SSHClient?) -> StatsConnection {
-        if let sharedClient {
-            return StatsConnection(
-                client: sharedClient,
-                lease: RemoteConnectionLease(client: sharedClient, ownership: .borrowed)
-            )
+    private static func makeConnection(server _: Server, borrowedLease: RemoteConnectionLease?) -> StatsConnection {
+        if let borrowedLease {
+            return StatsConnection(lease: borrowedLease)
         }
 
         let client = SSHClient()
-        return StatsConnection(
-            client: client,
-            lease: RemoteConnectionLease(client: client, ownership: .owned)
-        )
+        return StatsConnection(lease: RemoteConnectionLease(client: client, ownership: .owned))
     }
 
     private static func makeCollectionTask(
@@ -235,29 +227,25 @@ final class ServerStatsCollector: ObservableObject {
         connection: StatsConnection
     ) -> Task<Void, Never> {
         Task.detached(priority: .utility) { [weak collector] in
-            guard let collector, let client = connection.client else {
+            guard let collector else {
                 await connection.lease.close()
                 return
             }
             var collectionError: Error?
 
             do {
-                try await SSHConnectionOperationService.shared.runWithConnection(
-                    using: client,
-                    server: server,
-                    credentials: credentials,
-                    disconnectWhenDone: false
-                ) { connectedClient in
-                    await MainActor.run {
-                        collector.connectionError = nil
-                    }
-
-                    while !Task.isCancelled {
-                        let shouldContinue = await MainActor.run { collector.isCollecting }
-                        guard shouldContinue else { break }
-
-                        try await collector.collectStats(client: connectedClient)
-                        try? await Task.sleep(for: .seconds(2))
+                try await connection.lease.withExclusiveClient { leasedClient in
+                    if let sshClient = leasedClient as? SSHClient {
+                        try await SSHConnectionOperationService.shared.runWithConnection(
+                            using: sshClient,
+                            server: server,
+                            credentials: credentials,
+                            disconnectWhenDone: false
+                        ) { connectedClient in
+                            try await collector.collectStatsUntilStopped(executor: connectedClient)
+                        }
+                    } else {
+                        try await collector.collectStatsUntilStopped(executor: leasedClient)
                     }
                 }
             } catch {
@@ -281,6 +269,17 @@ final class ServerStatsCollector: ObservableObject {
                     collector.recordCollectionFinished()
                 }
             }
+        }
+    }
+
+    private func collectStatsUntilStopped(executor: any RemoteCommandExecuting) async throws {
+        connectionError = nil
+
+        while !Task.isCancelled {
+            guard isCollecting else { break }
+
+            try await collectStats(executor: executor)
+            try? await Task.sleep(for: .seconds(2))
         }
     }
 }

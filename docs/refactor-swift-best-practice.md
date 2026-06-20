@@ -1577,7 +1577,7 @@ Before Task 19, verify stop/start names read as side-effectful lifecycle APIs, `
   - Task 18 awaitable collector lifecycle.
   - Existing platform parsing utilities.
 
-- [ ] **Step 1: Add RED command-executor tests**
+- [x] **Step 1: Add RED command-executor tests**
 
 Add or extend `ServerStatsCollectorLifecycleTests` with:
 
@@ -1595,26 +1595,26 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected failure: platform collectors and collector seams still require `SSHClient`.
 
-- [ ] **Step 2: Move platform collectors to `RemoteCommandExecuting`**
+- [x] **Step 2: Move platform collectors to `RemoteCommandExecuting`**
 
 Change `PlatformStatsCollector.collectStats` and `getSystemInfo` to accept `any RemoteCommandExecuting`. Preserve existing parsing behavior and command strings.
 
-- [ ] **Step 3: Add platform resolution behind the command boundary**
+- [x] **Step 3: Add platform resolution behind the command boundary**
 
 If `RemoteCommandExecuting` lacks enough information to resolve `RemotePlatform`, add a small Stats-owned resolver that runs remote commands through the executor. Do not add Stats policy to `SSHClient`.
 
-- [ ] **Step 4: Replace raw shared-client provider in Stats UI**
+- [x] **Step 4: Replace raw shared-client provider in Stats UI**
 
 Rename the UI injection point from `sharedClientProvider` to a lease/provider name that describes ownership. The UI must not use `ObjectIdentifier(SSHClient)` as lifecycle truth.
 
-- [ ] **Step 5: Run focused Stats tests**
+- [x] **Step 5: Run focused Stats tests**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests -only-testing:VVTermTests/StatsParsingUtilsTests -only-testing:VVTermTests/ServerStatsDomainTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VVTerm/Core/SSH/RemoteCommandExecuting.swift \
@@ -1625,7 +1625,7 @@ git add VVTerm/Core/SSH/RemoteCommandExecuting.swift \
 git commit -m "refactor: decouple stats collection from raw SSH clients"
 ```
 
-- [ ] **Step 7: API/boundary cleanup**
+- [x] **Step 7: API/boundary cleanup**
 
 Before Task 20, verify Stats Domain remains pure, platform collectors stay Infrastructure, UI only sends visibility/retry intent, and every touched Stats test file has the required Test Context header. Record the result in the Progress Ledger.
 
@@ -1697,7 +1697,9 @@ git commit -m "refactor: complete remote lease boundary cleanup"
 - 2026-06-21: Task 17 API/boundary cleanup completed. RemoteFiles application code still depends on `SSHSFTPAdapter` rather than raw `SSHClient`; raw `SSHClient` use is confined to RemoteFiles infrastructure default provider/factory and feature-boundary conformance. `SSHSFTPAdapterTests` and `RemoteFileBrowserStoreTests` include Test Context headers. Verification: focused RemoteFiles suite passed 8 Swift Testing tests and `git diff --check` passed.
 - 2026-06-21: Task 18 RED/GREEN completed. Added `ServerStatsCollectorLifecycleTests` for awaited owned stop, restart waiting for pending stop, borrowed shared-client stop safety, failed collection close-before-retry ordering, and cancellation-as-lifecycle behavior. RED failed on missing `StatsConnection`, injectable collector initializer, and `stopCollectingAndWait`; GREEN passed 5 Swift Testing tests after adding pending stop tracking and injectable connection/collection seams.
 - 2026-06-21: Task 18 API/boundary cleanup completed. `stopCollecting()` remains a synchronous UI intent helper but stores the pending stop task; `stopCollectingAndWait()` is the explicit awaitable API; `startCollecting(...)` waits for pending stop before replacing connection state. `ServerStatsView` awaits visibility-driven stop and only sends stored stop intent from `onDisappear`. Verification: focused Stats lifecycle suite passed 5 Swift Testing tests; `git diff --check` passed; code review found no code issues after lifecycle fixes.
-- Next task: Task 19 Stats Command Executor Boundary.
+- 2026-06-21: Task 19 RED/GREEN completed. Added `collectorUsesCommandExecutorWithoutRawSSHClientOwnership`; RED failed because a non-`SSHClient` lease executor was ignored and Stats never populated executor-backed system info. GREEN passed after platform collectors moved to `any RemoteCommandExecuting`, Stats platform detection moved to `RemoteCommandExecuting.remoteEnvironment().platform`, and Stats UI switched from `sharedClientProvider` to borrowed lease providers.
+- 2026-06-21: Task 19 API/boundary cleanup completed. Stats Domain stayed pure, platform collectors remain in Infrastructure, `ServerStatsView` only sends visibility/retry intent with a borrowed lease provider and no longer keys lifecycle on `ObjectIdentifier(SSHClient)`, and all touched Stats test files include Test Context headers. Verification: focused Stats suite passed 10 XCTest tests plus 6 Swift Testing tests; `git diff --check` passed; code review found no blocking issues and the stale shared-SSH comment was aligned to lease vocabulary before commit.
+- Next task: Task 20 RemoteFiles/Stats Lease Boundary Final Sweep.
 
 ## Self-Review
 

@@ -6,15 +6,15 @@ import Foundation
 protocol PlatformStatsCollector: Sendable {
     /// Collect stats from the remote server
     /// - Parameters:
-    ///   - client: SSH client to execute commands
+    ///   - executor: Remote command executor used to run platform probes
     ///   - context: Shared context for rate calculations
     /// - Returns: Collected server stats
-    func collectStats(client: SSHClient, context: StatsCollectionContext) async throws -> ServerStats
+    func collectStats(executor: any RemoteCommandExecuting, context: StatsCollectionContext) async throws -> ServerStats
 
     /// Get initial system info (hostname, OS, CPU cores)
-    /// - Parameter client: SSH client to execute commands
+    /// - Parameter executor: Remote command executor used to run platform probes
     /// - Returns: System info tuple
-    func getSystemInfo(client: SSHClient) async throws -> (hostname: String, osInfo: String, cpuCores: Int)
+    func getSystemInfo(executor: any RemoteCommandExecuting) async throws -> (hostname: String, osInfo: String, cpuCores: Int)
 }
 
 // MARK: - Stats Collection Context

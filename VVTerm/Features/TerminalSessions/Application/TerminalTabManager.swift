@@ -1127,6 +1127,12 @@ final class TerminalTabManager: ObservableObject {
         return shellRegistry.firstPendingClient(for: serverId)
     }
 
+    func sharedStatsLease(for serverId: UUID) -> RemoteConnectionLease? {
+        sharedStatsClient(for: serverId).map {
+            RemoteConnectionLease(client: $0, ownership: .borrowed)
+        }
+    }
+
     private func registryLivePaneState(for serverId: UUID) -> TerminalPaneState? {
         let liveEntityIDs = terminalConnectionRegistry.openingOrStreamingEntityIDs(for: serverId)
         if let selectedTab = selectedTab(for: serverId) {

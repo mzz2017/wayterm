@@ -156,13 +156,41 @@ struct ServerStatsCollectorLifecycleTests {
         #expect(collector.connectionError == nil, "Cancellation is normal Stats lifecycle and must not publish a connection error")
     }
 
+    @Test
+    func collectorUsesCommandExecutorWithoutRawSSHClientOwnership() async throws {
+        let server = makeServer()
+        let client = ScriptedStatsLeaseClient()
+        let collector = ServerStatsCollector(
+            connectionFactory: { _, _ in
+                .init(lease: RemoteConnectionLease(client: client, ownership: .borrowed))
+            },
+            credentialsProvider: { server in
+                makeCredentials(serverId: server.id)
+            }
+        )
+
+        await collector.startCollecting(for: server)
+        var didCollect = false
+        for _ in 0..<25 {
+            if await client.commandCount() >= 3 {
+                didCollect = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await collector.stopCollectingAndWait()
+
+        #expect(didCollect, "Stats collection should execute commands through the lease command executor even when it is not an SSHClient")
+        #expect(collector.stats.hostname == "executor-host", "Stats collector should populate system info from the executor-backed platform collector")
+    }
+
     private func makeCollector(
         connectionFactory: OneShotStatsConnectionFactory,
         collectionTaskFactory: ServerStatsCollector.CollectionTaskFactory? = nil
     ) -> ServerStatsCollector {
         ServerStatsCollector(
-            connectionFactory: { server, sharedClient in
-                connectionFactory.nextConnection(server: server, sharedClient: sharedClient)
+            connectionFactory: { server, borrowedLease in
+                connectionFactory.nextConnection(server: server, borrowedLease: borrowedLease)
             },
             credentialsProvider: { server in
                 makeCredentials(serverId: server.id)
@@ -214,7 +242,7 @@ private final class OneShotStatsConnectionFactory {
 
     func nextConnection(
         server: Server,
-        sharedClient: SSHClient?
+        borrowedLease: RemoteConnectionLease?
     ) -> ServerStatsCollector.StatsConnection {
         callCount += 1
         guard !connections.isEmpty else {
@@ -319,6 +347,78 @@ private actor BlockingStatsLeaseClient: RemoteConnectionLeaseClient {
         await withCheckedContinuation { continuation in
             releaseWaiters.append(continuation)
         }
+    }
+}
+
+private actor ScriptedStatsLeaseClient: RemoteConnectionLeaseClient {
+    private var commands: [String] = []
+
+    func disconnect() async {}
+
+    func execute(_ command: String, timeout: Duration?) async throws -> String {
+        commands.append(command)
+
+        if command.contains("uname -srm") {
+            return "Linux 6.8 arm64\n---SEP---\nexecutor-host\n---SEP---\n8\n"
+        }
+
+        if command.contains("/proc/stat") {
+            return """
+                cpu  100 0 100 800 0 0 0 0
+                ---SEP---
+                MemTotal:       1000000 kB
+                MemFree:         200000 kB
+                MemAvailable:    600000 kB
+                Buffers:          10000 kB
+                Cached:          300000 kB
+                ---SEP---
+                Inter-|   Receive                                                |  Transmit
+                 eth0: 1000 0 0 0 0 0 0 0 2000 0 0 0 0 0 0 0
+                ---SEP---
+                0.10 0.20 0.30 1/100 12345
+                ---SEP---
+                1000.00 0.00
+                ---SEP---
+                42
+                """
+        }
+
+        if command.contains("df -BM") {
+            return "/dev/disk 100M 20M 80M 20% /\n"
+        }
+
+        if command.contains("ps aux") {
+            return """
+                USER PID %CPU %MEM COMMAND
+                root 1 1.0 0.1 init
+                """
+        }
+
+        return ""
+    }
+
+    func upload(
+        _ data: Data,
+        to remotePath: String,
+        permissions: Int32,
+        strategy: SSHUploadStrategy
+    ) async throws {}
+
+    func remoteEnvironment(forceRefresh: Bool) async -> RemoteEnvironment {
+        RemoteEnvironment(
+            platform: .linux,
+            shellProfile: .posix(shellName: "sh"),
+            activeShellName: "sh",
+            powerShellExecutable: nil
+        )
+    }
+
+    func remoteTerminalType(forceRefresh: Bool) async -> RemoteTerminalType {
+        .xterm256Color
+    }
+
+    func commandCount() -> Int {
+        commands.count
     }
 }
 

@@ -1,6 +1,11 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect pure Stats domain calculations and platform detection
+// rules shared by the UI and infrastructure collectors. They use value types
+// only and perform no network, keychain, filesystem, or clock-dependent work.
+// Update these tests only when the intended domain semantics change.
 final class ServerStatsDomainTests: XCTestCase {
     func testMemoryPercentReturnsZeroWhenTotalIsZero() {
         var stats = ServerStats()

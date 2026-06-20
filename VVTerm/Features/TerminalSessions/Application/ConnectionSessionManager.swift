@@ -1046,6 +1046,12 @@ final class ConnectionSessionManager: ObservableObject {
         return shellRegistry.firstPendingClient(for: serverId)
     }
 
+    func sharedStatsLease(for serverId: UUID) -> RemoteConnectionLease? {
+        sharedStatsClient(for: serverId).map {
+            RemoteConnectionLease(client: $0, ownership: .borrowed)
+        }
+    }
+
     // MARK: - Terminal Registration (with LRU caching)
 
     func registerTerminal(_ terminal: GhosttyTerminalView, for sessionId: UUID) {

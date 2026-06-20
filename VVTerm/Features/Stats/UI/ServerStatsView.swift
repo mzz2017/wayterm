@@ -48,7 +48,7 @@ struct ServerStatsView: View {
     let server: Server
     let isVisible: Bool
     let backgroundColor: Color
-    var sharedClientProvider: () -> SSHClient? = { nil }
+    var borrowedLeaseProvider: () -> RemoteConnectionLease? = { nil }
 
     @StateObject private var statsCollector: ServerStatsCollector
 
@@ -56,13 +56,13 @@ struct ServerStatsView: View {
         server: Server,
         isVisible: Bool,
         backgroundColor: Color,
-        sharedClientProvider: @escaping () -> SSHClient? = { nil },
+        borrowedLeaseProvider: @escaping () -> RemoteConnectionLease? = { nil },
         statsCollector: ServerStatsCollector
     ) {
         self.server = server
         self.isVisible = isVisible
         self.backgroundColor = backgroundColor
-        self.sharedClientProvider = sharedClientProvider
+        self.borrowedLeaseProvider = borrowedLeaseProvider
         _statsCollector = StateObject(wrappedValue: statsCollector)
     }
 
@@ -135,7 +135,7 @@ struct ServerStatsView: View {
                         .padding(.horizontal)
                     Button("Retry") {
                         Task {
-                            await statsCollector.startCollecting(for: server, using: sharedClientProvider())
+                            await statsCollector.startCollecting(for: server, using: borrowedLeaseProvider())
                         }
                     }
                     .buttonStyle(.bordered)
@@ -150,7 +150,7 @@ struct ServerStatsView: View {
         .task(id: makeTaskKey()) {
             // Start/stop collection based on visibility
             if isVisible {
-                await statsCollector.startCollecting(for: server, using: sharedClientProvider())
+                await statsCollector.startCollecting(for: server, using: borrowedLeaseProvider())
             } else {
                 await statsCollector.stopCollectingAndWait()
             }
@@ -161,8 +161,7 @@ struct ServerStatsView: View {
     }
 
     private func makeTaskKey() -> String {
-        let clientId = sharedClientProvider().map { ObjectIdentifier($0).hashValue } ?? 0
-        return "\(server.id.uuidString)-\(isVisible)-\(clientId)"
+        "\(server.id.uuidString)-\(isVisible)"
     }
 }
 

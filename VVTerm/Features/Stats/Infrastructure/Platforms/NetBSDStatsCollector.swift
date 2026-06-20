@@ -5,9 +5,9 @@ import Foundation
 /// Stats collector for NetBSD systems
 struct NetBSDStatsCollector: PlatformStatsCollector {
 
-    func getSystemInfo(client: SSHClient) async throws -> (hostname: String, osInfo: String, cpuCores: Int) {
+    func getSystemInfo(executor: any RemoteCommandExecuting) async throws -> (hostname: String, osInfo: String, cpuCores: Int) {
         let cmd = "uname -srm; echo '---SEP---'; hostname; echo '---SEP---'; sysctl -n hw.ncpu 2>/dev/null || echo 1"
-        let output = try await client.execute(cmd)
+        let output = try await executor.execute(cmd)
         let parts = output.components(separatedBy: "---SEP---")
 
         let osInfo = parts.count > 0 ? parts[0].trimmingCharacters(in: .whitespacesAndNewlines) : ""
@@ -17,7 +17,7 @@ struct NetBSDStatsCollector: PlatformStatsCollector {
         return (hostname, osInfo, cpuCores)
     }
 
-    func collectStats(client: SSHClient, context: StatsCollectionContext) async throws -> ServerStats {
+    func collectStats(executor: any RemoteCommandExecuting, context: StatsCollectionContext) async throws -> ServerStats {
         var stats = ServerStats()
 
         // Batch commands for NetBSD
@@ -29,7 +29,7 @@ struct NetBSDStatsCollector: PlatformStatsCollector {
             netstat -ibn | head -20; echo '---SEP---'; \
             ps -axo pid,pcpu,pmem,comm | head -6
             """
-        let batchOutput = try await client.execute(batchCmd)
+        let batchOutput = try await executor.execute(batchCmd)
         let sections = batchOutput.components(separatedBy: "---SEP---")
 
         // Load average
@@ -49,7 +49,7 @@ struct NetBSDStatsCollector: PlatformStatsCollector {
         }
 
         // Memory
-        let mem = try await parseMemory(client: client, totalMemory: totalMem)
+        let mem = try await parseMemory(executor: executor, totalMemory: totalMem)
         stats.memoryTotal = mem.total
         stats.memoryUsed = mem.used
         stats.memoryFree = mem.free
@@ -92,11 +92,11 @@ struct NetBSDStatsCollector: PlatformStatsCollector {
         }
 
         // Process count
-        let procCount = try await client.execute("ps -ax | wc -l")
+        let procCount = try await executor.execute("ps -ax | wc -l")
         stats.processCount = Int(procCount.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
 
         // Volumes
-        let dfOutput = try await client.execute("df -k 2>/dev/null | grep -E '^/dev' | head -10")
+        let dfOutput = try await executor.execute("df -k 2>/dev/null | grep -E '^/dev' | head -10")
         stats.volumes = parseDf(dfOutput)
 
         stats.timestamp = Date()
@@ -125,13 +125,13 @@ struct NetBSDStatsCollector: PlatformStatsCollector {
         return 0
     }
 
-    private func parseMemory(client: SSHClient, totalMemory: UInt64) async throws -> (total: UInt64, used: UInt64, free: UInt64, cached: UInt64) {
+    private func parseMemory(executor: any RemoteCommandExecuting, totalMemory: UInt64) async throws -> (total: UInt64, used: UInt64, free: UInt64, cached: UInt64) {
         // Get memory info via sysctl
         let memCmd = """
             sysctl -n uvm.free 2>/dev/null || echo 0; echo '---M---'; \
             sysctl -n uvm.filemax 2>/dev/null || echo 0
             """
-        let memOutput = try await client.execute(memCmd)
+        let memOutput = try await executor.execute(memCmd)
         let parts = memOutput.components(separatedBy: "---M---")
 
         let freePages = parts.count > 0 ? UInt64(parts[0].trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0 : 0

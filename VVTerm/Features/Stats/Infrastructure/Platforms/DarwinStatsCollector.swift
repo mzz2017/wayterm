@@ -5,9 +5,9 @@ import Foundation
 /// Stats collector for macOS/Darwin systems using sysctl, vm_stat, etc.
 struct DarwinStatsCollector: PlatformStatsCollector {
 
-    func getSystemInfo(client: SSHClient) async throws -> (hostname: String, osInfo: String, cpuCores: Int) {
+    func getSystemInfo(executor: any RemoteCommandExecuting) async throws -> (hostname: String, osInfo: String, cpuCores: Int) {
         let cmd = "uname -srm; echo '---SEP---'; hostname; echo '---SEP---'; sysctl -n hw.ncpu 2>/dev/null || echo 1"
-        let output = try await client.execute(cmd)
+        let output = try await executor.execute(cmd)
         let parts = output.components(separatedBy: "---SEP---")
 
         let osInfo = parts.count > 0 ? parts[0].trimmingCharacters(in: .whitespacesAndNewlines) : ""
@@ -17,7 +17,7 @@ struct DarwinStatsCollector: PlatformStatsCollector {
         return (hostname, osInfo, cpuCores)
     }
 
-    func collectStats(client: SSHClient, context: StatsCollectionContext) async throws -> ServerStats {
+    func collectStats(executor: any RemoteCommandExecuting, context: StatsCollectionContext) async throws -> ServerStats {
         var stats = ServerStats()
 
         // Batch commands for macOS
@@ -29,7 +29,7 @@ struct DarwinStatsCollector: PlatformStatsCollector {
             netstat -ib | head -20; echo '---SEP---'; \
             ps -Axo pid,pcpu,pmem,comm | head -6
             """
-        let batchOutput = try await client.execute(batchCmd)
+        let batchOutput = try await executor.execute(batchCmd)
         let sections = batchOutput.components(separatedBy: "---SEP---")
 
         // Load average (format: { 1.23 4.56 7.89 })
@@ -83,7 +83,7 @@ struct DarwinStatsCollector: PlatformStatsCollector {
         }
 
         // CPU via top (separate command due to complexity)
-        let topOutput = try await client.execute("top -l 1 -n 0 -s 0 2>/dev/null | grep 'CPU usage' || echo 'CPU usage: 0% user, 0% sys, 100% idle'")
+        let topOutput = try await executor.execute("top -l 1 -n 0 -s 0 2>/dev/null | grep 'CPU usage' || echo 'CPU usage: 0% user, 0% sys, 100% idle'")
         let cpu = parseTopCpu(topOutput)
         stats.cpuUser = cpu.user
         stats.cpuSystem = cpu.system
@@ -93,11 +93,11 @@ struct DarwinStatsCollector: PlatformStatsCollector {
         stats.cpuSteal = 0
 
         // Process count
-        let procCount = try await client.execute("ps -ax | wc -l")
+        let procCount = try await executor.execute("ps -ax | wc -l")
         stats.processCount = Int(procCount.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
 
         // Volumes
-        let dfOutput = try await client.execute("df -m 2>/dev/null | grep -E '^/dev' | head -10")
+        let dfOutput = try await executor.execute("df -m 2>/dev/null | grep -E '^/dev' | head -10")
         stats.volumes = parseDf(dfOutput)
 
         stats.timestamp = Date()
