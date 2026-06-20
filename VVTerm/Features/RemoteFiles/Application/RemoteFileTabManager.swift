@@ -44,7 +44,7 @@ final class RemoteFileTabManager: ObservableObject {
             return true
         }
 
-        return tabs(for: serverId).count < FreeTierLimits.maxTabs
+        return tabs(for: serverId).count < FreeTierLimits.maxFileTabs
     }
 
     @discardableResult

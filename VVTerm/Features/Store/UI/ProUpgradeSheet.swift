@@ -453,7 +453,7 @@ struct ProUpgradeSheet: View {
             ComparisonFeature(
                 icon: "doc.on.doc",
                 title: String(localized: "File tabs"),
-                free: .number("1"),
+                free: .number(String(FreeTierLimits.maxFileTabs)),
                 pro: .unlimited(accessibilityLabel: String(localized: "Multiple file tabs"))
             ),
             ComparisonFeature(
