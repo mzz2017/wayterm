@@ -944,6 +944,48 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerRecordsSuccessfulConnectionTransportFromShellRegistry() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer(connectionMode: .standard)
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: "Stale Transport",
+                connectionState: .disconnected,
+                activeTransport: .mosh
+            )
+            var recorded: [(id: UUID, transport: String)] = []
+            manager.successfulConnectionRecorder = { id, transport in
+                recorded.append((id: id, transport: transport))
+            }
+            manager.sessions = [session]
+
+            manager.registerSSHClient(
+                SSHClient(),
+                shellId: UUID(),
+                for: session.id,
+                serverId: server.id,
+                transport: .ssh,
+                skipTmuxLifecycle: true
+            )
+
+            // When the runtime reaches connected while the domain transport
+            // snapshot is stale.
+            manager.updateSessionState(session.id, to: .connected)
+
+            // Then successful-connection recording uses the registered shell
+            // transport rather than ConnectionSession.activeTransport.
+            #expect(
+                recorded.map(\.id) == [session.id],
+                "The session should be recorded exactly once when it reaches connected."
+            )
+            #expect(
+                recorded.map(\.transport) == [ShellTransport.ssh.rawValue],
+                "Successful connection transport should come from the live shell registry."
+            )
+        }
+    }
+
+    @Test
     func tabManagerSharedStatsClientSkipsMoshTransport() async {
         await withCleanTabManager { manager in
             let server = makeServer(connectionMode: .mosh)
@@ -1054,6 +1096,51 @@ struct ConnectionLifecycleIntegrationTests {
             #expect(
                 manager.sharedStatsClient(for: server.id).map(ObjectIdentifier.init) == ObjectIdentifier(pendingClient),
                 "A stale domain Mosh pane snapshot must not block a pending SSH stats client."
+            )
+        }
+    }
+
+    @Test
+    func tabManagerRecordsSuccessfulConnectionTransportFromShellRegistry() async {
+        await withCleanTabManager { manager in
+            let server = makeServer(connectionMode: .standard)
+            let tab = TerminalTab(serverId: server.id, title: server.name)
+            var stalePane = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+            stalePane.connectionState = .disconnected
+            stalePane.activeTransport = .mosh
+            var recorded: [(id: UUID, transport: String)] = []
+            manager.successfulConnectionRecorder = { id, transport in
+                recorded.append((id: id, transport: transport))
+            }
+            manager.tabsByServer[server.id] = [tab]
+            manager.paneStates[tab.rootPaneId] = stalePane
+
+            manager.registerSSHClient(
+                SSHClient(),
+                shellId: UUID(),
+                for: tab.rootPaneId,
+                serverId: server.id,
+                transport: .ssh,
+                skipTmuxLifecycle: true
+            )
+
+            // When the pane runtime reaches connected while the pane transport
+            // snapshot is stale.
+            manager.updatePaneState(tab.rootPaneId, connectionState: .connected)
+
+            // Then successful-connection recording uses the registered shell
+            // transport rather than TerminalPaneState.activeTransport.
+            #expect(
+                recorded.map(\.id) == [tab.rootPaneId],
+                "The pane should be recorded exactly once when it reaches connected."
+            )
+            #expect(
+                recorded.map(\.transport) == [ShellTransport.ssh.rawValue],
+                "Successful pane transport should come from the live shell registry."
             )
         }
     }

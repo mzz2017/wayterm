@@ -68,6 +68,9 @@ final class ConnectionSessionManager: ObservableObject {
     var liveActivityRefresh: @MainActor ([TerminalLiveActivitySnapshot]) -> Void = {
         LiveActivityManager.shared.refresh(with: $0)
     }
+    var successfulConnectionRecorder: @MainActor (_ id: UUID, _ transport: String) -> Void = {
+        EngagementTracker.shared.recordSuccessfulConnection(id: $0, transport: $1)
+    }
     @Published var selectedSessionId: UUID? {
         didSet {
             schedulePersist()
@@ -394,9 +397,9 @@ final class ConnectionSessionManager: ObservableObject {
 
         switch state {
         case .connected:
-            EngagementTracker.shared.recordSuccessfulConnection(
-                id: sessionId,
-                transport: sessions[index].activeTransport.rawValue
+            successfulConnectionRecorder(
+                sessionId,
+                successfulConnectionTransport(for: sessionId).rawValue
             )
         case .disconnected, .failed:
             if case .failed = state {
@@ -412,6 +415,12 @@ final class ConnectionSessionManager: ObservableObject {
         case .idle:
             break
         }
+    }
+
+    private func successfulConnectionTransport(for sessionId: UUID) -> ShellTransport {
+        shellRegistry.registration(for: sessionId)?.transport
+            ?? sessionWithID(sessionId)?.activeTransport
+            ?? .ssh
     }
 
     func sessionState(for sessionId: UUID) -> ConnectionState? {
@@ -2078,6 +2087,7 @@ extension ConnectionSessionManager {
         let terminals = terminalSurfaceRegistry.removeAll(cleanup: false)
         isRestoring = true
         liveActivityRefresh = { LiveActivityManager.shared.refresh(with: $0) }
+        successfulConnectionRecorder = { EngagementTracker.shared.recordSuccessfulConnection(id: $0, transport: $1) }
         sessions = []
         selectedSessionId = nil
         selectedViewByServer = [:]

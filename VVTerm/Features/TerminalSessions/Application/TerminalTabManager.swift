@@ -105,6 +105,9 @@ final class TerminalTabManager: ObservableObject {
     /// Application-owned pane SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
     private var paneRuntimes: [UUID: PaneRuntimeState] = [:]
     private let terminalConnectionRegistry = TerminalConnectionRegistry()
+    var successfulConnectionRecorder: @MainActor (_ id: UUID, _ transport: String) -> Void = {
+        EngagementTracker.shared.recordSuccessfulConnection(id: $0, transport: $1)
+    }
     #if DEBUG
     private var testingTerminalConnectionClientFactory: (@MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient)?
     #endif
@@ -1167,13 +1170,19 @@ final class TerminalTabManager: ObservableObject {
                 setPaneTmuxStatus(.background, for: paneId)
             }
         case .connected:
-            EngagementTracker.shared.recordSuccessfulConnection(
-                id: paneId,
-                transport: paneStates[paneId]?.activeTransport.rawValue ?? ShellTransport.ssh.rawValue
+            successfulConnectionRecorder(
+                paneId,
+                successfulConnectionTransport(for: paneId).rawValue
             )
         case .idle:
             break
         }
+    }
+
+    private func successfulConnectionTransport(for paneId: UUID) -> ShellTransport {
+        shellRegistry.registration(for: paneId)?.transport
+            ?? paneStates[paneId]?.activeTransport
+            ?? .ssh
     }
 
     private var hasConnectedPanes: Bool {
@@ -1767,6 +1776,7 @@ extension TerminalTabManager {
 
         let terminals = terminalSurfaceRegistry.removeAll(cleanup: false)
         isRestoring = true
+        successfulConnectionRecorder = { EngagementTracker.shared.recordSuccessfulConnection(id: $0, transport: $1) }
         tabsByServer = [:]
         selectedTabByServer = [:]
         selectedViewByServer = [:]
