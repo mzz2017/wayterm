@@ -664,11 +664,14 @@ struct TerminalContainerView: View {
     }
 
     private func attemptAutoReconnectIfNeeded() {
-        guard scenePhase == .active else { return }
-        guard !reconnectInFlight else { return }
-        guard !ConnectionSessionManager.shared.isSuspendingForBackground else { return }
-        guard autoReconnectEnabled else { return }
-        guard session.connectionState == .disconnected else { return }
+        guard TerminalAutoReconnectPolicy.shouldAttemptReconnect(
+            isSceneActive: scenePhase == .active,
+            autoReconnectEnabled: autoReconnectEnabled,
+            reconnectInFlight: reconnectInFlight,
+            isSuspendingForBackground: ConnectionSessionManager.shared.isSuspendingForBackground,
+            connectionState: session.connectionState,
+            hasLiveRuntime: ConnectionSessionManager.shared.hasLiveRuntime(forSessionId: session.id)
+        ) else { return }
         Task { await retryConnection() }
     }
 

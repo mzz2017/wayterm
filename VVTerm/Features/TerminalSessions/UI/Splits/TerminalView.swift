@@ -803,10 +803,14 @@ struct TerminalPaneView: View {
     }
 
     private func attemptAutoReconnectIfNeeded() {
-        guard scenePhase == .active else { return }
-        guard autoReconnectEnabled else { return }
-        guard !reconnectInFlight else { return }
-        guard connectionState == .disconnected else { return }
+        guard TerminalAutoReconnectPolicy.shouldAttemptReconnect(
+            isSceneActive: scenePhase == .active,
+            autoReconnectEnabled: autoReconnectEnabled,
+            reconnectInFlight: reconnectInFlight,
+            isSuspendingForBackground: false,
+            connectionState: connectionState,
+            hasLiveRuntime: TerminalTabManager.shared.hasLiveRuntime(forPaneId: paneId)
+        ) else { return }
         retryConnection()
     }
 
