@@ -2463,10 +2463,62 @@ git add VVTerm/Features/TerminalSessions/Application/TerminalConnectionRunner.sw
 git commit -m "refactor: decouple terminal runner from UI surface"
 ```
 
+## Task 33: Repo-Wide Swift Test Context Sweep
+
+**Files:**
+- Modify: every `VVTermTests/**/*.swift` file missing the required `Test Context` header.
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Global test documentation rule from `docs/engineering/swift-best-practices.md`.
+  - Existing unit tests and feature boundaries.
+- Produces:
+  - Every Swift unit test file has a clear `Test Context` comment describing protected behavior, target invariant, fake assumptions, and when failures should be treated as intended behavior updates rather than regressions.
+
+- [ ] **Step 1: Add RED repo-wide test-context scan**
+
+Run a scan that lists Swift test files lacking `Test Context`. This should fail before the sweep because older test files predate the rule.
+
+```bash
+for f in $(rg --files VVTermTests -g '*.swift'); do if ! rg -q "Test Context" "$f"; then echo "$f"; fi; done
+```
+
+- [ ] **Step 2: Add missing Test Context headers**
+
+Add concise file-level context headers to every reported Swift test file. Do not change test assertions or product behavior in this task.
+
+- [ ] **Step 3: Run GREEN test-context scan**
+
+```bash
+for f in $(rg --files VVTermTests -g '*.swift'); do if ! rg -q "Test Context" "$f"; then echo "$f"; fi; done
+```
+
+Expected after implementation: no output.
+
+- [ ] **Step 4: Run compile verification**
+
+```bash
+git diff --check
+xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO
+```
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Verify the task only adds test documentation comments, does not alter production behavior, and does not introduce temporary helpers or new test seams.
+
+- [ ] **Step 6: Request review and commit**
+
+```bash
+git add VVTermTests docs/refactor-swift-best-practice.md
+git commit -m "test: document Swift test contexts"
+```
+
 ## Progress Ledger
 
 - 2026-06-21: Task 31 completed. Terminal runtime/client factory ownership is centralized in `TerminalConnectionRuntime`; session and tab managers no longer own raw SSH client, shell id, or runner task state directly, and late/missing shell registrations are rejected before runner follow-up callbacks mutate closed state.
 - 2026-06-21: Task 32 RED/GREEN and API cleanup completed. `TerminalConnectionRunner` now depends on `TerminalConnectionSurface` and abstract connection operations instead of `GhosttyTerminalView`; `GhosttyTerminalView` adaptation lives at the surface registry/application boundary, and runner tests cover fake-surface size reads, stream writes, and process-exit notification without constructing a UI surface.
+- 2026-06-21: Final audit after Task 32 found repo-wide drift against the Swift test context rule: multiple older `VVTermTests/**/*.swift` files still lack `Test Context` headers. Task 33 is added to close this rule before final ready-for-merge review.
 
 - 2026-06-20: Plan created from local code audit, four read-only explorer audits, and current Swift/libssh2 references.
 - 2026-06-21: Task 14 completed in commit-sized slices. Runtime/live transport truth now comes from `TerminalConnectionRegistry`, `activeServerIds`, `openServerIds`, and `hasLiveRuntime`; `ConnectionState` is explicitly treated as a user-facing display snapshot and is no longer persisted or used for high-risk open/retry/watchdog lifecycle decisions.
