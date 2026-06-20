@@ -207,6 +207,43 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerActiveServersComeFromRegistryNotDomainSessionState() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .connected
+            )
+
+            manager.sessions = [session]
+
+            #expect(
+                manager.activeServerIds.isEmpty,
+                "A stale domain session state must not make a server active without a streaming runtime in the registry."
+            )
+        }
+    }
+
+    @Test
+    func tabManagerActiveServersComeFromRegistryNotDomainPaneState() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tabId = UUID()
+            let paneId = UUID()
+            var paneState = TerminalPaneState(paneId: paneId, tabId: tabId, serverId: server.id)
+            paneState.connectionState = .connected
+
+            manager.paneStates[paneId] = paneState
+
+            #expect(
+                manager.activeServerIds.isEmpty,
+                "A stale domain pane state must not make a server active without a streaming runtime in the registry."
+            )
+        }
+    }
+
+    @Test
     func connectionManagerUnregisterWithoutShellClearsPendingStart() async {
         await withCleanConnectionManager { manager in
             let session = ConnectionSession(

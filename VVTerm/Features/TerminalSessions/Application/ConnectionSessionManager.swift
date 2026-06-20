@@ -113,9 +113,7 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     var activeServerIds: Set<UUID> {
-        Set(sessions.compactMap { session in
-            session.connectionState.isConnected ? session.serverId : nil
-        })
+        terminalConnectionRegistry.activeServerIds
     }
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ConnectionSession")
@@ -363,10 +361,15 @@ final class ConnectionSessionManager: ObservableObject {
 
         sessions[index].connectionState = state
         let serverId = sessions[index].serverId
+        terminalConnectionRegistry.updateState(
+            TerminalEntityConnectionState(connectionState: state),
+            for: .session(sessionId),
+            serverId: serverId
+        )
+        connectedServerIds = activeServerIds
 
         switch state {
         case .connected:
-            connectedServerIds.insert(serverId)
             EngagementTracker.shared.recordSuccessfulConnection(
                 id: sessionId,
                 transport: sessions[index].activeTransport.rawValue
@@ -378,12 +381,6 @@ final class ConnectionSessionManager: ObservableObject {
             }
             if sessions[index].tmuxStatus == .foreground {
                 setTmuxStatus(.background, for: sessionId)
-            }
-            let hasOtherConnections = sessions.contains {
-                $0.serverId == serverId && $0.connectionState.isConnected
-            }
-            if !hasOtherConnections {
-                connectedServerIds.remove(serverId)
             }
         case .connecting, .reconnecting:
             sessions[index].activeTransport = .ssh
@@ -2079,6 +2076,7 @@ extension ConnectionSessionManager {
         isSuspendingForBackground = false
         tmuxCleanupServers.removeAll()
         sessionRuntimes.removeAll()
+        terminalConnectionRegistry.removeAll()
         testingTerminalConnectionClientFactory = nil
         isRestoring = false
 

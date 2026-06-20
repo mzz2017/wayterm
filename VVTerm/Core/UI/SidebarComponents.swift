@@ -85,8 +85,12 @@ struct ServerRow: View {
                         if let onConnect {
                             onConnect(server)
                         } else {
-                            tabManager.selectedViewByServer[server.id] = ViewTabConfigurationManager.shared.effectiveDefaultTab()
-                            tabManager.connectedServerIds.insert(server.id)
+                            Task { @MainActor in
+                                tabManager.selectedViewByServer[server.id] = ViewTabConfigurationManager.shared.effectiveDefaultTab()
+                                if tabManager.tabs(for: server.id).isEmpty {
+                                    _ = try? await tabManager.openTab(for: server)
+                                }
+                            }
                         }
                     } label: {
                         Label("Open Connection", systemImage: "point.forward.to.point.capsulepath.fill")

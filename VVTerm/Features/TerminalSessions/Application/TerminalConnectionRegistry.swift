@@ -4,7 +4,15 @@ import Foundation
 final class TerminalConnectionRegistry {
     private var runtimes: [TerminalEntityID: TerminalConnectionRuntime] = [:]
     private var serverIdsByEntity: [TerminalEntityID: UUID] = [:]
+    private var statesByEntity: [TerminalEntityID: TerminalEntityConnectionState] = [:]
     private var teardownTasksByServer: [UUID: [UUID: Task<Void, Never>]] = [:]
+
+    var activeServerIds: Set<UUID> {
+        Set(statesByEntity.compactMap { entityId, state in
+            guard state.isConnected else { return nil }
+            return serverIdsByEntity[entityId]
+        })
+    }
 
     func register(
         _ runtime: TerminalConnectionRuntime,
@@ -13,6 +21,18 @@ final class TerminalConnectionRegistry {
     ) {
         runtimes[entityId] = runtime
         serverIdsByEntity[entityId] = serverId
+        if statesByEntity[entityId] == nil {
+            statesByEntity[entityId] = .idle
+        }
+    }
+
+    func updateState(
+        _ state: TerminalEntityConnectionState,
+        for entityId: TerminalEntityID,
+        serverId: UUID
+    ) {
+        serverIdsByEntity[entityId] = serverId
+        statesByEntity[entityId] = state
     }
 
     func runtime(for entityId: TerminalEntityID) -> TerminalConnectionRuntime? {
@@ -28,6 +48,7 @@ final class TerminalConnectionRegistry {
         let task = Task {
             await runtime.close(mode: mode)
         }
+        statesByEntity[entityId] = .disconnected
         trackTeardownTask(task, for: serverId)
     }
 
@@ -51,5 +72,12 @@ final class TerminalConnectionRegistry {
                 self.teardownTasksByServer.removeValue(forKey: serverId)
             }
         }
+    }
+
+    func removeAll() {
+        runtimes.removeAll()
+        serverIdsByEntity.removeAll()
+        statesByEntity.removeAll()
+        teardownTasksByServer.removeAll()
     }
 }

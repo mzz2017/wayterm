@@ -79,9 +79,7 @@ final class TerminalTabManager: ObservableObject {
     }
 
     var activeServerIds: Set<UUID> {
-        Set(paneStates.values.compactMap { state in
-            state.connectionState.isConnected ? state.serverId : nil
-        })
+        terminalConnectionRegistry.activeServerIds
     }
 
     /// Selected view type per server (stats/terminal)
@@ -1121,6 +1119,14 @@ final class TerminalTabManager: ObservableObject {
     /// Update connection state for a pane
     func updatePaneState(_ paneId: UUID, connectionState: ConnectionState) {
         paneStates[paneId]?.connectionState = connectionState
+        if let serverId = paneStates[paneId]?.serverId {
+            terminalConnectionRegistry.updateState(
+                TerminalEntityConnectionState(connectionState: connectionState),
+                for: .pane(paneId),
+                serverId: serverId
+            )
+            connectedServerIds = activeServerIds
+        }
         switch connectionState {
         case .connecting, .reconnecting:
             setPaneTransport(.ssh, fallbackReason: nil, for: paneId)
@@ -1130,14 +1136,7 @@ final class TerminalTabManager: ObservableObject {
             if paneTmuxStatus(for: paneId) == .foreground {
                 setPaneTmuxStatus(.background, for: paneId)
             }
-            if let serverId = paneStates[paneId]?.serverId,
-               !paneStates.values.contains(where: { $0.serverId == serverId && $0.connectionState.isConnected }) {
-                connectedServerIds.remove(serverId)
-            }
         case .connected:
-            if let serverId = paneStates[paneId]?.serverId {
-                connectedServerIds.insert(serverId)
-            }
             EngagementTracker.shared.recordSuccessfulConnection(
                 id: paneId,
                 transport: paneStates[paneId]?.activeTransport.rawValue ?? ShellTransport.ssh.rawValue
@@ -1750,6 +1749,7 @@ extension TerminalTabManager {
         tabOpensInFlight.removeAll()
         serverTeardownTasks.removeAll()
         paneRuntimes.removeAll()
+        terminalConnectionRegistry.removeAll()
         testingTerminalConnectionClientFactory = nil
         tmuxCleanupServers.removeAll()
         isRestoring = false

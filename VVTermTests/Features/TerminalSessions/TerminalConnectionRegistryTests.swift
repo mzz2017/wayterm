@@ -15,6 +15,27 @@ import XCTest
 // Fakes and assumptions: tests use real SSHClient actor instances only for
 // identity. They do not connect to a network, start libssh2, or open shells.
 final class TerminalConnectionRegistryTests: XCTestCase {
+    @MainActor
+    func testActiveServerIdsOnlyIncludesStreamingEntities() {
+        // Given two entities tracked by the application-layer registry.
+        let registry = TerminalConnectionRegistry()
+        let streamingServerId = UUID()
+        let connectingServerId = UUID()
+        let streamingEntityId = TerminalEntityID.session(UUID())
+        let connectingEntityId = TerminalEntityID.pane(UUID())
+
+        // When only one entity has reached a streaming terminal state.
+        registry.updateState(.streaming, for: streamingEntityId, serverId: streamingServerId)
+        registry.updateState(.connecting, for: connectingEntityId, serverId: connectingServerId)
+
+        // Then active server state comes from the registry's runtime state, not
+        // from open tabs, restored snapshots, or domain model flags.
+        XCTAssertEqual(registry.activeServerIds, [streamingServerId])
+
+        registry.updateState(.disconnected, for: streamingEntityId, serverId: streamingServerId)
+        XCTAssertTrue(registry.activeServerIds.isEmpty)
+    }
+
     func testClosedEntityRejectsLateShellRegistrationFromSameClient() {
         // Given an entity that began starting a shell and then closed before
         // the runner registered its shell.
