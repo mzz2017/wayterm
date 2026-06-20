@@ -144,6 +144,7 @@ final class ConnectionSessionManager: ObservableObject {
     private let terminalConnectionRegistry = TerminalConnectionRegistry()
     #if DEBUG
     private var testingTerminalConnectionClientFactory: (@MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient)?
+    private var rejectedShellCleanupOperationForTesting: (@MainActor @Sendable () async -> Void)?
     #endif
     @Published private(set) var isSuspendingForBackground = false
 
@@ -260,7 +261,10 @@ final class ConnectionSessionManager: ObservableObject {
 
         logger.warning("\(logMessage) \(sessionId.uuidString, privacy: .public)")
         if !shellRegistry.hasClientReferences(staleContext.client) {
-            Task.detached(priority: .utility) { [client = staleContext.client] in
+            trackShellCleanup(
+                for: staleContext.serverId,
+                reason: "stale session start"
+            ) { [client = staleContext.client] in
                 await client.disconnect()
             }
         }
@@ -887,7 +891,10 @@ final class ConnectionSessionManager: ObservableObject {
 
         if let stale = registerResult.staleIncomingShell {
             logger.warning("Ignoring stale shell registration [sessionId: \(sessionId.uuidString, privacy: .public), serverId: \(serverId.uuidString, privacy: .public)]")
-            Task.detached(priority: .utility) { [client = stale.client, shellId = stale.shellId] in
+            trackShellCleanup(
+                for: serverId,
+                reason: "rejected session shell"
+            ) { [client = stale.client, shellId = stale.shellId] in
                 await client.closeShell(shellId)
                 await client.disconnect()
             }
@@ -895,7 +902,10 @@ final class ConnectionSessionManager: ObservableObject {
         }
 
         if let replaced = registerResult.replacedShell {
-            Task.detached { [client = replaced.client, shellId = replaced.shellId] in
+            trackShellCleanup(
+                for: serverId,
+                reason: "replaced session shell"
+            ) { [client = replaced.client, shellId = replaced.shellId] in
                 await client.closeShell(shellId)
             }
         }
@@ -1210,6 +1220,31 @@ final class ConnectionSessionManager: ObservableObject {
             }
             self.logger.info("Finished server teardown [serverId: \(serverId.uuidString, privacy: .public), taskId: \(taskId.uuidString, privacy: .public), remaining: \(self.serverTeardownTasks[serverId]?.count ?? 0)]")
         }
+    }
+
+    private func trackShellCleanup(
+        for serverId: UUID,
+        reason: String,
+        priority: TaskPriority = .utility,
+        operation: @escaping @Sendable () async -> Void
+    ) {
+#if DEBUG
+        let testingOperation = rejectedShellCleanupOperationForTesting
+#endif
+        let task = Task.detached(priority: priority) { [logger] in
+            logger.info("Shell cleanup started [serverId: \(serverId.uuidString, privacy: .public), reason: \(reason, privacy: .public)]")
+#if DEBUG
+            if let testingOperation {
+                await testingOperation()
+            } else {
+                await operation()
+            }
+#else
+            await operation()
+#endif
+            logger.info("Shell cleanup finished [serverId: \(serverId.uuidString, privacy: .public), reason: \(reason, privacy: .public)]")
+        }
+        trackServerTeardownTask(task, for: serverId)
     }
 
     @discardableResult
@@ -2135,6 +2170,7 @@ extension ConnectionSessionManager {
         sessionRuntimes.removeAll()
         terminalConnectionRegistry.removeAll()
         testingTerminalConnectionClientFactory = nil
+        rejectedShellCleanupOperationForTesting = nil
         isRestoring = false
 
         UserDefaults.standard.removeObject(forKey: persistenceKey)
@@ -2158,6 +2194,28 @@ extension ConnectionSessionManager {
         _ factory: @escaping @MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient
     ) {
         testingTerminalConnectionClientFactory = factory
+    }
+
+    func setRejectedShellCleanupOperationForTesting(
+        _ operation: (@MainActor @Sendable () async -> Void)?
+    ) {
+        rejectedShellCleanupOperationForTesting = operation
+    }
+
+    func beginShellStartForTesting(
+        sessionId: UUID,
+        serverId: UUID,
+        client: SSHClient
+    ) -> SSHShellRegistry.Generation {
+        shellRegistry.tryBeginStart(
+            for: sessionId,
+            serverId: serverId,
+            client: client
+        ).generation
+    }
+
+    func closeShellRegistrationForTesting(sessionId: UUID) {
+        _ = shellRegistry.closeEntity(sessionId)
     }
 
     func startRuntimeForTesting(sessionId: UUID) async {

@@ -114,6 +114,7 @@ final class TerminalTabManager: ObservableObject {
     }
     #if DEBUG
     private var testingTerminalConnectionClientFactory: (@MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient)?
+    private var rejectedShellCleanupOperationForTesting: (@MainActor @Sendable () async -> Void)?
     #endif
 
     /// Pane state keyed by pane ID
@@ -185,7 +186,10 @@ final class TerminalTabManager: ObservableObject {
 
         logger.warning("\(logMessage) \(paneId.uuidString, privacy: .public)")
         if !shellRegistry.hasClientReferences(staleContext.client) {
-            Task.detached(priority: .utility) { [client = staleContext.client] in
+            trackShellCleanup(
+                for: staleContext.serverId,
+                reason: "stale pane start"
+            ) { [client = staleContext.client] in
                 await client.disconnect()
             }
         }
@@ -884,7 +888,10 @@ final class TerminalTabManager: ObservableObject {
 
         if let stale = registerResult.staleIncomingShell {
             logger.warning("Ignoring stale shell registration for pane \(paneId.uuidString, privacy: .public)")
-            Task.detached(priority: .utility) { [client = stale.client, shellId = stale.shellId] in
+            trackShellCleanup(
+                for: serverId,
+                reason: "rejected pane shell"
+            ) { [client = stale.client, shellId = stale.shellId] in
                 await client.closeShell(shellId)
                 await client.disconnect()
             }
@@ -892,7 +899,10 @@ final class TerminalTabManager: ObservableObject {
         }
 
         if let replaced = registerResult.replacedShell {
-            Task.detached { [client = replaced.client, shellId = replaced.shellId] in
+            trackShellCleanup(
+                for: serverId,
+                reason: "replaced pane shell"
+            ) { [client = replaced.client, shellId = replaced.shellId] in
                 await client.closeShell(shellId)
             }
         }
@@ -1194,6 +1204,31 @@ final class TerminalTabManager: ObservableObject {
             }
             self.logger.info("Finished tab teardown [serverId: \(serverId.uuidString, privacy: .public), taskId: \(taskId.uuidString, privacy: .public), remaining: \(self.serverTeardownTasks[serverId]?.count ?? 0)]")
         }
+    }
+
+    private func trackShellCleanup(
+        for serverId: UUID,
+        reason: String,
+        priority: TaskPriority = .utility,
+        operation: @escaping @Sendable () async -> Void
+    ) {
+#if DEBUG
+        let testingOperation = rejectedShellCleanupOperationForTesting
+#endif
+        let task = Task.detached(priority: priority) { [logger] in
+            logger.info("Pane shell cleanup started [serverId: \(serverId.uuidString, privacy: .public), reason: \(reason, privacy: .public)]")
+#if DEBUG
+            if let testingOperation {
+                await testingOperation()
+            } else {
+                await operation()
+            }
+#else
+            await operation()
+#endif
+            logger.info("Pane shell cleanup finished [serverId: \(serverId.uuidString, privacy: .public), reason: \(reason, privacy: .public)]")
+        }
+        trackServerTeardownTask(task, for: serverId)
     }
 
     // MARK: - Pane State
@@ -1836,6 +1871,7 @@ extension TerminalTabManager {
         paneRuntimes.removeAll()
         terminalConnectionRegistry.removeAll()
         testingTerminalConnectionClientFactory = nil
+        rejectedShellCleanupOperationForTesting = nil
         tmuxCleanupServers.removeAll()
         isRestoring = false
 
@@ -1852,6 +1888,28 @@ extension TerminalTabManager {
         _ factory: @escaping @MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient
     ) {
         testingTerminalConnectionClientFactory = factory
+    }
+
+    func setRejectedShellCleanupOperationForTesting(
+        _ operation: (@MainActor @Sendable () async -> Void)?
+    ) {
+        rejectedShellCleanupOperationForTesting = operation
+    }
+
+    func beginShellStartForTesting(
+        paneId: UUID,
+        serverId: UUID,
+        client: SSHClient
+    ) -> SSHShellRegistry.Generation {
+        shellRegistry.tryBeginStart(
+            for: paneId,
+            serverId: serverId,
+            client: client
+        ).generation
+    }
+
+    func closeShellRegistrationForTesting(paneId: UUID) {
+        _ = shellRegistry.closeEntity(paneId)
     }
 
     func startRuntimeForTesting(paneId: UUID) async {

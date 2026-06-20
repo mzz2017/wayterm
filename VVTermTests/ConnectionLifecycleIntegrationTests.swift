@@ -651,6 +651,52 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func tabManagerOpenTabWaitsForRejectedLateShellCleanupBeforeCreatingTab() async throws {
+        try await withCleanTabManager { manager in
+            let server = makeServer(name: "Tencent", connectionMode: .standard)
+            let tab = TerminalTab(serverId: server.id, title: "Closing Pane")
+            let staleClient = SSHClient()
+            let staleShellId = UUID()
+            manager.tabsByServer[server.id] = [tab]
+            manager.selectedTabByServer[server.id] = tab.id
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+
+            let staleGeneration = manager.beginShellStartForTesting(
+                paneId: tab.rootPaneId,
+                serverId: server.id,
+                client: staleClient
+            )
+            manager.closeShellRegistrationForTesting(paneId: tab.rootPaneId)
+
+            var cleanupFinished = false
+            manager.setRejectedShellCleanupOperationForTesting {
+                try? await Task.sleep(for: .milliseconds(100))
+                cleanupFinished = true
+            }
+
+            manager.registerSSHClient(
+                staleClient,
+                shellId: staleShellId,
+                for: tab.rootPaneId,
+                serverId: server.id,
+                generation: staleGeneration,
+                skipTmuxLifecycle: true
+            )
+
+            _ = try await manager.openTab(for: server)
+
+            #expect(
+                cleanupFinished,
+                "Opening another tab must wait for cleanup of a rejected late pane shell."
+            )
+        }
+    }
+
+    @Test
     func tabManagerPaneInputResizeAndCloseUseManagerOwnedRuntime() async {
         await withCleanTabManager { manager in
             // Given a split-pane tab and a fake runtime client owned by the
