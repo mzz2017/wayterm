@@ -1057,6 +1057,34 @@ final class TerminalTabManager: ObservableObject {
         await unregisterSSHClient(for: paneId)
     }
 
+    func handleConnectWatchdogTimeout(
+        forPaneId paneId: UUID,
+        isReady: Bool,
+        terminalExists: Bool,
+        timeoutMessage: String
+    ) -> TerminalConnectWatchdogAction {
+        guard let state = paneStates[paneId]?.connectionState else { return .none }
+        let connectedWithoutTerminal = state.isConnected && !isReady && !terminalExists
+        guard state.isConnecting || connectedWithoutTerminal else { return .none }
+
+        if connectedWithoutTerminal {
+            updatePaneState(paneId, connectionState: .disconnected)
+            return .retry
+        }
+
+        if shellId(for: paneId) != nil {
+            updatePaneState(paneId, connectionState: .connected)
+            return .none
+        }
+
+        if isShellStartInFlight(for: paneId) {
+            return .continueWatching
+        }
+
+        updatePaneState(paneId, connectionState: .failed(timeoutMessage))
+        return .none
+    }
+
     /// Returns true when the same SSH client instance is registered to another live pane.
     /// This is used to avoid disconnecting a truly shared client during retry cleanup.
     func hasOtherRegistrations(using client: SSHClient, excluding paneId: UUID) -> Bool {

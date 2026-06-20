@@ -857,29 +857,21 @@ struct TerminalPaneView: View {
                 let stillConnectedWithoutTerminal = connectionState.isConnected && !isReady && !terminalExists
                 guard stillConnecting || stillConnectedWithoutTerminal else { return }
 
-                if stillConnectedWithoutTerminal {
-                    TerminalTabManager.shared.updatePaneState(paneId, connectionState: .disconnected)
-                    retryConnection()
-                    return
-                }
-
-                if TerminalTabManager.shared.shellId(for: paneId) != nil {
-                    TerminalTabManager.shared.updatePaneState(paneId, connectionState: .connected)
-                    return
-                }
-
-                let inFlight = TerminalTabManager.shared.isShellStartInFlight(for: paneId)
-                if inFlight {
-                    // Keep polling while a shell start is still in flight so stale locks
-                    // and hung attempts are eventually surfaced to the user.
-                    startConnectWatchdog()
-                    return
-                }
-
-                TerminalTabManager.shared.updatePaneState(
-                    paneId,
-                    connectionState: .failed(String(localized: "Connection timed out. Please retry."))
+                let watchdogAction = TerminalTabManager.shared.handleConnectWatchdogTimeout(
+                    forPaneId: paneId,
+                    isReady: isReady,
+                    terminalExists: terminalExists,
+                    timeoutMessage: String(localized: "Connection timed out. Please retry.")
                 )
+
+                switch watchdogAction {
+                case .retry:
+                    retryConnection()
+                case .continueWatching:
+                    startConnectWatchdog()
+                case .none:
+                    break
+                }
             }
         }
     }

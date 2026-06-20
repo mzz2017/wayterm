@@ -430,6 +430,34 @@ final class ConnectionSessionManager: ObservableObject {
         sessionWithID(sessionId)?.connectionState
     }
 
+    func handleConnectWatchdogTimeout(
+        forSessionId sessionId: UUID,
+        isReady: Bool,
+        terminalExists: Bool,
+        timeoutMessage: String
+    ) -> TerminalConnectWatchdogAction {
+        guard let state = sessionState(for: sessionId) else { return .none }
+        let connectedWithoutTerminal = state.isConnected && !isReady && !terminalExists
+        guard state.isConnecting || connectedWithoutTerminal else { return .none }
+
+        if connectedWithoutTerminal {
+            updateSessionState(sessionId, to: .disconnected)
+            return .retry
+        }
+
+        if shellId(for: sessionId) != nil {
+            updateSessionState(sessionId, to: .connected)
+            return .none
+        }
+
+        if isShellStartInFlight(for: sessionId) {
+            return .continueWatching
+        }
+
+        updateSessionState(sessionId, to: .failed(timeoutMessage))
+        return .none
+    }
+
     func hasOtherActiveSessions(for serverId: UUID, excluding sessionId: UUID) -> Bool {
         terminalConnectionRegistry.hasActiveEntity(
             for: serverId,

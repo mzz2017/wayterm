@@ -692,29 +692,21 @@ struct TerminalContainerView: View {
                 let stillConnectedNoTerminal = session.connectionState.isConnected && !isReady && !terminalAlreadyExists
                 guard stillConnecting || stillConnectedNoTerminal else { return }
 
-                if stillConnectedNoTerminal {
-                    ConnectionSessionManager.shared.updateSessionState(session.id, to: .disconnected)
-                    Task { await retryConnection() }
-                    return
-                }
-
-                if ConnectionSessionManager.shared.shellId(for: session.id) != nil {
-                    ConnectionSessionManager.shared.updateSessionState(session.id, to: .connected)
-                    return
-                }
-
-                let inFlight = ConnectionSessionManager.shared.isShellStartInFlight(for: session.id)
-                if inFlight {
-                    // Keep polling while shell start is in-flight so a hung start cannot
-                    // leave the UI stuck in "Connecting...".
-                    startConnectWatchdog()
-                    return
-                }
-
-                ConnectionSessionManager.shared.updateSessionState(
-                    session.id,
-                    to: .failed(String(localized: "Connection timed out. Please retry."))
+                let watchdogAction = ConnectionSessionManager.shared.handleConnectWatchdogTimeout(
+                    forSessionId: session.id,
+                    isReady: isReady,
+                    terminalExists: terminalAlreadyExists,
+                    timeoutMessage: String(localized: "Connection timed out. Please retry.")
                 )
+
+                switch watchdogAction {
+                case .retry:
+                    Task { await retryConnection() }
+                case .continueWatching:
+                    startConnectWatchdog()
+                case .none:
+                    break
+                }
             }
         }
     }

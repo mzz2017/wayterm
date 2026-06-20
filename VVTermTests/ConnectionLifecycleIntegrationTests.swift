@@ -936,11 +936,57 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerWatchdogRequestsRetryForConnectedSnapshotWithoutTerminal() async {
+        await withCleanConnectionManager { manager in
+            let session = ConnectionSession(
+                serverId: UUID(),
+                title: "Watchdog",
+                connectionState: .connected
+            )
+            manager.sessions = [session]
+            manager.updateSessionState(session.id, to: .connected)
+
+            let action = manager.handleConnectWatchdogTimeout(
+                forSessionId: session.id,
+                isReady: false,
+                terminalExists: false,
+                timeoutMessage: "Timed out"
+            )
+
+            #expect(action == .retry)
+            #expect(manager.sessions.first?.connectionState == .disconnected)
+        }
+    }
+
+    @Test
     func tabManagerTryBeginShellStartFailsWhenPaneIsMissing() async {
         await withCleanTabManager { manager in
             let missingPaneId = UUID()
             #expect(!manager.tryBeginShellStart(for: missingPaneId, client: SSHClient()))
             #expect(!manager.isShellStartInFlight(for: missingPaneId))
+        }
+    }
+
+    @Test
+    func tabManagerWatchdogRequestsRetryForConnectedSnapshotWithoutTerminal() async {
+        await withCleanTabManager { manager in
+            let paneId = UUID()
+            manager.paneStates[paneId] = TerminalPaneState(
+                paneId: paneId,
+                tabId: UUID(),
+                serverId: UUID()
+            )
+            manager.updatePaneState(paneId, connectionState: .connected)
+
+            let action = manager.handleConnectWatchdogTimeout(
+                forPaneId: paneId,
+                isReady: false,
+                terminalExists: false,
+                timeoutMessage: "Timed out"
+            )
+
+            #expect(action == .retry)
+            #expect(manager.paneStates[paneId]?.connectionState == .disconnected)
         }
     }
 

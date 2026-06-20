@@ -25,3 +25,9 @@ enum TerminalManualReconnectPolicy {
         return !reconnectInFlight && !hasLiveRuntime
     }
 }
+
+enum TerminalConnectWatchdogAction {
+    case none
+    case retry
+    case continueWatching
+}
