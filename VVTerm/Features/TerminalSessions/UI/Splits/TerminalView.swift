@@ -1213,7 +1213,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
                 }
 
                 guard let terminal else { return }
-                await SSHConnectionRunner.run(
+                await TerminalConnectionRunner.run(
                     server: server,
                     credentials: credentials,
                     sshClient: sshClient,
