@@ -76,8 +76,7 @@ final class ConnectionSessionManager: ObservableObject {
         }
     }
 
-    /// Servers we're currently connected to (persists even when all terminals closed)
-    /// Cleared when user explicitly disconnects from a server
+    /// Servers with live terminal transports. Open-but-restored sessions are tracked by `openServerIds`.
     @Published var connectedServerIds: Set<UUID> = []
 
     /// Per-server view state (stats/terminal) - persists when switching servers
@@ -107,6 +106,16 @@ final class ConnectionSessionManager: ObservableObject {
                 connectedServerIds.removeAll()
             }
         }
+    }
+
+    var openServerIds: Set<UUID> {
+        Set(sessions.map(\.serverId))
+    }
+
+    var activeServerIds: Set<UUID> {
+        Set(sessions.compactMap { session in
+            session.connectionState.isConnected ? session.serverId : nil
+        })
     }
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ConnectionSession")
@@ -336,7 +345,6 @@ final class ConnectionSessionManager: ObservableObject {
 
         sessions.append(session)
         selectedSessionId = session.id
-        connectedServerId = server.id
 
         // Update server's last connected after the navigation animation completes
         Task { [server] in
@@ -1607,7 +1615,7 @@ extension ConnectionSessionManager {
                 return (snapshot.serverId, view)
             }
         )
-        connectedServerIds = Set(restoredSessions.map(\.serverId))
+        connectedServerIds = activeServerIds
     }
 
     private func schedulePersist() {
@@ -2112,6 +2120,13 @@ extension ConnectionSessionManager {
         )
         terminalConnectionRegistry.register(runtime, for: entityId, serverId: session.serverId)
         await runtime.open(configuration: .testing)
+        if await runtime.state == .streaming {
+            updateSessionState(sessionId, to: .connected)
+        }
+    }
+
+    func restorePersistedSnapshotForTesting() {
+        restoreSnapshot()
     }
 }
 #endif

@@ -116,6 +116,97 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerRestoredSessionsAreOpenButNotActiveUntilRuntimeStreams() async throws {
+        try await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let sessionId = UUID()
+            let snapshot = TestConnectionSessionsSnapshot(
+                sessions: [
+                    .init(
+                        id: sessionId,
+                        serverId: server.id,
+                        title: server.name,
+                        createdAt: Date(),
+                        lastActivity: Date(),
+                        autoReconnect: true,
+                        parentSessionId: nil,
+                        workingDirectory: nil,
+                        presentationOverrides: nil
+                    )
+                ],
+                selectedSessionId: sessionId,
+                serverSelections: [
+                    .init(serverId: server.id, selectedSessionId: sessionId, selectedView: "terminal")
+                ]
+            )
+            UserDefaults.standard.set(
+                try JSONEncoder().encode(snapshot),
+                forKey: "connectionSessionsSnapshot.v1"
+            )
+
+            manager.restorePersistedSnapshotForTesting()
+
+            #expect(manager.openServerIds == [server.id], "Restored sessions should keep server navigation open.")
+            #expect(manager.activeServerIds.isEmpty, "Restored disconnected sessions must not appear as live transports.")
+            #expect(manager.connectedServerIds.isEmpty, "Legacy connected ids should mirror active live transports only.")
+
+            let client = RecordingPaneRuntimeClient()
+            manager.setTerminalConnectionClientFactoryForTesting { _, _ in client }
+            await manager.startRuntimeForTesting(sessionId: sessionId)
+
+            #expect(manager.activeServerIds == [server.id], "A server becomes active only after its runtime reaches streaming.")
+            #expect(manager.connectedServerIds == [server.id], "Legacy connected ids should update when the runtime is streaming.")
+        }
+    }
+
+    @Test
+    func tabManagerRestoredTabsAreOpenButNotActiveUntilRuntimeStreams() async throws {
+        try await withCleanTabManager { manager in
+            let server = makeServer()
+            let tabId = UUID()
+            let paneId = UUID()
+            let snapshot = TestTerminalTabsSnapshot(
+                servers: [
+                    .init(
+                        serverId: server.id,
+                        tabs: [
+                            .init(
+                                id: tabId,
+                                serverId: server.id,
+                                title: server.name,
+                                createdAt: Date(),
+                                layout: nil,
+                                focusedPaneId: paneId,
+                                rootPaneId: paneId,
+                                panePresentationOverrides: nil
+                            )
+                        ],
+                        selectedTabId: tabId,
+                        selectedView: "terminal"
+                    )
+                ]
+            )
+            UserDefaults.standard.set(
+                try JSONEncoder().encode(snapshot),
+                forKey: "terminalTabsSnapshot.v1"
+            )
+
+            manager.restorePersistedSnapshotForTesting()
+
+            #expect(manager.openServerIds == [server.id], "Restored tabs should keep server navigation open.")
+            #expect(manager.activeServerIds.isEmpty, "Restored panes must not appear as live transports before streaming.")
+            #expect(manager.connectedServerIds.isEmpty, "Legacy connected ids should mirror active live transports only.")
+
+            let client = RecordingPaneRuntimeClient()
+            manager.setTerminalConnectionClientFactoryForTesting { _, _ in client }
+            await manager.startRuntimeForTesting(paneId: paneId)
+
+            #expect(manager.activeServerIds == [server.id], "A server becomes active only after a pane runtime reaches streaming.")
+            #expect(manager.connectedServerIds == [server.id], "Legacy connected ids should update when the pane runtime is streaming.")
+        }
+    }
+
+    @Test
     func connectionManagerUnregisterWithoutShellClearsPendingStart() async {
         await withCleanConnectionManager { manager in
             let session = ConnectionSession(
@@ -615,6 +706,52 @@ struct ConnectionLifecycleIntegrationTests {
             #expect(paneIds.count == 3)
         }
     }
+}
+
+private struct TestConnectionSessionsSnapshot: Codable {
+    struct SessionSnapshot: Codable {
+        let id: UUID
+        let serverId: UUID
+        let title: String
+        let createdAt: Date
+        let lastActivity: Date
+        let autoReconnect: Bool
+        let parentSessionId: UUID?
+        let workingDirectory: String?
+        let presentationOverrides: TerminalPresentationOverrides?
+    }
+
+    struct ServerSnapshot: Codable {
+        let serverId: UUID
+        let selectedSessionId: UUID?
+        let selectedView: String?
+    }
+
+    let sessions: [SessionSnapshot]
+    let selectedSessionId: UUID?
+    let serverSelections: [ServerSnapshot]
+}
+
+private struct TestTerminalTabsSnapshot: Codable {
+    struct ServerSnapshot: Codable {
+        let serverId: UUID
+        let tabs: [TabSnapshot]
+        let selectedTabId: UUID?
+        let selectedView: String?
+    }
+
+    struct TabSnapshot: Codable {
+        let id: UUID
+        let serverId: UUID
+        let title: String
+        let createdAt: Date
+        let layout: TerminalSplitNode?
+        let focusedPaneId: UUID
+        let rootPaneId: UUID
+        let panePresentationOverrides: [UUID: TerminalPresentationOverrides]?
+    }
+
+    let servers: [ServerSnapshot]
 }
 
 private actor RecordingPaneRuntimeClient: TerminalConnectionClient {

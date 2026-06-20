@@ -637,7 +637,9 @@ struct ServerSidebarView: View {
             guard await AppLockManager.shared.ensureServerUnlocked(server) else { return }
             selectedServer = server
             tabManager.selectedViewByServer[server.id] = ViewTabConfigurationManager.shared.effectiveDefaultTab()
-            tabManager.connectedServerIds.insert(server.id)
+            if tabManager.tabs(for: server.id).isEmpty {
+                _ = try? await tabManager.openTab(for: server)
+            }
         }
     }
 

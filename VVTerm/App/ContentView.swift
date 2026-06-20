@@ -28,19 +28,19 @@ struct ContentView: View {
     @AppStorage(CloudKitSyncConstants.terminalThemeNameLightKey) private var terminalThemeNameLight = "Aizen Light"
     @AppStorage(CloudKitSyncConstants.terminalUsePerAppearanceThemeKey) private var usePerAppearanceTheme = true
 
-    /// Whether the selected server is connected
-    private var isSelectedServerConnected: Bool {
+    /// Whether the selected server has an open terminal workspace.
+    private var isSelectedServerOpen: Bool {
         guard let selected = selectedServer else { return false }
-        return tabManager.connectedServerIds.contains(selected.id)
+        return tabManager.openServerIds.contains(selected.id)
     }
 
-    /// Whether we have any connected servers
-    private var hasConnectedServers: Bool {
-        !tabManager.connectedServerIds.isEmpty
+    /// Whether any server has an open terminal workspace.
+    private var hasOpenServers: Bool {
+        !tabManager.openServerIds.isEmpty
     }
 
     private var canUseZenMode: Bool {
-        selectedServer != nil && isSelectedServerConnected
+        selectedServer != nil && isSelectedServerOpen
     }
 
     private var effectiveZenModeEnabled: Bool {
@@ -76,8 +76,8 @@ struct ContentView: View {
     private var detailContent: some View {
         if let server = selectedServer {
             // A server is selected
-            if isSelectedServerConnected {
-                // Server is connected - show its terminal container
+            if isSelectedServerOpen {
+                // Server is open - show its terminal container
                 ConnectionTerminalContainer(
                     tabManager: tabManager,
                     fileTabManager: fileTabs,
@@ -89,7 +89,7 @@ struct ContentView: View {
                     onToggleSidebar: toggleSidebarInZenMode
                 )
                 .id(server.id) // Ensure isolation per server
-            } else if !hasConnectedServers {
+            } else if !hasOpenServers {
                 // Not connected to any server - can connect freely
                 ServerConnectEmptyState(server: server) {
                     connectToServer(server)
@@ -113,7 +113,9 @@ struct ContentView: View {
         Task { @MainActor in
             guard await AppLockManager.shared.ensureServerUnlocked(server) else { return }
             tabManager.selectedViewByServer[server.id] = ViewTabConfigurationManager.shared.effectiveDefaultTab()
-            tabManager.connectedServerIds.insert(server.id)
+            if tabManager.tabs(for: server.id).isEmpty {
+                _ = try? await tabManager.openTab(for: server)
+            }
         }
     }
 

@@ -71,8 +71,18 @@ final class TerminalTabManager: ObservableObject {
         }
     }
 
-    /// Servers that are currently "connected" (have at least one tab open)
+    /// Servers with live terminal transports. Open tabs are tracked by `openServerIds`.
     @Published var connectedServerIds: Set<UUID> = []
+
+    var openServerIds: Set<UUID> {
+        Set(tabsByServer.keys)
+    }
+
+    var activeServerIds: Set<UUID> {
+        Set(paneStates.values.compactMap { state in
+            state.connectionState.isConnected ? state.serverId : nil
+        })
+    }
 
     /// Selected view type per server (stats/terminal)
     @Published var selectedViewByServer: [UUID: String] = [:] {
@@ -235,9 +245,6 @@ final class TerminalTabManager: ObservableObject {
         // Select the new tab
         selectedTabByServer[server.id] = tab.id
 
-        // Mark server as connected
-        connectedServerIds.insert(server.id)
-
         logger.info("Opened new tab for \(server.name), pane: \(tab.rootPaneId)")
         return tab
     }
@@ -278,8 +285,8 @@ final class TerminalTabManager: ObservableObject {
                 selectedTabByServer[currentTab.serverId] = serverTabs.first?.id
             }
 
-            // Note: Don't remove from connectedServerIds here
-            // User might still be viewing stats. Explicit disconnect handles that.
+            // Keep live transport state separate; explicit disconnect and pane state
+            // transitions decide whether a server remains active.
         }
 
         EngagementTracker.shared.noteTerminalSessionEnded(
@@ -1123,7 +1130,14 @@ final class TerminalTabManager: ObservableObject {
             if paneTmuxStatus(for: paneId) == .foreground {
                 setPaneTmuxStatus(.background, for: paneId)
             }
+            if let serverId = paneStates[paneId]?.serverId,
+               !paneStates.values.contains(where: { $0.serverId == serverId && $0.connectionState.isConnected }) {
+                connectedServerIds.remove(serverId)
+            }
         case .connected:
+            if let serverId = paneStates[paneId]?.serverId {
+                connectedServerIds.insert(serverId)
+            }
             EngagementTracker.shared.recordSuccessfulConnection(
                 id: paneId,
                 transport: paneStates[paneId]?.activeTransport.rawValue ?? ShellTransport.ssh.rawValue
@@ -1607,7 +1621,7 @@ final class TerminalTabManager: ObservableObject {
             from: restoredTabsByServer,
             snapshotsByTabId: snapshotsByTabId
         )
-        connectedServerIds = Set(restoredTabsByServer.keys)
+        connectedServerIds = activeServerIds
     }
 
     private func schedulePersist() {
@@ -1770,6 +1784,13 @@ extension TerminalTabManager {
         )
         terminalConnectionRegistry.register(runtime, for: entityId, serverId: paneState.serverId)
         await runtime.open(configuration: .testing)
+        if await runtime.state == .streaming {
+            updatePaneState(paneId, connectionState: .connected)
+        }
+    }
+
+    func restorePersistedSnapshotForTesting() {
+        restoreSnapshot()
     }
 }
 #endif
