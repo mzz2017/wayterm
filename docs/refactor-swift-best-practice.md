@@ -79,6 +79,10 @@ Create or modify these files over the refactor. Keep each file focused.
   - Borrowed/owned lease type for RemoteFiles, Stats, and rich paste.
 - Create `VVTerm/Core/SSH/RemoteCommandExecuting.swift`
   - Protocol for tmux/mosh/files/stats operations that need command execution but not raw client ownership.
+- Create `VVTerm/Core/SSH/RemoteConnectionLeaseProvider.swift`
+  - Application/Core boundary for resolving borrowed terminal leases or creating owned feature leases without each feature constructing `SSHClient` directly.
+- Create `VVTerm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileClient.swift`
+  - RemoteFiles-owned capability protocol for SFTP/file operations; `SSHClient` conforms in infrastructure without leaking raw-client policy into application or UI.
 - Create `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
   - Testable boundary for socket/libssh2 calls and raw error capture.
 - Create `VVTermTests/Features/TerminalSessions/TerminalConnectionRegistryTests.swift`
@@ -89,6 +93,10 @@ Create or modify these files over the refactor. Keep each file focused.
   - Tests cancellation-aware auth gate behavior.
 - Create `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
   - Tests fd/session cleanup and raw error mapping using fakes.
+- Create `VVTermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift`
+  - Tests RemoteFiles lease ownership, operation serialization, and disconnect waiting without real network access.
+- Create `VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift`
+  - Tests Stats start/stop/restart lease ordering and borrowed-client ownership without real network access.
 - Modify `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
   - Becomes session domain orchestration and UI intent facade; no direct SSH client ownership after the runtime registry lands.
 - Modify `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
@@ -1316,6 +1324,350 @@ git add docs/refactor-swift-best-practice.md VVTerm VVTermTests
 git commit -m "refactor: complete Swift lifecycle cleanup"
 ```
 
+## Task 16: Core Remote Connection Lease Gate
+
+**Files:**
+- Modify: `VVTerm/Core/SSH/RemoteConnectionLease.swift`
+- Modify: `VVTerm/Core/SSH/SSHClient.swift`
+- Test: `VVTermTests/Core/SSH/RemoteConnectionLeaseTests.swift`
+
+**Interfaces:**
+- Produces:
+  - `RemoteConnectionLease.withExclusiveClient<T>(_ operation: @Sendable (any RemoteConnectionLeaseClient) async throws -> T) async throws -> T`
+  - `RemoteConnectionLease.close()` waits for any in-flight exclusive operation before disconnecting an owned client.
+  - Concurrent `close()` calls on one lease still disconnect at most once.
+- Consumes:
+  - Existing `RemoteConnectionLeaseClient.disconnect()`.
+  - Existing `SSHConnectionOperationService.runWithConnection(...)`.
+
+- [ ] **Step 1: Add RED lease-ordering tests**
+
+Add these tests to `RemoteConnectionLeaseTests`:
+
+```swift
+@Test
+func ownedLeaseConcurrentCloseDisconnectsClientOnce() async
+
+@Test
+func exclusiveOperationsForSameLeaseDoNotOverlap() async throws
+
+@Test
+func closeWaitsForExclusiveOperationBeforeDisconnectingOwnedClient() async throws
+```
+
+Expected first RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteConnectionLeaseTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected failure: `RemoteConnectionLease` has no `withExclusiveClient` API, and close does not prove it waits behind an in-flight operation.
+
+- [ ] **Step 2: Implement per-lease operation serialization**
+
+Keep the gate in the lease state actor. Do not add locks or global queues. `withExclusiveClient` must serialize operations on the same lease and must check cancellation before starting the protected operation.
+
+- [ ] **Step 3: Make close wait for the gate**
+
+`close()` must mark the lease as closing, wait for the exclusive operation gate to drain, and then disconnect only when `ownership == .owned`. Borrowed close remains a no-op after the drain.
+
+- [ ] **Step 4: Run focused tests and diff check**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteConnectionLeaseTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add VVTerm/Core/SSH/RemoteConnectionLease.swift VVTerm/Core/SSH/SSHClient.swift VVTermTests/Core/SSH/RemoteConnectionLeaseTests.swift
+git commit -m "refactor: serialize remote connection lease operations"
+```
+
+- [ ] **Step 6: API/boundary cleanup**
+
+Before starting Task 17, review whether `withExclusiveClient` names its side effect clearly, whether the lease still exposes only the minimum mutable state, and whether the tests explain borrowed vs owned fake assumptions. Record the result in the Progress Ledger and commit it with Task 16 if not already included.
+
+## Task 17: RemoteFiles Lease-Owned SFTP Boundary
+
+**Files:**
+- Create: `VVTerm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileClient.swift`
+- Modify: `VVTerm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileService.swift`
+- Modify: `VVTerm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift`
+- Modify: `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift` only if disconnect task plumbing needs tightening.
+- Test: `VVTermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift`
+- Test: `VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift` only for returned disconnect task coverage or Test Context cleanup.
+
+**Interfaces:**
+- Produces:
+  - `protocol SFTPRemoteFileClient: RemoteConnectionLeaseClient` with the file-operation methods currently forwarded by `SFTPRemoteFileService`.
+  - `SSHSFTPAdapter` stores registrations as capability clients plus `RemoteConnectionLease`, not as policy-free raw `SSHClient` slots.
+  - `SSHSFTPAdapter.withService(...)` runs SFTP work through `RemoteConnectionLease.withExclusiveClient`.
+  - `SSHSFTPAdapter.disconnect(serverId:)` waits for in-flight owned SFTP work before closing the owned lease.
+- Consumes:
+  - Task 16 `RemoteConnectionLease.withExclusiveClient`.
+  - Existing `RemoteFileService` API.
+
+- [ ] **Step 1: Add RED adapter lifecycle tests**
+
+Create `SSHSFTPAdapterTests` with a `Test Context` comment and these tests:
+
+```swift
+@MainActor
+@Test
+func borrowedClientDisconnectDoesNotCloseTerminalOwnedClient() async throws
+
+@MainActor
+@Test
+func disconnectWaitsForInFlightOwnedSFTPOperationBeforeClosingClient() async throws
+
+@MainActor
+@Test
+func concurrentOperationsForSameServerAreSerializedThroughOneLease() async throws
+
+@MainActor
+@Test
+func failedBorrowedOperationDropsBorrowedRegistrationBeforeRetry() async throws
+```
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/SSHSFTPAdapterTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected failure: the test seams and `SFTPRemoteFileClient` capability protocol do not exist, and disconnect does not prove it waits for in-flight adapter work.
+
+- [ ] **Step 2: Add RemoteFiles SFTP capability protocol**
+
+Move the SFTP-facing methods into `SFTPRemoteFileClient` in RemoteFiles infrastructure. `SSHClient` should conform in this feature boundary. `SFTPRemoteFileService` should depend on `any SFTPRemoteFileClient`.
+
+- [ ] **Step 3: Route adapter operations through the lease gate**
+
+Keep `SSHSFTPAdapter` as the stable RemoteFiles owner. It may create an owned `SSHClient` only through one narrow factory seam, and all use of that client must be inside the lease-exclusive operation.
+
+- [ ] **Step 4: Tighten disconnect ordering**
+
+If a server has an in-flight SFTP operation, `disconnect(serverId:)` must wait for that operation to leave the lease gate before owned disconnect. Borrowed disconnect must remove RemoteFiles registration without disconnecting the terminal-owned client.
+
+- [ ] **Step 5: Run focused RemoteFiles tests**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add VVTerm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileClient.swift \
+  VVTerm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileService.swift \
+  VVTerm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift \
+  VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift \
+  VVTermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift \
+  VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift
+git commit -m "refactor: route remote files through connection leases"
+```
+
+- [ ] **Step 7: API/boundary cleanup**
+
+Before Task 18, check that RemoteFiles application/UI code does not reason about raw `SSHClient`, that test files include the required Test Context, and that any temporary factory seams are `internal` and named by behavior. Record the result in the Progress Ledger.
+
+## Task 18: Stats Collector Awaitable Stop
+
+**Files:**
+- Modify: `VVTerm/Features/Stats/Application/ServerStatsCollector.swift`
+- Modify: `VVTerm/Features/Stats/UI/ServerStatsView.swift`
+- Test: `VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift`
+
+**Interfaces:**
+- Produces:
+  - `ServerStatsCollector.stopCollectingAndWait() async`
+  - `ServerStatsCollector.startCollecting(...)` waits for any pending stop/close before replacing the current lease.
+  - `ServerStatsView` tracks or awaits collector stop work from visibility changes and disappearance.
+- Consumes:
+  - Existing `RemoteConnectionLease.close()`.
+  - Existing `ServerStatsCollector.stopCollecting()` may remain as a synchronous intent helper only if it stores a task that a later start waits on.
+
+- [ ] **Step 1: Add RED Stats lifecycle tests**
+
+Create `ServerStatsCollectorLifecycleTests` with a `Test Context` comment and these tests:
+
+```swift
+@MainActor
+@Test
+func stopCollectingAndWaitAwaitsOwnedLeaseDisconnect() async throws
+
+@MainActor
+@Test
+func startCollectingWaitsForPendingStopBeforeReplacingOwnedLease() async throws
+
+@MainActor
+@Test
+func stopCollectingDoesNotDisconnectBorrowedSharedClient() async throws
+```
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected failure: `stopCollectingAndWait()` and the needed lease/test seams do not exist.
+
+- [ ] **Step 2: Add injectable lease and collection seams**
+
+Add narrow internal test seams for creating a `RemoteConnectionLease` and running one collection loop without real network. Keep user-facing initialization unchanged.
+
+- [ ] **Step 3: Make stop awaitable**
+
+Cancel the stored collection task, await its completion or close task, close the current lease exactly once, then clear collector state. Cancellation should not surface as a connection error.
+
+- [ ] **Step 4: Track stop from SwiftUI**
+
+`ServerStatsView` may use `.task(id:)` and `onDisappear` only to send stop intent into the collector. Any returned lifecycle-critical task must be awaited in a SwiftUI `.task` or stored by the collector so the next start waits on it.
+
+- [ ] **Step 5: Run focused Stats lifecycle tests**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add VVTerm/Features/Stats/Application/ServerStatsCollector.swift \
+  VVTerm/Features/Stats/UI/ServerStatsView.swift \
+  VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift
+git commit -m "refactor: make stats collection stop awaitable"
+```
+
+- [ ] **Step 7: API/boundary cleanup**
+
+Before Task 19, verify stop/start names read as side-effectful lifecycle APIs, `ServerStatsView` no longer drops close tasks, and restart ordering no longer depends on stale `isCollecting` alone. Record the result in the Progress Ledger.
+
+## Task 19: Stats Command Executor Boundary
+
+**Files:**
+- Modify: `VVTerm/Core/SSH/RemoteCommandExecuting.swift`
+- Modify: `VVTerm/Features/Stats/Application/ServerStatsCollector.swift`
+- Modify: `VVTerm/Features/Stats/Infrastructure/Platforms/PlatformStatsCollector.swift`
+- Modify: all files under `VVTerm/Features/Stats/Infrastructure/Platforms/`
+- Modify: `VVTerm/Features/Stats/UI/ServerStatsView.swift`
+- Test: `VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift`
+- Test: `VVTermTests/Features/Stats/StatsParsingUtilsTests.swift`
+- Test: `VVTermTests/Features/Stats/ServerStatsDomainTests.swift`
+
+**Interfaces:**
+- Produces:
+  - Stats platform collectors consume `any RemoteCommandExecuting`, not `SSHClient`.
+  - Platform detection is performed through a command-executor-facing API or a Stats-owned resolver, not `SSHClient.remotePlatform()` from application code.
+  - `ServerStatsView` no longer exposes `() -> SSHClient?`; it asks for a borrowed lease or feature-level stats connection provider.
+- Consumes:
+  - Task 18 awaitable collector lifecycle.
+  - Existing platform parsing utilities.
+
+- [ ] **Step 1: Add RED command-executor tests**
+
+Add or extend `ServerStatsCollectorLifecycleTests` with:
+
+```swift
+@MainActor
+@Test
+func collectorUsesCommandExecutorWithoutRawSSHClientOwnership() async throws
+```
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected failure: platform collectors and collector seams still require `SSHClient`.
+
+- [ ] **Step 2: Move platform collectors to `RemoteCommandExecuting`**
+
+Change `PlatformStatsCollector.collectStats` and `getSystemInfo` to accept `any RemoteCommandExecuting`. Preserve existing parsing behavior and command strings.
+
+- [ ] **Step 3: Add platform resolution behind the command boundary**
+
+If `RemoteCommandExecuting` lacks enough information to resolve `RemotePlatform`, add a small Stats-owned resolver that runs remote commands through the executor. Do not add Stats policy to `SSHClient`.
+
+- [ ] **Step 4: Replace raw shared-client provider in Stats UI**
+
+Rename the UI injection point from `sharedClientProvider` to a lease/provider name that describes ownership. The UI must not use `ObjectIdentifier(SSHClient)` as lifecycle truth.
+
+- [ ] **Step 5: Run focused Stats tests**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests -only-testing:VVTermTests/StatsParsingUtilsTests -only-testing:VVTermTests/ServerStatsDomainTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add VVTerm/Core/SSH/RemoteCommandExecuting.swift \
+  VVTerm/Features/Stats/Application/ServerStatsCollector.swift \
+  VVTerm/Features/Stats/Infrastructure/Platforms \
+  VVTerm/Features/Stats/UI/ServerStatsView.swift \
+  VVTermTests/Features/Stats
+git commit -m "refactor: decouple stats collection from raw SSH clients"
+```
+
+- [ ] **Step 7: API/boundary cleanup**
+
+Before Task 20, verify Stats Domain remains pure, platform collectors stay Infrastructure, UI only sends visibility/retry intent, and every touched Stats test file has the required Test Context header. Record the result in the Progress Ledger.
+
+## Task 20: RemoteFiles/Stats Lease Boundary Final Sweep
+
+**Files:**
+- Modify only files found by the audit commands below.
+- Test: focused RemoteFiles, Stats, and connection lifecycle tests.
+
+**Interfaces:**
+- Produces:
+  - RemoteFiles and Stats no longer expose raw `SSHClient` through UI/application-facing APIs.
+  - Terminal managers either keep raw client access `private`/narrow or expose borrowed `RemoteConnectionLease` providers with clear ownership names.
+  - No lifecycle-critical stop/disconnect/close task is dropped by SwiftUI or feature UI.
+
+- [ ] **Step 1: Run audit commands**
+
+```bash
+rg -n "sharedStatsClient|activeSSHClient|getSSHClient|SSHClient\\(|ObjectIdentifier\\(.*SSHClient|stopCollecting\\(\\)" VVTerm/Features/RemoteFiles VVTerm/Features/Stats VVTerm/Features/TerminalSessions VVTerm/App -g '*.swift'
+rg -n "RemoteConnectionLease\\(|withExclusiveClient|disconnectWhenDone: false" VVTerm/Features/RemoteFiles VVTerm/Features/Stats VVTerm/Core/SSH -g '*.swift'
+rg -n "Task\\.detached|Task \\{" VVTerm/Features/RemoteFiles VVTerm/Features/Stats -g '*.swift'
+```
+
+- [ ] **Step 2: Classify every hit**
+
+Write classifications into the Progress Ledger. Every remaining raw-client hit must be private infrastructure construction, a test fake, or a temporary item assigned to the next plan wave.
+
+- [ ] **Step 3: Add regression tests for non-exempt hits**
+
+Use the smallest focused tests in `SSHSFTPAdapterTests`, `ServerStatsCollectorLifecycleTests`, or `ConnectionLifecycleIntegrationTests`.
+
+- [ ] **Step 4: Run final focused suite**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteConnectionLeaseTests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests -only-testing:VVTermTests/StatsParsingUtilsTests -only-testing:VVTermTests/ServerStatsDomainTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Then run:
+
+```bash
+xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add docs/refactor-swift-best-practice.md VVTerm VVTermTests
+git commit -m "refactor: complete remote lease boundary cleanup"
+```
+
 ## Progress Ledger
 
 - 2026-06-20: Plan created from local code audit, four read-only explorer audits, and current Swift/libssh2 references.
@@ -1331,7 +1683,8 @@ git commit -m "refactor: complete Swift lifecycle cleanup"
 - 2026-06-21: Task 15 tmux kill slice completed. `killTmuxIfNeeded` in both terminal managers now tracks managed remote tmux kill tasks per server, so immediate open waits for the kill operation instead of racing a fire-and-forget remote command. Remaining non-exempt hits: SwiftUI lifecycle teardown calls in `SSHTerminalWrapper` and split-pane `TerminalView`.
 - 2026-06-21: Task 15 SwiftUI surface lifecycle slice completed. `SSHTerminalWrapper` and split-pane `TerminalView` no longer perform business teardown from coordinator `deinit`; `dismantleUIView` / `dismantleNSView` now only detach or pause live surfaces, and closed-session cleanup is routed through manager-owned application-layer intent APIs. Verification: `TerminalSurfaceTeardownTests` passed, then the focused connection lifecycle/auth suite passed 16 XCTest tests plus 46 Swift Testing tests.
 - 2026-06-21: Task 15 final verification completed. The documented focused suite passed 16 XCTest tests plus 49 Swift Testing tests, and `xcodebuild build-for-testing -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` succeeded. Remaining architecture work is the previously deferred RemoteFiles/Stats lease-boundary cleanup, not an unresolved TerminalSessions lifecycle hit.
-- Next task: plan the next refactor wave for RemoteFiles/Stats lease-boundary ownership cleanup.
+- 2026-06-21: RemoteFiles/Stats lease-boundary audit completed with three read-only fan-out explorers. Findings: `RemoteConnectionLease.close()` is awaitable and idempotent per lease, but RemoteFiles and Stats still expose raw `SSHClient` at feature boundaries; RemoteFiles needs a per-lease exclusive operation gate before borrowed terminal clients can safely run SFTP; Stats stop/restart must await or track close work instead of dropping returned tasks from SwiftUI.
+- Next task: Task 16, Core Remote Connection Lease Gate.
 
 ## Self-Review
 
