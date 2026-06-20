@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect temporary local storage paths and cleanup used by remote
+// file previews/transfers. They use isolated temporary directories; update only
+// when temporary storage semantics intentionally change.
+
 struct RemoteFileTemporaryStorageTests {
     @Test
     func previewFilesArePlacedInPreviewSubdirectoryAndKeepExtension() throws {

@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect RemoteFiles sorting rules for files, folders, and metadata.
+// They use in-memory file entries and no remote filesystem; update only when sort
+// behavior intentionally changes.
+
 struct RemoteFileSortTests {
     @Test
     func directoriesStayAheadOfFilesWhenSortingByName() {

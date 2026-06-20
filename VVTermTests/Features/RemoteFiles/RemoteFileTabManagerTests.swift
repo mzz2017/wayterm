@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect RemoteFiles tab creation, selection, and close behavior.
+// They use in-memory tab state and no network I/O; update only when file-tab
+// workflow semantics intentionally change.
+
 @MainActor
 struct RemoteFileTabManagerTests {
     @Test

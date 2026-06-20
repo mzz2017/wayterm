@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect terminal default values used when creating sessions and
+// rendering surfaces. They use pure defaults and no persistent user settings;
+// update only when product default terminal behavior intentionally changes.
+
 struct TerminalDefaultsTests {
     private func makeDefaults(testName: String = #function) -> UserDefaults {
         let suiteName = "TerminalDefaultsTests.\(testName)"

@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect remote terminal type detection from command-executor output.
+// Fakes model remote command responses and perform no network I/O; update only
+// when supported terminal detection heuristics intentionally change.
+
 struct RemoteTerminalTypeResolverTests {
     private let posixEnvironment = RemoteEnvironment(
         platform: .linux,

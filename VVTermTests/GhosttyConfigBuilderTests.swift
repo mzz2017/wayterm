@@ -2,6 +2,12 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect generated Ghostty configuration defaults and serialization
+// used when launching terminal surfaces. They use pure in-memory configuration
+// builders and no terminal process; update only when VVTerm intentionally changes
+// Ghostty config defaults or emitted option names.
+
 struct GhosttyConfigBuilderTests {
     #if os(macOS)
     @Test

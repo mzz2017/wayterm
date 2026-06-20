@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect remote-file preview coordination and temporary preview
+// lifecycle. Fakes avoid real SFTP and UI preview controllers; update only when
+// preview workflow semantics intentionally change.
+
 @MainActor
 struct RemoteFilePreviewCoordinatorTests {
     @Test

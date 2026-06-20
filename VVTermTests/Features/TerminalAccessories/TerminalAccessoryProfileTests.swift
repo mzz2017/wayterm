@@ -1,6 +1,11 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect terminal accessory profile modeling, ordering, and defaults.
+// They use pure values and no rendered keyboard accessory UI; update only when
+// accessory profile semantics intentionally change.
+
 final class TerminalAccessoryProfileTests: XCTestCase {
     func testNormalizedRemovesDuplicateActiveItems() {
         let profile = TerminalAccessoryProfile(

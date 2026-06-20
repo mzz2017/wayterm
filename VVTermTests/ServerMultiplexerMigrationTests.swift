@@ -2,6 +2,11 @@ import Testing
 import Foundation
 @testable import VVTerm
 
+// Test Context:
+// These tests protect migration of legacy server multiplexer fields into the
+// current domain model. They use encoded fixture data and no network access;
+// update only when the persisted migration contract intentionally changes.
+
 struct ServerMultiplexerMigrationTests {
     private func decode(_ json: String) throws -> Server {
         try JSONDecoder().decode(Server.self, from: Data(json.utf8))

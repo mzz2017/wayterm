@@ -1,6 +1,11 @@
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect touch-selection geometry and gesture policy for terminal
+// text selection. They use pure coordinate/value fakes and no UIKit gestures;
+// update only when terminal selection behavior is intentionally redesigned.
+
 struct TerminalTouchSelectionTests {
     @Test
     func normalizesSelectionOrderAcrossRows() {

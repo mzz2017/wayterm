@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect terminal accessory domain models and default keyboard tool
+// definitions. They use pure values with no UI rendering; update only when the
+// accessory model contract intentionally changes.
+
 struct TerminalAccessoryModelsTests {
     private func makeCommandAction(
         id: UUID = UUID(),

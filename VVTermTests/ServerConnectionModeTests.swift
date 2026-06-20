@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect server connection-mode domain encoding and defaults for
+// standard, Cloudflare, and related modes. They use pure model fixtures; update only
+// when connection mode persistence or defaults intentionally change.
+
 struct ServerConnectionModeTests {
     private func makeServer(
         connectionMode: SSHConnectionMode = .standard,

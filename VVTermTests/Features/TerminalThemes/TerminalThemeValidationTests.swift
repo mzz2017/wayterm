@@ -1,6 +1,11 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect terminal theme validation rules and error reporting. They
+// use pure theme fixtures and no file system theme loading; update only when theme
+// schema or validation semantics intentionally change.
+
 final class TerminalThemeValidationTests: XCTestCase {
     func testNormalizeHexColorUppercasesAndPrefixesHash() {
         XCTAssertEqual(TerminalThemeValidator.normalizeHexColor("aabbcc"), "#AABBCC")

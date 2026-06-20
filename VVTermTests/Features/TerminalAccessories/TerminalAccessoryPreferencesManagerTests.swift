@@ -1,6 +1,11 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect terminal accessory preference persistence and defaults.
+// Fakes use isolated storage and no keyboard UI; update only when preference
+// storage or defaults intentionally change.
+
 @MainActor
 final class TerminalAccessoryPreferencesManagerTests: XCTestCase {
     private var syncWasEnabledObject: Any?

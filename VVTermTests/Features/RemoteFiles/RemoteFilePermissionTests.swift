@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect remote-file permission parsing and display rules. They use
+// pure permission fixtures and no SFTP calls; update only when permission
+// semantics intentionally change.
+
 struct RemoteFilePermissionTests {
     @Test
     func draftUpdatesBitsAndSummaries() {

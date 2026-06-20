@@ -3,6 +3,11 @@ import Testing
 import MoshBootstrap
 @testable import VVTerm
 
+// Test Context:
+// These tests protect RemoteMoshManager command construction and output parsing
+// without starting mosh or opening a network connection. Fakes model command
+// executor responses; update only when supported mosh bootstrap behavior changes.
+
 struct RemoteMoshManagerTests {
     @Test
     func parseValidMoshConnectOutput() throws {

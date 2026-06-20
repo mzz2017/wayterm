@@ -2,6 +2,11 @@ import Testing
 import Foundation
 @testable import VVTerm
 
+// Test Context:
+// These tests protect public-key derivation from stored private key material for
+// SSH key authentication. Fixtures contain test keys only and no secrets; update only
+// when supported key formats or derivation behavior intentionally changes.
+
 struct SSHPublicKeyDeriverTests {
     @Test func derivesEd25519PublicKeyMatchingGenerator() throws {
         let key = try SSHKeyGenerator.generate(type: .ed25519, comment: "test@vvterm")

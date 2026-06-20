@@ -1,6 +1,11 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect connection-session domain values and state snapshots. They
+// use pure session fixtures and no SSH runtime; update only when session domain
+// semantics intentionally change.
+
 final class ConnectionSessionDomainTests: XCTestCase {
     func testConnectionStateFlagsReflectConnectedAndConnectingStates() {
         XCTAssertTrue(ConnectionState.connected.isConnected)

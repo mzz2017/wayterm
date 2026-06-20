@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These legacy root tests protect server move support and shared model behavior
+// that predates feature-specific test files. They use pure in-memory models;
+// update only when the underlying server/workspace movement contract changes.
+
 struct ServerMoveSupportTests {
     private func makeWorkspace(
         id: UUID = UUID(),

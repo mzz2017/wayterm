@@ -1,6 +1,11 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect app-lock state transitions and timeout behavior. Fakes use
+// controllable time/auth assumptions and no biometric hardware; update only when
+// app-lock product behavior intentionally changes.
+
 @MainActor
 final class AppLockManagerTests: XCTestCase {
     private final class StubBiometricAuthService: BiometricAuthServing {

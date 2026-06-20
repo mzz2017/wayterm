@@ -1,6 +1,11 @@
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect visible preedit policy for marked text in terminal input.
+// They use pure policy values and no platform IME; update only when intended IME
+// display behavior changes.
+
 struct TerminalVisiblePreeditPolicyTests {
     @Test
     func hidesEnglishMarkedText() {

@@ -3,6 +3,11 @@ import Testing
 import UIKit
 @testable import VVTerm
 
+// Test Context:
+// These tests protect native Ghostty find-session state transitions without
+// constructing a live terminal surface. Fakes are in-memory search/session values;
+// update only when native find behavior intentionally changes.
+
 struct GhosttyNativeFindSessionTests {
     @Test
     @MainActor

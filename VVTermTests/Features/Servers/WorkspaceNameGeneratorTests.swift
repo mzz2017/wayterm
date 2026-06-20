@@ -1,6 +1,11 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect workspace name generation and collision handling. They use
+// in-memory name fixtures and no persisted workspaces; update only when naming
+// behavior intentionally changes.
+
 final class WorkspaceNameGeneratorTests: XCTestCase {
     func testGenerateUniqueNameAvoidsExistingNames() {
         let existing = ["Tokyo", "Kyoto", "Osaka", "Workspace-1"]

@@ -1,6 +1,11 @@
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect remote zmodem command construction for terminal transfer
+// workflows. They use pure command builders and no remote process; update only
+// when supported zmodem command syntax intentionally changes.
+
 struct RemoteZmxCommandBuilderTests {
     let b = RemoteZmxCommandBuilder()
 

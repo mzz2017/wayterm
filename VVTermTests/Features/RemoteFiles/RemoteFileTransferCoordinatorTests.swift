@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect remote-file transfer coordination and progress/error flow.
+// Fakes avoid real network and filesystem transfer side effects; update only when
+// transfer workflow semantics intentionally change.
+
 @MainActor
 struct RemoteFileTransferCoordinatorTests {
     @Test

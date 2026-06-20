@@ -1,6 +1,11 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect server environment domain values, labels, and persistence.
+// They use pure enum/model fixtures and no synced server records; update only
+// when environment semantics intentionally change.
+
 final class ServerEnvironmentTests: XCTestCase {
     func testBuiltInEnvironmentDisplayUsesLocalizedBuiltIns() {
         XCTAssertEqual(ServerEnvironment.production.displayName, String(localized: "Production"))
