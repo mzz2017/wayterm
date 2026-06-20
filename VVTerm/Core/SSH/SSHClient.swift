@@ -2277,6 +2277,14 @@ actor SSHSession {
                 await waitForSocket()
                 continue
             }
+            if let session = libssh2Session {
+                let rawError = driver.lastError(
+                    session: session,
+                    operation: .channelClose,
+                    fallbackCode: closeResult
+                )
+                throw SSHError.libssh2(rawError)
+            }
             throw SSHError.socketError("SCP close failed: \(closeResult)")
         }
 
@@ -2294,7 +2302,14 @@ actor SSHSession {
         }
 
         let exitStatus = driver.channelExitStatus(channel)
-        _ = driver.freeChannel(channel)
+        let freeResult = driver.freeChannel(channel)
+        if freeResult != 0, freeResult != LIBSSH2_ERROR_EAGAIN {
+            if let session = libssh2Session {
+                logChannelFailure(session: session, operation: .channelFree, fallbackCode: freeResult)
+            } else {
+                logger.debug("libssh2 upload channel free returned \(freeResult) [message: no active session]")
+            }
+        }
         return exitStatus
     }
 

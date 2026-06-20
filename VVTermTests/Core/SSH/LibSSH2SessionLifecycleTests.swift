@@ -399,6 +399,86 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         )
     }
 
+    func testExecUploadCloseFailurePreservesRawLibSSH2Error() async throws {
+        // Given exec upload reaches channel close, but libssh2 reports a raw
+        // close failure from the channel teardown boundary.
+        let payload = Data("payload".utf8)
+        let rawCloseError = LibSSH2RawError(
+            operation: .channelClose,
+            code: LIBSSH2_ERROR_SOCKET_SEND,
+            message: "socket send failed while closing upload channel"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x44),
+            channelCloseResult: rawCloseError.code,
+            rawErrors: [rawCloseError],
+            channelReadResults: [
+                .eagain,
+                .eagain
+            ],
+            channelWriteResults: [
+                payload.count
+            ]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When upload channel close fails.
+        try await session.connect()
+        do {
+            try await session.upload(payload, to: "/tmp/vvterm-upload", strategy: SSHUploadStrategy.execPreferred)
+            XCTFail("Expected raw libssh2 channel close failure")
+        } catch SSHError.libssh2(let rawError) {
+            // Then the close failure remains distinguishable from a generic
+            // socket error so teardown diagnostics preserve the C boundary.
+            XCTAssertEqual(rawError.operation, .channelClose)
+            XCTAssertEqual(rawError.code, LIBSSH2_ERROR_SOCKET_SEND)
+            XCTAssertEqual(rawError.message, "socket send failed while closing upload channel")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+    }
+
+    func testExecUploadFreeFailureQueriesRawLibSSH2Error() async throws {
+        // Given exec upload succeeds, but freeing the consumed upload channel
+        // reports a non-retryable libssh2 teardown error.
+        let payload = Data("payload".utf8)
+        let rawFreeError = LibSSH2RawError(
+            operation: .channelFree,
+            code: LIBSSH2_ERROR_SOCKET_SEND,
+            message: "socket send failed while freeing upload channel"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x44),
+            channelFreeResult: rawFreeError.code,
+            rawErrors: [rawFreeError],
+            channelReadResults: [
+                .eagain,
+                .eagain
+            ],
+            channelWriteResults: [
+                payload.count
+            ]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When upload completes and channel free reports a teardown diagnostic.
+        try await session.connect()
+        try await session.upload(payload, to: "/tmp/vvterm-upload", strategy: SSHUploadStrategy.execPreferred)
+
+        // Then the free failure is still queried as a raw libssh2 error instead
+        // of being silently discarded after the upload succeeds.
+        XCTAssertTrue(
+            driver.lastErrorOperations().contains(.channelFree),
+            "Upload channel free failures must preserve raw teardown diagnostics"
+        )
+    }
+
     func testSFTPDirectoryReadFailureClosesHandleExactlyOnce() async throws {
         // Given SFTP can start and open a directory handle, but readdir fails
         // before any entry is returned.
@@ -563,6 +643,8 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
     private let authMethodsResult: AuthMethodsResult
     private let publicKeyAuthResult: AuthResult
     private let channelOpenResult: OpaquePointer?
+    private let channelCloseResult: Int32
+    private let channelFreeResult: Int32
     private let ptyResult: Int32
     private let shellStartResult: Int32
     private let execStartResult: Int32
@@ -572,6 +654,7 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
     private let sftpLastErrorResult: UInt
     private let sessionBlockDirectionsResult: Int32
     private let channelWriteDelayMicroseconds: useconds_t
+    private let rawErrors: [LibSSH2RawError]
     private let lock = NSLock()
     private var closedSocketDescriptors: [Int32] = []
     private var observedSocketAbort = false
@@ -583,6 +666,7 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
     private var channelWriteResultQueue: [Int]
     private var sftpReadDirectoryResultQueue: [SFTPReadDirectoryResult]
     private var channelWriteCallLog: [ChannelWriteCall] = []
+    private var lastErrorOperationLog: [LibSSH2RawError.Operation] = []
     private var keepAliveInvocationCount = 0
 
     init(
@@ -592,6 +676,8 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         authMethods: AuthMethodsResult = .unavailable,
         publicKeyAuthResult: AuthResult = .success,
         channelOpenResult: OpaquePointer? = nil,
+        channelCloseResult: Int32 = 0,
+        channelFreeResult: Int32 = 0,
         ptyResult: Int32 = 0,
         shellStartResult: Int32 = 0,
         execStartResult: Int32 = 0,
@@ -602,6 +688,7 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         sftpLastErrorResult: UInt = 0,
         sessionBlockDirectionsResult: Int32 = 0,
         channelWriteDelayMicroseconds: useconds_t = 0,
+        rawErrors: [LibSSH2RawError] = [],
         execStartResults: [Int32] = [],
         channelReadResults: [ChannelReadResult] = [],
         channelEOFResults: [Bool] = [],
@@ -613,6 +700,8 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         self.authMethodsResult = authMethods
         self.publicKeyAuthResult = publicKeyAuthResult
         self.channelOpenResult = channelOpenResult
+        self.channelCloseResult = channelCloseResult
+        self.channelFreeResult = channelFreeResult
         self.ptyResult = ptyResult
         self.shellStartResult = shellStartResult
         self.execStartResult = execStartResult
@@ -622,6 +711,7 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         self.sftpLastErrorResult = sftpLastErrorResult
         self.sessionBlockDirectionsResult = sessionBlockDirectionsResult
         self.channelWriteDelayMicroseconds = channelWriteDelayMicroseconds
+        self.rawErrors = rawErrors
         self.execStartResultQueue = execStartResults
         self.channelReadResultQueue = channelReadResults
         self.channelEOFResultQueue = channelEOFResults
@@ -665,6 +755,12 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         lock.lock()
         defer { lock.unlock() }
         return keepAliveInvocationCount
+    }
+
+    func lastErrorOperations() -> [LibSSH2RawError.Operation] {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastErrorOperationLog
     }
 
     private func recordChannelEvent(_ event: ChannelEvent) {
@@ -791,6 +887,13 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         operation: LibSSH2RawError.Operation,
         fallbackCode: Int32
     ) -> LibSSH2RawError {
+        lock.lock()
+        lastErrorOperationLog.append(operation)
+        lock.unlock()
+
+        if let rawError = rawErrors.first(where: { $0.operation == operation }) {
+            return rawError
+        }
         if case .authentication = operation,
            case .failure(let rawError) = authMethodsResult {
             return rawError
@@ -878,12 +981,12 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
 
     nonisolated func closeChannel(_ channel: OpaquePointer) -> Int32 {
         recordChannelEvent(.close)
-        return 0
+        return channelCloseResult
     }
 
     nonisolated func freeChannel(_ channel: OpaquePointer) -> Int32 {
         recordChannelEvent(.free)
-        return 0
+        return channelFreeResult
     }
 
     nonisolated func readChannel(_ channel: OpaquePointer, stream: Int32, into buffer: inout [CChar]) -> Int {

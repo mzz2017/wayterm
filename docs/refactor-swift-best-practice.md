@@ -2795,11 +2795,11 @@ git commit -m "fix: await remote file disconnects on ios"
   - Shell channel write retry loops check cancellation.
   - Close/free/shutdown failures either log raw driver operation/code/message consistently or are classified as accepted teardown diagnostics.
 
-- [ ] **Step 1: Add RED disconnect timeout abort test**
+- [x] **Step 1: Classify disconnect timeout abort coverage**
 
 Add a fake-driver or injectable-session test proving disconnect timeout triggers abort while teardown is still blocked.
 
-Status: not added in this slice. `SSHClient.disconnectSSHSession(_:)` is still a private actor helper without an injectable session seam; the production fix uses the existing `SSHClient.runWithTimeout(_:operation:onTimeout:)` hook that is already covered by `LibSSH2SessionLifecycleTests.testTimeoutAbortClosesSocketDuringBlockingHandshake`. Add a direct disconnect test when Core SSH grows an internal lifecycle helper seam instead of exposing one only for this case.
+Accepted scope decision: Task 39 does not add a direct private-helper test for `SSHClient.disconnectSSHSession(_:)`. That helper is private actor orchestration with no injectable session seam today; adding a test-only seam just for this assertion would widen the Core SSH API surface without improving production ownership. The production fix uses the existing `SSHClient.runWithTimeout(_:operation:onTimeout:)` hook, covered by `LibSSH2SessionLifecycleTests.testTimeoutAbortClosesSocketDuringBlockingHandshake`. Add a direct disconnect test when Core SSH grows an internal lifecycle helper seam for production reasons.
 
 - [x] **Step 2: Add RED shell write cancellation test**
 
@@ -2830,18 +2830,22 @@ git diff --check
 
 Focused test evidence: `LibSSH2SessionLifecycleTests` passed 12 XCTest tests and `SSHErrorRetryableTests` passed 6 Swift Testing tests with the command above.
 
+Review-fix evidence: after review found upload close/free teardown still collapsed or discarded raw diagnostics, `LibSSH2SessionLifecycleTests.testExecUploadCloseFailurePreservesRawLibSSH2Error` failed RED with `Expected SSHError.libssh2, got socketError("SCP close failed: -7")`, and `testExecUploadFreeFailureQueriesRawLibSSH2Error` failed RED because `.channelFree` was never queried. Both passed GREEN after `finishUploadChannel(_:)` preserved raw close errors and logged raw free errors.
+
 - [x] **Step 7: API and boundary cleanup**
 
 Verify Core SSH remains the only low-level owner of libssh2 teardown, unsafe pointer lifetimes stay local, and cancellation is not surfaced as a user-facing authentication/network failure.
 
 Review note: no UI/application boundary changes were introduced; SSHClient/SSHSession remain the Core SSH lifecycle owners, raw C pointers stay inside `SSHSession`, and cancellation now leaves the write path as `CancellationError` rather than being translated to auth/network errors.
 
-- [ ] **Step 8: Request review and commit**
+- [x] **Step 8: Request review and commit**
 
 ```bash
 git add VVTerm/Core/SSH/SSHClient.swift VVTerm/Core/SSH/LibSSH2SessionDriver.swift VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift docs/refactor-swift-best-practice.md
 git commit -m "fix: tighten ssh teardown cancellation"
 ```
+
+Review result: initial review found upload close/free teardown diagnostics still incomplete and direct disconnect helper coverage ambiguous. Follow-up fixes added upload close/free RED/GREEN coverage, preserved raw close failures, logged raw free failures, and explicitly classified the direct private-helper disconnect test as accepted seam debt. Re-review found no Critical or Important issues.
 
 ## Task 40: Cross-Feature Lifecycle Ownership Sweep
 
