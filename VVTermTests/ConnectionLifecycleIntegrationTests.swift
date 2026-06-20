@@ -490,6 +490,10 @@ struct ConnectionLifecycleIntegrationTests {
             let secondServer = makeServer(name: "Second")
 
             try await withServerList([firstServer, secondServer]) {
+                let wasPro = StoreManager.shared.isPro
+                StoreManager.shared.isPro = true
+                defer { StoreManager.shared.isPro = wasPro }
+
                 let firstSession = ConnectionSession(
                     serverId: firstServer.id,
                     title: "First",

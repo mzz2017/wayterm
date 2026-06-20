@@ -270,7 +270,7 @@ final class ConnectionSessionManager: ObservableObject {
 
     var canOpenNewTab: Bool {
         if StoreManager.shared.isPro { return true }
-        return activeSessions.count < FreeTierLimits.maxTabs
+        return sessions.filter(\.isTabRoot).count < FreeTierLimits.maxTabs
     }
 
     // MARK: - Open Connection
