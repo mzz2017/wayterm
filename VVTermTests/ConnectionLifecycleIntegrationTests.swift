@@ -599,6 +599,28 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func tabManagerHandlePaneExitMarksDisconnectedAndWaitsForUnregister() async {
+        await withCleanTabManager { manager in
+            let serverId = UUID()
+            let paneId = UUID()
+            manager.paneStates[paneId] = TerminalPaneState(
+                paneId: paneId,
+                tabId: UUID(),
+                serverId: serverId
+            )
+
+            let client = SSHClient()
+            #expect(manager.tryBeginShellStart(for: paneId, client: client))
+
+            await manager.handlePaneExit(for: paneId)
+
+            #expect(manager.paneStates[paneId]?.connectionState == .disconnected)
+            #expect(!manager.isShellStartInFlight(for: paneId))
+            #expect(!manager.hasLiveRuntime(forPaneId: paneId))
+        }
+    }
+
+    @Test
     func tabManagerCloseTabAndWaitWaitsForPaneUnregister() async {
         await withCleanTabManager { manager in
             let serverId = UUID()
