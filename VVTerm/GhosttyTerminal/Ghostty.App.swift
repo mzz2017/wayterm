@@ -86,6 +86,28 @@ extension Ghostty {
                 .joined(separator: "\n")
         }
 
+        static func safeOutputProfileLines() -> String {
+            #if os(iOS)
+            """
+            # iOS safe output profile
+            image-storage-limit = 0
+            clipboard-write = deny
+            custom-shader = ""
+            background-image = ""
+            background-opacity = 1
+            background-blur = false
+            osc8-hyperlinks = false
+            osc8-max-uri-bytes = 2048
+            osc8-max-id-bytes = 256
+            font-fallback-limit = 8
+            glyph-atlas-max-size = 2048
+            color-glyphs = false
+            """
+            #else
+            ""
+            #endif
+        }
+
         static func configContent(
             primaryFontFamily: String,
             fontSize: Double,
@@ -119,6 +141,8 @@ extension Ghostty {
             # Limit scrollback to prevent unbounded memory growth
             # 10000 lines is plenty for most use cases (~5-10MB)
             scrollback-limit = 10000
+
+            \(safeOutputProfileLines())
 
             # Faster scroll speed (especially for iOS touch)
             mouse-scroll-multiplier = 3
