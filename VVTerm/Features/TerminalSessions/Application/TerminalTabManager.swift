@@ -1181,7 +1181,6 @@ final class TerminalTabManager: ObservableObject {
 
     private func successfulConnectionTransport(for paneId: UUID) -> ShellTransport {
         shellRegistry.registration(for: paneId)?.transport
-            ?? paneStates[paneId]?.activeTransport
             ?? .ssh
     }
 

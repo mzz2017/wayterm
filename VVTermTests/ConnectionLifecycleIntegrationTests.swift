@@ -986,6 +986,39 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerDefaultsSuccessfulConnectionTransportWhenRuntimeIsUnregistered() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer(connectionMode: .standard)
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: "Unregistered Runtime",
+                connectionState: .disconnected,
+                activeTransport: .mosh
+            )
+            var recorded: [(id: UUID, transport: String)] = []
+            manager.successfulConnectionRecorder = { id, transport in
+                recorded.append((id: id, transport: transport))
+            }
+            manager.sessions = [session]
+
+            // When a restored or partially torn-down session reaches connected
+            // without a live shell registry entry.
+            manager.updateSessionState(session.id, to: .connected)
+
+            // Then the recorder uses the explicit default transport rather than
+            // trusting stale ConnectionSession.activeTransport.
+            #expect(
+                recorded.map(\.id) == [session.id],
+                "The session should still be recorded when it reaches connected."
+            )
+            #expect(
+                recorded.map(\.transport) == [ShellTransport.ssh.rawValue],
+                "Unregistered runtime should record the safe default SSH transport."
+            )
+        }
+    }
+
+    @Test
     func tabManagerSharedStatsClientSkipsMoshTransport() async {
         await withCleanTabManager { manager in
             let server = makeServer(connectionMode: .mosh)
@@ -1141,6 +1174,41 @@ struct ConnectionLifecycleIntegrationTests {
             #expect(
                 recorded.map(\.transport) == [ShellTransport.ssh.rawValue],
                 "Successful pane transport should come from the live shell registry."
+            )
+        }
+    }
+
+    @Test
+    func tabManagerDefaultsSuccessfulConnectionTransportWhenRuntimeIsUnregistered() async {
+        await withCleanTabManager { manager in
+            let server = makeServer(connectionMode: .standard)
+            let tab = TerminalTab(serverId: server.id, title: server.name)
+            var stalePane = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+            stalePane.connectionState = .disconnected
+            stalePane.activeTransport = .mosh
+            var recorded: [(id: UUID, transport: String)] = []
+            manager.successfulConnectionRecorder = { id, transport in
+                recorded.append((id: id, transport: transport))
+            }
+            manager.tabsByServer[server.id] = [tab]
+            manager.paneStates[tab.rootPaneId] = stalePane
+
+            // When a pane reaches connected without a live shell registry entry.
+            manager.updatePaneState(tab.rootPaneId, connectionState: .connected)
+
+            // Then successful-connection recording does not reuse the stale
+            // TerminalPaneState.activeTransport snapshot.
+            #expect(
+                recorded.map(\.id) == [tab.rootPaneId],
+                "The pane should still be recorded when it reaches connected."
+            )
+            #expect(
+                recorded.map(\.transport) == [ShellTransport.ssh.rawValue],
+                "Unregistered pane runtime should record the safe default SSH transport."
             )
         }
     }

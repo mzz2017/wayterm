@@ -423,7 +423,6 @@ final class ConnectionSessionManager: ObservableObject {
 
     private func successfulConnectionTransport(for sessionId: UUID) -> ShellTransport {
         shellRegistry.registration(for: sessionId)?.transport
-            ?? sessionWithID(sessionId)?.activeTransport
             ?? .ssh
     }
 
