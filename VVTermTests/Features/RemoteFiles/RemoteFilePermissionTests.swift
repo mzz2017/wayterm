@@ -14,9 +14,9 @@ struct RemoteFilePermissionTests {
         draft.set(true, capability: .execute, for: .owner)
         draft.set(false, capability: .read, for: .group)
 
-        #expect(draft.accessBits == 0o740)
-        #expect(draft.octalSummary == "740")
-        #expect(draft.symbolicSummary == "rwxr-----")
+        #expect(draft.accessBits == 0o700)
+        #expect(draft.octalSummary == "700")
+        #expect(draft.symbolicSummary == "rwx------")
     }
 
     @Test
