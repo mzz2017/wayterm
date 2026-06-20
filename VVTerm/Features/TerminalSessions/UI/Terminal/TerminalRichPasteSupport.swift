@@ -240,22 +240,13 @@ final class TerminalRichPasteRuntime: TerminalRichPasteContext {
 
     static func connectionSession(
         sessionId: UUID,
-        sshClient: SSHClient,
         uiModel: TerminalRichPasteUIModel
     ) -> TerminalRichPasteRuntime {
         TerminalRichPasteRuntime(
             sessionId: sessionId,
             uiModel: uiModel,
             resolveConnectedSSHClient: {
-                if let registeredClient = ConnectionSessionManager.shared.sshClient(forSessionId: sessionId) {
-                    return registeredClient
-                }
-
-                if await sshClient.isConnected {
-                    return sshClient
-                }
-
-                return nil
+                ConnectionSessionManager.shared.sshClient(forSessionId: sessionId)
             },
             pasteTextFromClipboard: {
                 ConnectionSessionManager.shared.peekTerminal(for: sessionId)?.pasteTextFromClipboard()

@@ -13,6 +13,11 @@ enum ShellTeardownMode: Equatable, Sendable {
     case fullDisconnect
 }
 
+enum TerminalSurfaceDetachReason: Equatable, Sendable {
+    case viewDisappeared
+    case sessionClosed
+}
+
 @MainActor
 final class ConnectionSessionManager: ObservableObject {
     static let shared = ConnectionSessionManager()
@@ -27,6 +32,31 @@ final class ConnectionSessionManager: ObservableObject {
         let serverId: UUID
         let tmuxSessionNameToKill: String?
         let shellTeardownTask: Task<Void, Never>?
+    }
+
+    private final class SessionRuntimeState {
+        let sessionId: UUID
+        var server: Server
+        var credentials: ServerCredentials
+        let client: SSHClient
+        var shellId: UUID?
+        var shellTask: Task<Void, Never>?
+        var lastSize: (cols: Int, rows: Int) = (0, 0)
+        var onProcessExit: () -> Void
+
+        init(
+            sessionId: UUID,
+            server: Server,
+            credentials: ServerCredentials,
+            client: SSHClient,
+            onProcessExit: @escaping () -> Void
+        ) {
+            self.sessionId = sessionId
+            self.server = server
+            self.credentials = credentials
+            self.client = client
+            self.onProcessExit = onProcessExit
+        }
     }
 
     @Published var sessions: [ConnectionSession] = [] {
@@ -97,6 +127,12 @@ final class ConnectionSessionManager: ObservableObject {
     private var serverDisconnectTasks: [UUID: Task<Void, Never>] = [:]
     /// Per-server teardown work from ordinary tab closes. New opens wait for this too.
     private var serverTeardownTasks: [UUID: [UUID: Task<Void, Never>]] = [:]
+    /// Application-owned tab SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
+    private var sessionRuntimes: [UUID: SessionRuntimeState] = [:]
+    private let terminalConnectionRegistry = TerminalConnectionRegistry()
+    #if DEBUG
+    private var testingTerminalConnectionClientFactory: (@MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient)?
+    #endif
     @Published private(set) var isSuspendingForBackground = false
 
     /// Servers that already ran tmux cleanup (per app launch)
@@ -1038,7 +1074,7 @@ final class ConnectionSessionManager: ObservableObject {
             scheduleSSHUnregister(for: oldestId)
 
             // Call shell cancel handler
-            cancelAndClearShellHandlers(for: oldestId)
+            _ = cancelAndClearShellHandlers(for: oldestId)
         }
     }
 
@@ -1167,6 +1203,335 @@ final class ConnectionSessionManager: ObservableObject {
     func markTerminalUsed(for sessionId: UUID) {
         guard terminalViews[sessionId] != nil else { return }
         touchTerminal(sessionId)
+    }
+
+    func configureRuntime(
+        for sessionId: UUID,
+        server: Server,
+        credentials: ServerCredentials,
+        onProcessExit: @escaping () -> Void
+    ) {
+        if let runtime = sessionRuntimes[sessionId] {
+            runtime.server = server
+            runtime.credentials = credentials
+            runtime.onProcessExit = onProcessExit
+            return
+        }
+
+        sessionRuntimes[sessionId] = SessionRuntimeState(
+            sessionId: sessionId,
+            server: server,
+            credentials: credentials,
+            client: SSHClient(),
+            onProcessExit: onProcessExit
+        )
+    }
+
+    func attachSurface(_ terminal: GhosttyTerminalView, to sessionId: UUID) async {
+        if terminalViews[sessionId] !== terminal {
+            registerTerminal(terminal, for: sessionId)
+        }
+
+        registerShellCancelHandler({ [weak self] mode in
+            await self?.cancelRuntime(for: sessionId, mode: mode, cleanupTerminal: true)
+        }, for: sessionId)
+        registerShellSuspendHandler({ [weak self] in
+            self?.suspendRuntime(for: sessionId)
+        }, for: sessionId)
+
+        startRuntimeIfNeeded(for: sessionId, terminal: terminal)
+    }
+
+    func detachSurface(from sessionId: UUID, reason: TerminalSurfaceDetachReason) async {
+        switch reason {
+        case .viewDisappeared:
+            terminalViews[sessionId]?.pauseRendering()
+        case .sessionClosed:
+            await cancelRuntime(for: sessionId, mode: .fullDisconnect, cleanupTerminal: true)
+            unregisterShellCancelHandler(for: sessionId)
+            unregisterShellSuspendHandler(for: sessionId)
+            unregisterTerminal(for: sessionId)
+        }
+    }
+
+    func sendInput(_ data: Data, to sessionId: UUID) async {
+        if let runtime = terminalConnectionRegistry.runtime(for: .session(sessionId)) {
+            try? await runtime.send(data)
+            return
+        }
+
+        guard let runtime = sessionRuntimes[sessionId] else {
+            if let route = registeredShellRoute(for: sessionId) {
+                try? await route.client.write(data, to: route.shellId)
+            }
+            return
+        }
+
+        if let shellId = runtime.shellId {
+            do {
+                try await runtime.client.write(data, to: shellId)
+            } catch {
+                logger.error("Failed to send to SSH: \(error.localizedDescription)")
+            }
+            return
+        }
+
+        if let route = registeredShellRoute(for: sessionId) {
+            do {
+                try await route.client.write(data, to: route.shellId)
+            } catch {
+                logger.error("Failed to send to SSH: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func resizeSession(_ sessionId: UUID, cols: Int, rows: Int) async {
+        guard cols > 0 && rows > 0 else { return }
+
+        if let runtime = terminalConnectionRegistry.runtime(for: .session(sessionId)) {
+            try? await runtime.resize(cols: cols, rows: rows)
+            return
+        }
+
+        if let runtime = sessionRuntimes[sessionId] {
+            guard cols != runtime.lastSize.cols || rows != runtime.lastSize.rows else { return }
+            runtime.lastSize = (cols, rows)
+
+            if let shellId = runtime.shellId {
+                do {
+                    try await runtime.client.resize(cols: cols, rows: rows, for: shellId)
+                } catch {
+                    logger.warning("Failed to resize PTY: \(error.localizedDescription)")
+                }
+                return
+            }
+        }
+
+        guard let route = registeredShellRoute(for: sessionId) else { return }
+        do {
+            try await route.client.resize(cols: cols, rows: rows, for: route.shellId)
+        } catch {
+            logger.warning("Failed to resize PTY: \(error.localizedDescription)")
+        }
+    }
+
+    private func startRuntimeIfNeeded(for sessionId: UUID, terminal: GhosttyTerminalView) {
+        guard let runtime = runtimeStateForStarting(sessionId: sessionId) else { return }
+        startRuntimeIfNeeded(runtime, terminal: terminal)
+    }
+
+    private func runtimeStateForStarting(sessionId: UUID) -> SessionRuntimeState? {
+        if let runtime = sessionRuntimes[sessionId] {
+            return runtime
+        }
+
+        guard let session = sessionWithID(sessionId),
+              let server = ServerManager.shared.servers.first(where: { $0.id == session.serverId }) else {
+            updateSessionState(sessionId, to: .failed("Server not found"))
+            return nil
+        }
+
+        do {
+            let credentials = try KeychainManager.shared.getCredentials(for: server)
+            configureRuntime(for: sessionId, server: server, credentials: credentials, onProcessExit: {})
+            return sessionRuntimes[sessionId]
+        } catch {
+            updateSessionState(sessionId, to: .failed(error.localizedDescription))
+            return nil
+        }
+    }
+
+    private func startRuntimeIfNeeded(_ runtime: SessionRuntimeState, terminal: GhosttyTerminalView) {
+        let sessionId = runtime.sessionId
+
+        if runtime.shellTask != nil {
+            logger.debug("Ignoring duplicate start request for session \(sessionId.uuidString, privacy: .public)")
+            return
+        }
+
+        if let existingShellId = shellId(for: sessionId) {
+            runtime.shellId = existingShellId
+            updateSessionState(sessionId, to: .connected)
+            logger.debug("Reusing existing shell for session \(sessionId.uuidString, privacy: .public)")
+            return
+        }
+
+        if runtime.shellId != nil {
+            updateSessionState(sessionId, to: .connected)
+            return
+        }
+
+        guard let startResult = beginShellStart(for: sessionId, client: runtime.client),
+              startResult.started else {
+            if shellId(for: sessionId) != nil {
+                updateSessionState(sessionId, to: .connected)
+            }
+            logger.debug("Shell start already in progress for session \(sessionId.uuidString, privacy: .public)")
+            return
+        }
+
+        let sshClient = runtime.client
+        let server = runtime.server
+        let credentials = runtime.credentials
+        let onProcessExit = runtime.onProcessExit
+        let logger = self.logger
+        let shellGeneration = startResult.generation
+
+        runtime.shellTask = Task.detached(priority: .userInitiated) { [weak terminal] in
+            defer {
+                Task { @MainActor in
+                    ConnectionSessionManager.shared.finishShellStart(
+                        for: sessionId,
+                        client: sshClient,
+                        generation: shellGeneration
+                    )
+                    if ConnectionSessionManager.shared.sessionRuntimes[sessionId]?.client === sshClient {
+                        ConnectionSessionManager.shared.sessionRuntimes[sessionId]?.shellTask = nil
+                    }
+                }
+            }
+
+            guard let terminal else { return }
+            await TerminalConnectionRunner.run(
+                server: server,
+                credentials: credentials,
+                sshClient: sshClient,
+                terminal: terminal,
+                logger: logger,
+                onAttempt: { attempt in
+                    if attempt == 1 {
+                        ConnectionSessionManager.shared.updateSessionState(sessionId, to: .connecting)
+                    } else {
+                        ConnectionSessionManager.shared.updateSessionState(sessionId, to: .reconnecting(attempt: attempt))
+                    }
+                },
+                startupPlan: {
+                    await ConnectionSessionManager.shared.tmuxStartupPlan(
+                        for: sessionId,
+                        serverId: server.id,
+                        client: sshClient
+                    )
+                },
+                registerShell: { shell, skipTmuxLifecycle in
+                    ConnectionSessionManager.shared.registerSSHClient(
+                        sshClient,
+                        shellId: shell.id,
+                        for: sessionId,
+                        serverId: server.id,
+                        transport: shell.transport,
+                        fallbackReason: shell.fallbackReason,
+                        generation: shellGeneration,
+                        skipTmuxLifecycle: skipTmuxLifecycle
+                    )
+                    ConnectionSessionManager.shared.sessionRuntimes[sessionId]?.shellId = shell.id
+                    ConnectionSessionManager.shared.updateSessionState(sessionId, to: .connected)
+                },
+                onBeforeShellStart: { cols, rows in
+                    ConnectionSessionManager.shared.sessionRuntimes[sessionId]?.lastSize = (cols, rows)
+                },
+                onShellStarted: { _, shellId in
+                    await ConnectionSessionManager.shared.applyWorkingDirectoryIfNeeded(
+                        for: sessionId,
+                        client: sshClient,
+                        shellId: shellId
+                    )
+                },
+                onTitleChange: { title in
+                    ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
+                },
+                shouldContinueStreaming: { data, terminal in
+                    let sessionExists = ConnectionSessionManager.shared.sessions.contains { $0.id == sessionId }
+                    guard sessionExists else { return false }
+                    terminal.writeOutput(data)
+                    return true
+                },
+                shouldResetClient: { sshError in
+                    switch sshError {
+                    case .notConnected, .connectionFailed, .socketError, .timeout:
+                        return true
+                    case .channelOpenFailed, .shellRequestFailed:
+                        let hasOtherRegistrations = await ConnectionSessionManager.shared.hasOtherRegistrations(
+                            using: sshClient,
+                            excluding: sessionId
+                        )
+                        return !hasOtherRegistrations
+                    case .authenticationFailed, .tailscaleAuthenticationNotAccepted, .cloudflareConfigurationRequired, .cloudflareAuthenticationFailed, .cloudflareTunnelFailed, .hostKeyVerificationFailed, .moshServerMissing, .moshBootstrapFailed, .moshSessionFailed, .unknown:
+                        return false
+                    }
+                },
+                onProcessExit: {
+                    onProcessExit()
+                },
+                onFailure: { error, terminal in
+                    let errorMsg = "\r\n\u{001B}[31mSSH Error: \(error.localizedDescription)\u{001B}[0m\r\n"
+                    if let data = errorMsg.data(using: .utf8) {
+                        terminal.writeOutput(data)
+                    }
+                    ConnectionSessionManager.shared.updateSessionState(sessionId, to: .failed(error.localizedDescription))
+                }
+            )
+        }
+    }
+
+    private func registeredShellRoute(for sessionId: UUID) -> (client: SSHClient, shellId: UUID)? {
+        guard let client = sshClient(forSessionId: sessionId),
+              let shellId = shellId(for: sessionId) else {
+            return nil
+        }
+        return (client: client, shellId: shellId)
+    }
+
+    private func suspendRuntime(for sessionId: UUID) {
+        guard let runtime = sessionRuntimes[sessionId] else { return }
+        runtime.shellTask?.cancel()
+        runtime.shellTask = nil
+        runtime.shellId = nil
+    }
+
+    private func cancelRuntime(
+        for sessionId: UUID,
+        mode: ShellTeardownMode,
+        cleanupTerminal: Bool
+    ) async {
+        let runtime = sessionRuntimes[sessionId]
+        runtime?.shellTask?.cancel()
+        runtime?.shellTask = nil
+        let shellId = runtime?.shellId
+        runtime?.shellId = nil
+
+        if cleanupTerminal, let terminal = terminalViews[sessionId] {
+            terminal.cleanup()
+        }
+
+        guard let runtime else { return }
+        if let shellId {
+            await runtime.client.closeShell(shellId)
+        }
+        if mode == .fullDisconnect {
+            await runtime.client.disconnect()
+            sessionRuntimes.removeValue(forKey: sessionId)
+        }
+    }
+
+    private func applyWorkingDirectoryIfNeeded(
+        for sessionId: UUID,
+        client: SSHClient,
+        shellId: UUID
+    ) async {
+        let cwd: String? = await MainActor.run {
+            guard ConnectionSessionManager.shared.shouldApplyWorkingDirectory(for: sessionId) else { return nil }
+            return ConnectionSessionManager.shared.workingDirectory(for: sessionId)
+        }
+        guard let cwd else { return }
+        let environment = await client.remoteEnvironment()
+        guard environment.shellProfile.family != .unknown else { return }
+        guard let payload = RemoteTerminalBootstrap.directoryChangeCommand(
+            for: cwd,
+            environment: environment
+        ).data(using: .utf8) else {
+            return
+        }
+        try? await client.write(payload, to: shellId)
     }
 
     /// Send text to the terminal for a given session (used by voice input)
@@ -1748,6 +2113,8 @@ extension ConnectionSessionManager {
         tmuxCleanupServers.removeAll()
         terminalViews.removeAll()
         terminalAccessOrder.removeAll()
+        sessionRuntimes.removeAll()
+        testingTerminalConnectionClientFactory = nil
         isRestoring = false
 
         UserDefaults.standard.removeObject(forKey: persistenceKey)
@@ -1765,6 +2132,29 @@ extension ConnectionSessionManager {
 
     func setServerDisconnectTaskForTesting(_ serverId: UUID, task: Task<Void, Never>?) {
         serverDisconnectTasks[serverId] = task
+    }
+
+    func setTerminalConnectionClientFactoryForTesting(
+        _ factory: @escaping @MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient
+    ) {
+        testingTerminalConnectionClientFactory = factory
+    }
+
+    func startRuntimeForTesting(sessionId: UUID) async {
+        guard let session = sessionWithID(sessionId),
+              let factory = testingTerminalConnectionClientFactory else {
+            return
+        }
+
+        let server = ServerManager.shared.servers.first { $0.id == session.serverId }
+        let entityId = session.terminalEntityId
+        let client = factory(entityId, server)
+        let runtime = TerminalConnectionRuntime(
+            entityId: entityId,
+            clientFactory: { client }
+        )
+        terminalConnectionRegistry.register(runtime, for: entityId, serverId: session.serverId)
+        await runtime.open(configuration: .testing)
     }
 }
 #endif
