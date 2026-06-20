@@ -12,6 +12,51 @@ import Testing
 @MainActor
 struct SSHSFTPAdapterTests {
     @Test
+    func defaultAdapterUsesOwnedClientInsteadOfTerminalSessionSingletons() async throws {
+        let server = makeServer(host: "127.0.0.1", port: 1)
+        let manager = ConnectionSessionManager.shared
+        await manager.resetForTesting()
+
+        let terminalSession = ConnectionSession(
+            serverId: server.id,
+            title: "Terminal-owned",
+            connectionState: .connected
+        )
+        manager.sessions = [terminalSession]
+        manager.selectedSessionId = terminalSession.id
+        manager.registerSSHClient(
+            SSHClient(),
+            shellId: UUID(),
+            for: terminalSession.id,
+            serverId: server.id,
+            skipTmuxLifecycle: true
+        )
+
+        let ownedClient = RecordingSFTPClient(homeDirectory: "/owned-boundary")
+        let adapter = SSHSFTPAdapter(
+            credentialsProvider: { server in makeCredentials(serverId: server.id) },
+            ownedClientFactory: { ownedClient }
+        )
+
+        do {
+            let home = try await adapter.withService(for: server) { service in
+                try await service.resolveHomeDirectory()
+            }
+
+            #expect(
+                home == "/owned-boundary",
+                "RemoteFiles infrastructure defaults must not consult TerminalSessions singletons for borrowed leases."
+            )
+            await adapter.disconnect(serverId: server.id)
+            await manager.resetForTesting()
+        } catch {
+            await adapter.disconnect(serverId: server.id)
+            await manager.resetForTesting()
+            throw error
+        }
+    }
+
+    @Test
     func borrowedClientDisconnectDoesNotCloseTerminalOwnedClient() async throws {
         let server = makeServer()
         let borrowedClient = RecordingSFTPClient()
@@ -139,11 +184,15 @@ struct SSHSFTPAdapterTests {
         #expect(home == "/second", "Retry should use the replacement borrowed client after a borrowed operation failure")
     }
 
-    private func makeServer() -> Server {
+    private func makeServer(
+        host: String = "example.com",
+        port: Int = 22
+    ) -> Server {
         Server(
             workspaceId: UUID(),
             name: "RemoteFiles",
-            host: "example.com",
+            host: host,
+            port: port,
             username: "root"
         )
     }

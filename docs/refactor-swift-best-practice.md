@@ -2278,7 +2278,10 @@ git commit -m "fix: await terminal cleanup on termination"
 - Modify: `VVTerm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift`
 - Modify: `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
 - Modify: `VVTerm/Features/Stats/Application/ServerStatsCollector.swift`
+- Add: `VVTerm/Features/Stats/Infrastructure/StatsSSHConnectionProvider.swift`
 - Modify: `VVTerm/App/VVTermApp.swift`
+- Modify: `VVTerm/App/iOS/iOSContentView.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift`
 - Test: `VVTermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift`
 - Test: `VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
@@ -2293,15 +2296,15 @@ git commit -m "fix: await terminal cleanup on termination"
   - RemoteFiles defaults that do not reach into `ConnectionSessionManager.shared` or `TerminalTabManager.shared`.
   - Stats owned-client creation moved behind an injected factory/provider.
 
-- [ ] **Step 1: Add RED RemoteFiles default-boundary test**
+- [x] **Step 1: Add RED RemoteFiles default-boundary test**
 
 Add a test proving `SSHSFTPAdapter` without an injected borrowed provider does not consult TerminalSessions singletons. The adapter should use only injected dependencies and create owned infrastructure clients when no borrowed lease is provided.
 
-- [ ] **Step 2: Add RED Stats owned-factory boundary test**
+- [x] **Step 2: Add RED Stats owned-factory boundary test**
 
 Add a `ServerStatsCollectorLifecycleTests` case that uses a named Stats owned-connection factory boundary rather than `ServerStatsCollector.makeConnection`. The test should fail to compile until the production code exposes an injectable factory for owned stats connections outside Stats Application, proving default raw `SSHClient()` creation has moved out of `ServerStatsCollector`.
 
-- [ ] **Step 3: Run RED tests**
+- [x] **Step 3: Run RED tests**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
@@ -2309,29 +2312,33 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected before implementation: FAIL because RemoteFiles still has hidden TerminalSessions singleton defaults and Stats does not yet expose the owned-connection factory boundary needed to move default raw `SSHClient()` creation out of Stats Application.
 
-- [ ] **Step 4: Introduce explicit lease provider boundary**
+RED result: `xcodebuild test ... -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO` failed to build because `StatsConnectionProvider` and `ServerStatsCollector(connectionProvider:)` did not exist. The RemoteFiles RED test was also in place to prove default `SSHSFTPAdapter` must not consult TerminalSessions singletons.
+
+- [x] **Step 4: Introduce explicit lease provider boundary**
 
 Add the narrow provider type in Core SSH or the consuming feature boundary. Inject the app-level provider from `VVTermApp.makeRemoteFileBrowserStore()` and Stats screen composition. Remove RemoteFiles infrastructure default access to TerminalSessions singletons.
 
-- [ ] **Step 5: Move Stats raw SSH fallback behind factory**
+- [x] **Step 5: Move Stats raw SSH fallback behind factory**
 
 Make `ServerStatsCollector` depend on an injected connection factory/provider for owned leases. Keep the default factory in infrastructure/composition-level code, not in Stats Application policy, and keep collection code operating on `RemoteCommandExecuting`. Remove the Stats Application default that directly constructs `SSHClient()`, and move any SSH-specific `SSHConnectionOperationService` setup behind the injected owned-connection boundary.
 
-- [ ] **Step 6: Run focused verification**
+- [x] **Step 6: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 7: API and boundary cleanup**
+GREEN result: focused `xcodebuild test` passed 17 Swift Testing tests across `SSHSFTPAdapterTests`, `RemoteFileBrowserStoreTests`, and `ServerStatsCollectorLifecycleTests`.
+
+- [x] **Step 7: API and boundary cleanup**
 
 Verify RemoteFiles Application/UI depends on RemoteFiles abstractions, not TerminalSessions singletons. Verify Stats Application does not cast `RemoteConnectionLeaseClient` to `SSHClient`. Verify production defaults live at composition or infrastructure boundaries.
 
-- [ ] **Step 8: Request review and commit**
+- [x] **Step 8: Request review and commit**
 
 ```bash
-git add VVTerm/Core/SSH/RemoteConnectionLease.swift VVTerm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift VVTerm/Features/Stats/Application/ServerStatsCollector.swift VVTerm/App/VVTermApp.swift VVTermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift docs/refactor-swift-best-practice.md
+git add VVTerm/Core/SSH/RemoteConnectionLease.swift VVTerm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift VVTerm/Features/Stats/Application/ServerStatsCollector.swift VVTerm/Features/Stats/Infrastructure/StatsSSHConnectionProvider.swift VVTerm/App/VVTermApp.swift VVTerm/App/iOS/iOSContentView.swift VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift VVTermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift docs/refactor-swift-best-practice.md
 git commit -m "refactor: inject remote lease providers"
 ```
 

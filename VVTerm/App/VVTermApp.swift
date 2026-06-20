@@ -156,10 +156,12 @@ struct VVTermApp: App {
 
 private extension VVTermApp {
     static func makeRemoteFileBrowserStore() -> RemoteFileBrowserStore {
-        let adapter = SSHSFTPAdapter(borrowedLeaseProvider: { serverId in
-            ConnectionSessionManager.shared.sharedStatsLease(for: serverId)
-                ?? TerminalTabManager.shared.sharedStatsLease(for: serverId)
-        })
+        let adapter = SSHSFTPAdapter(
+            remoteConnectionLeaseProvider: RemoteConnectionLeaseProvider { serverId in
+                ConnectionSessionManager.shared.sharedStatsLease(for: serverId)
+                    ?? TerminalTabManager.shared.sharedStatsLease(for: serverId)
+            }
+        )
 
         return RemoteFileBrowserStore(
             remoteFileServiceAdapter: adapter,

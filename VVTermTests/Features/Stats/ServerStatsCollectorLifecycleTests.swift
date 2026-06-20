@@ -12,11 +12,42 @@ import Testing
 @MainActor
 struct ServerStatsCollectorLifecycleTests {
     @Test
+    func collectorUsesInjectedStatsConnectionProviderForOwnedFallback() async throws {
+        let server = makeServer()
+        let client = RecordingStatsLeaseClient()
+        var ownedFactoryCallCount = 0
+        let provider = StatsConnectionProvider(
+            ownedConnectionFactory: { server, credentials in
+                ownedFactoryCallCount += 1
+                #expect(credentials.serverId == server.id)
+                return .init(lease: RemoteConnectionLease(client: client, ownership: .owned))
+            }
+        )
+        let collector = ServerStatsCollector(
+            connectionProvider: provider,
+            credentialsProvider: { server in
+                makeCredentials(serverId: server.id)
+            },
+            collectionTaskFactory: { _, _, _, _ in
+                Task {}
+            }
+        )
+
+        await collector.startCollecting(for: server)
+
+        #expect(
+            ownedFactoryCallCount == 1,
+            "Stats owned fallback must be created through the injected provider boundary."
+        )
+        await collector.stopCollectingAndWait()
+    }
+
+    @Test
     func stopCollectingAndWaitAwaitsOwnedLeaseDisconnect() async throws {
         let server = makeServer()
         let client = BlockingStatsLeaseClient()
         let collector = makeCollector(
-            connectionFactory: OneShotStatsConnectionFactory([
+            ownedConnectionFactory: OneShotStatsOwnedConnectionFactory([
                 .init(lease: RemoteConnectionLease(client: client, ownership: .owned))
             ])
         )
@@ -46,11 +77,11 @@ struct ServerStatsCollectorLifecycleTests {
         let server = makeServer()
         let firstClient = BlockingStatsLeaseClient()
         let secondClient = RecordingStatsLeaseClient()
-        let factory = OneShotStatsConnectionFactory([
+        let factory = OneShotStatsOwnedConnectionFactory([
             .init(lease: RemoteConnectionLease(client: firstClient, ownership: .owned)),
             .init(lease: RemoteConnectionLease(client: secondClient, ownership: .owned))
         ])
-        let collector = makeCollector(connectionFactory: factory)
+        let collector = makeCollector(ownedConnectionFactory: factory)
 
         await collector.startCollecting(for: server)
         let stopTask = collector.stopCollecting()
@@ -79,7 +110,7 @@ struct ServerStatsCollectorLifecycleTests {
         let server = makeServer()
         let client = RecordingStatsLeaseClient()
         let collector = makeCollector(
-            connectionFactory: OneShotStatsConnectionFactory([
+            ownedConnectionFactory: OneShotStatsOwnedConnectionFactory([
                 .init(lease: RemoteConnectionLease(client: client, ownership: .borrowed))
             ])
         )
@@ -96,12 +127,12 @@ struct ServerStatsCollectorLifecycleTests {
         let server = makeServer()
         let failedClient = BlockingStatsLeaseClient()
         let retryClient = RecordingStatsLeaseClient()
-        let factory = OneShotStatsConnectionFactory([
+        let factory = OneShotStatsOwnedConnectionFactory([
             .init(lease: RemoteConnectionLease(client: failedClient, ownership: .owned)),
             .init(lease: RemoteConnectionLease(client: retryClient, ownership: .owned))
         ])
         let collector = makeCollector(
-            connectionFactory: factory,
+            ownedConnectionFactory: factory,
             collectionTaskFactory: { collector, _, _, connection in
                 Task {
                     await collector.beginCollectionTeardown()
@@ -136,7 +167,7 @@ struct ServerStatsCollectorLifecycleTests {
         let server = makeServer()
         let client = RecordingStatsLeaseClient()
         let collector = makeCollector(
-            connectionFactory: OneShotStatsConnectionFactory([
+            ownedConnectionFactory: OneShotStatsOwnedConnectionFactory([
                 .init(lease: RemoteConnectionLease(client: client, ownership: .owned))
             ]),
             collectionTaskFactory: { collector, _, _, connection in
@@ -161,15 +192,19 @@ struct ServerStatsCollectorLifecycleTests {
         let server = makeServer()
         let client = ScriptedStatsLeaseClient()
         let collector = ServerStatsCollector(
-            connectionFactory: { _, _ in
-                .init(lease: RemoteConnectionLease(client: client, ownership: .borrowed))
+            connectionProvider: StatsConnectionProvider { server, credentials in
+                Issue.record("Unexpected owned Stats connection for \(server.name) with \(credentials.serverId)")
+                return .init(lease: RemoteConnectionLease(client: RecordingStatsLeaseClient(), ownership: .owned))
             },
             credentialsProvider: { server in
                 makeCredentials(serverId: server.id)
             }
         )
 
-        await collector.startCollecting(for: server)
+        await collector.startCollecting(
+            for: server,
+            using: RemoteConnectionLease(client: client, ownership: .borrowed)
+        )
         var didCollect = false
         for _ in 0..<25 {
             if await client.commandCount() >= 3 {
@@ -185,12 +220,12 @@ struct ServerStatsCollectorLifecycleTests {
     }
 
     private func makeCollector(
-        connectionFactory: OneShotStatsConnectionFactory,
+        ownedConnectionFactory: OneShotStatsOwnedConnectionFactory,
         collectionTaskFactory: ServerStatsCollector.CollectionTaskFactory? = nil
     ) -> ServerStatsCollector {
         ServerStatsCollector(
-            connectionFactory: { server, borrowedLease in
-                connectionFactory.nextConnection(server: server, borrowedLease: borrowedLease)
+            connectionProvider: StatsConnectionProvider { server, credentials in
+                ownedConnectionFactory.nextConnection(server: server, credentials: credentials)
             },
             credentialsProvider: { server in
                 makeCredentials(serverId: server.id)
@@ -232,7 +267,7 @@ private enum StatsCollectorLifecycleTestError: Error {
 }
 
 @MainActor
-private final class OneShotStatsConnectionFactory {
+private final class OneShotStatsOwnedConnectionFactory {
     private var connections: [ServerStatsCollector.StatsConnection]
     private(set) var callCount = 0
 
@@ -242,9 +277,10 @@ private final class OneShotStatsConnectionFactory {
 
     func nextConnection(
         server: Server,
-        borrowedLease: RemoteConnectionLease?
+        credentials: ServerCredentials
     ) -> ServerStatsCollector.StatsConnection {
         callCount += 1
+        #expect(credentials.serverId == server.id)
         guard !connections.isEmpty else {
             Issue.record("Unexpected Stats connection factory call for \(server.name)")
             return .init(lease: RemoteConnectionLease(client: RecordingStatsLeaseClient(), ownership: .owned))

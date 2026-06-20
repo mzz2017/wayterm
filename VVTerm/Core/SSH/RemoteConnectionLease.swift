@@ -44,6 +44,21 @@ struct RemoteConnectionLease: Sendable {
     }
 }
 
+@MainActor
+struct RemoteConnectionLeaseProvider {
+    private let provider: @MainActor (UUID) -> RemoteConnectionLease?
+
+    init(_ provider: @escaping @MainActor (UUID) -> RemoteConnectionLease?) {
+        self.provider = provider
+    }
+
+    func lease(for serverId: UUID) -> RemoteConnectionLease? {
+        provider(serverId)
+    }
+
+    static let none = RemoteConnectionLeaseProvider { _ in nil }
+}
+
 extension SSHClient: RemoteConnectionLeaseClient {}
 
 private actor RemoteConnectionLeaseState {

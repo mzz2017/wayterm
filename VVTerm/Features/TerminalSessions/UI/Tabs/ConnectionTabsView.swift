@@ -235,7 +235,7 @@ struct ConnectionTerminalContainer: View {
                 isVisible: selectedView == "stats",
                 backgroundColor: liveTerminalBackgroundColor,
                 borrowedLeaseProvider: { tabManager.sharedStatsLease(for: server.id) },
-                statsCollector: ServerStatsCollector()
+                statsCollector: ServerStatsCollector(connectionProvider: StatsSSHConnectionProvider.makeProvider())
             )
                 .opacity(selectedView == "stats" ? 1 : 0)
                 .allowsHitTesting(selectedView == "stats")

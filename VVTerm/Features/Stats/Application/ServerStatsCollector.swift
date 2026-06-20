@@ -4,18 +4,72 @@ import os.log
 
 // MARK: - Server Stats Collector
 
+@MainActor
+struct StatsConnectionProvider {
+    typealias OwnedConnectionFactory = @MainActor (Server, ServerCredentials) -> ServerStatsCollector.StatsConnection
+
+    private let ownedConnectionFactory: OwnedConnectionFactory
+
+    init(ownedConnectionFactory: @escaping OwnedConnectionFactory) {
+        self.ownedConnectionFactory = ownedConnectionFactory
+    }
+
+    func connection(
+        for server: Server,
+        credentials: ServerCredentials,
+        borrowedLease: RemoteConnectionLease?
+    ) -> ServerStatsCollector.StatsConnection {
+        if let borrowedLease {
+            return ServerStatsCollector.StatsConnection(lease: borrowedLease)
+        }
+
+        return ownedConnectionFactory(server, credentials)
+    }
+}
+
 /// Main stats collector that uses a borrowed remote connection lease when available.
 @MainActor
 final class ServerStatsCollector: ObservableObject {
     struct StatsConnection {
-        let lease: RemoteConnectionLease
+        typealias ExecutorOperation = @Sendable (any RemoteCommandExecuting) async throws -> Void
+        typealias ExecutorRunner = @Sendable (
+            RemoteConnectionLease,
+            Server,
+            ServerCredentials,
+            @escaping ExecutorOperation
+        ) async throws -> Void
 
-        init(lease: RemoteConnectionLease) {
+        let lease: RemoteConnectionLease
+        private let executorRunner: ExecutorRunner
+
+        init(
+            lease: RemoteConnectionLease,
+            executorRunner: @escaping ExecutorRunner = StatsConnection.runWithLeasedExecutor
+        ) {
             self.lease = lease
+            self.executorRunner = executorRunner
+        }
+
+        func run(
+            server: Server,
+            credentials: ServerCredentials,
+            operation: @escaping ExecutorOperation
+        ) async throws {
+            try await executorRunner(lease, server, credentials, operation)
+        }
+
+        private static func runWithLeasedExecutor(
+            lease: RemoteConnectionLease,
+            server _: Server,
+            credentials _: ServerCredentials,
+            operation: @escaping ExecutorOperation
+        ) async throws {
+            try await lease.withExclusiveClient { leasedClient in
+                try await operation(leasedClient)
+            }
         }
     }
 
-    typealias ConnectionFactory = @MainActor (Server, RemoteConnectionLease?) -> StatsConnection
     typealias CredentialsProvider = @MainActor (Server) throws -> ServerCredentials
     typealias CollectionTaskFactory = @MainActor (
         ServerStatsCollector,
@@ -33,7 +87,7 @@ final class ServerStatsCollector: ObservableObject {
     private var collectTask: Task<Void, Never>?
     private var pendingStopTask: Task<Void, Never>?
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "Stats")
-    private let connectionFactory: ConnectionFactory
+    private let connectionProvider: StatsConnectionProvider
     private let credentialsProvider: CredentialsProvider
     private let collectionTaskFactory: CollectionTaskFactory
 
@@ -45,13 +99,13 @@ final class ServerStatsCollector: ObservableObject {
     private let context = StatsCollectionContext()
 
     init(
-        connectionFactory: @escaping ConnectionFactory = ServerStatsCollector.makeConnection,
+        connectionProvider: StatsConnectionProvider,
         credentialsProvider: @escaping CredentialsProvider = { server in
             try KeychainManager.shared.getCredentials(for: server)
         },
         collectionTaskFactory: @escaping CollectionTaskFactory = ServerStatsCollector.makeCollectionTask
     ) {
-        self.connectionFactory = connectionFactory
+        self.connectionProvider = connectionProvider
         self.credentialsProvider = credentialsProvider
         self.collectionTaskFactory = collectionTaskFactory
     }
@@ -74,18 +128,21 @@ final class ServerStatsCollector: ObservableObject {
         connectionError = nil
         resetCollectionState()
 
-        let connection = connectionFactory(server, borrowedLease)
-        configureConnectionState(lease: connection.lease)
-
         // Get credentials
         let credentials: ServerCredentials
         do {
             credentials = try credentialsProvider(server)
         } catch {
-            await connection.lease.close()
             finishCollection(withError: "No credentials found")
             return
         }
+
+        let connection = connectionProvider.connection(
+            for: server,
+            credentials: credentials,
+            borrowedLease: borrowedLease
+        )
+        configureConnectionState(lease: connection.lease)
 
         collectTask = collectionTaskFactory(self, server, credentials, connection)
     }
@@ -211,15 +268,6 @@ final class ServerStatsCollector: ObservableObject {
         if memoryHistory.count > 60 { memoryHistory.removeFirst() }
     }
 
-    private static func makeConnection(server _: Server, borrowedLease: RemoteConnectionLease?) -> StatsConnection {
-        if let borrowedLease {
-            return StatsConnection(lease: borrowedLease)
-        }
-
-        let client = SSHClient()
-        return StatsConnection(lease: RemoteConnectionLease(client: client, ownership: .owned))
-    }
-
     private static func makeCollectionTask(
         collector: ServerStatsCollector,
         server: Server,
@@ -234,19 +282,11 @@ final class ServerStatsCollector: ObservableObject {
             var collectionError: Error?
 
             do {
-                try await connection.lease.withExclusiveClient { leasedClient in
-                    if let sshClient = leasedClient as? SSHClient {
-                        try await SSHConnectionOperationService.shared.runWithConnection(
-                            using: sshClient,
-                            server: server,
-                            credentials: credentials,
-                            disconnectWhenDone: false
-                        ) { connectedClient in
-                            try await collector.collectStatsUntilStopped(executor: connectedClient)
-                        }
-                    } else {
-                        try await collector.collectStatsUntilStopped(executor: leasedClient)
-                    }
+                try await connection.run(
+                    server: server,
+                    credentials: credentials
+                ) { executor in
+                    try await collector.collectStatsUntilStopped(executor: executor)
                 }
             } catch {
                 if error is CancellationError {

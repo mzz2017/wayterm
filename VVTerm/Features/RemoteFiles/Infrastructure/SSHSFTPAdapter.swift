@@ -16,15 +16,12 @@ final class SSHSFTPAdapter {
     }
 
     private var clients: [UUID: ClientRegistration] = [:]
-    private let borrowedLeaseProvider: BorrowedLeaseProvider
+    private let remoteConnectionLeaseProvider: RemoteConnectionLeaseProvider
     private let credentialsProvider: CredentialsProvider
     private let ownedClientFactory: OwnedClientFactory
 
     init(
-        borrowedLeaseProvider: @escaping BorrowedLeaseProvider = { serverId in
-            ConnectionSessionManager.shared.sharedStatsLease(for: serverId)
-                ?? TerminalTabManager.shared.sharedStatsLease(for: serverId)
-        },
+        remoteConnectionLeaseProvider: RemoteConnectionLeaseProvider = .none,
         credentialsProvider: @escaping CredentialsProvider = { server in
             try KeychainManager.shared.getCredentials(for: server)
         },
@@ -32,9 +29,25 @@ final class SSHSFTPAdapter {
             SSHClient()
         }
     ) {
-        self.borrowedLeaseProvider = borrowedLeaseProvider
+        self.remoteConnectionLeaseProvider = remoteConnectionLeaseProvider
         self.credentialsProvider = credentialsProvider
         self.ownedClientFactory = ownedClientFactory
+    }
+
+    convenience init(
+        borrowedLeaseProvider: @escaping BorrowedLeaseProvider,
+        credentialsProvider: @escaping CredentialsProvider = { server in
+            try KeychainManager.shared.getCredentials(for: server)
+        },
+        ownedClientFactory: @escaping OwnedClientFactory = {
+            SSHClient()
+        }
+    ) {
+        self.init(
+            remoteConnectionLeaseProvider: RemoteConnectionLeaseProvider(borrowedLeaseProvider),
+            credentialsProvider: credentialsProvider,
+            ownedClientFactory: ownedClientFactory
+        )
     }
 
     func withService<T>(
@@ -66,7 +79,7 @@ final class SSHSFTPAdapter {
     }
 
     private func borrowedLease(for serverId: UUID) -> RemoteConnectionLease? {
-        borrowedLeaseProvider(serverId)
+        remoteConnectionLeaseProvider.lease(for: serverId)
     }
 
     private func clientRegistration(for server: Server) -> ClientRegistration {

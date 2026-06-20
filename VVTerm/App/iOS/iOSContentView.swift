@@ -1296,7 +1296,7 @@ struct iOSTerminalView: View {
                 isVisible: true,
                 backgroundColor: Color(UIColor.systemGroupedBackground),
                 borrowedLeaseProvider: { sessionManager.sharedStatsLease(for: server.id) },
-                statsCollector: ServerStatsCollector()
+                statsCollector: ServerStatsCollector(connectionProvider: StatsSSHConnectionProvider.makeProvider())
             )
         }
     }
@@ -1309,7 +1309,7 @@ struct iOSTerminalView: View {
                     isVisible: true,
                     backgroundColor: Color(UIColor.systemGroupedBackground),
                     borrowedLeaseProvider: { sessionManager.sharedStatsLease(for: server.id) },
-                    statsCollector: ServerStatsCollector()
+                    statsCollector: ServerStatsCollector(connectionProvider: StatsSSHConnectionProvider.makeProvider())
                 )
                 .zIndex(1)
             }
