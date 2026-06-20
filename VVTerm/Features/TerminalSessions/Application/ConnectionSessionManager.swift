@@ -2376,6 +2376,17 @@ extension ConnectionSessionManager {
         terminalConnectionRegistry.runtime(for: entityId) != nil
     }
 
+    func setRuntimeShellTaskForTesting(
+        sessionId: UUID,
+        _ task: Task<Void, Never>
+    ) async {
+        guard let runtime = sessionRuntimes[sessionId] else { return }
+        await runtime.runtime.setShellTask(task)
+        registerShellCancelHandler({ [weak self] mode in
+            await self?.cancelRuntime(for: sessionId, mode: mode, cleanupTerminal: false)
+        }, for: sessionId)
+    }
+
     func completeRuntimeShellStartForTesting(
         sessionId: UUID,
         client: SSHClient,

@@ -954,6 +954,56 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerCloseSessionAndWaitAwaitsStoredRunnerTask() async {
+        await withCleanConnectionManager { manager in
+            // Given a session with a configured production-style runtime and a
+            // stored runner task whose finish path is deliberately delayed.
+            let server = makeServer(connectionMode: .standard)
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .connected
+            )
+            let runnerGate = RunnerTaskGate()
+            manager.sessions = [session]
+            manager.configureRuntime(
+                for: session.id,
+                server: server,
+                credentials: makeCredentials(serverId: server.id),
+                onProcessExit: {}
+            )
+            await manager.setRuntimeShellTaskForTesting(
+                sessionId: session.id,
+                Task {
+                    await runnerGate.waitForRelease()
+                    await runnerGate.markRunnerFinished()
+                }
+            )
+
+            // When the application close-and-wait API runs before the runner
+            // task has released its cleanup path.
+            let closeTask = Task {
+                await manager.closeSessionAndWait(session)
+                await runnerGate.markCloseReturned()
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+
+            // Then close-and-wait must still be waiting on the runner task.
+            #expect(
+                await !runnerGate.closeReturned,
+                "closeSessionAndWait must not return while the stored runner task is still finishing."
+            )
+
+            await runnerGate.release()
+            await closeTask.value
+            #expect(
+                await runnerGate.runnerFinished,
+                "The delayed runner task should finish before closeSessionAndWait returns."
+            )
+        }
+    }
+
+    @Test
     func connectionManagerLateRuntimeShellCallbackCannotUpdateClosedGeneration() async {
         await withCleanConnectionManager { manager in
             // Given a shell start that belongs to an older session generation.
@@ -1030,6 +1080,60 @@ struct ConnectionLifecycleIntegrationTests {
             let events = await fake.events
             #expect(events == ["connect", "startShell"])
             #expect(manager.paneStates[tab.rootPaneId]?.connectionState == .connected)
+        }
+    }
+
+    @Test
+    func tabManagerClosePaneAndWaitAwaitsStoredRunnerTask() async {
+        await withCleanTabManager { manager in
+            // Given a pane with a configured production-style runtime and a
+            // stored runner task whose finish path is deliberately delayed.
+            let server = makeServer(connectionMode: .standard)
+            let tab = TerminalTab(serverId: server.id, title: server.name)
+            let runnerGate = RunnerTaskGate()
+            manager.tabsByServer[server.id] = [tab]
+            manager.selectedTabByServer[server.id] = tab.id
+            var paneState = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+            paneState.connectionState = .connected
+            manager.paneStates[tab.rootPaneId] = paneState
+            manager.configureRuntime(
+                forPane: tab.rootPaneId,
+                server: server,
+                credentials: makeCredentials(serverId: server.id),
+                onProcessExit: {}
+            )
+            await manager.setRuntimeShellTaskForTesting(
+                paneId: tab.rootPaneId,
+                Task {
+                    await runnerGate.waitForRelease()
+                    await runnerGate.markRunnerFinished()
+                }
+            )
+
+            // When the application close-and-wait API runs before the runner
+            // task has released its cleanup path.
+            let closeTask = Task {
+                await manager.closePaneAndWait(tab: tab, paneId: tab.rootPaneId)
+                await runnerGate.markCloseReturned()
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+
+            // Then close-and-wait must still be waiting on the runner task.
+            #expect(
+                await !runnerGate.closeReturned,
+                "closePaneAndWait must not return while the stored runner task is still finishing."
+            )
+
+            await runnerGate.release()
+            await closeTask.value
+            #expect(
+                await runnerGate.runnerFinished,
+                "The delayed runner task should finish before closePaneAndWait returns."
+            )
         }
     }
 
@@ -1924,6 +2028,31 @@ private struct TestTerminalTabsSnapshot: Codable {
     }
 
     let servers: [ServerSnapshot]
+}
+
+private actor RunnerTaskGate {
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private(set) var runnerFinished = false
+    private(set) var closeReturned = false
+
+    func waitForRelease() async {
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+        }
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+
+    func markRunnerFinished() {
+        runnerFinished = true
+    }
+
+    func markCloseReturned() {
+        closeReturned = true
+    }
 }
 
 private actor RecordingPaneRuntimeClient: TerminalConnectionClient {

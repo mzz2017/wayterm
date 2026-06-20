@@ -135,6 +135,7 @@ actor TerminalConnectionRuntime {
 
         guard let client else {
             shellId = nil
+            await pendingShellTask?.value
             state = .disconnected
             return
         }
@@ -150,6 +151,7 @@ actor TerminalConnectionRuntime {
             self.client = nil
         }
 
+        await pendingShellTask?.value
         state = .disconnected
     }
 

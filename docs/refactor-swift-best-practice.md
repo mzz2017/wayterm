@@ -2636,36 +2636,36 @@ git commit -m "fix: clear completed teardown waits synchronously"
   - Awaitable close paths that do not return until the stored runner task and its main-actor finish path have completed or been explicitly classified as impossible to await.
   - A corrected Progress Ledger statement for Task 31: any remaining manager/runtime bridge state must be named and tested rather than claimed gone.
 
-- [ ] **Step 1: Add RED runner-close ordering tests**
+- [x] **Step 1: Add RED runner-close ordering tests**
 
 Add tests proving `closeSessionAndWait(_:)` and `closePaneAndWait(_:)` wait for a delayed production runner cleanup path before returning. The test should fail because current close paths cancel/drop the stored runner task rather than awaiting its completion.
 
-- [ ] **Step 2: Run RED verification**
+- [x] **Step 2: Run RED verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalConnectionRuntimeTests ENABLE_DEBUG_DYLIB=NO
 ```
 
-- [ ] **Step 3: Make runner cancellation awaitable**
+- [x] **Step 3: Make runner cancellation awaitable**
 
 Move runner-task cancellation/finish ordering behind the runtime owner or expose an explicit awaitable manager path. Any nested main-actor cleanup scheduled from a runner `defer` must complete before close-and-wait reports completion.
 
-- [ ] **Step 4: Reconcile runtime ownership ledger**
+- [x] **Step 4: Reconcile runtime ownership ledger**
 
 Update Task 31 ledger wording so it does not overclaim that managers no longer own raw SSH client, shell id, or runner task bridge state unless the code now proves that. Remaining bridge state must be documented as a temporary boundary with an invariant and follow-up task.
 
-- [ ] **Step 5: Run focused verification**
+- [x] **Step 5: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalConnectionRuntimeTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 6: API and boundary cleanup**
+- [x] **Step 6: API and boundary cleanup**
 
 Verify close/reconnect APIs name side effects clearly, no stored runner task is dropped before its finish path is observed, and same-server reopen waits for prior runner teardown through existing server teardown gates.
 
-- [ ] **Step 7: Request review and commit**
+- [x] **Step 7: Request review and commit**
 
 ```bash
 git add VVTerm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift VVTermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift docs/refactor-swift-best-practice.md
@@ -2890,7 +2890,8 @@ Commit each split sub-task atomically.
 ## Progress Ledger
 
 - 2026-06-21: Post-Task-35 closure audit found the plan was not actually ready for final merge review. Current non-exempt gaps are now tracked as Tasks 36-40: terminal runner close must await the stored runner finish path, terminal reconnect orchestration still lives in SwiftUI, iOS RemoteFiles disconnect drops returned teardown tasks, Core SSH needs tighter disconnect timeout/cancellation diagnostics, and cross-feature save/delete/sync/download/window ownership still needs a scoped sweep.
-- 2026-06-21: Task 31 completed. Terminal runtime/client factory ownership is centralized in `TerminalConnectionRuntime`; session and tab managers no longer own raw SSH client, shell id, or runner task state directly, and late/missing shell registrations are rejected before runner follow-up callbacks mutate closed state.
+- 2026-06-21: Task 36 RED/GREEN completed. RED verification showed `closeSessionAndWait(_:)` already waited for a delayed stored runner task, while `closePaneAndWait(_:)` returned before a delayed stored runtime shell task finished. `TerminalConnectionRuntime.close(mode:)` now awaits the stored shell task in every close branch, and regression tests cover both session and pane close ordering. Verification: focused lifecycle/runtime suite passed 57 Swift Testing tests, and `git diff --check` passed.
+- 2026-06-21: Task 31 completed, with Task 36 ledger correction. Terminal runtime/client factory ownership is centralized in `TerminalConnectionRuntime`; session and tab managers still hold temporary application-boundary bridge maps and shell registry leases for runtime lookup/registration, but runner finish ordering is protected by awaitable runtime close paths and late/missing shell registrations are rejected before runner follow-up callbacks mutate closed state.
 - 2026-06-21: Task 32 RED/GREEN and API cleanup completed. `TerminalConnectionRunner` now depends on `TerminalConnectionSurface` and abstract connection operations instead of `GhosttyTerminalView`; `GhosttyTerminalView` adaptation lives at the surface registry/application boundary, and runner tests cover fake-surface size reads, stream writes, and process-exit notification without constructing a UI surface.
 - 2026-06-21: Final audit after Task 32 found repo-wide drift against the Swift test context rule: multiple older `VVTermTests/**/*.swift` files still lack `Test Context` headers. Task 33 is added to close this rule before final ready-for-merge review.
 - 2026-06-21: Task 33 RED scan listed legacy `VVTermTests/**/*.swift` files missing `Test Context`; the sweep added file-level headers only, and the GREEN scan produced no output.

@@ -2035,6 +2035,14 @@ extension TerminalTabManager {
         terminalConnectionRegistry.runtime(for: entityId) != nil
     }
 
+    func setRuntimeShellTaskForTesting(
+        paneId: UUID,
+        _ task: Task<Void, Never>
+    ) async {
+        guard let runtime = paneRuntimes[paneId] else { return }
+        await runtime.runtime.setShellTask(task)
+    }
+
     func completeRuntimeShellStartForTesting(
         paneId: UUID,
         client: SSHClient,
