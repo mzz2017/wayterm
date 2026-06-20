@@ -81,8 +81,8 @@ final class TerminalTabManager: ObservableObject {
 
     // MARK: - Terminal Registry
 
-    /// Terminal views keyed by pane ID
-    private var terminalViews: [UUID: GhosttyTerminalView] = [:]
+    /// Terminal UI surfaces keyed by pane entity. SSH runtime ownership is separate.
+    private let terminalSurfaceRegistry = TerminalSurfaceRegistry()
     private var shellRegistry = SSHShellRegistry(staleThreshold: 120)
     /// Server IDs with an in-flight tab-open request to avoid queued duplicates.
     private var tabOpensInFlight: Set<UUID> = []
@@ -480,15 +480,13 @@ final class TerminalTabManager: ObservableObject {
 
     /// Register a terminal view for a pane
     func registerTerminal(_ terminal: GhosttyTerminalView, for paneId: UUID) {
-        terminalViews[paneId] = terminal
+        terminalSurfaceRegistry.register(terminal, for: .pane(paneId))
         scheduleTerminalRegistryVersionUpdate()
     }
 
     /// Unregister a terminal view
     func unregisterTerminal(for paneId: UUID) {
-        if let terminal = terminalViews.removeValue(forKey: paneId) {
-            terminal.cleanup()
-        }
+        terminalSurfaceRegistry.removeSurface(for: .pane(paneId), cleanup: true)
         scheduleTerminalRegistryVersionUpdate()
     }
 
@@ -500,7 +498,7 @@ final class TerminalTabManager: ObservableObject {
 
     /// Get terminal for a pane
     func getTerminal(for paneId: UUID) -> GhosttyTerminalView? {
-        terminalViews[paneId]
+        terminalSurfaceRegistry.surface(for: .pane(paneId))
     }
 
     func configureRuntime(
@@ -526,7 +524,7 @@ final class TerminalTabManager: ObservableObject {
     }
 
     func attachSurface(_ terminal: GhosttyTerminalView, toPane paneId: UUID) async {
-        if terminalViews[paneId] !== terminal {
+        if terminalSurfaceRegistry.surface(for: .pane(paneId)) !== terminal {
             registerTerminal(terminal, for: paneId)
         }
 
@@ -536,10 +534,8 @@ final class TerminalTabManager: ObservableObject {
     func detachSurface(fromPane paneId: UUID, reason: TerminalSurfaceDetachReason) async {
         switch reason {
         case .viewDisappeared:
-            terminalViews[paneId]?.pauseRendering()
+            terminalSurfaceRegistry.detachSurface(for: .pane(paneId), cleanup: false)
         case .sessionClosed:
-            await cancelRuntime(forPane: paneId, mode: .fullDisconnect, cleanupTerminal: true, closeRegisteredShell: false)
-            await unregisterSSHClient(for: paneId)
             unregisterTerminal(for: paneId)
         }
     }
@@ -782,8 +778,8 @@ final class TerminalTabManager: ObservableObject {
         let shellId = runtime?.shellId
         runtime?.shellId = nil
 
-        if cleanupTerminal, let terminal = terminalViews[paneId] {
-            terminal.cleanup()
+        if cleanupTerminal {
+            terminalSurfaceRegistry.removeSurface(for: .pane(paneId), cleanup: true)
         }
 
         guard let runtime else { return }
@@ -1123,7 +1119,7 @@ final class TerminalTabManager: ObservableObject {
             setPaneTransport(.ssh, fallbackReason: nil, for: paneId)
         case .disconnected, .failed:
             setPanePresentationOverrides(.empty, for: paneId)
-            terminalViews[paneId]?.applyPresentationOverrides(.empty)
+            terminalSurfaceRegistry.surface(for: .pane(paneId))?.applyPresentationOverrides(.empty)
             if paneTmuxStatus(for: paneId) == .foreground {
                 setPaneTmuxStatus(.background, for: paneId)
             }
@@ -1170,7 +1166,7 @@ final class TerminalTabManager: ObservableObject {
         }
         setPanePresentationOverrides(overrides, for: paneId)
         schedulePersist()
-        terminalViews[paneId]?.applyPresentationOverrides(overrides)
+        terminalSurfaceRegistry.surface(for: .pane(paneId))?.applyPresentationOverrides(overrides)
         return TerminalZoomResult(
             presentationOverrides: overrides,
             effectiveFontSize: overrides.resolvedFontSize()
@@ -1727,7 +1723,7 @@ extension TerminalTabManager {
             uniqueClients[ObjectIdentifier(context.client)] = context.client
         }
 
-        let terminals = Array(terminalViews.values)
+        let terminals = terminalSurfaceRegistry.removeAll(cleanup: false)
         isRestoring = true
         tabsByServer = [:]
         selectedTabByServer = [:]
@@ -1736,7 +1732,6 @@ extension TerminalTabManager {
         paneStates = [:]
         tmuxAttachPrompt = nil
         terminalRegistryVersion = 0
-        terminalViews.removeAll()
         shellRegistry.removeAll()
         tabOpensInFlight.removeAll()
         serverTeardownTasks.removeAll()

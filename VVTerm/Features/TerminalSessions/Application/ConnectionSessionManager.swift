@@ -112,8 +112,8 @@ final class ConnectionSessionManager: ObservableObject {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ConnectionSession")
     private var shellRegistry = SSHShellRegistry(staleThreshold: 120)
 
-    /// Terminal views indexed by session ID for voice input and other external interactions
-    private var terminalViews: [UUID: GhosttyTerminalView] = [:]
+    /// Terminal UI surfaces indexed by session entity. SSH runtime ownership is separate.
+    private let terminalSurfaceRegistry = TerminalSurfaceRegistry()
     /// Sessions whose preserved terminal must be reset before attaching a fresh shell.
     private var terminalsNeedingReconnectReset: Set<UUID> = []
 
@@ -143,9 +143,6 @@ final class ConnectionSessionManager: ObservableObject {
     /// Maximum number of terminal surfaces to keep in memory
     /// Each Ghostty surface uses ~50-100MB (font atlas, Metal textures, scrollback)
     private let maxTerminals = 20
-
-    /// LRU access order - most recently accessed at the end
-    private var terminalAccessOrder: [UUID] = []
 
     private let persistenceKey = "connectionSessionsSnapshot.v1"
     private var persistTask: Task<Void, Never>?
@@ -369,7 +366,7 @@ final class ConnectionSessionManager: ObservableObject {
         case .disconnected, .failed:
             if case .failed = state {
                 sessions[index].presentationOverrides = .empty
-                terminalViews[sessionId]?.applyPresentationOverrides(.empty)
+                terminalSurfaceRegistry.surface(for: .session(sessionId))?.applyPresentationOverrides(.empty)
             }
             if sessions[index].tmuxStatus == .foreground {
                 setTmuxStatus(.background, for: sessionId)
@@ -442,7 +439,7 @@ final class ConnectionSessionManager: ObservableObject {
         }
         setPresentationOverrides(overrides, for: sessionId)
         schedulePersist()
-        terminalViews[sessionId]?.applyPresentationOverrides(overrides)
+        terminalSurfaceRegistry.surface(for: .session(sessionId))?.applyPresentationOverrides(overrides)
         return TerminalZoomResult(
             presentationOverrides: overrides,
             effectiveFontSize: overrides.resolvedFontSize()
@@ -569,7 +566,7 @@ final class ConnectionSessionManager: ObservableObject {
         wasSelected: Bool,
         replacementSessionId: UUID?
     ) {
-        if let terminal = terminalViews[sessionId], terminal.window != nil {
+        if let terminal = terminalSurfaceRegistry.surface(for: .session(sessionId)), terminal.window != nil {
             terminal.pauseRendering()
             if !wasSelected {
                 _ = terminal.resignFirstResponder()
@@ -579,7 +576,7 @@ final class ConnectionSessionManager: ObservableObject {
         }
 
         guard let replacementSessionId,
-              let replacementTerminal = terminalViews[replacementSessionId],
+              let replacementTerminal = terminalSurfaceRegistry.surface(for: .session(replacementSessionId)),
               replacementTerminal.window != nil else {
             return
         }
@@ -595,7 +592,7 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func redrawSessionAfterClose(_ session: ConnectionSession) {
-        guard let terminal = terminalViews[session.id] else { return }
+        guard let terminal = terminalSurfaceRegistry.surface(for: .session(session.id)) else { return }
         terminal.resumeRendering()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak terminal] in
@@ -667,7 +664,7 @@ final class ConnectionSessionManager: ObservableObject {
     /// Handle shell exit without removing the session (keeps tab for reconnect)
     func handleShellExit(for sessionId: UUID) {
         setPresentationOverrides(.empty, for: sessionId)
-        terminalViews[sessionId]?.applyPresentationOverrides(.empty)
+        terminalSurfaceRegistry.surface(for: .session(sessionId))?.applyPresentationOverrides(.empty)
         updateSessionState(sessionId, to: .disconnected)
         markTerminalForReconnectReset(for: sessionId)
         scheduleSSHUnregister(for: sessionId)
@@ -991,21 +988,20 @@ final class ConnectionSessionManager: ObservableObject {
             }
         }
         #endif
-        terminalViews[sessionId] = terminal
+        terminalSurfaceRegistry.register(terminal, for: .session(sessionId))
         #if os(iOS)
         Task { @MainActor [weak self, weak terminal] in
-            guard let self, let terminal, self.terminalViews[sessionId] === terminal else { return }
+            guard let self, let terminal, self.terminalSurfaceRegistry.surface(for: .session(sessionId)) === terminal else { return }
             self.setTerminalBrowseMode(terminal.isKeyboardInBrowseMode, for: sessionId)
             self.setTerminalFindNavigatorVisible(terminal.isFindNavigatorVisible, for: sessionId)
         }
         #endif
-        touchTerminal(sessionId)
 
-        logger.debug("Registered terminal for session, total: \(self.terminalViews.count)/\(self.maxTerminals)")
+        logger.debug("Registered terminal for session, total: \(self.terminalSurfaceRegistry.count)/\(self.maxTerminals)")
     }
 
     func unregisterTerminal(for sessionId: UUID) {
-        cleanupTerminalSurface(for: sessionId)
+        terminalSurfaceRegistry.removeSurface(for: .session(sessionId), cleanup: true)
         terminalsNeedingReconnectReset.remove(sessionId)
         #if os(iOS)
         Task { @MainActor [weak self] in
@@ -1016,24 +1012,12 @@ final class ConnectionSessionManager: ObservableObject {
         terminalBrowseModeBySession.removeValue(forKey: sessionId)
         terminalFindNavigatorVisibleBySession.removeValue(forKey: sessionId)
         #endif
-        removeTerminalFromAccessOrder(sessionId)
-        logger.debug("Unregistered terminal, remaining: \(self.terminalViews.count)")
+        logger.debug("Unregistered terminal, remaining: \(self.terminalSurfaceRegistry.count)")
     }
 
     /// Update access order for LRU tracking
     private func touchTerminal(_ sessionId: UUID) {
-        removeTerminalFromAccessOrder(sessionId)
-        terminalAccessOrder.append(sessionId)
-    }
-
-    private func cleanupTerminalSurface(for sessionId: UUID) {
-        if let terminal = terminalViews.removeValue(forKey: sessionId) {
-            #if os(iOS)
-            terminal.onKeyboardBrowseModeChange = nil
-            terminal.onFindNavigatorVisibilityChange = nil
-            #endif
-            terminal.cleanup()
-        }
+        terminalSurfaceRegistry.touch(.session(sessionId))
     }
 
     private func setTerminalBrowseMode(_ isBrowsing: Bool, for sessionId: UUID) {
@@ -1048,32 +1032,14 @@ final class ConnectionSessionManager: ObservableObject {
         }
     }
 
-    private func removeTerminalFromAccessOrder(_ sessionId: UUID) {
-        terminalAccessOrder.removeAll { $0 == sessionId }
-    }
-
     /// Evict least recently used terminals if over capacity
     private func evictOldTerminalsIfNeeded() {
-        while terminalViews.count >= maxTerminals, let oldestId = terminalAccessOrder.first {
-            // Don't evict the currently selected session
-            if oldestId == selectedSessionId {
-                terminalAccessOrder.removeFirst()
-                terminalAccessOrder.append(oldestId)
-                continue
-            }
-
-            logger.info("Evicting oldest terminal to free memory (count: \(self.terminalViews.count))")
-
-            // Remove from access order
-            terminalAccessOrder.removeFirst()
-
-            // Cleanup and remove terminal
-            cleanupTerminalSurface(for: oldestId)
-
-            // Also cleanup associated SSH shell
+        let selectedEntityId = selectedSessionId.map(TerminalEntityID.session)
+        terminalSurfaceRegistry.evictOldest(maxCount: maxTerminals, preserving: selectedEntityId) { [weak self] entityId in
+            guard let self else { return }
+            guard case .session(let oldestId) = entityId else { return }
+            logger.info("Evicting oldest terminal to free memory (count: \(self.terminalSurfaceRegistry.count))")
             scheduleSSHUnregister(for: oldestId)
-
-            // Call shell cancel handler
             _ = cancelAndClearShellHandlers(for: oldestId)
         }
     }
@@ -1098,7 +1064,7 @@ final class ConnectionSessionManager: ObservableObject {
 
     private func pauseCachedTerminalsForBackground() {
         #if os(iOS)
-        for terminal in terminalViews.values {
+        for terminal in terminalSurfaceRegistry.allSurfaces {
             terminal.pauseRendering()
             if terminal.isFirstResponder {
                 terminal.markKeyboardFocusForReconnect()
@@ -1109,21 +1075,17 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     func getTerminal(for sessionId: UUID) -> GhosttyTerminalView? {
-        if let terminal = terminalViews[sessionId] {
-            touchTerminal(sessionId)
-            return terminal
-        }
-        return nil
+        terminalSurfaceRegistry.accessedSurface(for: .session(sessionId))
     }
 
     /// Returns a terminal without mutating LRU state.
     func peekTerminal(for sessionId: UUID) -> GhosttyTerminalView? {
-        terminalViews[sessionId]
+        terminalSurfaceRegistry.surface(for: .session(sessionId))
     }
 
     /// Returns whether a terminal exists without mutating LRU state.
     func hasTerminal(for sessionId: UUID) -> Bool {
-        terminalViews[sessionId] != nil
+        terminalSurfaceRegistry.hasSurface(for: .session(sessionId))
     }
 
     func markTerminalForReconnectReset(for sessionId: UUID) {
@@ -1201,7 +1163,7 @@ final class ConnectionSessionManager: ObservableObject {
 
     /// Marks an existing terminal as recently used without fetching it for body evaluation.
     func markTerminalUsed(for sessionId: UUID) {
-        guard terminalViews[sessionId] != nil else { return }
+        guard terminalSurfaceRegistry.hasSurface(for: .session(sessionId)) else { return }
         touchTerminal(sessionId)
     }
 
@@ -1228,7 +1190,7 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     func attachSurface(_ terminal: GhosttyTerminalView, to sessionId: UUID) async {
-        if terminalViews[sessionId] !== terminal {
+        if terminalSurfaceRegistry.surface(for: .session(sessionId)) !== terminal {
             registerTerminal(terminal, for: sessionId)
         }
 
@@ -1245,11 +1207,8 @@ final class ConnectionSessionManager: ObservableObject {
     func detachSurface(from sessionId: UUID, reason: TerminalSurfaceDetachReason) async {
         switch reason {
         case .viewDisappeared:
-            terminalViews[sessionId]?.pauseRendering()
+            terminalSurfaceRegistry.detachSurface(for: .session(sessionId), cleanup: false)
         case .sessionClosed:
-            await cancelRuntime(for: sessionId, mode: .fullDisconnect, cleanupTerminal: true)
-            unregisterShellCancelHandler(for: sessionId)
-            unregisterShellSuspendHandler(for: sessionId)
             unregisterTerminal(for: sessionId)
         }
     }
@@ -1499,8 +1458,8 @@ final class ConnectionSessionManager: ObservableObject {
         let shellId = runtime?.shellId
         runtime?.shellId = nil
 
-        if cleanupTerminal, let terminal = terminalViews[sessionId] {
-            terminal.cleanup()
+        if cleanupTerminal {
+            terminalSurfaceRegistry.removeSurface(for: .session(sessionId), cleanup: true)
         }
 
         guard let runtime else { return }
@@ -1536,7 +1495,7 @@ final class ConnectionSessionManager: ObservableObject {
 
     /// Send text to the terminal for a given session (used by voice input)
     func sendText(_ text: String, to sessionId: UUID) {
-        guard let terminal = terminalViews[sessionId] else { return }
+        guard let terminal = terminalSurfaceRegistry.surface(for: .session(sessionId)) else { return }
         terminal.sendText(text)
     }
 
@@ -2095,7 +2054,7 @@ extension ConnectionSessionManager {
             uniqueClients[ObjectIdentifier(context.client)] = context.client
         }
 
-        let terminals = Array(terminalViews.values)
+        let terminals = terminalSurfaceRegistry.removeAll(cleanup: false)
         isRestoring = true
         sessions = []
         selectedSessionId = nil
@@ -2111,8 +2070,6 @@ extension ConnectionSessionManager {
         terminalsNeedingReconnectReset.removeAll()
         isSuspendingForBackground = false
         tmuxCleanupServers.removeAll()
-        terminalViews.removeAll()
-        terminalAccessOrder.removeAll()
         sessionRuntimes.removeAll()
         testingTerminalConnectionClientFactory = nil
         isRestoring = false
