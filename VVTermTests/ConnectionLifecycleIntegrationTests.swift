@@ -226,6 +226,32 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerActiveSessionsComeFromRegistryNotDomainSessionState() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let staleDomainSession = ConnectionSession(
+                serverId: server.id,
+                title: "Stale Domain Connected",
+                connectionState: .connected
+            )
+            let registryLiveSession = ConnectionSession(
+                serverId: server.id,
+                title: "Registry Live",
+                connectionState: .disconnected
+            )
+
+            manager.sessions = [staleDomainSession, registryLiveSession]
+            manager.updateSessionState(registryLiveSession.id, to: .connected)
+            manager.sessions[1].connectionState = .disconnected
+
+            #expect(
+                manager.activeSessions.map(\.id) == [registryLiveSession.id],
+                "Active sessions should come from registry runtime state, not stale domain snapshots."
+            )
+        }
+    }
+
+    @Test
     func tabManagerActiveServersComeFromRegistryNotDomainPaneState() async {
         await withCleanTabManager { manager in
             let server = makeServer()

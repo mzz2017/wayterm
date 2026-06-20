@@ -282,7 +282,11 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     var activeSessions: [ConnectionSession] {
-        sessions.filter { $0.connectionState.isConnected || $0.connectionState.isConnecting }
+        let liveEntityIDs = sessions.reduce(into: Set<TerminalEntityID>()) { result, session in
+            let serverLiveEntityIDs = terminalConnectionRegistry.openingOrStreamingEntityIDs(for: session.serverId)
+            result.formUnion(serverLiveEntityIDs)
+        }
+        return sessions.filter { liveEntityIDs.contains(.session($0.id)) }
     }
 
     var canOpenNewTab: Bool {
