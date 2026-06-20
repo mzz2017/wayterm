@@ -31,7 +31,6 @@ struct TerminalContainerView: View {
     @State private var operationNotice: NoticeItem?
     @State private var dismissFallbackBanner = false
     @State private var reconnectInFlight = false
-    @State private var connectWatchdogToken = UUID()
     @State private var hasEstablishedConnection = false
     @State private var showingRetrustHostConfirmation = false
     @StateObject private var richPasteUI = TerminalRichPasteUIModel()
@@ -271,7 +270,6 @@ struct TerminalContainerView: View {
             }
         }
         .onChange(of: isReady) { _ in
-            connectWatchdogToken = UUID()
             startConnectWatchdog()
         }
         .onChange(of: session.connectionState) { state in
@@ -283,7 +281,6 @@ struct TerminalContainerView: View {
                     hasEstablishedConnection = true
                 }
                 reconnectInFlight = false
-                connectWatchdogToken = UUID()
                 startConnectWatchdog()
             } else if case .disconnected = state {
                 attemptAutoReconnectIfNeeded()
@@ -680,40 +677,13 @@ struct TerminalContainerView: View {
     }
 
     private func startConnectWatchdog() {
-        guard ConnectionSessionManager.shared.shouldScheduleConnectWatchdog(
+        ConnectionSessionManager.shared.scheduleConnectWatchdog(
             forSessionId: session.id,
             isReady: isReady,
-            terminalExists: terminalAlreadyExists
-        ) else { return }
-        let token = connectWatchdogToken
-
-        Task {
-            try? await Task.sleep(for: .seconds(20))
-            guard !Task.isCancelled else { return }
-
-            await MainActor.run {
-                guard token == connectWatchdogToken else { return }
-
-                let stillConnecting = session.connectionState.isConnecting
-                let stillConnectedNoTerminal = session.connectionState.isConnected && !isReady && !terminalAlreadyExists
-                guard stillConnecting || stillConnectedNoTerminal else { return }
-
-                let watchdogAction = ConnectionSessionManager.shared.handleConnectWatchdogTimeout(
-                    forSessionId: session.id,
-                    isReady: isReady,
-                    terminalExists: terminalAlreadyExists,
-                    timeoutMessage: String(localized: "Connection timed out. Please retry.")
-                )
-
-                switch watchdogAction {
-                case .retry:
-                    Task { await retryConnection() }
-                case .continueWatching:
-                    startConnectWatchdog()
-                case .none:
-                    break
-                }
-            }
+            terminalExists: terminalAlreadyExists,
+            timeoutMessage: String(localized: "Connection timed out. Please retry.")
+        ) {
+            await retryConnection()
         }
     }
 
@@ -731,7 +701,6 @@ struct TerminalContainerView: View {
         guard credentials != nil else { return }
         ghosttyApp.startIfNeeded()
         try? await ConnectionSessionManager.shared.reconnect(session: session)
-        connectWatchdogToken = UUID()
         startConnectWatchdog()
         reconnectToken = UUID()
     }

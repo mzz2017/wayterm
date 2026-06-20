@@ -184,6 +184,9 @@ final class ConnectionSessionManager: ObservableObject {
     private var sessionOpensInFlight: Set<UUID> = []
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
     private var serverDisconnectTasks: [UUID: Task<Void, Never>] = [:]
+    /// Application-owned connect watchdog timers keyed by session.
+    private var connectWatchdogTasks: [UUID: Task<Void, Never>] = [:]
+    private var connectWatchdogGenerations: [UUID: UUID] = [:]
     /// Per-server teardown work from ordinary tab closes. New opens wait for this too.
     private var serverTeardownTasks: [UUID: [UUID: Task<Void, Never>]] = [:]
     /// Application-owned tab SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
@@ -489,6 +492,63 @@ final class ConnectionSessionManager: ObservableObject {
     ) -> Bool {
         guard let state = sessionState(for: sessionId) else { return false }
         return state.isConnecting || (state.isConnected && !isReady && !terminalExists)
+    }
+
+    func scheduleConnectWatchdog(
+        forSessionId sessionId: UUID,
+        isReady: Bool,
+        terminalExists: Bool,
+        timeout: Duration = .seconds(20),
+        timeoutMessage: String,
+        onRetry: @escaping @MainActor () async -> Void
+    ) {
+        connectWatchdogTasks[sessionId]?.cancel()
+        connectWatchdogTasks[sessionId] = nil
+
+        guard shouldScheduleConnectWatchdog(
+            forSessionId: sessionId,
+            isReady: isReady,
+            terminalExists: terminalExists
+        ) else {
+            connectWatchdogGenerations.removeValue(forKey: sessionId)
+            return
+        }
+
+        let generation = UUID()
+        connectWatchdogGenerations[sessionId] = generation
+        let task = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+            guard self.connectWatchdogGenerations[sessionId] == generation else { return }
+
+            let action = self.handleConnectWatchdogTimeout(
+                forSessionId: sessionId,
+                isReady: isReady,
+                terminalExists: terminalExists,
+                timeoutMessage: timeoutMessage
+            )
+
+            switch action {
+            case .retry:
+                self.connectWatchdogTasks[sessionId] = nil
+                self.connectWatchdogGenerations.removeValue(forKey: sessionId)
+                await onRetry()
+            case .continueWatching:
+                self.scheduleConnectWatchdog(
+                    forSessionId: sessionId,
+                    isReady: isReady,
+                    terminalExists: terminalExists,
+                    timeout: timeout,
+                    timeoutMessage: timeoutMessage,
+                    onRetry: onRetry
+                )
+            case .none:
+                self.connectWatchdogTasks[sessionId] = nil
+                self.connectWatchdogGenerations.removeValue(forKey: sessionId)
+            }
+        }
+        connectWatchdogTasks[sessionId] = task
     }
 
     func handleConnectWatchdogTimeout(
@@ -2376,6 +2436,9 @@ extension ConnectionSessionManager {
         shellCancelHandlers.removeAll()
         shellSuspendHandlers.removeAll()
         sessionOpensInFlight.removeAll()
+        connectWatchdogTasks.values.forEach { $0.cancel() }
+        connectWatchdogTasks.removeAll()
+        connectWatchdogGenerations.removeAll()
         serverDisconnectTasks.removeAll()
         terminalsNeedingReconnectReset.removeAll()
         isSuspendingForBackground = false

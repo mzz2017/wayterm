@@ -387,7 +387,6 @@ struct TerminalPaneView: View {
     @State private var dismissFallbackBanner = false
     @State private var reconnectInFlight = false
     @State private var terminalBackgroundColor: Color = Self.initialTerminalBackgroundColor()
-    @State private var connectWatchdogToken = UUID()
     @State private var hasEstablishedConnection = false
     @State private var showingRetrustHostConfirmation = false
     @StateObject private var richPasteUI = TerminalRichPasteUIModel()
@@ -601,7 +600,6 @@ struct TerminalPaneView: View {
             }
         }
         .onChange(of: isReady) { _ in
-            connectWatchdogToken = UUID()
             startConnectWatchdog()
         }
         .onChange(of: connectionState) { state in
@@ -613,7 +611,6 @@ struct TerminalPaneView: View {
                     hasEstablishedConnection = true
                 }
                 reconnectInFlight = false
-                connectWatchdogToken = UUID()
                 startConnectWatchdog()
             } else if case .disconnected = state {
                 attemptAutoReconnectIfNeeded()
@@ -835,7 +832,6 @@ struct TerminalPaneView: View {
             }
         }
         reconnectInFlight = true
-        connectWatchdogToken = UUID()
         reconnectToken = UUID()
         Task {
             await TerminalTabManager.shared.reconnectPane(paneId)
@@ -847,37 +843,13 @@ struct TerminalPaneView: View {
     }
 
     private func startConnectWatchdog() {
-        guard TerminalTabManager.shared.shouldScheduleConnectWatchdog(
+        TerminalTabManager.shared.scheduleConnectWatchdog(
             forPaneId: paneId,
             isReady: isReady,
-            terminalExists: terminalExists
-        ) else { return }
-        let token = connectWatchdogToken
-        Task {
-            try? await Task.sleep(for: .seconds(20))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard token == connectWatchdogToken else { return }
-                let stillConnecting = connectionState.isConnecting
-                let stillConnectedWithoutTerminal = connectionState.isConnected && !isReady && !terminalExists
-                guard stillConnecting || stillConnectedWithoutTerminal else { return }
-
-                let watchdogAction = TerminalTabManager.shared.handleConnectWatchdogTimeout(
-                    forPaneId: paneId,
-                    isReady: isReady,
-                    terminalExists: terminalExists,
-                    timeoutMessage: String(localized: "Connection timed out. Please retry.")
-                )
-
-                switch watchdogAction {
-                case .retry:
-                    retryConnection()
-                case .continueWatching:
-                    startConnectWatchdog()
-                case .none:
-                    break
-                }
-            }
+            terminalExists: terminalExists,
+            timeoutMessage: String(localized: "Connection timed out. Please retry.")
+        ) {
+            retryConnection()
         }
     }
 

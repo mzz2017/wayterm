@@ -384,6 +384,84 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerOwnsConnectWatchdogRetryTask() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .connected
+            )
+            manager.sessions = [session]
+            manager.updateSessionState(session.id, to: .connected)
+            var retryCount = 0
+
+            // Given a connected session whose terminal surface never became
+            // ready, and SwiftUI sends only the current surface state.
+            manager.scheduleConnectWatchdog(
+                forSessionId: session.id,
+                isReady: false,
+                terminalExists: false,
+                timeout: .milliseconds(10),
+                timeoutMessage: "timeout"
+            ) {
+                retryCount += 1
+            }
+
+            // When the manager-owned watchdog timeout expires.
+            try? await Task.sleep(for: .milliseconds(150))
+
+            // Then retry is triggered by the application layer task, not by a
+            // SwiftUI-owned sleep/retry orchestration.
+            #expect(retryCount == 1)
+            #expect(manager.sessionState(for: session.id) == .disconnected)
+        }
+    }
+
+    @Test
+    func connectionManagerCancelsConnectWatchdogWhenSurfaceBecomesReady() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .connected
+            )
+            manager.sessions = [session]
+            manager.updateSessionState(session.id, to: .connected)
+            var retryCount = 0
+
+            // Given an initial watchdog for a connected session without a
+            // ready terminal surface.
+            manager.scheduleConnectWatchdog(
+                forSessionId: session.id,
+                isReady: false,
+                terminalExists: false,
+                timeout: .milliseconds(30),
+                timeoutMessage: "timeout"
+            ) {
+                retryCount += 1
+            }
+
+            // When SwiftUI reports that the terminal surface is now ready.
+            manager.scheduleConnectWatchdog(
+                forSessionId: session.id,
+                isReady: true,
+                terminalExists: true,
+                timeout: .milliseconds(10),
+                timeoutMessage: "timeout"
+            ) {
+                retryCount += 1
+            }
+            try? await Task.sleep(for: .milliseconds(150))
+
+            // Then the previous manager-owned watchdog is cancelled.
+            #expect(retryCount == 0)
+            #expect(manager.sessionState(for: session.id) == .connected)
+        }
+    }
+
+    @Test
     func connectionManagerRefreshesLiveActivityWithRegistryActiveSessionsOnly() async {
         await withCleanConnectionManager { manager in
             let server = makeServer()
@@ -569,6 +647,39 @@ struct ConnectionLifecycleIntegrationTests {
                 ),
                 "Ready connected panes should not schedule another watchdog."
             )
+        }
+    }
+
+    @Test
+    func tabManagerOwnsConnectWatchdogRetryTask() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tabId = UUID()
+            let paneId = UUID()
+            var paneState = TerminalPaneState(paneId: paneId, tabId: tabId, serverId: server.id)
+            paneState.connectionState = .connected
+            manager.paneStates[paneId] = paneState
+            manager.updatePaneState(paneId, connectionState: .connected)
+            var retryCount = 0
+
+            // Given a connected split pane whose terminal surface never became
+            // ready, and SwiftUI sends only surface state.
+            manager.scheduleConnectWatchdog(
+                forPaneId: paneId,
+                isReady: false,
+                terminalExists: false,
+                timeout: .milliseconds(10),
+                timeoutMessage: "timeout"
+            ) {
+                retryCount += 1
+            }
+
+            // When the manager-owned watchdog timeout expires.
+            try? await Task.sleep(for: .milliseconds(150))
+
+            // Then retry is triggered by TerminalTabManager's task.
+            #expect(retryCount == 1)
+            #expect(manager.paneStates[paneId]?.connectionState == .disconnected)
         }
     }
 

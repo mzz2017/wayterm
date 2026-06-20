@@ -133,6 +133,9 @@ final class TerminalTabManager: ObservableObject {
     private var tabOpensInFlight: Set<UUID> = []
     /// In-flight SSH teardown tasks by server, used to serialize close/open ordering.
     private var serverTeardownTasks: [UUID: [UUID: Task<Void, Never>]] = [:]
+    /// Application-owned connect watchdog timers keyed by pane.
+    private var connectWatchdogTasks: [UUID: Task<Void, Never>] = [:]
+    private var connectWatchdogGenerations: [UUID: UUID] = [:]
     /// Application-owned pane SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
     private var paneRuntimes: [UUID: PaneRuntimeState] = [:]
     private let terminalConnectionRegistry = TerminalConnectionRegistry()
@@ -1188,6 +1191,63 @@ final class TerminalTabManager: ObservableObject {
         return state.isConnecting || (state.isConnected && !isReady && !terminalExists)
     }
 
+    func scheduleConnectWatchdog(
+        forPaneId paneId: UUID,
+        isReady: Bool,
+        terminalExists: Bool,
+        timeout: Duration = .seconds(20),
+        timeoutMessage: String,
+        onRetry: @escaping @MainActor () async -> Void
+    ) {
+        connectWatchdogTasks[paneId]?.cancel()
+        connectWatchdogTasks[paneId] = nil
+
+        guard shouldScheduleConnectWatchdog(
+            forPaneId: paneId,
+            isReady: isReady,
+            terminalExists: terminalExists
+        ) else {
+            connectWatchdogGenerations.removeValue(forKey: paneId)
+            return
+        }
+
+        let generation = UUID()
+        connectWatchdogGenerations[paneId] = generation
+        let task = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+            guard self.connectWatchdogGenerations[paneId] == generation else { return }
+
+            let action = self.handleConnectWatchdogTimeout(
+                forPaneId: paneId,
+                isReady: isReady,
+                terminalExists: terminalExists,
+                timeoutMessage: timeoutMessage
+            )
+
+            switch action {
+            case .retry:
+                self.connectWatchdogTasks[paneId] = nil
+                self.connectWatchdogGenerations.removeValue(forKey: paneId)
+                await onRetry()
+            case .continueWatching:
+                self.scheduleConnectWatchdog(
+                    forPaneId: paneId,
+                    isReady: isReady,
+                    terminalExists: terminalExists,
+                    timeout: timeout,
+                    timeoutMessage: timeoutMessage,
+                    onRetry: onRetry
+                )
+            case .none:
+                self.connectWatchdogTasks[paneId] = nil
+                self.connectWatchdogGenerations.removeValue(forKey: paneId)
+            }
+        }
+        connectWatchdogTasks[paneId] = task
+    }
+
     func handleConnectWatchdogTimeout(
         forPaneId paneId: UUID,
         isReady: Bool,
@@ -2030,6 +2090,9 @@ extension TerminalTabManager {
         terminalRegistryVersion = 0
         shellRegistry.removeAll()
         tabOpensInFlight.removeAll()
+        connectWatchdogTasks.values.forEach { $0.cancel() }
+        connectWatchdogTasks.removeAll()
+        connectWatchdogGenerations.removeAll()
         serverTeardownTasks.removeAll()
         paneRuntimes.removeAll()
         terminalConnectionRegistry.removeAll()
