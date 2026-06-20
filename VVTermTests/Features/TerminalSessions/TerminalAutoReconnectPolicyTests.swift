@@ -63,3 +63,55 @@ struct TerminalAutoReconnectPolicyTests {
         )
     }
 }
+
+// Test Context:
+// These tests protect user-initiated reconnect decisions made from SwiftUI
+// event handlers. The UI snapshot can lag behind the application-owned runtime
+// registry after closes, background suspend, or process exit, so the fake
+// inputs intentionally combine stale `ConnectionState` values with explicit
+// runtime liveness.
+//
+// The target invariant is that manual retry may start when no retry is already
+// in flight and the registry has no opening or streaming runtime. Update these
+// tests only if manual retry intentionally stops using registry liveness as its
+// source of truth.
+//
+// Fakes and assumptions: tests exercise a pure policy. They do not construct
+// SwiftUI views, touch Keychain, create terminals, or start network runtimes.
+struct TerminalManualReconnectPolicyTests {
+    @Test
+    func retriesStaleConnectingSnapshotWhenRuntimeIsInactive() {
+        #expect(
+            TerminalManualReconnectPolicy.shouldAttemptReconnect(
+                reconnectInFlight: false,
+                snapshotState: .connecting,
+                hasLiveRuntime: false
+            ),
+            "A stale connecting snapshot must not block manual retry when the registry has no live runtime."
+        )
+    }
+
+    @Test
+    func doesNotRetryDisconnectedSnapshotWhenRuntimeIsLive() {
+        #expect(
+            !TerminalManualReconnectPolicy.shouldAttemptReconnect(
+                reconnectInFlight: false,
+                snapshotState: .disconnected,
+                hasLiveRuntime: true
+            ),
+            "A stale disconnected snapshot must not start another manual retry while the registry runtime is live."
+        )
+    }
+
+    @Test
+    func doesNotRetryWhileRetryIsAlreadyInFlight() {
+        #expect(
+            !TerminalManualReconnectPolicy.shouldAttemptReconnect(
+                reconnectInFlight: true,
+                snapshotState: .failed("timeout"),
+                hasLiveRuntime: false
+            ),
+            "UI retry buttons and watchdog callbacks should collapse repeated retry attempts."
+        )
+    }
+}

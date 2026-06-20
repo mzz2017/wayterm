@@ -814,8 +814,11 @@ struct TerminalPaneView: View {
     }
 
     private func retryConnection() {
-        guard !reconnectInFlight else { return }
-        guard !connectionState.isConnecting else { return }
+        guard TerminalManualReconnectPolicy.shouldAttemptReconnect(
+            reconnectInFlight: reconnectInFlight,
+            snapshotState: connectionState,
+            hasLiveRuntime: TerminalTabManager.shared.hasLiveRuntime(forPaneId: paneId)
+        ) else { return }
         credentialLoadErrorMessage = nil
         operationNotice = nil
         isReady = false

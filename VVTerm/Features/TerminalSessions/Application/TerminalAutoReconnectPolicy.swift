@@ -15,3 +15,13 @@ enum TerminalAutoReconnectPolicy {
             && !hasLiveRuntime
     }
 }
+
+enum TerminalManualReconnectPolicy {
+    static func shouldAttemptReconnect(
+        reconnectInFlight: Bool,
+        snapshotState _: ConnectionState,
+        hasLiveRuntime: Bool
+    ) -> Bool {
+        return !reconnectInFlight && !hasLiveRuntime
+    }
+}

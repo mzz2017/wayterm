@@ -721,8 +721,11 @@ struct TerminalContainerView: View {
 
     @MainActor
     private func retryConnection() async {
-        guard !reconnectInFlight else { return }
-        guard !session.connectionState.isConnecting else { return }
+        guard TerminalManualReconnectPolicy.shouldAttemptReconnect(
+            reconnectInFlight: reconnectInFlight,
+            snapshotState: session.connectionState,
+            hasLiveRuntime: ConnectionSessionManager.shared.hasLiveRuntime(forSessionId: session.id)
+        ) else { return }
         reconnectInFlight = true
         defer { reconnectInFlight = false }
         isReady = false
