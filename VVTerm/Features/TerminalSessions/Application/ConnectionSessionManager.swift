@@ -1242,8 +1242,9 @@ final class ConnectionSessionManager: ObservableObject {
     private func waitForServerTeardownTasks(_ serverId: UUID) async {
         while let tasksById = serverTeardownTasks[serverId], !tasksById.isEmpty {
             logger.info("Open waiting for tab teardown cleanup [serverId: \(serverId.uuidString, privacy: .public), count: \(tasksById.count)]")
-            for task in tasksById.values {
+            for (taskId, task) in tasksById {
                 await task.value
+                finishServerTeardownTask(taskId, for: serverId)
             }
         }
     }
@@ -1264,12 +1265,17 @@ final class ConnectionSessionManager: ObservableObject {
         Task { @MainActor [weak self] in
             await task.value
             guard let self else { return }
-            self.serverTeardownTasks[serverId]?.removeValue(forKey: taskId)
-            if self.serverTeardownTasks[serverId]?.isEmpty == true {
-                self.serverTeardownTasks.removeValue(forKey: serverId)
-            }
-            self.logger.info("Finished server teardown [serverId: \(serverId.uuidString, privacy: .public), taskId: \(taskId.uuidString, privacy: .public), remaining: \(self.serverTeardownTasks[serverId]?.count ?? 0)]")
+            self.finishServerTeardownTask(taskId, for: serverId)
         }
+    }
+
+    private func finishServerTeardownTask(_ taskId: UUID, for serverId: UUID) {
+        guard serverTeardownTasks[serverId]?.removeValue(forKey: taskId) != nil else { return }
+        if serverTeardownTasks[serverId]?.isEmpty == true {
+            serverTeardownTasks.removeValue(forKey: serverId)
+        }
+        let remainingTasks = serverTeardownTasks[serverId]?.count ?? 0
+        logger.info("Finished server teardown [serverId: \(serverId.uuidString, privacy: .public), taskId: \(taskId.uuidString, privacy: .public), remaining: \(remainingTasks)]")
     }
 
     private func trackShellCleanup(

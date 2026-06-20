@@ -2514,6 +2514,107 @@ git add VVTermTests docs/refactor-swift-best-practice.md
 git commit -m "test: document Swift test contexts"
 ```
 
+## Task 34: Final Verification Failure Cleanup
+
+**Files:**
+- Modify: `VVTerm/Core/SSH/SSHPublicKeyDeriver.swift`
+- Modify: `VVTerm/Core/SSH/SSHKeyGenerator.swift`
+- Modify: `VVTermTests/SSHPublicKeyDeriverTests.swift`
+- Modify: `VVTermTests/Features/TerminalAccessories/TerminalAccessoryProfileTests.swift`
+- Modify: `VVTermTests/Features/RemoteFiles/RemoteFilePermissionTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Final full-suite iOS unit test output after Task 33.
+  - Terminal accessory normalization spec in `docs/specs/terminal-accessory-customization.md`.
+  - Existing PKCS#1 RSA public-key derivation contract.
+- Produces:
+  - Final verification failures are either corrected as stale test expectations or fixed at the production boundary that failed.
+  - PKCS#1 RSA public-key derivation no longer depends on Security.framework importing a private key.
+
+- [x] **Step 1: Capture RED final verification failures**
+
+Run the full iOS unit suite and record the failing tests before changing code.
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO
+```
+
+- [x] **Step 2: Identify root causes**
+
+Classify each failure before editing:
+- Terminal accessory profile tests had stale expectations; the spec says normalization restores defaults when active items fall below the minimum.
+- Remote file permission draft expected `0740` after explicitly clearing group read from `0640`; the correct result is `0700`.
+- PKCS#1 RSA public-key derivation crashed the app-hosted test process through the Security.framework private-key import path and then exposed a Data-slice indexing trap while replacing it.
+
+- [x] **Step 3: Fix the minimal boundaries**
+
+Update stale test expectations and replace PKCS#1 RSA derivation with pure Swift ASN.1 parsing of the private key's modulus/exponent.
+
+- [x] **Step 4: Run focused GREEN verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalAccessoryProfileTests -only-testing:VVTermTests/RemoteFilePermissionTests -only-testing:VVTermTests/SSHPublicKeyDeriverTests ENABLE_DEBUG_DYLIB=NO
+```
+
+- [x] **Step 5: Re-run final verification**
+
+```bash
+git diff --check
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO
+```
+
+Result: `git diff --check` passed; final iOS unit verification passed with 104 XCTest tests and 282 Swift Testing tests in 46 suites.
+
+- [x] **Step 6: Review and commit**
+
+```bash
+git add VVTerm/Core/SSH/SSHPublicKeyDeriver.swift VVTerm/Core/SSH/SSHKeyGenerator.swift VVTermTests/SSHPublicKeyDeriverTests.swift VVTermTests/Features/TerminalAccessories/TerminalAccessoryProfileTests.swift VVTermTests/Features/RemoteFiles/RemoteFilePermissionTests.swift docs/refactor-swift-best-practice.md
+git commit -m "fix: stabilize RSA public key derivation"
+```
+
+## Task 35: Final Teardown Wait Hang Cleanup
+
+**Files:**
+- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Full iOS unit test run after Task 34.
+  - Existing `ConnectionLifecycleIntegrationTests.connectionManagerDisconnectServerLeavesOtherServersConnected()` coverage.
+- Produces:
+  - Completed server teardown tasks are removed by the waiter after `await task.value`, so a main-actor wait loop cannot starve the cleanup task responsible for removing the same entry.
+
+- [x] **Step 1: Capture RED hang evidence**
+
+Full-suite verification repeatedly hung in `ConnectionLifecycleIntegrationTests.connectionManagerDisconnectServerLeavesOtherServersConnected()` with a permanent `Open waiting for tab teardown cleanup` loop after `Tracking server teardown` for a session that had no shell cancel handler.
+
+- [x] **Step 2: Identify root cause**
+
+`waitForServerTeardownTasks` awaited completed tasks but left dictionary removal to a separate `@MainActor Task`; when the waiter immediately looped on the main actor, it could starve the cleanup task and keep seeing the already-completed entry forever.
+
+- [x] **Step 3: Fix the waiter**
+
+Remove each tracked teardown entry synchronously after the waiter observes `task.value`, while keeping the existing cleanup task idempotent for callers that do not explicitly wait.
+
+- [x] **Step 4: Verify lifecycle and final suite**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO
+```
+
+Result: lifecycle focused verification passed 55 Swift Testing tests; final iOS unit verification passed with 104 XCTest tests and 282 Swift Testing tests in 46 suites.
+
+- [x] **Step 5: Review and commit**
+
+```bash
+git add VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift docs/refactor-swift-best-practice.md
+git commit -m "fix: clear completed teardown waits synchronously"
+```
+
 ## Progress Ledger
 
 - 2026-06-21: Task 31 completed. Terminal runtime/client factory ownership is centralized in `TerminalConnectionRuntime`; session and tab managers no longer own raw SSH client, shell id, or runner task state directly, and late/missing shell registrations are rejected before runner follow-up callbacks mutate closed state.
@@ -2522,6 +2623,8 @@ git commit -m "test: document Swift test contexts"
 - 2026-06-21: Task 33 RED scan listed legacy `VVTermTests/**/*.swift` files missing `Test Context`; the sweep added file-level headers only, and the GREEN scan produced no output.
 - 2026-06-21: Task 33 verification passed: `git diff --check`, GREEN context scan, and `xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO`. Boundary check confirmed Swift test diffs only add comment lines.
 - 2026-06-21: Task 33 review completed locally because the current harness only permits new subagents when explicitly requested. Review found and fixed misplaced context headers in three legacy banner files, then re-ran the GREEN context scan, header-format scan, `git diff --check`, and build-for-testing successfully.
+- 2026-06-21: Task 34 RED final suite exposed stale TerminalAccessories and RemoteFiles test expectations plus a real PKCS#1 RSA derivation crash. Focused GREEN passed after replacing Security.framework private-key import with pure Swift ASN.1 parsing, making both RSA mpint helpers Data-slice safe, and updating stale expectations; final iOS unit verification passed with 104 XCTest tests and 282 Swift Testing tests in 46 suites.
+- 2026-06-21: Task 35 RED full-suite verification exposed a main-actor teardown wait hang in `ConnectionSessionManager`; the waiter now removes completed tracked tasks itself instead of relying only on a separate cleanup task. Focused lifecycle verification passed 55 Swift Testing tests, including the previously hanging disconnect/reopen case.
 
 - 2026-06-20: Plan created from local code audit, four read-only explorer audits, and current Swift/libssh2 references.
 - 2026-06-21: Task 14 completed in commit-sized slices. Runtime/live transport truth now comes from `TerminalConnectionRegistry`, `activeServerIds`, `openServerIds`, and `hasLiveRuntime`; `ConnectionState` is explicitly treated as a user-facing display snapshot and is no longer persisted or used for high-risk open/retry/watchdog lifecycle decisions.
