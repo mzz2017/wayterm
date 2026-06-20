@@ -1987,22 +1987,22 @@ git commit -m "refactor: route channel IO through libssh2 driver"
   - Driver-owned SFTP methods for init, shutdown, open, close handle, readdir, seek, read, write, stat, symlink, mkdir, setstat, rename, unlink, rmdir, statvfs, and last-error mapping.
   - `SSHSession` remains the owner of cached `sftpSession` and remote-file async operation ordering.
 
-- [ ] **Step 1: Add RED SFTP cleanup test**
+- [x] **Step 1: Add RED SFTP cleanup test**
 
 Add a fake-driver test that opens an SFTP directory handle, forces a readdir failure, and asserts the handle is closed exactly once and the error maps through `RemoteFileBrowserError`.
 
-- [ ] **Step 2: Move SFTP C calls into `LibSSH2SessionDriver`**
+- [x] **Step 2: Move SFTP C calls into `LibSSH2SessionDriver`**
 
 Move `libssh2_sftp_init`, `libssh2_sftp_shutdown`, `libssh2_sftp_open_ex`, `libssh2_sftp_close_handle`, `libssh2_sftp_readdir_ex`, `libssh2_sftp_seek64`, `libssh2_sftp_read`, `libssh2_sftp_write`, `libssh2_sftp_stat_ex`, `libssh2_sftp_symlink_ex`, `libssh2_sftp_statvfs`, `libssh2_sftp_mkdir_ex`, `libssh2_sftp_rename_ex`, `libssh2_sftp_unlink_ex`, `libssh2_sftp_rmdir_ex`, and `libssh2_sftp_last_error` behind driver methods.
 
-- [ ] **Step 3: Run focused RemoteFiles verification**
+- [x] **Step 3: Run focused RemoteFiles verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 4: API and boundary cleanup**
+- [x] **Step 4: API and boundary cleanup**
 
 Verify RemoteFiles application/UI code still depends on `SSHSFTPAdapter` or leases, not raw `SSHClient`; `SSHSession` remains the owner of cached SFTP state; `LibSSH2SessionDriver` does not store SFTP pointers; path and buffer unsafe pointers stay inside non-escaping driver calls. Request code review before committing.
 
@@ -2096,7 +2096,11 @@ git commit -m "refactor: complete core SSH FFI boundary sweep"
 - 2026-06-21: Task 23 channel I/O boundary GREEN completed. `LibSSH2SessionDriving` now owns channel read/write/EOF, upload EOF/wait/exit, resize, extended-data handling, SCP open, and session block-direction calls. `SSHSession` still owns shell state, exec requests, upload retry policy, cancellation checks, and continuation completion. `execute(_:)` now starts the I/O loop after registering the exec request so lifecycle ordering does not depend on task scheduling.
 - 2026-06-21: Task 23 API/boundary cleanup completed. New driver API names match the Task 23 boundary (`readChannel`, `writeChannel`, `isChannelEOF`, `openSCPChannel`, `sessionBlockDirections`), unsafe buffer/path pointer conversion is confined to `LibSSH2SessionDriver`, and raw channel pointers remain stored only in `SSHSession` state objects. Boundary scan shows Task 23 calls are confined to `LibSSH2SessionDriver.swift`; remaining direct `SSHClient.swift` `libssh2_` hits are SFTP session/handle operations for Task 24 and keepalive for Task 25.
 - 2026-06-21: Task 23 review fix completed. Review found an exec-upload non-zero-exit double close/free risk after `finishUploadChannel` consumed the channel; added `testExecUploadNonZeroExitDoesNotCloseFreedChannelTwice` and clear the outer upload channel optional after successful `finishUploadChannel` ownership transfer. Re-review confirmed the Critical is resolved with no new Critical or Important findings. Final verification: `LibSSH2SessionLifecycleTests` passed 9 XCTest tests; `RemoteTerminalBootstrapTests` and `TerminalSurfaceTeardownTests` passed 13 Swift Testing tests; `git diff --check` passed.
-- Next task: Task 24 Move SFTP Session and Handle Operations Behind the Driver.
+- 2026-06-21: Task 24 RED completed. Added `testSFTPDirectoryReadFailureClosesHandleExactlyOnce`; the first focused run failed to compile because `LibSSH2SessionDriving` and the fake driver did not yet expose SFTP init/open/readdir/close/last-error operations or SFTP event capture.
+- 2026-06-21: Task 24 SFTP boundary GREEN completed. `LibSSH2SessionDriving` now owns SFTP init/shutdown, open/close handle, directory read, seek, read/write, stat, symlink, statvfs, mkdir, rename, unlink, rmdir, and last-error calls. `SSHSession` remains the owner of cached `sftpSession`, remote-file async ordering, cancellation checks, and RemoteFiles error mapping. Verification: `LibSSH2SessionLifecycleTests` passed 10 XCTest tests; `SSHSFTPAdapterTests` and `RemoteFileBrowserStoreTests` passed 9 Swift Testing tests; `git diff --check` passed.
+- 2026-06-21: Task 24 API/boundary cleanup completed before review. New SFTP driver APIs are low-level boundary operations; `LibSSH2SessionDriver` does not store SFTP pointers; path and buffer unsafe pointer lifetimes are confined to non-escaping driver methods. Boundary scan shows SFTP C calls are confined to `LibSSH2SessionDriver.swift`; the only remaining direct `SSHClient.swift` `libssh2_` hit is keepalive for Task 25. RemoteFiles still enters through `SSHSFTPAdapter`/leases rather than raw UI-owned clients.
+- 2026-06-21: Task 24 review completed. Review found no Critical, Important, or Minor issues and confirmed the SFTP ownership boundary, injected-driver error mapping, non-escaping pointer lifetime, and RemoteFiles lease/adapter entry point.
+- Next task: Task 24 commit.
 
 ## Self-Review
 

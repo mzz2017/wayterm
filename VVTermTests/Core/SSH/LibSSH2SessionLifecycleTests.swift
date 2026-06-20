@@ -336,6 +336,41 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
             "Exec upload must not close/free a channel after ownership was consumed by finishUploadChannel"
         )
     }
+
+    func testSFTPDirectoryReadFailureClosesHandleExactlyOnce() async throws {
+        // Given SFTP can start and open a directory handle, but readdir fails
+        // before any entry is returned.
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            sftpSessionResult: OpaquePointer(bitPattern: 0x55),
+            sftpOpenResult: OpaquePointer(bitPattern: 0x66),
+            sftpReadDirectoryResults: [
+                .error(Int(LIBSSH2_ERROR_SOCKET_RECV))
+            ],
+            sftpLastErrorResult: UInt(LIBSSH2_FX_CONNECTION_LOST)
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When directory listing maps the failed readdir to a RemoteFiles error.
+        try await session.connect()
+        do {
+            _ = try await session.listDirectory(at: "/var/log")
+            XCTFail("Expected SFTP read directory failure")
+        } catch RemoteFileBrowserError.disconnected {
+            // Then the SFTP error remains distinguishable for RemoteFiles.
+        } catch {
+            XCTFail("Expected RemoteFileBrowserError.disconnected, got \(error)")
+        }
+
+        // And the opened SFTP directory handle is closed exactly once.
+        XCTAssertEqual(
+            driver.sftpEvents(),
+            [.initSession, .open(path: "/var/log"), .readDirectory, .closeHandle],
+            "SFTP directory read failure must close the opened handle exactly once"
+        )
+    }
 }
 
 private extension SSHSessionConfig {
@@ -438,6 +473,21 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         case error(Int)
     }
 
+    enum SFTPEvent: Equatable {
+        case initSession
+        case shutdownSession
+        case open(path: String)
+        case readDirectory
+        case closeHandle
+    }
+
+    enum SFTPReadDirectoryResult {
+        case entry(String)
+        case end
+        case eagain
+        case error(Int)
+    }
+
     struct ChannelWriteCall: Equatable {
         let stream: Int32
         let bytes: [UInt8]
@@ -455,14 +505,19 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
     private let shellStartResult: Int32
     private let execStartResult: Int32
     private let channelExitStatusResult: Int32
+    private let sftpSessionResult: OpaquePointer?
+    private let sftpOpenResult: OpaquePointer?
+    private let sftpLastErrorResult: UInt
     private let lock = NSLock()
     private var closedSocketDescriptors: [Int32] = []
     private var observedSocketAbort = false
     private var channelEventLog: [ChannelEvent] = []
+    private var sftpEventLog: [SFTPEvent] = []
     private var execStartResultQueue: [Int32]
     private var channelReadResultQueue: [ChannelReadResult]
     private var channelEOFResultQueue: [Bool]
     private var channelWriteResultQueue: [Int]
+    private var sftpReadDirectoryResultQueue: [SFTPReadDirectoryResult]
     private var channelWriteCallLog: [ChannelWriteCall] = []
 
     init(
@@ -476,6 +531,10 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         shellStartResult: Int32 = 0,
         execStartResult: Int32 = 0,
         channelExitStatusResult: Int32 = 0,
+        sftpSessionResult: OpaquePointer? = nil,
+        sftpOpenResult: OpaquePointer? = nil,
+        sftpReadDirectoryResults: [SFTPReadDirectoryResult] = [],
+        sftpLastErrorResult: UInt = 0,
         execStartResults: [Int32] = [],
         channelReadResults: [ChannelReadResult] = [],
         channelEOFResults: [Bool] = [],
@@ -491,10 +550,14 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         self.shellStartResult = shellStartResult
         self.execStartResult = execStartResult
         self.channelExitStatusResult = channelExitStatusResult
+        self.sftpSessionResult = sftpSessionResult
+        self.sftpOpenResult = sftpOpenResult
+        self.sftpLastErrorResult = sftpLastErrorResult
         self.execStartResultQueue = execStartResults
         self.channelReadResultQueue = channelReadResults
         self.channelEOFResultQueue = channelEOFResults
         self.channelWriteResultQueue = channelWriteResults
+        self.sftpReadDirectoryResultQueue = sftpReadDirectoryResults
     }
 
     func closedSockets() -> [Int32] {
@@ -521,6 +584,12 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         lock.lock()
         defer { lock.unlock() }
         return channelWriteCallLog
+    }
+
+    func sftpEvents() -> [SFTPEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        return sftpEventLog
     }
 
     private func recordChannelEvent(_ event: ChannelEvent) {
@@ -569,6 +638,21 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         lock.lock()
         defer { lock.unlock() }
         channelWriteCallLog.append(call)
+    }
+
+    private func recordSFTPEvent(_ event: SFTPEvent) {
+        lock.lock()
+        defer { lock.unlock() }
+        sftpEventLog.append(event)
+    }
+
+    private func nextSFTPReadDirectoryResult() -> SFTPReadDirectoryResult {
+        lock.lock()
+        defer { lock.unlock() }
+        if sftpReadDirectoryResultQueue.isEmpty {
+            return .end
+        }
+        return sftpReadDirectoryResultQueue.removeFirst()
     }
 
     func waitForObservedSocketAbort(timeout: Duration) -> Bool {
@@ -798,6 +882,115 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
 
     nonisolated func sessionBlockDirections(session: OpaquePointer) -> Int32 {
         0
+    }
+
+    nonisolated func initSFTPSession(session: OpaquePointer) -> OpaquePointer? {
+        recordSFTPEvent(.initSession)
+        return sftpSessionResult
+    }
+
+    nonisolated func shutdownSFTPSession(_ sftp: OpaquePointer) -> Int32 {
+        recordSFTPEvent(.shutdownSession)
+        return 0
+    }
+
+    nonisolated func openSFTPHandle(
+        sftp: OpaquePointer,
+        path: String,
+        flags: UInt32,
+        mode: Int32,
+        openType: Int32
+    ) -> OpaquePointer? {
+        recordSFTPEvent(.open(path: path))
+        return sftpOpenResult
+    }
+
+    nonisolated func closeSFTPHandle(_ handle: OpaquePointer) -> Int32 {
+        recordSFTPEvent(.closeHandle)
+        return 0
+    }
+
+    nonisolated func readSFTPDirectory(
+        handle: OpaquePointer,
+        into nameBuffer: inout [CChar],
+        attributes: inout LIBSSH2_SFTP_ATTRIBUTES
+    ) -> Int {
+        recordSFTPEvent(.readDirectory)
+        switch nextSFTPReadDirectoryResult() {
+        case .entry(let name):
+            let bytes = [UInt8](name.utf8)
+            for index in 0..<min(bytes.count, nameBuffer.count) {
+                nameBuffer[index] = CChar(bitPattern: bytes[index])
+            }
+            return min(bytes.count, nameBuffer.count)
+        case .end:
+            return 0
+        case .eagain:
+            return Int(LIBSSH2_ERROR_EAGAIN)
+        case .error(let code):
+            return code
+        }
+    }
+
+    nonisolated func seekSFTPFile(handle: OpaquePointer, offset: UInt64) {}
+
+    nonisolated func readSFTPFile(handle: OpaquePointer, into buffer: inout [CChar]) -> Int {
+        0
+    }
+
+    nonisolated func writeSFTPFile(handle: OpaquePointer, data: Data, offset: Int, maxLength: Int) -> Int {
+        maxLength
+    }
+
+    nonisolated func statSFTPPath(
+        sftp: OpaquePointer,
+        path: String,
+        statType: Int32,
+        attributes: inout LIBSSH2_SFTP_ATTRIBUTES
+    ) -> Int32 {
+        0
+    }
+
+    nonisolated func readSFTPSymlink(
+        sftp: OpaquePointer,
+        path: String,
+        targetBuffer: inout [CChar],
+        linkType: Int32
+    ) -> Int {
+        0
+    }
+
+    nonisolated func statSFTPFileSystem(
+        sftp: OpaquePointer,
+        path: String,
+        status: inout LIBSSH2_SFTP_STATVFS
+    ) -> Int32 {
+        0
+    }
+
+    nonisolated func makeSFTPDirectory(sftp: OpaquePointer, path: String, permissions: Int32) -> Int {
+        0
+    }
+
+    nonisolated func renameSFTPPath(
+        sftp: OpaquePointer,
+        sourcePath: String,
+        destinationPath: String,
+        flags: Int
+    ) -> Int {
+        0
+    }
+
+    nonisolated func unlinkSFTPFile(sftp: OpaquePointer, path: String) -> Int {
+        0
+    }
+
+    nonisolated func removeSFTPDirectory(sftp: OpaquePointer, path: String) -> Int {
+        0
+    }
+
+    nonisolated func lastSFTPError(_ sftp: OpaquePointer) -> UInt {
+        sftpLastErrorResult
     }
 
     nonisolated func disconnect(

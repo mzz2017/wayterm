@@ -1263,7 +1263,7 @@ actor SSHSession {
         let sftp = try await ensureSFTPSession()
         let normalizedPath = RemoteFilePath.normalize(path)
         let handle = try await openDirectoryHandle(at: normalizedPath, sftp: sftp)
-        defer { libssh2_sftp_close_handle(handle) }
+        defer { driver.closeSFTPHandle(handle) }
 
         let limit = maxEntries ?? .max
         var entries: [RemoteFileEntry] = []
@@ -1273,22 +1273,11 @@ actor SSHSession {
             try Task.checkCancellation()
             var attributes = LIBSSH2_SFTP_ATTRIBUTES()
 
-            let bytesRead = nameBuffer.withUnsafeMutableBufferPointer { buffer -> Int in
-                guard let baseAddress = buffer.baseAddress else {
-                    return Int(LIBSSH2_ERROR_EAGAIN)
-                }
-
-                return Int(
-                    libssh2_sftp_readdir_ex(
-                        handle,
-                        baseAddress,
-                        buffer.count,
-                        nil,
-                        0,
-                        &attributes
-                    )
-                )
-            }
+            let bytesRead = driver.readSFTPDirectory(
+                handle: handle,
+                into: &nameBuffer,
+                attributes: &attributes
+            )
 
             if bytesRead > 0 {
                 let name = Self.string(from: nameBuffer, length: bytesRead)
@@ -1321,7 +1310,7 @@ actor SSHSession {
                 continue
             }
 
-            throw Self.remoteFileError(from: sftp, operation: "read directory", path: normalizedPath)
+            throw remoteFileError(from: sftp, operation: "read directory", path: normalizedPath)
         }
 
         return entries
@@ -1351,10 +1340,10 @@ actor SSHSession {
             flags: UInt32(LIBSSH2_FXF_READ),
             mode: 0
         )
-        defer { libssh2_sftp_close_handle(handle) }
+        defer { driver.closeSFTPHandle(handle) }
 
         if offset > 0 {
-            libssh2_sftp_seek64(handle, offset)
+            driver.seekSFTPFile(handle: handle, offset: offset)
         }
 
         var data = Data()
@@ -1366,12 +1355,7 @@ actor SSHSession {
             let chunkSize = min(32 * 1024, remaining)
             var buffer = [CChar](repeating: 0, count: chunkSize)
 
-            let bytesRead = buffer.withUnsafeMutableBufferPointer { bufferPtr -> Int in
-                guard let baseAddress = bufferPtr.baseAddress else {
-                    return Int(LIBSSH2_ERROR_EAGAIN)
-                }
-                return Int(libssh2_sftp_read(handle, baseAddress, bufferPtr.count))
-            }
+            let bytesRead = driver.readSFTPFile(handle: handle, into: &buffer)
 
             if bytesRead > 0 {
                 buffer.withUnsafeBufferPointer { bufferPtr in
@@ -1390,7 +1374,7 @@ actor SSHSession {
                 continue
             }
 
-            throw Self.remoteFileError(from: sftp, operation: "read file", path: normalizedPath)
+            throw remoteFileError(from: sftp, operation: "read file", path: normalizedPath)
         }
 
         return data
@@ -1405,7 +1389,7 @@ actor SSHSession {
             flags: UInt32(LIBSSH2_FXF_READ),
             mode: 0
         )
-        defer { libssh2_sftp_close_handle(handle) }
+        defer { driver.closeSFTPHandle(handle) }
 
         let fileManager = FileManager.default
         let destinationDirectory = localURL.deletingLastPathComponent()
@@ -1421,23 +1405,12 @@ actor SSHSession {
         do {
             while true {
                 try Task.checkCancellation()
-                var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+                var buffer = [CChar](repeating: 0, count: 64 * 1024)
 
-                let bytesRead = buffer.withUnsafeMutableBufferPointer { bufferPtr -> Int in
-                    guard let baseAddress = bufferPtr.baseAddress else {
-                        return Int(LIBSSH2_ERROR_EAGAIN)
-                    }
-                    return Int(
-                        libssh2_sftp_read(
-                            handle,
-                            UnsafeMutableRawPointer(baseAddress).assumingMemoryBound(to: CChar.self),
-                            bufferPtr.count
-                        )
-                    )
-                }
+                let bytesRead = driver.readSFTPFile(handle: handle, into: &buffer)
 
                 if bytesRead > 0 {
-                    try localFileHandle.write(contentsOf: Data(buffer.prefix(bytesRead)))
+                    try localFileHandle.write(contentsOf: Data(buffer.prefix(bytesRead).map { UInt8(bitPattern: $0) }))
                     continue
                 }
 
@@ -1450,7 +1423,7 @@ actor SSHSession {
                     continue
                 }
 
-                throw Self.remoteFileError(from: sftp, operation: "download file", path: normalizedPath)
+                throw remoteFileError(from: sftp, operation: "download file", path: normalizedPath)
             }
         } catch {
             try? localFileHandle.close()
@@ -1471,20 +1444,18 @@ actor SSHSession {
             mode: permissions,
             operation: "write file"
         )
-        defer { libssh2_sftp_close_handle(handle) }
+        defer { driver.closeSFTPHandle(handle) }
 
         var totalBytesWritten = 0
         while totalBytesWritten < data.count {
             try Task.checkCancellation()
 
-            let bytesWritten = data.withUnsafeBytes { rawBuffer -> Int in
-                guard let baseAddress = rawBuffer.baseAddress else { return 0 }
-                let remainingCount = min(64 * 1024, data.count - totalBytesWritten)
-                let writeBaseAddress = baseAddress
-                    .advanced(by: totalBytesWritten)
-                    .assumingMemoryBound(to: CChar.self)
-                return Int(libssh2_sftp_write(handle, writeBaseAddress, remainingCount))
-            }
+            let bytesWritten = driver.writeSFTPFile(
+                handle: handle,
+                data: data,
+                offset: totalBytesWritten,
+                maxLength: min(64 * 1024, data.count - totalBytesWritten)
+            )
 
             if bytesWritten > 0 {
                 totalBytesWritten += bytesWritten
@@ -1496,7 +1467,7 @@ actor SSHSession {
                 continue
             }
 
-            throw Self.remoteFileError(from: sftp, operation: "write file", path: normalizedPath)
+            throw remoteFileError(from: sftp, operation: "write file", path: normalizedPath)
         }
     }
 
@@ -1514,14 +1485,7 @@ actor SSHSession {
         while true {
             try Task.checkCancellation()
 
-            let result = normalizedPath.withCString { pathPtr in
-                libssh2_sftp_statvfs(
-                    sftp,
-                    pathPtr,
-                    normalizedPath.utf8.count,
-                    &status
-                )
-            }
+            let result = driver.statSFTPFileSystem(sftp: sftp, path: normalizedPath, status: &status)
 
             if result == 0 {
                 let fragmentSize = UInt64(status.f_frsize)
@@ -1539,7 +1503,7 @@ actor SSHSession {
                 continue
             }
 
-            throw Self.remoteFileError(from: sftp, operation: "read filesystem status", path: normalizedPath)
+            throw remoteFileError(from: sftp, operation: "read filesystem status", path: normalizedPath)
         }
     }
 
@@ -1550,15 +1514,8 @@ actor SSHSession {
             at: normalizedPath,
             sftp: sftp,
             operation: "create directory"
-        ) { sftpHandle, pathPtr, pathLength in
-            Int(
-                libssh2_sftp_mkdir_ex(
-                    sftpHandle,
-                    pathPtr,
-                    pathLength,
-                    Int(permissions)
-                )
-            )
+        ) { sftpHandle, mutationPath in
+            driver.makeSFTPDirectory(sftp: sftpHandle, path: mutationPath, permissions: permissions)
         }
     }
 
@@ -1572,15 +1529,12 @@ actor SSHSession {
         while true {
             try Task.checkCancellation()
 
-            let result = normalizedPath.withCString { pathPtr in
-                libssh2_sftp_stat_ex(
-                    sftp,
-                    pathPtr,
-                    UInt32(normalizedPath.utf8.count),
-                    Int32(LIBSSH2_SFTP_SETSTAT),
-                    &attributes
-                )
-            }
+            let result = driver.statSFTPPath(
+                sftp: sftp,
+                path: normalizedPath,
+                statType: Int32(LIBSSH2_SFTP_SETSTAT),
+                attributes: &attributes
+            )
 
             if result == 0 {
                 return
@@ -1591,7 +1545,7 @@ actor SSHSession {
                 continue
             }
 
-            throw Self.remoteFileError(from: sftp, operation: "set permissions", path: normalizedPath)
+            throw remoteFileError(from: sftp, operation: "set permissions", path: normalizedPath)
         }
     }
 
@@ -1617,19 +1571,13 @@ actor SSHSession {
                     at: normalizedSource,
                     sftp: sftp,
                     operation: "rename"
-                ) { sftpHandle, sourcePtr, sourceLength in
-                    normalizedDestination.withCString { destinationPtr in
-                        Int(
-                            libssh2_sftp_rename_ex(
-                                sftpHandle,
-                                sourcePtr,
-                                sourceLength,
-                                destinationPtr,
-                                UInt32(normalizedDestination.utf8.count),
-                                flags
-                            )
-                        )
-                    }
+                ) { sftpHandle, sourcePath in
+                    driver.renameSFTPPath(
+                        sftp: sftpHandle,
+                        sourcePath: sourcePath,
+                        destinationPath: normalizedDestination,
+                        flags: flags
+                    )
                 }
                 return
             } catch {
@@ -1647,14 +1595,8 @@ actor SSHSession {
             at: normalizedPath,
             sftp: sftp,
             operation: "delete file"
-        ) { sftpHandle, pathPtr, pathLength in
-            Int(
-                libssh2_sftp_unlink_ex(
-                    sftpHandle,
-                    pathPtr,
-                    pathLength
-                )
-            )
+        ) { sftpHandle, mutationPath in
+            driver.unlinkSFTPFile(sftp: sftpHandle, path: mutationPath)
         }
     }
 
@@ -1665,14 +1607,8 @@ actor SSHSession {
             at: normalizedPath,
             sftp: sftp,
             operation: "delete directory"
-        ) { sftpHandle, pathPtr, pathLength in
-            Int(
-                libssh2_sftp_rmdir_ex(
-                    sftpHandle,
-                    pathPtr,
-                    pathLength
-                )
-            )
+        ) { sftpHandle, mutationPath in
+            driver.removeSFTPDirectory(sftp: sftpHandle, path: mutationPath)
         }
     }
 
@@ -2421,18 +2357,18 @@ actor SSHSession {
         while true {
             try Task.checkCancellation()
 
-            if let sftpSession = libssh2_sftp_init(session) {
+            if let sftpSession = driver.initSFTPSession(session: session) {
                 self.sftpSession = sftpSession
                 return sftpSession
             }
 
-            let lastError = libssh2_session_last_errno(session)
-            if lastError == LIBSSH2_ERROR_EAGAIN {
+            let rawError = driver.lastError(session: session, operation: .sftpInit, fallbackCode: 0)
+            if rawError.code == LIBSSH2_ERROR_EAGAIN {
                 await waitForSocket()
                 continue
             }
 
-            throw Self.remoteFileError(from: nil, operation: "start SFTP session", path: nil)
+            throw remoteFileError(from: nil, operation: "start SFTP session", path: nil)
         }
     }
 
@@ -2476,30 +2412,26 @@ actor SSHSession {
             throw RemoteFileBrowserError.disconnected
         }
 
-        let pathLength = UInt32(path.utf8.count)
         while true {
             try Task.checkCancellation()
 
-            if let handle = path.withCString({ pathPtr in
-                libssh2_sftp_open_ex(
-                    sftp,
-                    pathPtr,
-                    pathLength,
-                    UInt(flags),
-                    Int(mode),
-                    Int32(openType)
-                )
-            }) {
+            if let handle = driver.openSFTPHandle(
+                sftp: sftp,
+                path: path,
+                flags: flags,
+                mode: mode,
+                openType: openType
+            ) {
                 return handle
             }
 
-            let lastError = libssh2_session_last_errno(session)
-            if lastError == LIBSSH2_ERROR_EAGAIN {
+            let rawError = driver.lastError(session: session, operation: .sftpOpen, fallbackCode: 0)
+            if rawError.code == LIBSSH2_ERROR_EAGAIN {
                 await waitForSocket()
                 continue
             }
 
-            throw Self.remoteFileError(from: sftp, operation: operation, path: path)
+            throw remoteFileError(from: sftp, operation: operation, path: path)
         }
     }
 
@@ -2507,19 +2439,16 @@ actor SSHSession {
         at path: String,
         sftp: OpaquePointer,
         operation: String,
-        mutation: (OpaquePointer, UnsafePointer<CChar>, UInt32) -> Int
+        mutation: (OpaquePointer, String) -> Int
     ) async throws {
         guard libssh2Session != nil else {
             throw RemoteFileBrowserError.disconnected
         }
 
-        let pathLength = UInt32(path.utf8.count)
         while true {
             try Task.checkCancellation()
 
-            let result = path.withCString { pathPtr in
-                mutation(sftp, pathPtr, pathLength)
-            }
+            let result = mutation(sftp, path)
 
             if result == 0 {
                 return
@@ -2530,7 +2459,7 @@ actor SSHSession {
                 continue
             }
 
-            throw Self.remoteFileError(from: sftp, operation: operation, path: path)
+            throw remoteFileError(from: sftp, operation: operation, path: path)
         }
     }
 
@@ -2542,15 +2471,12 @@ actor SSHSession {
         while true {
             try Task.checkCancellation()
 
-            let result = normalizedPath.withCString { pathPtr in
-                libssh2_sftp_stat_ex(
-                    sftp,
-                    pathPtr,
-                    UInt32(normalizedPath.utf8.count),
-                    statType,
-                    &attributes
-                )
-            }
+            let result = driver.statSFTPPath(
+                sftp: sftp,
+                path: normalizedPath,
+                statType: statType,
+                attributes: &attributes
+            )
 
             if result == 0 {
                 let entryName = Self.fileName(for: normalizedPath)
@@ -2572,7 +2498,7 @@ actor SSHSession {
                 continue
             }
 
-            throw Self.remoteFileError(
+            throw remoteFileError(
                 from: sftp,
                 operation: statType == Int32(LIBSSH2_SFTP_LSTAT) ? "lstat" : "stat",
                 path: normalizedPath
@@ -2596,36 +2522,24 @@ actor SSHSession {
         while true {
             try Task.checkCancellation()
 
-            let result = buffer.withUnsafeMutableBufferPointer { bufferPtr -> Int in
-                guard let baseAddress = bufferPtr.baseAddress else {
-                    return Int(LIBSSH2_ERROR_EAGAIN)
-                }
-
-                return normalizedPath.withCString { pathPtr in
-                    Int(
-                        libssh2_sftp_symlink_ex(
-                            sftp,
-                            pathPtr,
-                            UInt32(normalizedPath.utf8.count),
-                            baseAddress,
-                            UInt32(bufferPtr.count),
-                            linkType
-                        )
-                    )
-                }
-            }
+            let result = driver.readSFTPSymlink(
+                sftp: sftp,
+                path: normalizedPath,
+                targetBuffer: &buffer,
+                linkType: linkType
+            )
 
             if result >= 0 {
                 return Self.string(from: buffer, length: result)
             }
 
-            let lastError = libssh2_session_last_errno(session)
-            if lastError == LIBSSH2_ERROR_EAGAIN {
+            let rawError = driver.lastError(session: session, operation: .sftpSymlink, fallbackCode: Int32(result))
+            if rawError.code == LIBSSH2_ERROR_EAGAIN {
                 await waitForSocket()
                 continue
             }
 
-            throw Self.remoteFileError(
+            throw remoteFileError(
                 from: sftp,
                 operation: linkType == Int32(LIBSSH2_SFTP_REALPATH) ? "resolve path" : "read link",
                 path: normalizedPath
@@ -2635,7 +2549,7 @@ actor SSHSession {
 
     private func closeSFTPSession() {
         guard let sftpSession else { return }
-        _ = libssh2_sftp_shutdown(sftpSession)
+        _ = driver.shutdownSFTPSession(sftpSession)
         self.sftpSession = nil
     }
 
@@ -2650,13 +2564,13 @@ actor SSHSession {
         return String(decoding: bytes, as: UTF8.self)
     }
 
-    private static func remoteFileError(
+    private func remoteFileError(
         from sftp: OpaquePointer?,
         operation: String,
         path: String?
     ) -> RemoteFileBrowserError {
-        let code = sftp.map { libssh2_sftp_last_error($0) } ?? 0
-        return remoteFileError(lastError: UInt(code), operation: operation, path: path)
+        let code = sftp.map { driver.lastSFTPError($0) } ?? 0
+        return Self.remoteFileError(lastError: code, operation: operation, path: path)
     }
 
     private static func remoteFileError(
