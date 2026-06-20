@@ -201,6 +201,25 @@ Build with: `./scripts/build.sh ghostty`
 Build with: `./scripts/build.sh ssh`
 Output: `Vendor/libssh2/{macos,ios,ios-simulator}/`
 
+## Testing Notes
+
+### iOS simulator tests
+- On macOS 26.5.1 / Xcode 26.5, app-hosted iOS unit tests can hang before XCTest output when Xcode's debug dylib layout is enabled (`ENABLE_DEBUG_DYLIB=YES`, the default app-debug layout). The app launches, but the host process has no `XCTestConfigurationFilePath` and no `DYLD_INSERT_LIBRARIES=...libXCTestBundleInject...`, so XCTest never injects the test bundle.
+- For focused CLI iOS unit tests, use `ENABLE_DEBUG_DYLIB=NO`, disable parallel testing, and skip UI tests:
+
+```bash
+xcodebuild test \
+  -project VVTerm.xcodeproj \
+  -scheme VVTerm \
+  -destination 'platform=iOS Simulator,name=iPhone 17' \
+  -parallel-testing-enabled NO \
+  -skip-testing:VVTermUITests \
+  -only-testing:VVTermTests/<TestClass> \
+  ENABLE_DEBUG_DYLIB=NO
+```
+
+- The shared `VVTerm` scheme includes both `VVTermTests` and `VVTermUITests`; `-skip-testing:VVTermUITests` prevents running UI tests but Xcode may still prepare/build the UI test target. Prefer a unit-test-only scheme or test plan if this becomes disruptive.
+
 ## Data Models
 
 ### Server
