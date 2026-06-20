@@ -175,6 +175,23 @@ final class ConnectionSessionManager: ObservableObject {
         sessions.first { $0.serverId == serverId && $0.connectionState.isConnected }
     }
 
+    private func registryLiveSession(for serverId: UUID) -> ConnectionSession? {
+        let liveEntityIDs = terminalConnectionRegistry.openingOrStreamingEntityIDs(for: serverId)
+        if let selected = selectedSession(for: serverId),
+           liveEntityIDs.contains(.session(selected.id)) {
+            return selected
+        }
+
+        return sessions.first {
+            $0.serverId == serverId && liveEntityIDs.contains(.session($0.id))
+        }
+    }
+
+    private func registryLiveSSHClient(for serverId: UUID) -> SSHClient? {
+        guard let session = registryLiveSession(for: serverId) else { return nil }
+        return shellRegistry.client(for: session.id)
+    }
+
     private func selectedSession(for serverId: UUID) -> ConnectionSession? {
         if let selectedSessionId = selectedSessionByServer[serverId] {
             return sessionWithID(selectedSessionId)
@@ -956,6 +973,11 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     func sharedStatsClient(for serverId: UUID) -> SSHClient? {
+        if let liveSession = registryLiveSession(for: serverId) {
+            guard liveSession.activeTransport != .mosh else { return nil }
+            return registryLiveSSHClient(for: serverId)
+        }
+
         if selectedTransport(for: serverId) == .mosh {
             return nil
         }

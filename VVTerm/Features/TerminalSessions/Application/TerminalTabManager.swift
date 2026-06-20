@@ -1032,10 +1032,31 @@ final class TerminalTabManager: ObservableObject {
     }
 
     func sharedStatsClient(for serverId: UUID) -> SSHClient? {
+        if let livePane = registryLivePaneState(for: serverId) {
+            guard livePane.activeTransport != .mosh else { return nil }
+            return shellRegistry.client(for: livePane.paneId)
+        }
+
         if selectedTransport(for: serverId) == .mosh {
             return nil
         }
         return sshClient(for: serverId)
+    }
+
+    private func registryLivePaneState(for serverId: UUID) -> TerminalPaneState? {
+        let liveEntityIDs = terminalConnectionRegistry.openingOrStreamingEntityIDs(for: serverId)
+        if let selectedTab = selectedTab(for: serverId) {
+            let preferredPaneIds = [selectedTab.focusedPaneId, selectedTab.rootPaneId] + selectedTab.allPaneIds
+            for paneId in preferredPaneIds where liveEntityIDs.contains(.pane(paneId)) {
+                if let state = paneStates[paneId] {
+                    return state
+                }
+            }
+        }
+
+        return paneStates.values.first {
+            $0.serverId == serverId && liveEntityIDs.contains(.pane($0.paneId))
+        }
     }
 
     private func selectedTransport(for serverId: UUID) -> ShellTransport {

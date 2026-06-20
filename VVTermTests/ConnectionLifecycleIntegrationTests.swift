@@ -776,6 +776,54 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerSharedStatsClientUsesRegistryActiveSSHWhenSelectionIsStaleMosh() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer(connectionMode: .standard)
+            let staleSelected = ConnectionSession(
+                serverId: server.id,
+                title: "Stale Mosh",
+                connectionState: .disconnected,
+                activeTransport: .mosh
+            )
+            let activeSession = ConnectionSession(
+                serverId: server.id,
+                title: "Active SSH",
+                connectionState: .disconnected,
+                activeTransport: .ssh
+            )
+            manager.sessions = [staleSelected, activeSession]
+            manager.selectedSessionId = staleSelected.id
+            manager.selectedSessionByServer[server.id] = staleSelected.id
+
+            let staleClient = SSHClient()
+            manager.registerSSHClient(
+                staleClient,
+                shellId: UUID(),
+                for: staleSelected.id,
+                serverId: server.id,
+                transport: .mosh,
+                skipTmuxLifecycle: true
+            )
+
+            let activeClient = SSHClient()
+            manager.registerSSHClient(
+                activeClient,
+                shellId: UUID(),
+                for: activeSession.id,
+                serverId: server.id,
+                transport: .ssh,
+                skipTmuxLifecycle: true
+            )
+            manager.updateSessionState(activeSession.id, to: .connected)
+
+            #expect(
+                manager.sharedStatsClient(for: server.id).map(ObjectIdentifier.init) == ObjectIdentifier(activeClient),
+                "Stats should use the registry-active SSH session instead of a stale selected Mosh session."
+            )
+        }
+    }
+
+    @Test
     func tabManagerSharedStatsClientSkipsMoshTransport() async {
         await withCleanTabManager { manager in
             let server = makeServer(connectionMode: .mosh)
@@ -800,6 +848,59 @@ struct ConnectionLifecycleIntegrationTests {
 
             #expect(manager.sshClient(for: server.id) != nil)
             #expect(manager.sharedStatsClient(for: server.id) == nil)
+        }
+    }
+
+    @Test
+    func tabManagerSharedStatsClientUsesRegistryActiveSSHWhenSelectionIsStaleMosh() async {
+        await withCleanTabManager { manager in
+            let server = makeServer(connectionMode: .standard)
+            let stalePaneId = UUID()
+            let activePaneId = UUID()
+            let tab = TerminalTab(
+                serverId: server.id,
+                title: server.name,
+                rootPaneId: stalePaneId,
+                focusedPaneId: stalePaneId
+            )
+            manager.tabsByServer[server.id] = [tab]
+            manager.selectedTabByServer[server.id] = tab.id
+
+            var stalePane = TerminalPaneState(paneId: stalePaneId, tabId: tab.id, serverId: server.id)
+            stalePane.connectionState = .disconnected
+            stalePane.activeTransport = .mosh
+            manager.paneStates[stalePaneId] = stalePane
+
+            var activePane = TerminalPaneState(paneId: activePaneId, tabId: tab.id, serverId: server.id)
+            activePane.connectionState = .disconnected
+            activePane.activeTransport = .ssh
+            manager.paneStates[activePaneId] = activePane
+
+            let staleClient = SSHClient()
+            manager.registerSSHClient(
+                staleClient,
+                shellId: UUID(),
+                for: stalePaneId,
+                serverId: server.id,
+                transport: .mosh,
+                skipTmuxLifecycle: true
+            )
+
+            let activeClient = SSHClient()
+            manager.registerSSHClient(
+                activeClient,
+                shellId: UUID(),
+                for: activePaneId,
+                serverId: server.id,
+                transport: .ssh,
+                skipTmuxLifecycle: true
+            )
+            manager.updatePaneState(activePaneId, connectionState: .connected)
+
+            #expect(
+                manager.sharedStatsClient(for: server.id).map(ObjectIdentifier.init) == ObjectIdentifier(activeClient),
+                "Stats should use the registry-active SSH pane instead of a stale selected Mosh pane."
+            )
         }
     }
 
