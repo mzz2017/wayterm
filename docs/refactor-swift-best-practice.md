@@ -1940,30 +1940,30 @@ git commit -m "refactor: move shell channel setup behind libssh2 driver"
     - `sessionBlockDirections(session:) -> Int32`
   - `SSHSession` remains the only owner of I/O tasks, shell state, exec request state, upload retry strategy, and cancellation.
 
-- [ ] **Step 1: Add RED channel write/EAGAIN tests**
+- [x] **Step 1: Add RED channel write/EAGAIN tests**
 
 Add a fake-driver test that starts a shell, configures `writeChannel` to return `LIBSSH2_ERROR_EAGAIN` once and then a positive byte count, calls `session.write(_:to:)`, and asserts the driver receives the expected copied bytes and retry offsets. The production driver method owns the non-escaping pointer conversion from that byte slice to `libssh2_channel_write_ex`.
 
-- [ ] **Step 2: Add RED exec startup/read tests**
+- [x] **Step 2: Add RED exec startup/read tests**
 
 Add a fake-driver test for `execute(_:)` where channel open succeeds, exec startup returns `EAGAIN` once then success, stdout returns data, EOF becomes true, and the continuation returns the expected output.
 
-- [ ] **Step 3: Move channel read/write/EOF/resize calls**
+- [x] **Step 3: Move channel read/write/EOF/resize calls**
 
 Move direct `libssh2_channel_read_ex`, `libssh2_channel_write_ex`, `libssh2_channel_eof`, `libssh2_channel_request_pty_size_ex`, `libssh2_channel_send_eof`, `libssh2_channel_wait_eof`, `libssh2_channel_wait_closed`, `libssh2_channel_get_exit_status`, `libssh2_channel_handle_extended_data2`, `libssh2_scp_send64`, and `libssh2_session_block_directions` calls from `SSHClient.swift` into `LibSSH2SessionDriver`.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/RemoteTerminalBootstrapTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 5: API and boundary cleanup**
+- [x] **Step 5: API and boundary cleanup**
 
 Verify no channel I/O C calls remain in `SSHClient.swift`; raw channel pointers are still stored only in `SSHSession` state objects; upload and exec cancellation still resume continuations exactly once. Record remaining SCP/SFTP-specific calls in the Progress Ledger.
 
-- [ ] **Step 6: Request review and commit**
+- [x] **Step 6: Request review and commit**
 
 ```bash
 git add VVTerm/Core/SSH/LibSSH2SessionDriver.swift VVTerm/Core/SSH/SSHClient.swift VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift docs/refactor-swift-best-practice.md
@@ -2092,7 +2092,11 @@ git commit -m "refactor: complete core SSH FFI boundary sweep"
 - 2026-06-21: Task 22 GREEN completed. `LibSSH2SessionDriving` now owns shell channel open, environment setup, PTY request, shell/exec startup for `startShell`, and channel close/free teardown used by shell and exec cleanup paths. `SSHSession` remains the owner of shell ids, `ShellChannelState`, `ExecRequest`, continuations, and cleanup ordering. Verification: `LibSSH2SessionLifecycleTests` and `TerminalSurfaceTeardownTests` passed.
 - 2026-06-21: Task 22 boundary scan completed. Task 22 direct C calls are confined to `LibSSH2SessionDriver.swift` lines 193 and 302-363. Remaining `SSHClient.swift` direct channel hits are deferred to Task 23: exec request open/startup at lines 1992 and 2014; SCP/exec upload close/free/open/startup at lines 2205-2304; upload finish close/free at lines 2345 and 2370.
 - 2026-06-21: Task 22 final verification completed. `LibSSH2SessionLifecycleTests` passed 6 XCTest tests; `ConnectionLifecycleIntegrationTests` and `TerminalSurfaceTeardownTests` passed 49 Swift Testing tests; `git diff --check` passed. Review found no blocking issues. Accepted residual risk: close/free diagnostics currently log return codes only; Task 23/25 may tighten teardown raw-error diagnostics.
-- Next task: Task 23 Move Channel I/O, Exec, Upload, and Resize Calls Behind the Driver.
+- 2026-06-21: Task 23 RED completed. Added fake-driver lifecycle tests for shell write retry after `LIBSSH2_ERROR_EAGAIN` and exec startup retry/read/EOF/close ordering; the first focused run failed to compile because `LibSSH2SessionDriving` and the fake driver did not yet expose channel write/read/EOF scripts and call capture.
+- 2026-06-21: Task 23 channel I/O boundary GREEN completed. `LibSSH2SessionDriving` now owns channel read/write/EOF, upload EOF/wait/exit, resize, extended-data handling, SCP open, and session block-direction calls. `SSHSession` still owns shell state, exec requests, upload retry policy, cancellation checks, and continuation completion. `execute(_:)` now starts the I/O loop after registering the exec request so lifecycle ordering does not depend on task scheduling.
+- 2026-06-21: Task 23 API/boundary cleanup completed. New driver API names match the Task 23 boundary (`readChannel`, `writeChannel`, `isChannelEOF`, `openSCPChannel`, `sessionBlockDirections`), unsafe buffer/path pointer conversion is confined to `LibSSH2SessionDriver`, and raw channel pointers remain stored only in `SSHSession` state objects. Boundary scan shows Task 23 calls are confined to `LibSSH2SessionDriver.swift`; remaining direct `SSHClient.swift` `libssh2_` hits are SFTP session/handle operations for Task 24 and keepalive for Task 25.
+- 2026-06-21: Task 23 review fix completed. Review found an exec-upload non-zero-exit double close/free risk after `finishUploadChannel` consumed the channel; added `testExecUploadNonZeroExitDoesNotCloseFreedChannelTwice` and clear the outer upload channel optional after successful `finishUploadChannel` ownership transfer. Re-review confirmed the Critical is resolved with no new Critical or Important findings. Final verification: `LibSSH2SessionLifecycleTests` passed 9 XCTest tests; `RemoteTerminalBootstrapTests` and `TerminalSurfaceTeardownTests` passed 13 Swift Testing tests; `git diff --check` passed.
+- Next task: Task 24 Move SFTP Session and Handle Operations Behind the Driver.
 
 ## Self-Review
 

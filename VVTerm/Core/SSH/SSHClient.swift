@@ -1818,8 +1818,7 @@ actor SSHSession {
             if !shellChannels.isEmpty {
                 let states = Array(shellChannels.values)
                 for state in states {
-                    // Use _ex variant since macros not available in Swift (stream_id 0 = stdout)
-                    let bytesRead = libssh2_channel_read_ex(state.channel, 0, &buffer, buffer.count)
+                    let bytesRead = driver.readChannel(state.channel, stream: 0, into: &buffer)
 
                     if bytesRead > 0 {
                         let readCount = Int(bytesRead)
@@ -1870,7 +1869,7 @@ actor SSHSession {
                     }
 
                     // Check for EOF
-                    if libssh2_channel_eof(state.channel) != 0 {
+                    if driver.isChannelEOF(state.channel) {
                         if !state.batchBuffer.isEmpty {
                             state.continuation.yield(state.batchBuffer)
                         }
@@ -1889,7 +1888,7 @@ actor SSHSession {
 
                     guard let execChannel = request.channel else { continue }
 
-                    let bytesRead = libssh2_channel_read_ex(execChannel, 0, &buffer, buffer.count)
+                    let bytesRead = driver.readChannel(execChannel, stream: 0, into: &buffer)
                     if bytesRead > 0 {
                         request.output.append(Data(bytes: buffer, count: Int(bytesRead)))
                         didWork = true
@@ -1900,7 +1899,7 @@ actor SSHSession {
                         continue
                     }
 
-                    let stderrRead = libssh2_channel_read_ex(execChannel, 1, &buffer, buffer.count)
+                    let stderrRead = driver.readChannel(execChannel, stream: 1, into: &buffer)
                     if stderrRead > 0 {
                         request.stderr.append(Data(bytes: buffer, count: Int(stderrRead)))
                         didWork = true
@@ -1911,7 +1910,7 @@ actor SSHSession {
                         continue
                     }
 
-                    if let currentChannel = request.channel, libssh2_channel_eof(currentChannel) != 0 {
+                    if let currentChannel = request.channel, driver.isChannelEOF(currentChannel) {
                         finishExecRequest(requestId, error: nil)
                         didWork = true
                     }
@@ -1989,20 +1988,12 @@ actor SSHSession {
         }
 
         if request.channel == nil {
-            let newChannel = libssh2_channel_open_ex(
-                session,
-                "session",
-                UInt32("session".utf8.count),
-                2 * 1024 * 1024,
-                32768,
-                nil,
-                0
-            )
+            let newChannel = driver.openSessionChannel(session: session)
             if let newChannel = newChannel {
                 request.channel = newChannel
             } else {
-                let lastError = libssh2_session_last_errno(session)
-                if lastError == LIBSSH2_ERROR_EAGAIN {
+                let rawError = driver.lastError(session: session, operation: .channelOpen, fallbackCode: 0)
+                if rawError.code == LIBSSH2_ERROR_EAGAIN {
                     return false
                 }
                 finishExecRequest(request.id, error: SSHError.channelOpenFailed)
@@ -2011,13 +2002,7 @@ actor SSHSession {
         }
 
         if !request.isStarted, let execChannel = request.channel {
-            let execResult = libssh2_channel_process_startup(
-                execChannel,
-                "exec",
-                4,
-                request.command,
-                UInt32(request.command.utf8.count)
-            )
+            let execResult = driver.startExec(channel: execChannel, command: request.command)
             if execResult == Int32(LIBSSH2_ERROR_EAGAIN) {
                 return false
             }
@@ -2061,7 +2046,7 @@ actor SSHSession {
     private func waitForSocket() async {
         guard let session = libssh2Session, socket >= 0 else { return }
 
-        let direction = libssh2_session_block_directions(session)
+        let direction = driver.sessionBlockDirections(session: session)
         guard direction != 0 else { return }
 
         // Use poll() for reliable, low-overhead socket waiting
@@ -2088,21 +2073,18 @@ actor SSHSession {
             throw SSHError.notConnected
         }
 
-        // Copy data to array for async-safe access (withUnsafeBytes doesn't support async)
-        var bytes = [UInt8](data)
+        let bytes = [UInt8](data)
         var remaining = bytes.count
         var offset = 0
 
         while remaining > 0 {
-            // Use _ex variant since macros not available in Swift (stream_id 0 = stdin)
-            let written = bytes.withUnsafeMutableBufferPointer { buffer -> Int in
-                guard let ptr = buffer.baseAddress else { return -1 }
-                return Int(libssh2_channel_write_ex(
-                    state.channel, 0,
-                    UnsafeRawPointer(ptr.advanced(by: offset)).assumingMemoryBound(to: CChar.self),
-                    remaining
-                ))
-            }
+            let written = driver.writeChannel(
+                state.channel,
+                stream: 0,
+                bytes: bytes,
+                offset: offset,
+                remaining: remaining
+            )
 
             if written > 0 {
                 offset += written
@@ -2152,30 +2134,26 @@ actor SSHSession {
         do {
             while scpChannel == nil {
                 try Task.checkCancellation()
-                scpChannel = remotePath.withCString { pathPtr in
-                    libssh2_scp_send64(
-                        session,
-                        pathPtr,
-                        permissions,
-                        Int64(data.count),
-                        0,
-                        0
-                    )
-                }
+                scpChannel = driver.openSCPChannel(
+                    session: session,
+                    path: remotePath,
+                    permissions: permissions,
+                    size: Int64(data.count)
+                )
 
                 if scpChannel != nil {
                     break
                 }
 
-                let lastError = libssh2_session_last_errno(session)
-                if lastError == LIBSSH2_ERROR_EAGAIN {
+                let rawError = driver.lastError(session: session, operation: .scpChannelOpen, fallbackCode: 0)
+                if rawError.code == LIBSSH2_ERROR_EAGAIN {
                     await waitForSocket()
                     continue
                 }
-                throw SSHError.socketError("SCP channel open failed: \(lastError)")
+                throw SSHError.socketError("SCP channel open failed: \(rawError.code)")
             }
 
-            guard let scpChannel else {
+            guard let openedSCPChannel = scpChannel else {
                 throw SSHError.socketError("SCP channel open failed")
             }
 
@@ -2183,11 +2161,13 @@ actor SSHSession {
             var offset = 0
             while offset < bytes.count {
                 try Task.checkCancellation()
-                let written = bytes.withUnsafeBufferPointer { buffer -> Int in
-                    guard let baseAddress = buffer.baseAddress else { return -1 }
-                    let pointer = UnsafeRawPointer(baseAddress.advanced(by: offset)).assumingMemoryBound(to: CChar.self)
-                    return Int(libssh2_channel_write_ex(scpChannel, 0, pointer, bytes.count - offset))
-                }
+                let written = driver.writeChannel(
+                    openedSCPChannel,
+                    stream: 0,
+                    bytes: bytes,
+                    offset: offset,
+                    remaining: bytes.count - offset
+                )
 
                 if written > 0 {
                     offset += written
@@ -2198,12 +2178,12 @@ actor SSHSession {
                 }
             }
 
-            _ = try await finishUploadChannel(scpChannel)
+            _ = try await finishUploadChannel(openedSCPChannel)
+            scpChannel = nil
             logger.info("SCP upload finished [path: \(remotePath, privacy: .public)]")
         } catch {
             if let scpChannel {
-                libssh2_channel_close(scpChannel)
-                libssh2_channel_free(scpChannel)
+                closeAndFreeChannel(scpChannel)
             }
             throw error
         }
@@ -2224,46 +2204,32 @@ actor SSHSession {
         do {
             while execChannel == nil {
                 try Task.checkCancellation()
-                execChannel = libssh2_channel_open_ex(
-                    session,
-                    "session",
-                    UInt32("session".utf8.count),
-                    2 * 1024 * 1024,
-                    32768,
-                    nil,
-                    0
-                )
+                execChannel = driver.openSessionChannel(session: session)
 
                 if execChannel != nil {
                     break
                 }
 
-                let lastError = libssh2_session_last_errno(session)
-                if lastError == LIBSSH2_ERROR_EAGAIN {
+                let rawError = driver.lastError(session: session, operation: .channelOpen, fallbackCode: 0)
+                if rawError.code == LIBSSH2_ERROR_EAGAIN {
                     await waitForSocket()
                     continue
                 }
-                throw SSHError.socketError("Exec upload channel open failed: \(lastError)")
+                throw SSHError.socketError("Exec upload channel open failed: \(rawError.code)")
             }
 
-            guard let execChannel else {
+            guard let openedExecChannel = execChannel else {
                 throw SSHError.socketError("Exec upload channel open failed")
             }
 
-            _ = libssh2_channel_handle_extended_data2(
-                execChannel,
-                LIBSSH2_CHANNEL_EXTENDED_DATA_IGNORE
+            _ = driver.handleExtendedData(
+                channel: openedExecChannel,
+                mode: LIBSSH2_CHANNEL_EXTENDED_DATA_IGNORE
             )
 
             while true {
                 try Task.checkCancellation()
-                let execResult = libssh2_channel_process_startup(
-                    execChannel,
-                    "exec",
-                    4,
-                    command,
-                    UInt32(command.utf8.count)
-                )
+                let execResult = driver.startExec(channel: openedExecChannel, command: command)
                 if execResult == 0 {
                     break
                 }
@@ -2278,11 +2244,13 @@ actor SSHSession {
             var offset = 0
             while offset < bytes.count {
                 try Task.checkCancellation()
-                let written = bytes.withUnsafeBufferPointer { buffer -> Int in
-                    guard let baseAddress = buffer.baseAddress else { return -1 }
-                    let pointer = UnsafeRawPointer(baseAddress.advanced(by: offset)).assumingMemoryBound(to: CChar.self)
-                    return Int(libssh2_channel_write_ex(execChannel, 0, pointer, bytes.count - offset))
-                }
+                let written = driver.writeChannel(
+                    openedExecChannel,
+                    stream: 0,
+                    bytes: bytes,
+                    offset: offset,
+                    remaining: bytes.count - offset
+                )
 
                 if written > 0 {
                     offset += written
@@ -2293,15 +2261,15 @@ actor SSHSession {
                 }
             }
 
-            let exitStatus = try await finishUploadChannel(execChannel, drainOutput: true)
+            let exitStatus = try await finishUploadChannel(openedExecChannel, drainOutput: true)
+            execChannel = nil
             guard exitStatus == 0 else {
                 throw SSHError.socketError("Exec upload failed with exit status \(exitStatus)")
             }
             logger.info("Exec upload finished [path: \(remotePath, privacy: .public)]")
         } catch {
             if let execChannel {
-                libssh2_channel_close(execChannel)
-                libssh2_channel_free(execChannel)
+                closeAndFreeChannel(execChannel)
             }
             throw error
         }
@@ -2313,7 +2281,7 @@ actor SSHSession {
     ) async throws -> Int32 {
         while true {
             try Task.checkCancellation()
-            let sendEOFResult = libssh2_channel_send_eof(channel)
+            let sendEOFResult = driver.sendChannelEOF(channel)
             if sendEOFResult == 0 {
                 break
             }
@@ -2329,7 +2297,7 @@ actor SSHSession {
             if drainOutput {
                 try await drainChannelOutput(channel)
             }
-            let waitEOFResult = libssh2_channel_wait_eof(channel)
+            let waitEOFResult = driver.waitChannelEOF(channel)
             if waitEOFResult == 0 {
                 break
             }
@@ -2342,7 +2310,7 @@ actor SSHSession {
 
         while true {
             try Task.checkCancellation()
-            let closeResult = libssh2_channel_close(channel)
+            let closeResult = driver.closeChannel(channel)
             if closeResult == 0 {
                 break
             }
@@ -2355,7 +2323,7 @@ actor SSHSession {
 
         while true {
             try Task.checkCancellation()
-            let waitClosedResult = libssh2_channel_wait_closed(channel)
+            let waitClosedResult = driver.waitChannelClosed(channel)
             if waitClosedResult == 0 {
                 break
             }
@@ -2366,8 +2334,8 @@ actor SSHSession {
             throw SSHError.socketError("SCP wait close failed: \(waitClosedResult)")
         }
 
-        let exitStatus = libssh2_channel_get_exit_status(channel)
-        libssh2_channel_free(channel)
+        let exitStatus = driver.channelExitStatus(channel)
+        _ = driver.freeChannel(channel)
         return exitStatus
     }
 
@@ -2376,7 +2344,7 @@ actor SSHSession {
 
         while true {
             try Task.checkCancellation()
-            let stdoutRead = libssh2_channel_read_ex(channel, 0, &buffer, buffer.count)
+            let stdoutRead = driver.readChannel(channel, stream: 0, into: &buffer)
             if stdoutRead > 0 {
                 continue
             }
@@ -2388,7 +2356,7 @@ actor SSHSession {
 
         while true {
             try Task.checkCancellation()
-            let stderrRead = libssh2_channel_read_ex(channel, 1, &buffer, buffer.count)
+            let stderrRead = driver.readChannel(channel, stream: 1, into: &buffer)
             if stderrRead > 0 {
                 continue
             }
@@ -2406,8 +2374,7 @@ actor SSHSession {
             throw SSHError.notConnected
         }
 
-        // Use _ex variant since macros not available in Swift
-        let result = libssh2_channel_request_pty_size_ex(state.channel, Int32(cols), Int32(rows), 0, 0)
+        let result = driver.requestPtySize(channel: state.channel, cols: cols, rows: rows)
         if result != 0 && result != Int32(LIBSSH2_ERROR_EAGAIN) {
             logger.warning("PTY resize failed: \(result)")
         }
@@ -2419,13 +2386,13 @@ actor SSHSession {
         guard libssh2Session != nil else {
             throw SSHError.notConnected
         }
-        startIOLoop()
 
         let requestId = UUID()
         return try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { continuation in
                 let request = ExecRequest(id: requestId, command: command, continuation: continuation)
                 execRequests[request.id] = request
+                startIOLoop()
             }
         }, onCancel: { [weak self] in
             Task {

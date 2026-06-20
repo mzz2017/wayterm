@@ -195,6 +195,147 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
             "PTY failure must close and free the channel that startShell opened"
         )
     }
+
+    func testShellWriteRetriesEAGAINAndWritesCopiedBytes() async throws {
+        // Given a connected shell whose first write would block before the
+        // remaining bytes can be written in two successful chunks.
+        let bytes = Data("hello".utf8)
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x22),
+            channelWriteResults: [
+                Int(LIBSSH2_ERROR_EAGAIN),
+                2,
+                3
+            ]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When writing to the shell.
+        try await session.connect()
+        let shell = try await session.startShell(cols: 80, rows: 24)
+        try await session.write(bytes, to: shell.id)
+        await session.closeShell(shell.id)
+
+        // Then the driver receives copied bytes and retry offsets; no unsafe
+        // Data pointer is allowed to escape from the production driver method.
+        XCTAssertEqual(
+            driver.channelWriteCalls(),
+            [
+                .init(stream: 0, bytes: Array(bytes), offset: 0, remaining: 5),
+                .init(stream: 0, bytes: Array(bytes), offset: 0, remaining: 5),
+                .init(stream: 0, bytes: Array(bytes), offset: 2, remaining: 3)
+            ],
+            "EAGAIN should retry the same copied bytes before advancing the offset"
+        )
+    }
+
+    func testExecuteRetriesStartupEAGAINReadsStdoutAndClosesChannel() async throws {
+        // Given an exec request whose process startup would block once, then
+        // produces stdout and reaches EOF.
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x33),
+            execStartResults: [
+                Int32(LIBSSH2_ERROR_EAGAIN),
+                0
+            ],
+            channelReadResults: [
+                .data(Data("root\n".utf8)),
+                .eagain
+            ],
+            channelEOFResults: [
+                true
+            ]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When executing a command.
+        try await session.connect()
+        let output = try await SSHClient.runWithTimeout(
+            .seconds(1),
+            operation: {
+                try await session.execute("whoami")
+            },
+            onTimeout: {
+                session.abort()
+            }
+        )
+
+        // Then startup retries, stdout is returned, and the exec channel is
+        // closed through the same driver-owned teardown boundary.
+        XCTAssertEqual(output, "root\n")
+        XCTAssertEqual(
+            driver.channelEvents(),
+            [
+                .openSession,
+                .startExec("whoami"),
+                .startExec("whoami"),
+                .read(stream: 0),
+                .read(stream: 1),
+                .isEOF,
+                .close,
+                .free
+            ],
+            "Exec EAGAIN/read/EOF flow should stay observable at the driver boundary"
+        )
+    }
+
+    func testExecUploadNonZeroExitDoesNotCloseFreedChannelTwice() async throws {
+        // Given exec-preferred upload reaches remote process completion, frees
+        // its channel, and then reports a non-zero exit status.
+        let payload = Data("payload".utf8)
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x44),
+            channelExitStatusResult: 7,
+            channelReadResults: [
+                .eagain,
+                .eagain
+            ],
+            channelWriteResults: [
+                payload.count
+            ]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When upload translates the non-zero exit status into an error.
+        try await session.connect()
+        do {
+            try await session.upload(payload, to: "/tmp/vvterm-upload", strategy: SSHUploadStrategy.execPreferred)
+            XCTFail("Expected non-zero exec upload exit status to fail")
+        } catch SSHError.socketError(let message) {
+            XCTAssertTrue(
+                message.contains("exit status 7"),
+                "Upload failure should preserve the remote exit status"
+            )
+        } catch {
+            XCTFail("Expected SSHError.socketError for non-zero exit, got \(error)")
+        }
+
+        // Then the channel that finishUploadChannel already freed is not
+        // closed/freed again by the outer upload catch path.
+        let teardownEvents: [RecordingLibSSH2SessionDriver.ChannelEvent] = driver.channelEvents().filter { event in
+            switch event {
+            case .close, .free:
+                return true
+            default:
+                return false
+            }
+        }
+        let expectedTeardownEvents: [RecordingLibSSH2SessionDriver.ChannelEvent] = [.close, .free]
+        XCTAssertEqual(
+            teardownEvents,
+            expectedTeardownEvents,
+            "Exec upload must not close/free a channel after ownership was consumed by finishUploadChannel"
+        )
+    }
 }
 
 private extension SSHSessionConfig {
@@ -284,8 +425,24 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         case requestPty
         case startShell
         case startExec(String)
+        case read(stream: Int32)
+        case write(stream: Int32, offset: Int, remaining: Int)
+        case isEOF
         case close
         case free
+    }
+
+    enum ChannelReadResult {
+        case data(Data)
+        case eagain
+        case error(Int)
+    }
+
+    struct ChannelWriteCall: Equatable {
+        let stream: Int32
+        let bytes: [UInt8]
+        let offset: Int
+        let remaining: Int
     }
 
     private let sessionInitResult: OpaquePointer?
@@ -297,10 +454,16 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
     private let ptyResult: Int32
     private let shellStartResult: Int32
     private let execStartResult: Int32
+    private let channelExitStatusResult: Int32
     private let lock = NSLock()
     private var closedSocketDescriptors: [Int32] = []
     private var observedSocketAbort = false
     private var channelEventLog: [ChannelEvent] = []
+    private var execStartResultQueue: [Int32]
+    private var channelReadResultQueue: [ChannelReadResult]
+    private var channelEOFResultQueue: [Bool]
+    private var channelWriteResultQueue: [Int]
+    private var channelWriteCallLog: [ChannelWriteCall] = []
 
     init(
         sessionInitResult: OpaquePointer?,
@@ -311,7 +474,12 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         channelOpenResult: OpaquePointer? = nil,
         ptyResult: Int32 = 0,
         shellStartResult: Int32 = 0,
-        execStartResult: Int32 = 0
+        execStartResult: Int32 = 0,
+        channelExitStatusResult: Int32 = 0,
+        execStartResults: [Int32] = [],
+        channelReadResults: [ChannelReadResult] = [],
+        channelEOFResults: [Bool] = [],
+        channelWriteResults: [Int] = []
     ) {
         self.sessionInitResult = sessionInitResult
         self.connectedSocket = connectedSocket
@@ -322,6 +490,11 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         self.ptyResult = ptyResult
         self.shellStartResult = shellStartResult
         self.execStartResult = execStartResult
+        self.channelExitStatusResult = channelExitStatusResult
+        self.execStartResultQueue = execStartResults
+        self.channelReadResultQueue = channelReadResults
+        self.channelEOFResultQueue = channelEOFResults
+        self.channelWriteResultQueue = channelWriteResults
     }
 
     func closedSockets() -> [Int32] {
@@ -344,10 +517,58 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         return channelEventLog
     }
 
+    func channelWriteCalls() -> [ChannelWriteCall] {
+        lock.lock()
+        defer { lock.unlock() }
+        return channelWriteCallLog
+    }
+
     private func recordChannelEvent(_ event: ChannelEvent) {
         lock.lock()
         defer { lock.unlock() }
         channelEventLog.append(event)
+    }
+
+    private func nextExecStartResult() -> Int32 {
+        lock.lock()
+        defer { lock.unlock() }
+        if execStartResultQueue.isEmpty {
+            return execStartResult
+        }
+        return execStartResultQueue.removeFirst()
+    }
+
+    private func nextChannelReadResult() -> ChannelReadResult {
+        lock.lock()
+        defer { lock.unlock() }
+        if channelReadResultQueue.isEmpty {
+            return .eagain
+        }
+        return channelReadResultQueue.removeFirst()
+    }
+
+    private func nextChannelEOFResult() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if channelEOFResultQueue.isEmpty {
+            return false
+        }
+        return channelEOFResultQueue.removeFirst()
+    }
+
+    private func nextChannelWriteResult(default defaultResult: Int) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        if channelWriteResultQueue.isEmpty {
+            return defaultResult
+        }
+        return channelWriteResultQueue.removeFirst()
+    }
+
+    private func recordChannelWriteCall(_ call: ChannelWriteCall) {
+        lock.lock()
+        defer { lock.unlock() }
+        channelWriteCallLog.append(call)
     }
 
     func waitForObservedSocketAbort(timeout: Duration) -> Bool {
@@ -493,7 +714,7 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
 
     nonisolated func startExec(channel: OpaquePointer, command: String) -> Int32 {
         recordChannelEvent(.startExec(command))
-        return execStartResult
+        return nextExecStartResult()
     }
 
     nonisolated func closeChannel(_ channel: OpaquePointer) -> Int32 {
@@ -504,6 +725,79 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
     nonisolated func freeChannel(_ channel: OpaquePointer) -> Int32 {
         recordChannelEvent(.free)
         return 0
+    }
+
+    nonisolated func readChannel(_ channel: OpaquePointer, stream: Int32, into buffer: inout [CChar]) -> Int {
+        recordChannelEvent(.read(stream: stream))
+        switch nextChannelReadResult() {
+        case .data(let data):
+            let bytes = [UInt8](data)
+            let count = min(bytes.count, buffer.count)
+            for index in 0..<count {
+                buffer[index] = CChar(bitPattern: bytes[index])
+            }
+            return count
+        case .eagain:
+            return Int(LIBSSH2_ERROR_EAGAIN)
+        case .error(let code):
+            return code
+        }
+    }
+
+    nonisolated func writeChannel(
+        _ channel: OpaquePointer,
+        stream: Int32,
+        bytes: [UInt8],
+        offset: Int,
+        remaining: Int
+    ) -> Int {
+        recordChannelEvent(.write(stream: stream, offset: offset, remaining: remaining))
+        recordChannelWriteCall(
+            ChannelWriteCall(stream: stream, bytes: bytes, offset: offset, remaining: remaining)
+        )
+        return nextChannelWriteResult(default: remaining)
+    }
+
+    nonisolated func isChannelEOF(_ channel: OpaquePointer) -> Bool {
+        recordChannelEvent(.isEOF)
+        return nextChannelEOFResult()
+    }
+
+    nonisolated func sendChannelEOF(_ channel: OpaquePointer) -> Int32 {
+        0
+    }
+
+    nonisolated func waitChannelEOF(_ channel: OpaquePointer) -> Int32 {
+        0
+    }
+
+    nonisolated func waitChannelClosed(_ channel: OpaquePointer) -> Int32 {
+        0
+    }
+
+    nonisolated func channelExitStatus(_ channel: OpaquePointer) -> Int32 {
+        channelExitStatusResult
+    }
+
+    nonisolated func requestPtySize(channel: OpaquePointer, cols: Int, rows: Int) -> Int32 {
+        0
+    }
+
+    nonisolated func handleExtendedData(channel: OpaquePointer, mode: Int32) -> Int32 {
+        0
+    }
+
+    nonisolated func openSCPChannel(
+        session: OpaquePointer,
+        path: String,
+        permissions: Int32,
+        size: Int64
+    ) -> OpaquePointer? {
+        channelOpenResult
+    }
+
+    nonisolated func sessionBlockDirections(session: OpaquePointer) -> Int32 {
+        0
     }
 
     nonisolated func disconnect(

@@ -30,13 +30,21 @@ struct LibSSH2RawError: Error, Sendable, Equatable {
     enum Operation: String, Sendable {
         case authentication
         case channelClose
+        case channelEOF
         case channelFree
         case channelOpen
         case channelProcessStartup
+        case channelRead
         case channelRequestPty
+        case channelRequestPtySize
         case channelSetEnvironment
+        case channelWaitClosed
+        case channelWaitEOF
+        case channelWrite
         case handshake
+        case scpChannelOpen
         case sessionDisconnect
+        case sessionBlockDirections
         case sessionFree
     }
 
@@ -102,6 +110,28 @@ protocol LibSSH2SessionDriving: Sendable {
     nonisolated func startExec(channel: OpaquePointer, command: String) -> Int32
     nonisolated func closeChannel(_ channel: OpaquePointer) -> Int32
     nonisolated func freeChannel(_ channel: OpaquePointer) -> Int32
+    nonisolated func readChannel(_ channel: OpaquePointer, stream: Int32, into buffer: inout [CChar]) -> Int
+    nonisolated func writeChannel(
+        _ channel: OpaquePointer,
+        stream: Int32,
+        bytes: [UInt8],
+        offset: Int,
+        remaining: Int
+    ) -> Int
+    nonisolated func isChannelEOF(_ channel: OpaquePointer) -> Bool
+    nonisolated func sendChannelEOF(_ channel: OpaquePointer) -> Int32
+    nonisolated func waitChannelEOF(_ channel: OpaquePointer) -> Int32
+    nonisolated func waitChannelClosed(_ channel: OpaquePointer) -> Int32
+    nonisolated func channelExitStatus(_ channel: OpaquePointer) -> Int32
+    nonisolated func requestPtySize(channel: OpaquePointer, cols: Int, rows: Int) -> Int32
+    nonisolated func handleExtendedData(channel: OpaquePointer, mode: Int32) -> Int32
+    nonisolated func openSCPChannel(
+        session: OpaquePointer,
+        path: String,
+        permissions: Int32,
+        size: Int64
+    ) -> OpaquePointer?
+    nonisolated func sessionBlockDirections(session: OpaquePointer) -> Int32
     nonisolated func lastError(
         session: OpaquePointer,
         operation: LibSSH2RawError.Operation,
@@ -361,6 +391,77 @@ struct LibSSH2SessionDriver: LibSSH2SessionDriving {
 
     nonisolated func freeChannel(_ channel: OpaquePointer) -> Int32 {
         libssh2_channel_free(channel)
+    }
+
+    nonisolated func readChannel(_ channel: OpaquePointer, stream: Int32, into buffer: inout [CChar]) -> Int {
+        buffer.withUnsafeMutableBufferPointer { mutableBuffer in
+            guard let baseAddress = mutableBuffer.baseAddress else { return -1 }
+            return Int(libssh2_channel_read_ex(channel, stream, baseAddress, mutableBuffer.count))
+        }
+    }
+
+    nonisolated func writeChannel(
+        _ channel: OpaquePointer,
+        stream: Int32,
+        bytes: [UInt8],
+        offset: Int,
+        remaining: Int
+    ) -> Int {
+        bytes.withUnsafeBufferPointer { buffer in
+            guard let baseAddress = buffer.baseAddress else { return -1 }
+            let pointer = UnsafeRawPointer(baseAddress.advanced(by: offset)).assumingMemoryBound(to: CChar.self)
+            return Int(libssh2_channel_write_ex(channel, stream, pointer, remaining))
+        }
+    }
+
+    nonisolated func isChannelEOF(_ channel: OpaquePointer) -> Bool {
+        libssh2_channel_eof(channel) != 0
+    }
+
+    nonisolated func sendChannelEOF(_ channel: OpaquePointer) -> Int32 {
+        libssh2_channel_send_eof(channel)
+    }
+
+    nonisolated func waitChannelEOF(_ channel: OpaquePointer) -> Int32 {
+        libssh2_channel_wait_eof(channel)
+    }
+
+    nonisolated func waitChannelClosed(_ channel: OpaquePointer) -> Int32 {
+        libssh2_channel_wait_closed(channel)
+    }
+
+    nonisolated func channelExitStatus(_ channel: OpaquePointer) -> Int32 {
+        libssh2_channel_get_exit_status(channel)
+    }
+
+    nonisolated func requestPtySize(channel: OpaquePointer, cols: Int, rows: Int) -> Int32 {
+        libssh2_channel_request_pty_size_ex(channel, Int32(cols), Int32(rows), 0, 0)
+    }
+
+    nonisolated func handleExtendedData(channel: OpaquePointer, mode: Int32) -> Int32 {
+        libssh2_channel_handle_extended_data2(channel, mode)
+    }
+
+    nonisolated func openSCPChannel(
+        session: OpaquePointer,
+        path: String,
+        permissions: Int32,
+        size: Int64
+    ) -> OpaquePointer? {
+        path.withCString { pathPointer in
+            libssh2_scp_send64(
+                session,
+                pathPointer,
+                permissions,
+                size,
+                0,
+                0
+            )
+        }
+    }
+
+    nonisolated func sessionBlockDirections(session: OpaquePointer) -> Int32 {
+        libssh2_session_block_directions(session)
     }
 
     nonisolated func lastError(
