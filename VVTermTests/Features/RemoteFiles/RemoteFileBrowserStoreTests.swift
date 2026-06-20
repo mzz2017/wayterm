@@ -2,6 +2,13 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect RemoteFiles browser state rules: entry filtering,
+// per-tab persistence, initial path selection, and directory/viewer request
+// ordering. Fakes use in-memory UserDefaults suites and injected providers, so
+// failures usually indicate a browser-state behavior regression unless the
+// persisted snapshot model or path-precedence product rule intentionally
+// changes.
 @MainActor
 struct RemoteFileBrowserStoreTests {
     @Test

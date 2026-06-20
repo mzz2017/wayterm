@@ -1409,7 +1409,7 @@ Before starting Task 17, review whether `withExclusiveClient` names its side eff
   - Task 16 `RemoteConnectionLease.withExclusiveClient`.
   - Existing `RemoteFileService` API.
 
-- [ ] **Step 1: Add RED adapter lifecycle tests**
+- [x] **Step 1: Add RED adapter lifecycle tests**
 
 Create `SSHSFTPAdapterTests` with a `Test Context` comment and these tests:
 
@@ -1439,26 +1439,26 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected failure: the test seams and `SFTPRemoteFileClient` capability protocol do not exist, and disconnect does not prove it waits for in-flight adapter work.
 
-- [ ] **Step 2: Add RemoteFiles SFTP capability protocol**
+- [x] **Step 2: Add RemoteFiles SFTP capability protocol**
 
 Move the SFTP-facing methods into `SFTPRemoteFileClient` in RemoteFiles infrastructure. `SSHClient` should conform in this feature boundary. `SFTPRemoteFileService` should depend on `any SFTPRemoteFileClient`.
 
-- [ ] **Step 3: Route adapter operations through the lease gate**
+- [x] **Step 3: Route adapter operations through the lease gate**
 
 Keep `SSHSFTPAdapter` as the stable RemoteFiles owner. It may create an owned `SSHClient` only through one narrow factory seam, and all use of that client must be inside the lease-exclusive operation.
 
-- [ ] **Step 4: Tighten disconnect ordering**
+- [x] **Step 4: Tighten disconnect ordering**
 
 If a server has an in-flight SFTP operation, `disconnect(serverId:)` must wait for that operation to leave the lease gate before owned disconnect. Borrowed disconnect must remove RemoteFiles registration without disconnecting the terminal-owned client.
 
-- [ ] **Step 5: Run focused RemoteFiles tests**
+- [x] **Step 5: Run focused RemoteFiles tests**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add VVTerm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileClient.swift \
@@ -1470,7 +1470,7 @@ git add VVTerm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileClient.swift \
 git commit -m "refactor: route remote files through connection leases"
 ```
 
-- [ ] **Step 7: API/boundary cleanup**
+- [x] **Step 7: API/boundary cleanup**
 
 Before Task 18, check that RemoteFiles application/UI code does not reason about raw `SSHClient`, that test files include the required Test Context, and that any temporary factory seams are `internal` and named by behavior. Record the result in the Progress Ledger.
 
@@ -1685,7 +1685,9 @@ git commit -m "refactor: complete remote lease boundary cleanup"
 - 2026-06-21: Task 15 final verification completed. The documented focused suite passed 16 XCTest tests plus 49 Swift Testing tests, and `xcodebuild build-for-testing -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` succeeded. Remaining architecture work is the previously deferred RemoteFiles/Stats lease-boundary cleanup, not an unresolved TerminalSessions lifecycle hit.
 - 2026-06-21: RemoteFiles/Stats lease-boundary audit completed with three read-only fan-out explorers. Findings: `RemoteConnectionLease.close()` is awaitable and idempotent per lease, but RemoteFiles and Stats still expose raw `SSHClient` at feature boundaries; RemoteFiles needs a per-lease exclusive operation gate before borrowed terminal clients can safely run SFTP; Stats stop/restart must await or track close work instead of dropping returned tasks from SwiftUI.
 - 2026-06-21: Task 16 RED/GREEN completed. Added lease-ordering tests for concurrent close, non-overlapping exclusive operations, and close waiting for a protected operation; then implemented `RemoteConnectionLease.withExclusiveClient` with private actor-owned per-lease serialization. API cleanup found no new UI/application raw-client exposure; mutable gate state remains private to `RemoteConnectionLeaseState`. Verification: `RemoteConnectionLeaseTests` passed 6 Swift Testing tests and `git diff --check` passed.
-- Next task: Task 16 commit, then Task 17 RemoteFiles Lease-Owned SFTP Boundary.
+- 2026-06-21: Task 17 RED/GREEN completed. Added `SSHSFTPAdapterTests` covering borrowed disconnect safety, owned disconnect waiting for in-flight SFTP work, per-server lease serialization, and borrowed registration retry after failure. RED failed on missing `SFTPRemoteFileClient` and adapter seams; GREEN passed 4 `SSHSFTPAdapterTests` after introducing the RemoteFiles SFTP capability protocol and routing adapter work through `RemoteConnectionLease.withExclusiveClient`.
+- 2026-06-21: Task 17 API/boundary cleanup completed. RemoteFiles application code still depends on `SSHSFTPAdapter` rather than raw `SSHClient`; raw `SSHClient` use is confined to RemoteFiles infrastructure default provider/factory and feature-boundary conformance. `SSHSFTPAdapterTests` and `RemoteFileBrowserStoreTests` include Test Context headers. Verification: focused RemoteFiles suite passed 8 Swift Testing tests and `git diff --check` passed.
+- Next task: Task 18 Stats Collector Awaitable Stop.
 
 ## Self-Review
 
