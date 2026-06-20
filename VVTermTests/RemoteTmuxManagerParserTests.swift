@@ -1,7 +1,30 @@
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect remote tmux command parsing, command construction, and
+// capability probing behavior used when terminal sessions attach to persistent
+// remote multiplexers. The invariant is that unavailable tmux should produce a
+// nil backend while lifecycle cancellation remains distinguishable and
+// propagates to the caller. Fakes below do not perform network I/O; update this
+// context only when the product intentionally changes tmux probing semantics or
+// remote command execution ownership.
 struct RemoteTmuxManagerParserTests {
+
+    @Test
+    func tmuxBackendPropagatesCancellationInsteadOfReportingUnavailable() async throws {
+        let executor = CancellationRemoteCommandExecutor(environment: .fallbackPOSIX)
+
+        do {
+            _ = try await RemoteTmuxManager.shared.availableBackend(using: executor, preferred: .tmux)
+            Issue.record("A canceled tmux availability probe should throw CancellationError, not return nil")
+        } catch is CancellationError {
+            let commandCount = await executor.commandCount()
+            #expect(commandCount == 1)
+        } catch {
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+    }
 
     @Test
     func parseWhitespaceFormatFromRealTmuxOutput() {
@@ -245,5 +268,31 @@ struct RemoteTmuxManagerParserTests {
         #expect(!script.contains("WheelUpPane"))
         #expect(!script.contains("WheelDownPane"))
         #expect(!script.contains("sh -lc"))
+    }
+}
+
+private actor CancellationRemoteCommandExecutor: RemoteCommandExecuting {
+    let environment: RemoteEnvironment
+    private(set) var commands: [String] = []
+
+    init(environment: RemoteEnvironment) {
+        self.environment = environment
+    }
+
+    func execute(_ command: String, timeout: Duration?) async throws -> String {
+        commands.append(command)
+        throw CancellationError()
+    }
+
+    func remoteEnvironment(forceRefresh: Bool) async -> RemoteEnvironment {
+        environment
+    }
+
+    func remoteTerminalType(forceRefresh: Bool) async -> RemoteTerminalType {
+        .xterm256Color
+    }
+
+    func commandCount() -> Int {
+        commands.count
     }
 }
