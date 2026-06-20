@@ -1031,6 +1031,7 @@ struct iOSTerminalView: View {
         guard let action = IOSTerminalViewPolicy.foregroundReconnectAction(
             selectedViewId: selectedView,
             selectedSession: session.iosTerminalSessionSnapshot,
+            selectedSessionHasLiveRuntime: sessionManager.hasLiveRuntime(forSessionId: session.id),
             refreshTerminal: refreshTerminal,
             autoReconnectEnabled: autoReconnectEnabled,
             isSuspendingForBackground: sessionManager.isSuspendingForBackground

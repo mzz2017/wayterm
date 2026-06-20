@@ -117,6 +117,10 @@ final class ConnectionSessionManager: ObservableObject {
         terminalConnectionRegistry.activeServerIds
     }
 
+    func hasLiveRuntime(forSessionId sessionId: UUID) -> Bool {
+        terminalConnectionRegistry.isOpeningOrStreaming(.session(sessionId))
+    }
+
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ConnectionSession")
     private var shellRegistry = SSHShellRegistry(staleThreshold: 120)
 

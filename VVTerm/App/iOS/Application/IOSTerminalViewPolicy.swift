@@ -67,6 +67,7 @@ enum IOSTerminalViewPolicy {
     static func foregroundReconnectAction(
         selectedViewId: String,
         selectedSession: IOSTerminalSessionSnapshot?,
+        selectedSessionHasLiveRuntime: Bool,
         refreshTerminal: Bool,
         autoReconnectEnabled: Bool,
         isSuspendingForBackground: Bool
@@ -76,7 +77,10 @@ enum IOSTerminalViewPolicy {
 
         let canReconnect = autoReconnectEnabled
             && !isSuspendingForBackground
-            && selectedSession.connectionState.shouldReconnectOnForeground
+            && (
+                selectedSession.connectionState.shouldReconnectOnForeground
+                    || !selectedSessionHasLiveRuntime
+            )
 
         return IOSTerminalForegroundReconnectAction(
             sessionId: selectedSession.id,
