@@ -4,6 +4,23 @@ import Combine
 import SwiftUI
 import os.log
 
+struct ServerDeletionFailure: Identifiable, Equatable {
+    enum Operation: Equatable {
+        case deleteServer(UUID)
+        case deleteWorkspace(UUID)
+    }
+
+    let id: UUID
+    let operation: Operation
+    let message: String
+
+    init(id: UUID = UUID(), operation: Operation, error: Error) {
+        self.id = id
+        self.operation = operation
+        self.message = error.localizedDescription
+    }
+}
+
 @MainActor
 final class ServerManager: ObservableObject {
     typealias ServerDeletionTeardown = @MainActor @Sendable (Server) async -> Void
@@ -16,6 +33,7 @@ final class ServerManager: ObservableObject {
     @Published var workspaces: [Workspace] = []
     @Published var isLoading = false
     @Published var error: String?
+    @Published private(set) var deletionFailure: ServerDeletionFailure?
 
     private let cloudKit = CloudKitManager.shared
     private let syncCoordinator = CloudKitSyncCoordinator.shared
@@ -26,6 +44,8 @@ final class ServerManager: ObservableObject {
     private let recordsSyncMutations: Bool
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ServerManager")
     private var isSyncEnabled: Bool { SyncSettings.isEnabled }
+    private var deletionRequests: [UUID: Task<Void, Never>] = [:]
+    var pendingDeletionRequestIDs: Set<UUID> { Set(deletionRequests.keys) }
 
     // Local storage keys
     private let serversKey = CloudKitSyncConstants.serverStorageKey
@@ -1053,6 +1073,18 @@ final class ServerManager: ObservableObject {
         await persistLocalMutations(logMessage: "Deleted server: \(server.name)")
     }
 
+    @discardableResult
+    func requestServerDeletion(
+        _ server: Server,
+        onDeleted: @escaping @MainActor () -> Void = {}
+    ) -> UUID {
+        trackDeletionRequest(operation: .deleteServer(server.id)) { [weak self] in
+            guard let self else { return }
+            try await self.deleteServer(server)
+            onDeleted()
+        }
+    }
+
     func updateLastConnected(for server: Server) async {
         guard let index = servers.firstIndex(where: { $0.id == server.id }) else { return }
         servers[index].lastConnected = Date()
@@ -1119,6 +1151,48 @@ final class ServerManager: ObservableObject {
         workspaces.removeAll { $0.id == workspace.id }
         enqueuePendingWorkspaceDelete(workspace)
         await persistLocalMutations(logMessage: "Deleted workspace: \(workspace.name)")
+    }
+
+    @discardableResult
+    func requestWorkspaceDeletion(
+        _ workspace: Workspace,
+        onDeleted: @escaping @MainActor () -> Void = {}
+    ) -> UUID {
+        trackDeletionRequest(operation: .deleteWorkspace(workspace.id)) { [weak self] in
+            guard let self else { return }
+            try await self.deleteWorkspace(workspace)
+            onDeleted()
+        }
+    }
+
+    func clearDeletionFailure() {
+        deletionFailure = nil
+    }
+
+    func waitForDeletionRequest(_ requestID: UUID) async {
+        await deletionRequests[requestID]?.value
+    }
+
+    private func trackDeletionRequest(
+        operation: ServerDeletionFailure.Operation,
+        _ action: @escaping @MainActor () async throws -> Void
+    ) -> UUID {
+        let requestID = UUID()
+        deletionFailure = nil
+
+        let task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await action()
+            } catch {
+                self.error = error.localizedDescription
+                self.deletionFailure = ServerDeletionFailure(operation: operation, error: error)
+            }
+            self.deletionRequests.removeValue(forKey: requestID)
+        }
+
+        deletionRequests[requestID] = task
+        return requestID
     }
 
     func reorderWorkspaces(from source: IndexSet, to destination: Int) async throws {

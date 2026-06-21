@@ -89,7 +89,7 @@ struct iOSServerRow: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
-                Task { try? await ServerManager.shared.deleteServer(server) }
+                serverManager.requestServerDeletion(server)
             } label: {
                 Label("Remove", systemImage: "trash")
             }
@@ -117,7 +117,7 @@ struct iOSServerRow: View {
                 }
 
                 Button(role: .destructive) {
-                    Task { try? await ServerManager.shared.deleteServer(server) }
+                    serverManager.requestServerDeletion(server)
                 } label: {
                     Label("Remove", systemImage: "trash")
                 }
@@ -418,8 +418,7 @@ struct iOSWorkspacePickerView: View {
     }
 
     private func deleteWorkspace(_ workspace: Workspace) {
-        Task {
-            try? await serverManager.deleteWorkspace(workspace)
+        serverManager.requestWorkspaceDeletion(workspace) {
             if selectedWorkspace?.id == workspace.id {
                 selectedWorkspace = serverManager.workspaces.first
             }

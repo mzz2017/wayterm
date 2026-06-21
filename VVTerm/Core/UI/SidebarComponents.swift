@@ -76,7 +76,7 @@ struct ServerRow: View {
                         Label("Server Settings", systemImage: "slider.horizontal.3")
                     }
                     Button(role: .destructive) {
-                        Task { try? await ServerManager.shared.deleteServer(server) }
+                        serverManager.requestServerDeletion(server)
                     } label: {
                         Label("Delete Server", systemImage: "trash")
                     }
@@ -105,7 +105,7 @@ struct ServerRow: View {
                     }
                     Divider()
                     Button(role: .destructive) {
-                        Task { try? await ServerManager.shared.deleteServer(server) }
+                        serverManager.requestServerDeletion(server)
                     } label: {
                         Label("Delete Server", systemImage: "trash")
                     }

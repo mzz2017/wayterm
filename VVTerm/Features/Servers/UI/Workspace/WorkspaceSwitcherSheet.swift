@@ -115,7 +115,11 @@ struct WorkspaceSwitcherSheet: View {
             Button("Cancel", role: .cancel) { }
             Button("Delete", role: .destructive) {
                 guard let workspace = workspaceToDelete else { return }
-                Task { try? await serverManager.deleteWorkspace(workspace) }
+                serverManager.requestWorkspaceDeletion(workspace) {
+                    if selectedWorkspace?.id == workspace.id {
+                        selectedWorkspace = serverManager.workspaces.first
+                    }
+                }
             }
         } message: {
             Text(deleteWarningText(for: workspaceToDelete))

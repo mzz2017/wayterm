@@ -9,7 +9,8 @@ import Testing
 // lifecycle closures so failures identify changes to local state invariants
 // rather than sync transport behavior. Update this context only when
 // bootstrap/backfill policy, known-host cleanup ownership, credential-save
-// ordering, or server deletion teardown ownership changes intentionally.
+// ordering, server deletion teardown ownership, or user-initiated deletion
+// intent tracking changes intentionally.
 @Suite(.serialized)
 @MainActor
 struct ServerManagerBootstrapTests {
@@ -353,9 +354,55 @@ struct ServerManagerBootstrapTests {
             "Workspace metadata should be removed after contained server teardown completes."
         )
     }
+
+    @Test
+    func workspaceDeletionIntentTracksFailureInsteadOfDroppingResult() async throws {
+        // Given a workspace deletion launched from a synchronous UI intent where
+        // credential cleanup fails during the awaitable application delete path.
+        let workspace = Workspace(id: UUID(), name: "Main", order: 0)
+        let server = Server(
+            id: UUID(),
+            workspaceId: workspace.id,
+            name: "Tencent",
+            host: "workspace-intent-failure.example.com",
+            username: "root"
+        )
+        let manager = ServerManager.makeForTesting(
+            servers: [server],
+            workspaces: [workspace],
+            deleteCredentials: { _ in
+                throw ServerDeletionIntentFailure()
+            }
+        )
+        var successCalled = false
+
+        // When the UI sends deletion intent without being able to await from
+        // the button action itself.
+        let requestID = manager.requestWorkspaceDeletion(workspace) {
+            successCalled = true
+        }
+
+        // Then the application layer tracks the task, captures the failure, and
+        // does not run the success continuation or remove metadata as if the
+        // destructive action succeeded.
+        #expect(manager.pendingDeletionRequestIDs.contains(requestID))
+        await manager.waitForDeletionRequest(requestID)
+        #expect(!manager.pendingDeletionRequestIDs.contains(requestID))
+        #expect(!successCalled)
+        #expect(manager.deletionFailure?.operation == .deleteWorkspace(workspace.id))
+        #expect(
+            manager.deletionFailure?.message.contains("ServerDeletionIntentFailure") == true,
+            "Deletion intent failure should preserve the underlying error identity for diagnostics."
+        )
+        #expect(
+            manager.workspaces.contains { $0.id == workspace.id },
+            "Failed workspace deletion intent must not silently remove workspace metadata."
+        )
+    }
 }
 
 private struct ServerCredentialStoreFailure: Error {}
+private struct ServerDeletionIntentFailure: Error {}
 
 private actor ServerDeletionOrderProbe {
     private var recordedEvents: [String] = []
