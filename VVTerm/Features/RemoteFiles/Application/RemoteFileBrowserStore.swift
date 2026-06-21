@@ -110,6 +110,11 @@ final class RemoteFileBrowserStore: ObservableObject {
         let task: Task<Void, Never>
     }
 
+    struct NavigationRequest {
+        let tabId: UUID
+        let task: Task<Void, Never>
+    }
+
     @Published private(set) var states: [UUID: BrowserState] = [:]
     @Published var pendingToolbarCommand: ToolbarCommand?
 
@@ -129,6 +134,8 @@ final class RemoteFileBrowserStore: ObservableObject {
     var viewerRequestIDs: [UUID: UUID] = [:]
     var previewLoadRequests: [UUID: PreviewLoadRequest] = [:]
     var previewLoadRequestByTab: [UUID: UUID] = [:]
+    var navigationRequests: [UUID: NavigationRequest] = [:]
+    var navigationRequestByTab: [UUID: UUID] = [:]
     private var mutationRequests: [UUID: Task<Void, Never>] = [:]
     private var transferRequests: [UUID: Task<Void, Never>] = [:]
     private var pendingDisconnects: [UUID: PendingDisconnect] = [:]
@@ -152,6 +159,10 @@ final class RemoteFileBrowserStore: ObservableObject {
 
     var pendingPreviewLoadRequestIDs: Set<UUID> {
         Set(previewLoadRequestByTab.values)
+    }
+
+    var pendingNavigationRequestIDs: Set<UUID> {
+        Set(navigationRequestByTab.values)
     }
 
     init(
@@ -282,6 +293,10 @@ final class RemoteFileBrowserStore: ObservableObject {
 
     func waitForPreviewLoadRequest(_ requestID: UUID) async {
         await previewLoadRequests[requestID]?.task.value
+    }
+
+    func waitForNavigationRequest(_ requestID: UUID) async {
+        await navigationRequests[requestID]?.task.value
     }
 
     func currentPathValue(for tab: RemoteFileTab) -> String? {
@@ -469,6 +484,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     func removeRuntimeState(for tabId: UUID) {
+        cancelNavigationRequest(for: tabId)
         cancelPreviewLoadRequest(for: tabId)
         directoryRequestIDs.removeValue(forKey: tabId)
         viewerRequestIDs.removeValue(forKey: tabId)

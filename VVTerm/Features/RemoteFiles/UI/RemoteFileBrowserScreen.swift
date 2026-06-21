@@ -315,7 +315,11 @@ struct RemoteFileBrowserScreen: View {
             }
         }
         .task(id: initialLoadTaskID) {
-            await browser.loadInitialPath(for: server, tab: fileTab, initialPath: initialPath)
+            browser.requestNavigation(
+                .loadInitialPath(initialPath: initialPath),
+                in: fileTab,
+                server: server
+            )
         }
         .onAppear {
             onCurrentPathChange(browser.lastVisitedPath(for: fileTab))
@@ -822,7 +826,7 @@ struct RemoteFileBrowserScreen: View {
         switch entry.type {
         case .directory:
             Button {
-                Task { await browser.openDirectory(entry, in: fileTab, server: server) }
+                browser.requestNavigation(.openDirectory(entry), in: fileTab, server: server)
             } label: {
                 Label(String(localized: "Open"), systemImage: "folder")
             }
@@ -1082,13 +1086,10 @@ struct RemoteFileBrowserScreen: View {
     }
 
     func previewEntry(_ entry: RemoteFileEntry) {
-        Task {
-            await browser.activate(entry, in: fileTab, server: server)
+        browser.requestNavigation(.activate(entry), in: fileTab, server: server) { result in
             #if os(iOS)
-            if browser.selectedEntryPath(for: fileTab) == entry.path {
-                await MainActor.run {
-                    presentedPreviewPath = entry.path
-                }
+            if result == .selectedFile(entry) {
+                presentedPreviewPath = entry.path
             }
             #endif
         }
@@ -1696,8 +1697,8 @@ struct RemoteFileBrowserScreen: View {
 
         Task {
             if snapshot.currentPath != destinationPath {
-                await browser.openBreadcrumb(
-                    RemoteFileBreadcrumb(title: "", path: destinationPath),
+                browser.requestNavigation(
+                    .openBreadcrumb(RemoteFileBreadcrumb(title: "", path: destinationPath)),
                     in: fileTab,
                     server: server
                 )

@@ -640,7 +640,7 @@ struct ConnectionTerminalContainer: View {
         return Menu {
             Button {
                 guard let selectedFileTab else { return }
-                Task { await fileBrowser.goUp(in: selectedFileTab, server: server) }
+                fileBrowser.requestNavigation(.goUp, in: selectedFileTab, server: server)
             } label: {
                 Label("Parent", systemImage: "arrow.turn.up.left")
             }
@@ -648,7 +648,7 @@ struct ConnectionTerminalContainer: View {
 
             Button {
                 guard let selectedFileTab else { return }
-                Task { await fileBrowser.refresh(server: server, tab: selectedFileTab) }
+                fileBrowser.requestNavigation(.refresh, in: selectedFileTab, server: server)
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
@@ -815,11 +815,11 @@ struct ConnectionTerminalContainer: View {
                 ),
                 onFilesGoUp: {
                     guard let selectedFileTab else { return }
-                    Task { await fileBrowser.goUp(in: selectedFileTab, server: server) }
+                    fileBrowser.requestNavigation(.goUp, in: selectedFileTab, server: server)
                 },
                 onFilesRefresh: {
                     guard let selectedFileTab else { return }
-                    Task { await fileBrowser.refresh(server: server, tab: selectedFileTab) }
+                    fileBrowser.requestNavigation(.refresh, in: selectedFileTab, server: server)
                 },
                 onExitZen: {
                     showingZenPanel = false

@@ -317,6 +317,193 @@ struct RemoteFileBrowserStoreTests {
         ])
     }
 
+    @Test
+    func navigationRequestTracksInitialDirectoryLoadUntilSnapshotCompletes() async throws {
+        let server = makeServer()
+        let tab = RemoteFileTab(serverId: server.id, seedPath: "/srv")
+        let client = BlockingNavigationRemoteFileClient(
+            listResponses: [
+                "/srv": [makeEntry(name: "app", path: "/srv/app", type: .directory)]
+            ],
+            blockedListPaths: ["/srv"]
+        )
+        let store = makeStore(server: server, client: client)
+
+        // Given SwiftUI sends initial browser load intent through the
+        // application store while the remote directory list is still blocked.
+        let requestID = store.requestNavigation(
+            .loadInitialPath(initialPath: "/srv"),
+            in: tab,
+            server: server
+        )
+        await client.waitUntilListStarted(path: "/srv")
+
+        // Then the store exposes the pending navigation request until the
+        // remote snapshot finishes.
+        #expect(store.pendingNavigationRequestIDs.contains(requestID))
+        #expect(
+            store.isLoading(for: tab),
+            "Initial directory load intent should leave loading state owned by RemoteFileBrowserStore."
+        )
+
+        await client.releaseList(path: "/srv")
+        await store.waitForNavigationRequest(requestID)
+
+        #expect(!store.pendingNavigationRequestIDs.contains(requestID))
+        #expect(store.currentPathValue(for: tab) == "/srv")
+        #expect(store.entries(for: tab).map(\.path) == ["/srv/app"])
+    }
+
+    @Test
+    func newerNavigationRequestCancelsVisiblePendingRequestAndSkipsStaleResult() async throws {
+        let server = makeServer()
+        let tab = RemoteFileTab(serverId: server.id)
+        let slowEntry = makeEntry(name: "slow", path: "/slow", type: .directory)
+        let fileEntry = makeEntry(name: "current.txt", path: "/current.txt", type: .file)
+        let client = BlockingNavigationRemoteFileClient(
+            listResponses: [
+                "/slow": [makeEntry(name: "stale.txt", path: "/slow/stale.txt", type: .file)]
+            ],
+            blockedListPaths: ["/slow"]
+        )
+        let store = makeStore(server: server, client: client)
+
+        // Given one directory navigation is blocked by a slow remote response.
+        let slowRequestID = store.requestNavigation(.openDirectory(slowEntry), in: tab, server: server)
+        await client.waitUntilListStarted(path: "/slow")
+
+        // When the user immediately sends a newer same-tab activation intent
+        // that does not need to queue behind the same remote directory list.
+        let activationRequestID = store.requestNavigation(.activate(fileEntry), in: tab, server: server)
+        await store.waitForNavigationRequest(activationRequestID)
+
+        // Then the older request is no longer visible as pending, but remains
+        // awaitable until its blocked fake exits.
+        #expect(!store.pendingNavigationRequestIDs.contains(slowRequestID))
+        #expect(!store.pendingNavigationRequestIDs.contains(activationRequestID))
+        #expect(store.selectedEntryPath(for: tab) == "/current.txt")
+
+        await client.releaseList(path: "/slow")
+        await store.waitForNavigationRequest(slowRequestID)
+
+        // Then the stale slow result cannot overwrite the newer selection.
+        #expect(store.currentPathValue(for: tab) == nil)
+        #expect(store.selectedEntryPath(for: tab) == "/current.txt")
+    }
+
+    @Test
+    func removeRuntimeStateCancelsVisibleNavigationRequestButKeepsWaitHookAwaitable() async throws {
+        let server = makeServer()
+        let tab = RemoteFileTab(serverId: server.id)
+        let entry = makeEntry(name: "logs", path: "/logs", type: .directory)
+        let client = BlockingNavigationRemoteFileClient(
+            listResponses: [
+                "/logs": [makeEntry(name: "app.log", path: "/logs/app.log", type: .file)]
+            ],
+            blockedListPaths: ["/logs"]
+        )
+        let store = makeStore(server: server, client: client)
+
+        // Given a navigation request is waiting inside remote directory IO.
+        let requestID = store.requestNavigation(.openDirectory(entry), in: tab, server: server)
+        await client.waitUntilListStarted(path: "/logs")
+
+        // When runtime state is removed for the tab.
+        store.removeRuntimeState(for: tab.id)
+
+        // Then visible pending state clears immediately, while the wait hook
+        // still waits for the blocked request task to exit.
+        #expect(!store.pendingNavigationRequestIDs.contains(requestID))
+        await client.releaseList(path: "/logs")
+        await store.waitForNavigationRequest(requestID)
+
+        #expect(store.currentPathValue(for: tab) == nil)
+        #expect(!store.state(for: tab).hasLoadedDirectory)
+    }
+
+    @Test
+    func disconnectCancelsVisibleNavigationRequestsBeforeRemoteDisconnect() async throws {
+        let server = makeServer()
+        let tab = RemoteFileTab(serverId: server.id)
+        let entry = makeEntry(name: "tmp", path: "/tmp", type: .directory)
+        let client = BlockingNavigationRemoteFileClient(
+            listResponses: [
+                "/tmp": [makeEntry(name: "file.txt", path: "/tmp/file.txt", type: .file)]
+            ],
+            blockedListPaths: ["/tmp"]
+        )
+        let store = makeStore(server: server, client: client)
+
+        // Given RemoteFiles has visible runtime state plus a pending navigation
+        // request for a server that is about to disconnect.
+        let requestID = store.requestNavigation(.openDirectory(entry), in: tab, server: server)
+        await client.waitUntilListStarted(path: "/tmp")
+
+        // When the server disconnects.
+        _ = store.disconnect(serverId: server.id)
+
+        // Then the store clears visible navigation pending state before remote
+        // service teardown proceeds.
+        #expect(!store.pendingNavigationRequestIDs.contains(requestID))
+        await client.releaseList(path: "/tmp")
+        await store.waitForNavigationRequest(requestID)
+
+        #expect(store.currentPathValue(for: tab) == nil)
+    }
+
+    @Test
+    func activationRequestReportsSelectedFileWithoutUIOwnedAsyncTask() async throws {
+        let server = makeServer()
+        let tab = RemoteFileTab(serverId: server.id)
+        let symlink = makeEntry(name: "latest.log", path: "/latest.log", type: .symlink)
+        let resolved = makeEntry(name: "latest.log", path: "/latest.log", type: .file)
+        let client = BlockingNavigationRemoteFileClient(stats: ["/latest.log": resolved])
+        let store = makeStore(server: server, client: client)
+        var results: [RemoteFileNavigationResult] = []
+
+        // Given entry activation intent resolves a symlink to a file.
+        let requestID = store.requestNavigation(.activate(symlink), in: tab, server: server) { result in
+            results.append(result)
+        }
+        await store.waitForNavigationRequest(requestID)
+
+        // Then the store owns the async stat/select ordering and reports only
+        // a presentation result to UI callbacks.
+        #expect(results == [.selectedFile(symlink)])
+        #expect(store.selectedEntryPath(for: tab) == "/latest.log")
+    }
+
+    @Test
+    func newerActivationRequestPreventsBlockedSymlinkStatFromSelectingStaleFile() async throws {
+        let server = makeServer()
+        let tab = RemoteFileTab(serverId: server.id)
+        let symlink = makeEntry(name: "latest.log", path: "/latest.log", type: .symlink)
+        let staleResolvedFile = makeEntry(name: "latest.log", path: "/latest.log", type: .file)
+        let currentFile = makeEntry(name: "current.log", path: "/current.log", type: .file)
+        let client = BlockingNavigationRemoteFileClient(
+            stats: ["/latest.log": staleResolvedFile],
+            blockedStatPaths: ["/latest.log"]
+        )
+        let store = makeStore(server: server, client: client)
+
+        // Given a symlink activation request is blocked while resolving the
+        // remote target type.
+        let staleRequestID = store.requestNavigation(.activate(symlink), in: tab, server: server)
+        await client.waitUntilStatStarted(path: "/latest.log")
+
+        // When a newer same-tab activation selects another file.
+        let currentRequestID = store.requestNavigation(.activate(currentFile), in: tab, server: server)
+        await store.waitForNavigationRequest(currentRequestID)
+        #expect(store.selectedEntryPath(for: tab) == "/current.log")
+
+        // Then the older stat result remains awaitable but cannot write stale
+        // selection state after it resumes.
+        await client.releaseStat(path: "/latest.log")
+        await store.waitForNavigationRequest(staleRequestID)
+
+        #expect(store.selectedEntryPath(for: tab) == "/current.log")
+    }
+
     private func makeEntry(name: String, path: String, type: RemoteFileType) -> RemoteFileEntry {
         RemoteFileEntry(
             name: name,
@@ -359,6 +546,21 @@ struct RemoteFileBrowserStoreTests {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
+    }
+
+    private func makeStore(
+        server: Server,
+        client: BlockingNavigationRemoteFileClient
+    ) -> RemoteFileBrowserStore {
+        RemoteFileBrowserStore(
+            defaults: makeDefaults(),
+            remoteFileServiceAdapter: SSHSFTPAdapter(
+                credentialsProvider: { server in makeCredentials(serverId: server.id) },
+                ownedClientFactory: {
+                    client
+                }
+            )
+        )
     }
 }
 
@@ -479,6 +681,151 @@ private actor BlockingDisconnectRemoteFileClient: SFTPRemoteFileClient {
             name: URL(fileURLWithPath: path).lastPathComponent,
             path: path,
             type: .file,
+            size: nil,
+            modifiedAt: nil,
+            permissions: nil,
+            symlinkTarget: nil
+        )
+    }
+}
+
+private actor BlockingNavigationRemoteFileClient: SFTPRemoteFileClient {
+    private var listResponses: [String: [RemoteFileEntry]]
+    private var stats: [String: RemoteFileEntry]
+    private var blockedListPaths: Set<String>
+    private var blockedStatPaths: Set<String>
+    private var releasedListPaths: Set<String> = []
+    private var listStartedPaths: Set<String> = []
+    private var listStartedWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    private var listReleaseWaiters: [String: CheckedContinuation<Void, Never>] = [:]
+    private var releasedStatPaths: Set<String> = []
+    private var statStartedPaths: Set<String> = []
+    private var statStartedWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
+    private var statReleaseWaiters: [String: CheckedContinuation<Void, Never>] = [:]
+
+    init(
+        listResponses: [String: [RemoteFileEntry]] = [:],
+        stats: [String: RemoteFileEntry] = [:],
+        blockedListPaths: Set<String> = [],
+        blockedStatPaths: Set<String> = []
+    ) {
+        self.listResponses = listResponses
+        self.stats = stats
+        self.blockedListPaths = blockedListPaths
+        self.blockedStatPaths = blockedStatPaths
+    }
+
+    func waitUntilListStarted(path: String) async {
+        let normalizedPath = RemoteFilePath.normalize(path)
+        if listStartedPaths.contains(normalizedPath) { return }
+        await withCheckedContinuation { continuation in
+            listStartedWaiters[normalizedPath, default: []].append(continuation)
+        }
+    }
+
+    func releaseList(path: String) {
+        let normalizedPath = RemoteFilePath.normalize(path)
+        releasedListPaths.insert(normalizedPath)
+        listReleaseWaiters.removeValue(forKey: normalizedPath)?.resume()
+    }
+
+    func waitUntilStatStarted(path: String) async {
+        let normalizedPath = RemoteFilePath.normalize(path)
+        if statStartedPaths.contains(normalizedPath) { return }
+        await withCheckedContinuation { continuation in
+            statStartedWaiters[normalizedPath, default: []].append(continuation)
+        }
+    }
+
+    func releaseStat(path: String) {
+        let normalizedPath = RemoteFilePath.normalize(path)
+        releasedStatPaths.insert(normalizedPath)
+        statReleaseWaiters.removeValue(forKey: normalizedPath)?.resume()
+    }
+
+    func connectForRemoteFileLease(to server: Server, credentials: ServerCredentials) async throws {}
+
+    func disconnect() async {}
+
+    func execute(_ command: String, timeout: Duration?) async throws -> String { "" }
+
+    func remoteEnvironment(forceRefresh: Bool) async -> RemoteEnvironment { .fallbackPOSIX }
+
+    func remoteTerminalType(forceRefresh: Bool) async -> RemoteTerminalType { .xterm256Color }
+
+    func listDirectory(at path: String, maxEntries: Int?) async throws -> [RemoteFileEntry] {
+        let normalizedPath = RemoteFilePath.normalize(path)
+        listStartedPaths.insert(normalizedPath)
+        for waiter in listStartedWaiters.removeValue(forKey: normalizedPath) ?? [] {
+            waiter.resume()
+        }
+
+        if blockedListPaths.contains(normalizedPath), !releasedListPaths.contains(normalizedPath) {
+            await withCheckedContinuation { continuation in
+                listReleaseWaiters[normalizedPath] = continuation
+            }
+        }
+
+        return listResponses[normalizedPath] ?? []
+    }
+
+    func stat(at path: String) async throws -> RemoteFileEntry {
+        let normalizedPath = RemoteFilePath.normalize(path)
+        statStartedPaths.insert(normalizedPath)
+        for waiter in statStartedWaiters.removeValue(forKey: normalizedPath) ?? [] {
+            waiter.resume()
+        }
+
+        if blockedStatPaths.contains(normalizedPath), !releasedStatPaths.contains(normalizedPath) {
+            await withCheckedContinuation { continuation in
+                statReleaseWaiters[normalizedPath] = continuation
+            }
+        }
+
+        return stats[normalizedPath] ?? makeEntry(path: path, type: .file)
+    }
+
+    func lstat(at path: String) async throws -> RemoteFileEntry {
+        makeEntry(path: path, type: .file)
+    }
+
+    func readFile(at path: String, maxBytes: Int) async throws -> Data { Data() }
+
+    func downloadFile(at path: String, to localURL: URL) async throws {}
+
+    func upload(
+        _ data: Data,
+        to remotePath: String,
+        permissions: Int32,
+        strategy: SSHUploadStrategy
+    ) async throws {}
+
+    func createDirectory(at path: String, permissions: Int32) async throws {}
+
+    func renameItem(at sourcePath: String, to destinationPath: String) async throws {}
+
+    func deleteFile(at path: String) async throws {}
+
+    func deleteDirectory(at path: String) async throws {}
+
+    func setPermissions(at path: String, permissions: UInt32) async throws {}
+
+    func resolveHomeDirectory() async throws -> String { "/home/test" }
+
+    func fileSystemStatus(at path: String) async throws -> RemoteFileFilesystemStatus {
+        RemoteFileFilesystemStatus(
+            blockSize: 1,
+            totalBlocks: 0,
+            freeBlocks: 0,
+            availableBlocks: 0
+        )
+    }
+
+    private func makeEntry(path: String, type: RemoteFileType) -> RemoteFileEntry {
+        RemoteFileEntry(
+            name: URL(fileURLWithPath: path).lastPathComponent,
+            path: path,
+            type: type,
             size: nil,
             modifiedAt: nil,
             permissions: nil,

@@ -33,7 +33,7 @@ extension RemoteFileBrowserScreen {
                     }
                 }
                 .refreshable {
-                    await browser.refresh(server: server, tab: fileTab)
+                    browser.requestNavigation(.refresh, in: fileTab, server: server)
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
@@ -128,7 +128,7 @@ extension RemoteFileBrowserScreen {
                     systemName: "arrow.turn.up.left",
                     isDisabled: snapshot.currentPath == "/"
                 ) {
-                    Task { await browser.goUp(in: fileTab, server: server) }
+                    browser.requestNavigation(.goUp, in: fileTab, server: server)
                 }
             }
 
@@ -179,12 +179,9 @@ extension RemoteFileBrowserScreen {
     }
 
     func handleIOSEntryTap(_ entry: RemoteFileEntry) {
-        Task {
-            await browser.activate(entry, in: fileTab, server: server)
-            if browser.selectedEntryPath(for: fileTab) == entry.path {
-                await MainActor.run {
-                    presentedPreviewPath = entry.path
-                }
+        browser.requestNavigation(.activate(entry), in: fileTab, server: server) { result in
+            if result == .selectedFile(entry) {
+                presentedPreviewPath = entry.path
             }
         }
     }

@@ -191,13 +191,11 @@ extension RemoteFileBrowserScreen {
                         systemImage: "server.rack",
                         isCurrent: snapshot.currentPath == "/"
                     ) {
-                        Task {
-                            await browser.openBreadcrumb(
-                                .init(title: server.name, path: "/"),
-                                in: fileTab,
-                                server: server
-                            )
-                        }
+                        browser.requestNavigation(
+                            .openBreadcrumb(.init(title: server.name, path: "/")),
+                            in: fileTab,
+                            server: server
+                        )
                     }
 
                     ForEach(Array(snapshot.breadcrumbs.dropFirst().enumerated()), id: \.element.id) { index, breadcrumb in
@@ -210,7 +208,7 @@ extension RemoteFileBrowserScreen {
                             systemImage: "folder.fill",
                             isCurrent: index == snapshot.breadcrumbs.dropFirst().count - 1
                         ) {
-                            Task { await browser.openBreadcrumb(breadcrumb, in: fileTab, server: server) }
+                            browser.requestNavigation(.openBreadcrumb(breadcrumb), in: fileTab, server: server)
                         }
                     }
                 }
@@ -341,7 +339,7 @@ extension RemoteFileBrowserScreen {
         case .directory:
             menu.addItem(
                 makeMacOSMenuItem(title: String(localized: "Open"), systemImage: "folder") {
-                    Task { await browser.openDirectory(entry, in: fileTab, server: server) }
+                    browser.requestNavigation(.openDirectory(entry), in: fileTab, server: server)
                 }
             )
             menu.addItem(
