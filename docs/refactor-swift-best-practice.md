@@ -6317,6 +6317,97 @@ Before review, verify factory naming is grammatical, no new public API beyond th
 
 Perform local lifecycle review against the Swift checklist unless the user explicitly authorizes new subagents. Fix Critical and Important findings, update the Progress Ledger and Must-Fix status with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
+## Task 80: iOS Foreground Reconnect Request Tracking
+
+**Files:**
+- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `VVTerm/App/iOS/iOSContentView.swift`
+- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `VVTermTests/IOSForegroundReconnectIntentBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing `ConnectionSessionManager.foregroundReconnectActionForSelectedSession(...)`.
+  - Existing `ConnectionSessionManager.reconnectSessionIfRuntimeInactive(_:)`.
+  - Existing iOS presentation state: `activateTerminal(_:)`, `reconnectTokenBySession`, and `shouldShowTerminalBySession`.
+- Produces:
+  - `ConnectionSessionManager.requestForegroundReconnectForSelectedSession(selectedViewId:terminalViewId:refreshTerminal:autoReconnectEnabled:onAction:) -> UUID?`.
+  - `ConnectionSessionManager.pendingForegroundReconnectRequestIDs`.
+  - `ConnectionSessionManager.waitForForegroundReconnectRequest(_:)`.
+  - iOS foreground/scene/selection helper sends synchronous intent to the manager and no longer starts its own reconnect `Task`.
+
+- [ ] **Step 1: Add RED foreground reconnect request tracking tests**
+
+Extend `ConnectionLifecycleIntegrationTests` with manager-owned request tests:
+- `foregroundReconnectRequestTracksReconnectUntilCompletion`
+  - Arrange a selected disconnected session and a blocked reconnect operation.
+  - Call `requestForegroundReconnectForSelectedSession(...)`.
+  - Assert the returned request ID is pending while reconnect is blocked.
+  - Release reconnect, await `waitForForegroundReconnectRequest(_:)`, and assert one callback receives a `TerminalForegroundReconnectAction` for the selected session.
+- `duplicateForegroundReconnectRequestsCoalesceUntilCompletion`
+  - Call the request API twice for the same selected session before releasing the blocked reconnect.
+  - Assert both calls return the same request ID, reconnect runs once, and both callbacks run after completion.
+- `closeSessionCancelsPendingForegroundReconnectRequest`
+  - Start a blocked foreground reconnect request, close the session, and assert visible pending state clears immediately while `waitForForegroundReconnectRequest(_:)` does not return until the blocked reconnect exits.
+
+Create `IOSForegroundReconnectIntentBoundaryTests` with Test Context:
+- Protected behavior: iOS foreground/scene/selection refresh may update presentation state from a callback, but reconnect execution must be owned and tracked by `ConnectionSessionManager`.
+- Invariant: `attemptForegroundReconnectIfNeeded(refreshTerminal:)` must call `sessionManager.requestForegroundReconnectForSelectedSession(...)` and must not create a local `Task {}` or call `handleForegroundReconnectForSelectedSession(...)`.
+- Fake assumptions: source-boundary coverage is used because this is a SwiftUI/application ownership rule; manager ordering is covered by `ConnectionLifecycleIntegrationTests`.
+- Update guidance: update only if this foreground reconnect ownership intentionally moves to another non-UI application owner.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests/foregroundReconnectRequestTracksReconnectUntilCompletion -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests/duplicateForegroundReconnectRequestsCoalesceUntilCompletion -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests/closeSessionCancelsPendingForegroundReconnectRequest -only-testing:VVTermTests/IOSForegroundReconnectIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: focused tests fail to compile because the request API, pending IDs, wait hook, cancellation hook, and source-boundary behavior do not exist; source-boundary test also fails because the iOS helper owns a local `Task` and calls `handleForegroundReconnectForSelectedSession(...)`.
+
+- [ ] **Step 2: Add manager-owned foreground reconnect request API**
+
+Update `ConnectionSessionManager.swift`:
+- Add a private `ForegroundReconnectRequest` record with selected session ID, task, and callbacks.
+- Add `foregroundReconnectRequests`, `foregroundReconnectRequestBySession`, and `pendingForegroundReconnectRequestIDs`.
+- Add `waitForForegroundReconnectRequest(_:)`.
+- Add `requestForegroundReconnectForSelectedSession(...) -> UUID?` that:
+  - Computes the action with `foregroundReconnectActionForSelectedSession(...)`.
+  - Returns `nil` if no action exists.
+  - Coalesces duplicate requests for the same `action.sessionId`.
+  - Runs `reconnectSessionIfRuntimeInactive(_:)` only when `action.shouldReconnect` and the session still exists.
+  - Checks cancellation and selected-session/session existence before callbacks.
+  - Calls all callbacks with the final action.
+- Cancel foreground reconnect requests from session close/reset paths without surfacing cancellation as failure.
+
+- [ ] **Step 3: Route iOS foreground helper through request intent**
+
+Update `iOSContentView.swift`:
+- Replace the local `Task { @MainActor ... }` in `attemptForegroundReconnectIfNeeded(refreshTerminal:)` with a synchronous call to `sessionManager.requestForegroundReconnectForSelectedSession(...)`.
+- Move presentation-only state changes into the `onAction` callback:
+  - Re-resolve the session by `action.sessionId`.
+  - Call `activateTerminal(session)` when `action.shouldRefreshTerminal`.
+  - Update `reconnectTokenBySession` and `shouldShowTerminalBySession` when `action.shouldReconnect`.
+- Do not change scene/onAppear/onChange call sites or terminal refresh policy in this task.
+
+- [ ] **Step 4: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests/foregroundReconnectRequestTracksReconnectUntilCompletion -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests/duplicateForegroundReconnectRequestsCoalesceUntilCompletion -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests/closeSessionCancelsPendingForegroundReconnectRequest -only-testing:VVTermTests/IOSForegroundReconnectIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "attemptForegroundReconnectIfNeeded|requestForegroundReconnectForSelectedSession|handleForegroundReconnectForSelectedSession|Task \\{ @MainActor" VVTerm/App/iOS/iOSContentView.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTermTests/IOSForegroundReconnectIntentBoundaryTests.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows the iOS foreground helper calls the request API and no longer owns a local reconnect `Task`.
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Before review, verify the request API naming matches existing manager-owned request APIs, callbacks carry only presentation action data, UI remains limited to presentation state updates, close/reset cancellation keeps wait hooks awaitable until blocked work exits, and no new stale selected-session or SwiftUI lifecycle decision was introduced.
+
+- [ ] **Step 6: Review and commit**
+
+Perform local lifecycle review against the Swift checklist unless the user explicitly authorizes new subagents. Fix Critical and Important findings, update the Progress Ledger and Must-Fix status with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
 - 2026-06-21: Task 79 RED/GREEN completed with local lifecycle review and no new subagents. `TerminalRichPasteRuntime` factories now receive `sessionManager` / `tabManager` from root and split terminal coordinators and use those injected managers for rich-paste upload requests and clipboard text paste fallback. `TerminalRichPasteSupport.swift` no longer resolves `ConnectionSessionManager.shared` or `TerminalTabManager.shared`; upload lifecycle ownership remains in the existing `ConnectionSessionManager.requestSessionRichPasteUpload(...)` and `TerminalTabManager.requestPaneRichPasteUpload(...)` request APIs. Initial RED failed as expected with 12 source-boundary issues because factories resolved manager singletons and wrapper construction sites did not pass injected managers. GREEN focused verification passed 3 Swift Testing tests in `TerminalRichPasteRuntimeManagerBoundaryTests`; broader rich-paste verification passed 13 tests across `TerminalRichPasteIntentBoundaryTests`, `TerminalRichPasteUploadRequestTests`, and `TerminalRichPasteRuntimeManagerBoundaryTests`. Source scan showed no manager singleton reach-through in `TerminalRichPasteSupport.swift` and the expected root/split manager injection call sites. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. API/boundary cleanup found grammatical factory names, no new public API beyond manager parameters, no moved upload lifecycle ownership, no temporary helper/WIP state, no new untracked task, and no new SwiftUI-owned multi-step lifecycle orchestration.
