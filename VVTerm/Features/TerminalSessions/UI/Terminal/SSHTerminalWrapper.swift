@@ -24,9 +24,7 @@ protocol SSHTerminalCoordinator: AnyObject {
 
 extension SSHTerminalCoordinator {
     func sendToSSH(_ data: Data) {
-        Task(priority: .userInitiated) { [sessionId] in
-            await ConnectionSessionManager.shared.sendInput(data, to: sessionId)
-        }
+        ConnectionSessionManager.shared.requestSessionInput(data, to: sessionId)
     }
 
     func attachSurface(

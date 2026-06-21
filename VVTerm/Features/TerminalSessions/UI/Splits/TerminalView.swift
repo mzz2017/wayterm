@@ -962,9 +962,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
             }
             existingTerminal.applyPresentationOverrides(TerminalTabManager.shared.presentationOverrides(for: paneId))
             existingTerminal.writeCallback = { [paneId] data in
-                Task(priority: .userInitiated) {
-                    await TerminalTabManager.shared.sendInput(data, toPane: paneId)
-                }
+                TerminalTabManager.shared.requestPaneInput(data, toPane: paneId)
             }
             coordinator.installRichPasteInterception(on: existingTerminal)
 
@@ -1098,9 +1096,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         }
 
         func sendToSSH(_ data: Data) {
-            Task(priority: .userInitiated) { [paneId] in
-                await TerminalTabManager.shared.sendInput(data, toPane: paneId)
-            }
+            TerminalTabManager.shared.requestPaneInput(data, toPane: paneId)
         }
 
         @MainActor

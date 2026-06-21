@@ -77,6 +77,11 @@ final class ConnectionSessionManager: ObservableObject {
         let task: Task<Void, Never>
     }
 
+    private struct InputRequest {
+        let sessionId: UUID
+        let task: Task<Void, Never>
+    }
+
     private final class SessionRuntimeState {
         let sessionId: UUID
         var server: Server
@@ -267,6 +272,10 @@ final class ConnectionSessionManager: ObservableObject {
     private var surfaceAttachRequests: [UUID: SurfaceAttachRequest] = [:]
     private var surfaceAttachRequestBySession: [UUID: UUID] = [:]
     var pendingSurfaceAttachRequestIDs: Set<UUID> { Set(surfaceAttachRequests.keys) }
+    private var inputRequests: [UUID: InputRequest] = [:]
+    private var inputRequestBySession: [UUID: UUID] = [:]
+    private var lastInputTaskBySession: [UUID: Task<Void, Never>] = [:]
+    var pendingInputRequestIDs: Set<UUID> { Set(inputRequests.keys) }
     private var sessionReconnectsInFlight: Set<UUID> = []
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
     private var serverDisconnectTasks: [UUID: Task<Void, Never>] = [:]
@@ -290,6 +299,7 @@ final class ConnectionSessionManager: ObservableObject {
     private var sessionRetryOperationForTesting: (@MainActor (ConnectionSession, Server?) async -> TerminalReconnectRequestResult)?
     private var sessionHostRetrustOperationForTesting: (@MainActor (ConnectionSession, Server) async -> Bool)?
     private var surfaceAttachOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
+    private var inputOperationForTesting: (@MainActor (Data, TerminalEntityID) async -> Void)?
     #endif
     @Published private(set) var isSuspendingForBackground = false
 
@@ -489,6 +499,10 @@ final class ConnectionSessionManager: ObservableObject {
 
     func waitForSurfaceAttachRequest(_ requestID: UUID) async {
         await surfaceAttachRequests[requestID]?.task.value
+    }
+
+    func waitForInputRequest(_ requestID: UUID) async {
+        await inputRequests[requestID]?.task.value
     }
 
     /// Opens a connection to a server
@@ -881,6 +895,7 @@ final class ConnectionSessionManager: ObservableObject {
         cancelInstallRequests(for: sessionId)
         cancelSessionRetryRequest(for: sessionId)
         cancelSessionHostRetrustRequest(for: sessionId)
+        cancelInputRequests(for: sessionId)
         let shellTeardownTask = cancelAndClearShellHandlers(for: sessionId)
         terminalsNeedingReconnectReset.remove(sessionId)
         terminalBrowseModeBySession.removeValue(forKey: sessionId)
@@ -901,6 +916,19 @@ final class ConnectionSessionManager: ObservableObject {
             request.task.cancel()
             request.onCompleted.forEach { $0() }
         }
+    }
+
+    private func cancelInputRequests(for sessionId: UUID) {
+        let requestIDs = inputRequests.compactMap { requestID, request in
+            request.sessionId == sessionId ? requestID : nil
+        }
+
+        for requestID in requestIDs {
+            inputRequests.removeValue(forKey: requestID)?.task.cancel()
+        }
+
+        inputRequestBySession.removeValue(forKey: sessionId)
+        lastInputTaskBySession.removeValue(forKey: sessionId)
     }
 
     private func cancelSessionRetryRequest(for sessionId: UUID) {
@@ -1833,6 +1861,46 @@ final class ConnectionSessionManager: ObservableObject {
                 logger.error("Failed to send to SSH: \(error.localizedDescription)")
             }
         }
+    }
+
+    @discardableResult
+    func requestSessionInput(_ data: Data, to sessionId: UUID) -> UUID? {
+        guard !data.isEmpty else { return nil }
+        guard sessionWithID(sessionId) != nil else { return nil }
+
+        let requestID = UUID()
+        let previousTask = lastInputTaskBySession[sessionId]
+        let task = Task { @MainActor [weak self] in
+            if let previousTask {
+                await previousTask.value
+            }
+
+            guard let self else { return }
+            defer {
+                self.inputRequests.removeValue(forKey: requestID)
+                if self.inputRequestBySession[sessionId] == requestID {
+                    self.inputRequestBySession.removeValue(forKey: sessionId)
+                    self.lastInputTaskBySession.removeValue(forKey: sessionId)
+                }
+            }
+
+            guard !Task.isCancelled else { return }
+            guard self.sessionWithID(sessionId) != nil else { return }
+
+            #if DEBUG
+            if let inputOperationForTesting = self.inputOperationForTesting {
+                await inputOperationForTesting(data, .session(sessionId))
+                return
+            }
+            #endif
+
+            await self.sendInput(data, to: sessionId)
+        }
+
+        inputRequests[requestID] = InputRequest(sessionId: sessionId, task: task)
+        inputRequestBySession[sessionId] = requestID
+        lastInputTaskBySession[sessionId] = task
+        return requestID
     }
 
     func resizeSession(_ sessionId: UUID, cols: Int, rows: Int) async {
@@ -2968,6 +3036,10 @@ extension ConnectionSessionManager {
         surfaceAttachRequests.values.forEach { $0.task.cancel() }
         surfaceAttachRequests.removeAll()
         surfaceAttachRequestBySession.removeAll()
+        inputRequests.values.forEach { $0.task.cancel() }
+        inputRequests.removeAll()
+        inputRequestBySession.removeAll()
+        lastInputTaskBySession.removeAll()
         sessionReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
@@ -2989,6 +3061,7 @@ extension ConnectionSessionManager {
         sessionRetryOperationForTesting = nil
         sessionHostRetrustOperationForTesting = nil
         surfaceAttachOperationForTesting = nil
+        inputOperationForTesting = nil
         isRestoring = false
 
         UserDefaults.standard.removeObject(forKey: persistenceKey)
@@ -3008,6 +3081,12 @@ extension ConnectionSessionManager {
         _ operation: (@MainActor (TerminalEntityID) async -> Void)?
     ) {
         surfaceAttachOperationForTesting = operation
+    }
+
+    func setInputOperationForTesting(
+        _ operation: (@MainActor (Data, TerminalEntityID) async -> Void)?
+    ) {
+        inputOperationForTesting = operation
     }
 
     @discardableResult

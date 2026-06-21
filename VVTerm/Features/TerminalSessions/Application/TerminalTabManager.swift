@@ -62,6 +62,11 @@ final class TerminalTabManager: ObservableObject {
         let task: Task<Void, Never>
     }
 
+    private struct InputRequest {
+        let paneId: UUID
+        let task: Task<Void, Never>
+    }
+
     private final class PaneRuntimeState {
         let paneId: UUID
         var server: Server
@@ -181,6 +186,10 @@ final class TerminalTabManager: ObservableObject {
     private var surfaceAttachRequests: [UUID: SurfaceAttachRequest] = [:]
     private var surfaceAttachRequestByPane: [UUID: UUID] = [:]
     var pendingSurfaceAttachRequestIDs: Set<UUID> { Set(surfaceAttachRequests.keys) }
+    private var inputRequests: [UUID: InputRequest] = [:]
+    private var inputRequestByPane: [UUID: UUID] = [:]
+    private var lastInputTaskByPane: [UUID: Task<Void, Never>] = [:]
+    var pendingInputRequestIDs: Set<UUID> { Set(inputRequests.keys) }
     private var serverUnlocker: @MainActor (Server) async -> Bool = { server in
         await AppLockManager.shared.ensureServerUnlocked(server)
     }
@@ -208,6 +217,7 @@ final class TerminalTabManager: ObservableObject {
     private var paneRetryOperationForTesting: (@MainActor (UUID, Server) async -> TerminalReconnectRequestResult)?
     private var paneHostRetrustOperationForTesting: (@MainActor (UUID, Server) async -> Bool)?
     private var surfaceAttachOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
+    private var inputOperationForTesting: (@MainActor (Data, TerminalEntityID) async -> Void)?
     #endif
 
     /// Pane state keyed by pane ID
@@ -392,6 +402,10 @@ final class TerminalTabManager: ObservableObject {
 
     func waitForSurfaceAttachRequest(_ requestID: UUID) async {
         await surfaceAttachRequests[requestID]?.task.value
+    }
+
+    func waitForInputRequest(_ requestID: UUID) async {
+        await inputRequests[requestID]?.task.value
     }
 
     /// Open a new tab for a server
@@ -882,6 +896,46 @@ final class TerminalTabManager: ObservableObject {
                 logger.error("Failed to send to pane SSH: \(error.localizedDescription)")
             }
         }
+    }
+
+    @discardableResult
+    func requestPaneInput(_ data: Data, toPane paneId: UUID) -> UUID? {
+        guard !data.isEmpty else { return nil }
+        guard paneStates[paneId] != nil else { return nil }
+
+        let requestID = UUID()
+        let previousTask = lastInputTaskByPane[paneId]
+        let task = Task { @MainActor [weak self] in
+            if let previousTask {
+                await previousTask.value
+            }
+
+            guard let self else { return }
+            defer {
+                self.inputRequests.removeValue(forKey: requestID)
+                if self.inputRequestByPane[paneId] == requestID {
+                    self.inputRequestByPane.removeValue(forKey: paneId)
+                    self.lastInputTaskByPane.removeValue(forKey: paneId)
+                }
+            }
+
+            guard !Task.isCancelled else { return }
+            guard self.paneStates[paneId] != nil else { return }
+
+            #if DEBUG
+            if let inputOperationForTesting = self.inputOperationForTesting {
+                await inputOperationForTesting(data, .pane(paneId))
+                return
+            }
+            #endif
+
+            await self.sendInput(data, toPane: paneId)
+        }
+
+        inputRequests[requestID] = InputRequest(paneId: paneId, task: task)
+        inputRequestByPane[paneId] = requestID
+        lastInputTaskByPane[paneId] = task
+        return requestID
     }
 
     func resizePane(_ paneId: UUID, cols: Int, rows: Int) async {
@@ -1815,6 +1869,7 @@ final class TerminalTabManager: ObservableObject {
         cancelInstallRequests(for: paneId)
         cancelPaneRetryRequest(for: paneId)
         cancelPaneHostRetrustRequest(for: paneId)
+        cancelInputRequests(for: paneId)
         clearTmuxRuntimeState(for: paneId)
         unregisterTerminal(for: paneId)
         paneStates.removeValue(forKey: paneId)
@@ -1838,6 +1893,19 @@ final class TerminalTabManager: ObservableObject {
             request.task.cancel()
             request.onCompleted.forEach { $0() }
         }
+    }
+
+    private func cancelInputRequests(for paneId: UUID) {
+        let requestIDs = inputRequests.compactMap { requestID, request in
+            request.paneId == paneId ? requestID : nil
+        }
+
+        for requestID in requestIDs {
+            inputRequests.removeValue(forKey: requestID)?.task.cancel()
+        }
+
+        inputRequestByPane.removeValue(forKey: paneId)
+        lastInputTaskByPane.removeValue(forKey: paneId)
     }
 
     private func cancelPaneRetryRequest(for paneId: UUID) {
@@ -2614,6 +2682,10 @@ extension TerminalTabManager {
         surfaceAttachRequests.values.forEach { $0.task.cancel() }
         surfaceAttachRequests.removeAll()
         surfaceAttachRequestByPane.removeAll()
+        inputRequests.values.forEach { $0.task.cancel() }
+        inputRequests.removeAll()
+        inputRequestByPane.removeAll()
+        lastInputTaskByPane.removeAll()
         paneReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
@@ -2635,6 +2707,7 @@ extension TerminalTabManager {
         paneRetryOperationForTesting = nil
         paneHostRetrustOperationForTesting = nil
         surfaceAttachOperationForTesting = nil
+        inputOperationForTesting = nil
         tmuxCleanupServers.removeAll()
         isRestoring = false
 
@@ -2657,6 +2730,12 @@ extension TerminalTabManager {
         _ operation: (@MainActor (TerminalEntityID) async -> Void)?
     ) {
         surfaceAttachOperationForTesting = operation
+    }
+
+    func setInputOperationForTesting(
+        _ operation: (@MainActor (Data, TerminalEntityID) async -> Void)?
+    ) {
+        inputOperationForTesting = operation
     }
 
     @discardableResult

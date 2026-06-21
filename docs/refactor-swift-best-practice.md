@@ -4496,7 +4496,7 @@ Request code review for Task 59. Fix Critical and Important findings, update the
   - `pendingInputRequestIDs` and `waitForInputRequest(_:)` on both managers for lifecycle tests.
   - DEBUG-only input operation seams that let tests prove input/no-input decisions and write ordering without constructing `GhosttyTerminalView` or opening SSH.
 
-- [ ] **Step 1: Add RED input request and boundary tests**
+- [x] **Step 1: Add RED input request and boundary tests**
 
 Add `TerminalInputIntentTests` with the required Test Context. Cover:
 - a root session input request rejects empty `Data` or missing sessions without creating a task;
@@ -4517,7 +4517,7 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: the focused suite fails to compile because `requestSessionInput(...)`, `requestPaneInput(...)`, pending input request IDs, wait hooks, and DEBUG input seams do not exist. If it compiles unexpectedly, boundary tests fail because representables still own input `Task` wrappers.
 
-- [ ] **Step 2: Add manager-owned root session input requests**
+- [x] **Step 2: Add manager-owned root session input requests**
 
 Implement root-session input request tracking in `ConnectionSessionManager`. The request should:
 1. reject empty input without creating a task;
@@ -4529,11 +4529,11 @@ Implement root-session input request tracking in `ConnectionSessionManager`. The
 
 Use a DEBUG input-operation seam so tests can count send attempts without real SSH. Keep existing `sendInput(_:to:)` as the low-level async boundary used by the request task.
 
-- [ ] **Step 3: Add split-pane input requests**
+- [x] **Step 3: Add split-pane input requests**
 
 Add equivalent request tracking to `TerminalTabManager` for pane input. It should reject missing pane state and empty payloads, serialize rapid pane input in request order, expose pending IDs and a wait hook, and keep existing `sendInput(_:toPane:)` as the low-level async boundary.
 
-- [ ] **Step 4: Route representable input callbacks through request APIs**
+- [x] **Step 4: Route representable input callbacks through request APIs**
 
 Update `SSHTerminalWrapper` macOS and iOS write callbacks:
 - reused-terminal and newly-created-terminal paths should call `ConnectionSessionManager.shared.requestSessionInput(data, to: sessionId)`;
@@ -4545,7 +4545,7 @@ Update `SSHTerminalPaneWrapper` in `TerminalView.swift`:
 
 This task deliberately leaves resize, rich-paste, title/background parsing, process-exit, and RemoteFiles navigation `Task` bridges for later slices.
 
-- [ ] **Step 5: Run focused verification**
+- [x] **Step 5: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalInputIntentTests -only-testing:VVTermTests/TerminalInputBoundaryTests ENABLE_DEBUG_DYLIB=NO
@@ -4555,16 +4555,17 @@ git diff --check
 
 Expected GREEN result: focused tests pass; source scan shows input callbacks use request APIs and representables no longer own input `Task` wrappers. Remaining `Task` hits for resize, rich paste, title/background parsing, process exit, and file navigation must be named in the Progress Ledger as deferred slices.
 
-- [ ] **Step 6: API and boundary cleanup**
+- [x] **Step 6: API and boundary cleanup**
 
 Before review, verify request API names match the previous `requestSurfaceAttach`, `requestSessionRetry`, and `requestPaneRetry` style; UI supplies only input bytes; managers own request tracking and low-level send invocation; DEBUG seams are reset in test cleanup; tests include the required Test Context and Given / When / Then comments.
 
-- [ ] **Step 7: Request review and commit**
+- [x] **Step 7: Request review and commit**
 
 Request code review for Task 60. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
 
 ## Progress Ledger
 
+- 2026-06-21: Task 60 RED/GREEN completed with review fixes. `SSHTerminalCoordinator.sendToSSH(_:)`, reused split-pane terminal write callbacks, and split-pane coordinator input now send synchronous intent to `ConnectionSessionManager.requestSessionInput(...)` or `TerminalTabManager.requestPaneInput(...)` instead of creating UI-owned `Task { await ...sendInput(...) }` wrappers. The managers own tracked input request tasks, reject empty payloads and missing sessions/panes, serialize rapid writes per session/pane by awaiting the previous request task, recheck liveness before low-level send, expose pending request IDs plus wait hooks, and reset DEBUG input seams during test cleanup. Review found one Important issue: close paths canceled install/retry/host-retrust work but did not cancel/clear the newly introduced input request bookkeeping. Follow-up RED tests reproduced this through the real `closeSessionAndWait(...)` and `closePaneAndWait(...)` paths, failing because `pendingInputRequestIDs` remained non-empty after close. The fix added close-path `cancelInputRequests(for:)` helpers that scan all matching request records, cancel/remove them, and clear the latest-request plus last-task indexes before session/pane state is removed. The initial RED failed to compile because request APIs, pending IDs, wait hooks, and DEBUG input seams did not exist; the close-path RED failed with the expected non-empty pending request assertions. GREEN focused verification passed 10 Swift Testing tests in 2 suites with `ENABLE_DEBUG_DYLIB=NO`. The boundary scan showed only `requestSessionInput` / `requestPaneInput` in the terminal wrapper and split wrapper input paths, with no direct UI `sendInput` calls. `git diff --check` passed. A concurrent test/build attempt hit Xcode `build.db` lock, then the focused test was rerun sequentially and passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Remaining `Task {}` hits in terminal wrapper/split files are existing resize, rich-paste, title/background parsing, process-exit/pane lifecycle, file navigation, and credential reload paths and remain deferred to later slices.
 - 2026-06-21: Post-Task-59 scan selected Task 60 as the next executable lifecycle slice, then corrected it after read-only review. The first checkpoint planned resize request tracking, but a focused explorer pointed out that Task 20 already moved raw resize ownership into managers and the current resize callbacks already call `resizeSession` / `resizePane` rather than raw SSH clients. The remaining higher-risk terminal UI bridge is input: root `SSHTerminalCoordinator.sendToSSH(_:)` and split pane write callbacks still launch UI-owned `Task` wrappers around `sendInput`, and rapid writes can race because ordering is not owned by a manager request queue. Task 60 is therefore corrected to terminal input intent ownership. It should not widen into resize, rich paste, title/background parsing, process-exit, or RemoteFiles navigation tasks.
 - 2026-06-21: Task 59 RED/GREEN completed with review fixes. `SSHTerminalWrapper` and split `SSHTerminalPaneWrapper` no longer decide shell-missing, shell-start-in-flight, reconnect-reset, app-active, or background-suspend attach policy before starting runtime work. They now pass value-only `TerminalSurfaceAttachContext` plus the concrete `GhosttyTerminalView` to `ConnectionSessionManager.requestSurfaceAttach(...)` or `TerminalTabManager.requestSurfaceAttach(...)`. The managers own tracked surface attach request tasks, revalidate duplicate pending intent against the latest UI context, store that latest context for the task to recheck before attaching, reject existing shell/shell-start-in-flight cases, expose pending request IDs plus wait hooks, and reset DEBUG attach seams during test cleanup. Root-session requests consume reconnect reset only after an accepted attach decision and require app active, view active, no background suspension, and auto-reconnect for disconnected sessions; macOS and iOS root wrappers both pass the `sshAutoReconnect` preference. Split-pane requests use the same active-context and shell guards without adding root-only reconnect-reset behavior. Initial RED failed to compile because `TerminalSurfaceAttachContext`, request APIs, pending IDs, wait hooks, and DEBUG attach seams did not exist. Review found two Important issues: inactive duplicate context was being treated as accepted, and macOS root context hard-coded auto-reconnect. Both were fixed, and narrow re-review reported no remaining findings. GREEN focused verification passed 7 Swift Testing tests in 2 suites with `ENABLE_DEBUG_DYLIB=NO`. The boundary scan showed no forbidden root wrapper references to `shellId(for:)`, `isShellStartInFlight`, `consumeTerminalReconnectReset`, `isSuspendingForBackground`, or direct `Task { await ConnectionSessionManager.shared.attachSurface... }`, and no forbidden split wrapper references to `shellId(for:)`, `isShellStartInFlight`, or direct `Task { await TerminalTabManager.shared.attachSurface... }`. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Remaining `Task {}` hits in terminal wrapper/split files are existing credential reload, process-exit/pane lifecycle, file navigation, resize/input/rich-paste/title/background parsing paths and remain deferred to later slices.
 - 2026-06-21: Post-Task-58 scan selected Task 59 as the next executable lifecycle slice. The working tree was clean after Task 58, so remaining SwiftUI lifecycle hotspots were rescanned. A read-only explorer and local scan found the clearest next TerminalSessions gap in terminal surface attach/start policy: `SSHTerminalWrapper` and split `SSHTerminalPaneWrapper` still create untracked attach `Task` wrappers and let representables decide shell-missing, shell-start-in-flight, reconnect-reset, app-active, and background-suspend policy before calling application managers. This can start runtime work from SwiftUI/representable callbacks and still relies on stale display `connectionState` in the iOS update path. Task 59 should move attach/start policy into `ConnectionSessionManager` and `TerminalTabManager` request APIs, keep UI limited to surface/presentation context, and defer resize/input/rich-paste callback task bridges to later slices.
