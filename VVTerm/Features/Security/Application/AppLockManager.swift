@@ -54,6 +54,11 @@ final class AppLockManager: ObservableObject {
     private let authService: any BiometricAuthServing
     private var lastAppUnlockAt: Date?
     private var unlockedServers: [UUID: Date] = [:]
+    private var appLockRequestTasks: [UUID: Task<Void, Never>] = [:]
+
+    var pendingAppLockRequestIDs: Set<UUID> {
+        Set(appLockRequestTasks.keys)
+    }
 
     init(defaults: UserDefaults, authService: any BiometricAuthServing) {
         self.defaults = defaults
@@ -84,6 +89,24 @@ final class AppLockManager: ObservableObject {
             biometryKind = .none
             biometryAvailabilityMessage = message
         }
+    }
+
+    @discardableResult
+    func requestFullAppLockChange(_ enabled: Bool) -> UUID {
+        trackAppLockRequest { manager in
+            await manager.requestSetFullAppLockEnabled(enabled)
+        }
+    }
+
+    @discardableResult
+    func requestAppUnlock() -> UUID {
+        trackAppLockRequest { manager in
+            _ = await manager.ensureAppUnlocked()
+        }
+    }
+
+    func waitForAppLockRequest(_ requestID: UUID) async {
+        await appLockRequestTasks[requestID]?.value
     }
 
     func requestSetFullAppLockEnabled(_ enabled: Bool) async {
@@ -198,6 +221,20 @@ final class AppLockManager: ObservableObject {
         unlockedServers = unlockedServers.filter { $0.value >= threshold }
     }
 
+    private func trackAppLockRequest(_ operation: @escaping @MainActor (AppLockManager) async -> Void) -> UUID {
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                appLockRequestTasks.removeValue(forKey: requestID)
+            }
+
+            await operation(self)
+        }
+        appLockRequestTasks[requestID] = task
+        return requestID
+    }
+
     private func authenticate(reason: String) async -> Bool {
         guard !isAuthenticating else { return false }
 
@@ -207,6 +244,8 @@ final class AppLockManager: ObservableObject {
         do {
             try await authService.authenticate(localizedReason: reason, allowPasscodeFallback: true)
             return true
+        } catch is CancellationError {
+            return false
         } catch let error as BiometricAuthError {
             if !error.isCancellation {
                 lastErrorMessage = error.localizedDescription

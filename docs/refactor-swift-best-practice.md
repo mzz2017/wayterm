@@ -3869,7 +3869,7 @@ Actual review result: code review found an Important cancellation gap where `Can
   - `AppLockManager.waitForAppLockRequest(_:)` and `pendingAppLockRequestIDs` for awaitable lifecycle ordering tests.
   - SwiftUI app-lock views that send authentication intent without owning `Task { await appLockManager... }`.
 
-- [ ] **Step 1: Add RED app-lock request and boundary tests**
+- [x] **Step 1: Add RED app-lock request and boundary tests**
 
 Add AppLock manager tests with delayed fake biometric auth. Cover that `requestFullAppLockChange(true)` tracks the request while authentication is in flight, eventually enables full app lock, and clears the request only after the existing async behavior completes. Cover that `requestAppUnlock()` tracks the request, unlocks an already locked app after authentication, and clears the request after completion. Add `AppLockIntentBoundaryTests` with a Test Context header that reads `AppLockGateView.swift` and `GeneralSettingsView.swift`; it should fail while those SwiftUI files contain `Task { await appLockManager.ensureAppUnlocked() }` or `Task { await appLockManager.requestSetFullAppLockEnabled(...) }`.
 
@@ -3881,15 +3881,17 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: `AppLockManagerTests` fails to compile because `requestFullAppLockChange(_:)`, `requestAppUnlock()`, `waitForAppLockRequest(_:)`, or `pendingAppLockRequestIDs` do not exist. If those compile unexpectedly, `AppLockIntentBoundaryTests` fails because app-lock SwiftUI still launches authentication tasks directly.
 
-- [ ] **Step 2: Add AppLockManager request ownership**
+Actual RED result: the focused suite failed before production changes because `AppLockManager` did not expose `requestFullAppLockChange(_:)`, `requestAppUnlock()`, `waitForAppLockRequest(_:)`, or `pendingAppLockRequestIDs`. After review identified cancellation as lifecycle state, the review-fix RED failed because `lastErrorMessage` was set to `Swift.CancellationError` instead of staying nil.
+
+- [x] **Step 2: Add AppLockManager request ownership**
 
 Add a tracked request-task dictionary to `AppLockManager`. `requestFullAppLockChange(_:)` should create and store a `Task` that awaits the existing `requestSetFullAppLockEnabled(_:)`, then clears itself. `requestAppUnlock()` should create and store a `Task` that awaits the existing `ensureAppUnlocked()`, then clears itself. Keep the existing async methods as the behavior boundary for product logic and existing call sites that already run inside application-layer async flows. Cancellation should clear tracking and should not create a user-facing failure.
 
-- [ ] **Step 3: Route SwiftUI app-lock authentication through request APIs**
+- [x] **Step 3: Route SwiftUI app-lock authentication through request APIs**
 
 Update `GeneralSettingsView` full-app-lock toggle setter to call `appLockManager.requestFullAppLockChange(newValue)` synchronously. Update `AppLockContainer` `.onAppear` and scene activation hooks to call `appLockManager.requestAppUnlock()` after handling scene phase. Update `AppLockGateView` unlock button to call `appLockManager.requestAppUnlock()` synchronously. Preserve visible behavior: `isAuthenticating` still drives disabled/progress state, unavailable biometry still sets `lastErrorMessage`, authentication cancellation remains non-failure, and successful unlock/enable still updates the same published state.
 
-- [ ] **Step 4: Run focused verification**
+- [x] **Step 4: Run focused verification**
 
 Run focused tests, scoped source scans, and whitespace check:
 
@@ -3899,16 +3901,23 @@ rg -n "Task \\{|requestSetFullAppLockEnabled|ensureAppUnlocked" VVTerm/Features/
 git diff --check
 ```
 
-- [ ] **Step 5: API and boundary cleanup**
+Actual GREEN result: the focused suite passed 6 XCTest tests plus 2 Swift Testing tests after adding tracked request APIs and cancellation-aware authentication handling. The app-lock source scan showed SwiftUI only calls `requestAppUnlock()` / `requestFullAppLockChange(newValue)`, with the only production `Task {}` in `AppLockManager`. `git diff --check` passed. iOS build-for-testing passed. macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings / AppIntents metadata skip warning.
+
+- [x] **Step 5: API and boundary cleanup**
 
 Before review, verify `AppLockManager` is the only owner of user-initiated app-lock authentication tasks, request API names express intent and side effects, SwiftUI only updates view-local presentation state or sends synchronous intent, tests use fake biometric auth without real device prompts, and touched test files include enough Test Context / Given / When / Then information for future failure triage.
 
-- [ ] **Step 6: Request review and commit**
+Actual cleanup result: `AppLockManager` owns tracked app-lock request tasks and exposes request IDs plus an await hook for ordering tests. `AppLockContainer`, `AppLockGateView`, and the full-app-lock toggle now send synchronous intent only. Tests use delayed fake biometric auth, include Test Context / Given / When / Then notes, and cover cancellation as lifecycle completion rather than user-facing failure. The request tracker passes the manager into the stored operation closure to avoid an unnecessary strong operation capture of `self`.
+
+- [x] **Step 6: Request review and commit**
 
 Request code review for Task 52. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
 
+Actual review result: code review found no Critical issues. Important findings were that `CancellationError` was incorrectly surfaced as `lastErrorMessage` and that the new source-boundary test file was still untracked; both were fixed. Minor findings about touched legacy tests lacking Given/When/Then context and Task 52 ledger drift were also fixed before commit.
+
 ## Progress Ledger
 
+- 2026-06-21: Task 52 RED/GREEN completed with review fixes. `AppLockContainer`, `AppLockGateView`, and `GeneralSettingsView` no longer own biometric authentication `Task` work; they send synchronous intent to `AppLockManager.requestAppUnlock()` or `requestFullAppLockChange(_:)`. `AppLockManager` owns tracked request tasks, exposes pending request IDs plus `waitForAppLockRequest(_:)`, preserves existing async behavior boundaries, and treats `CancellationError` as lifecycle completion rather than a user-facing auth failure. RED failed to compile until the request APIs and tracking state existed; review-fix RED proved cancellation still polluted `lastErrorMessage`. Final focused tests passed 6 XCTest tests plus 2 Swift Testing tests; the source scan showed only manager-owned app-lock tasks; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings / AppIntents metadata skip warning. Broader SwiftUI task hits in terminal, RemoteFiles, Settings language change, App sync, and low-level Application/Core paths remain deferred to later slices.
 - 2026-06-21: Post-Task-51 scan selected Task 52 as the next executable lifecycle slice. Current plan checkboxes were all complete, so the codebase was rescanned for SwiftUI-owned lifecycle `Task` work, direct resource/singleton calls, and stale terminal runtime state. `AppLockContainer`, `AppLockGateView`, and the full-app-lock toggle in `GeneralSettingsView` are a focused remaining Security/Settings hit: SwiftUI launches authentication tasks directly for app unlock and full-lock enablement even though `AppLockManager` is already the stable Application owner for biometric authentication state. Broader hits remain intentionally deferred for later classification, including Terminal view retry/tmux/voice tasks, RemoteFiles navigation/preview tasks, App app-delegate sync calls, and low-level Application/Core tasks that are already tracked or need separate ownership audits.
 - 2026-06-21: Task 51 RED/GREEN completed with review fix. `ServerFormSheet` no longer owns the Test Connection async `Task`, no longer launches `Task.detached`, and no longer directly reaches `SSHConnectionOperationService.shared` or `RemoteMoshManager.shared`; it sends synchronous intent to `ServerConnectionTester` in Servers Application. `ServerConnectionTester` owns tracked connection-test request tasks, exposes pending request IDs plus `waitForConnectionTestRequest`, records ordinary `ServerConnectionTestFailure`, preserves cancellation as lifecycle state rather than failure, and always calls `onCompleted` so SwiftUI can clear transient testing state after success, failure, or cancellation. RED first failed to compile until the connection tester/protocol existed; review-fix RED failed until `onCompleted` existed. Final focused tests passed 6 Swift Testing tests; scoped source scans showed the UI helper only delegates to `connectionTester.requestConnectionTest`; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings. Broader SwiftUI task hits in terminal, RemoteFiles, Settings, and other low-level paths remain deferred to later slices.
 - 2026-06-21: Post-Task-50 scan selected Task 51 as the next executable lifecycle slice. Current plan checkboxes were all complete, so the codebase was rescanned for SwiftUI-owned lifecycle `Task` work, direct resource/singleton calls, and stale terminal runtime state. `ServerFormSheet` connection testing is the clearest remaining Servers feature hit: the Test Connection button starts a SwiftUI-owned `Task`, `runConnectionTest(force:)` launches `Task.detached`, and the UI file directly reaches `SSHConnectionOperationService.shared` plus `RemoteMoshManager.shared`. Broader hits remain intentionally deferred for later classification, including Terminal view retry/voice lifecycle tasks, RemoteFiles navigation/preview tasks, Settings language-change task ownership, and low-level Application/Core tasks that are already tracked or need separate ownership audits.
