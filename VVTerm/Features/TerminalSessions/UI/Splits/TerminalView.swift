@@ -80,6 +80,7 @@ struct TerminalTabView: View {
                 TerminalPaneView(
                     paneId: tab.rootPaneId,
                     server: server,
+                    tabManager: tabManager,
                     isFocused: true,
                     isTabSelected: isSelected,
                     onFocus: { },
@@ -148,6 +149,7 @@ struct TerminalTabView: View {
                 TerminalPaneView(
                     paneId: paneId,
                     server: server,
+                    tabManager: tabManager,
                     isFocused: tab.focusedPaneId == paneId,
                     isTabSelected: isSelected,
                     onFocus: { focusPane(paneId) },
@@ -357,6 +359,7 @@ struct TerminalTabView: View {
 struct TerminalPaneView: View {
     let paneId: UUID
     let server: Server
+    let tabManager: TerminalTabManager
     let isFocused: Bool
     let isTabSelected: Bool
     let onFocus: () -> Void
@@ -388,7 +391,7 @@ struct TerminalPaneView: View {
     @AppStorage("sshAutoReconnect") private var autoReconnectEnabled = true
 
     private var paneState: TerminalPaneState? {
-        TerminalTabManager.shared.paneStates[paneId]
+        tabManager.paneStates[paneId]
     }
 
     private var connectionState: ConnectionState {
@@ -416,7 +419,7 @@ struct TerminalPaneView: View {
 
     /// Check if terminal already exists (reuse case)
     private var terminalExists: Bool {
-        TerminalTabManager.shared.getTerminal(for: paneId) != nil
+        tabManager.getTerminal(for: paneId) != nil
     }
 
     private var effectiveThemeName: String {
@@ -534,6 +537,7 @@ struct TerminalPaneView: View {
                         server: server,
                         credentials: credentials,
                         richPasteUIModel: richPasteUI,
+                        tabManager: tabManager,
                         isActive: shouldFocus,
                         onProcessExit: onProcessExit,
                         onReady: { isReady = true }
@@ -921,6 +925,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
     let server: Server
     let credentials: ServerCredentials
     let richPasteUIModel: TerminalRichPasteUIModel
+    let tabManager: TerminalTabManager
     let isActive: Bool
     let onProcessExit: () -> Void
     let onReady: () -> Void
@@ -942,7 +947,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         }
 
         let coordinator = context.coordinator
-        TerminalTabManager.shared.configureRuntime(
+        tabManager.configureRuntime(
             forPane: paneId,
             server: server,
             credentials: credentials,
@@ -950,28 +955,28 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         )
 
         // Check if terminal already exists for this pane (reuse to save memory)
-        if let existingTerminal = TerminalTabManager.shared.getTerminal(for: paneId) {
+        if let existingTerminal = tabManager.getTerminal(for: paneId) {
             coordinator.isReusingTerminal = true
             coordinator.terminal = existingTerminal
 
-            existingTerminal.onResize = { [paneId] cols, rows in
-                TerminalTabManager.shared.requestPaneResize(
+            existingTerminal.onResize = { [tabManager, paneId] cols, rows in
+                tabManager.requestPaneResize(
                     TerminalResizeRequestSize(cols: cols, rows: rows),
                     forPane: paneId
                 )
             }
-            existingTerminal.onPwdChange = { [paneId] rawDirectory in
-                TerminalTabManager.shared.updatePaneWorkingDirectory(paneId, rawDirectory: rawDirectory)
+            existingTerminal.onPwdChange = { [tabManager, paneId] rawDirectory in
+                tabManager.updatePaneWorkingDirectory(paneId, rawDirectory: rawDirectory)
             }
-            existingTerminal.onTitleChange = { [paneId] title in
-                TerminalTabManager.shared.updatePaneTitle(paneId, rawTitle: title)
+            existingTerminal.onTitleChange = { [tabManager, paneId] title in
+                tabManager.updatePaneTitle(paneId, rawTitle: title)
             }
-            existingTerminal.onZoomAction = { [paneId] action in
-                TerminalTabManager.shared.handleTerminalZoom(action, for: paneId)
+            existingTerminal.onZoomAction = { [tabManager, paneId] action in
+                tabManager.handleTerminalZoom(action, for: paneId)
             }
-            existingTerminal.applyPresentationOverrides(TerminalTabManager.shared.presentationOverrides(for: paneId))
-            existingTerminal.writeCallback = { [paneId] data in
-                TerminalTabManager.shared.requestPaneInput(data, toPane: paneId)
+            existingTerminal.applyPresentationOverrides(tabManager.presentationOverrides(for: paneId))
+            existingTerminal.writeCallback = { [tabManager, paneId] data in
+                tabManager.requestPaneInput(data, toPane: paneId)
             }
             coordinator.installRichPasteInterception(on: existingTerminal)
 
@@ -1006,21 +1011,21 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
             }
         }
         terminalView.onProcessExit = onProcessExit
-        terminalView.onPwdChange = { [paneId] rawDirectory in
-            TerminalTabManager.shared.updatePaneWorkingDirectory(paneId, rawDirectory: rawDirectory)
+        terminalView.onPwdChange = { [tabManager, paneId] rawDirectory in
+            tabManager.updatePaneWorkingDirectory(paneId, rawDirectory: rawDirectory)
         }
-        terminalView.onTitleChange = { [paneId] title in
-            TerminalTabManager.shared.updatePaneTitle(paneId, rawTitle: title)
+        terminalView.onTitleChange = { [tabManager, paneId] title in
+            tabManager.updatePaneTitle(paneId, rawTitle: title)
         }
-        terminalView.onZoomAction = { [paneId] action in
-            TerminalTabManager.shared.handleTerminalZoom(action, for: paneId)
+        terminalView.onZoomAction = { [tabManager, paneId] action in
+            tabManager.handleTerminalZoom(action, for: paneId)
         }
-        terminalView.applyPresentationOverrides(TerminalTabManager.shared.presentationOverrides(for: paneId))
+        terminalView.applyPresentationOverrides(tabManager.presentationOverrides(for: paneId))
 
         // Store terminal reference
         coordinator.terminal = terminalView
         coordinator.installRichPasteInterception(on: terminalView)
-        TerminalTabManager.shared.registerTerminal(terminalView, for: paneId)
+        tabManager.registerTerminal(terminalView, for: paneId)
 
         // Setup write callback to send keyboard input to SSH
         terminalView.writeCallback = { [weak coordinator] data in
@@ -1028,8 +1033,8 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         }
 
         // Setup resize callback to notify SSH of terminal size changes
-        terminalView.onResize = { [paneId] cols, rows in
-            TerminalTabManager.shared.requestPaneResize(
+        terminalView.onResize = { [tabManager, paneId] cols, rows in
+            tabManager.requestPaneResize(
                 TerminalResizeRequestSize(cols: cols, rows: rows),
                 forPane: paneId
             )
@@ -1048,8 +1053,8 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         if let scrollView = nsView as? TerminalScrollView {
             scrollView.shouldOwnFirstResponder = isActive
             let terminalView = scrollView.surfaceView
-            if terminalView.surfacePresentationOverrides != TerminalTabManager.shared.presentationOverrides(for: paneId) {
-                terminalView.applyPresentationOverrides(TerminalTabManager.shared.presentationOverrides(for: paneId))
+            if terminalView.surfacePresentationOverrides != tabManager.presentationOverrides(for: paneId) {
+                terminalView.applyPresentationOverrides(tabManager.presentationOverrides(for: paneId))
             }
         }
     }
@@ -1074,7 +1079,8 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         return Coordinator(
             paneId: paneId,
             onProcessExit: onProcessExit,
-            richPasteUIModel: richPasteUIModel
+            richPasteUIModel: richPasteUIModel,
+            tabManager: tabManager
         )
     }
 
@@ -1082,6 +1088,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
     class Coordinator {
         let paneId: UUID
         let onProcessExit: () -> Void
+        let tabManager: TerminalTabManager
         weak var terminal: GhosttyTerminalView?
         var isReusingTerminal = false
         private let richPasteRuntime: TerminalRichPasteRuntime
@@ -1090,10 +1097,12 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         init(
             paneId: UUID,
             onProcessExit: @escaping () -> Void,
-            richPasteUIModel: TerminalRichPasteUIModel
+            richPasteUIModel: TerminalRichPasteUIModel,
+            tabManager: TerminalTabManager
         ) {
             self.paneId = paneId
             self.onProcessExit = onProcessExit
+            self.tabManager = tabManager
             self.richPasteRuntime = .terminalPane(
                 paneId: paneId,
                 uiModel: richPasteUIModel
@@ -1106,12 +1115,12 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         }
 
         func sendToSSH(_ data: Data) {
-            TerminalTabManager.shared.requestPaneInput(data, toPane: paneId)
+            tabManager.requestPaneInput(data, toPane: paneId)
         }
 
         @MainActor
         func attachSurface(_ terminal: GhosttyTerminalView, context: TerminalSurfaceAttachContext) {
-            TerminalTabManager.shared.requestSurfaceAttach(
+            tabManager.requestSurfaceAttach(
                 paneId: paneId,
                 terminal: terminal,
                 context: context
@@ -1120,7 +1129,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
 
         @MainActor
         func cancelShell() {
-            TerminalTabManager.shared.detachSurfaceForClosedPane(paneId)
+            tabManager.detachSurfaceForClosedPane(paneId)
             terminal = nil
         }
     }

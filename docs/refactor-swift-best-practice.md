@@ -5725,7 +5725,7 @@ Request code review for Task 73. Fix Critical and Important findings, update the
   - `SSHTerminalPaneWrapper.Coordinator` stores the same manager for `sendToSSH(_:)`, `attachSurface(_:context:)`, and `cancelShell()`.
   - Split pane surface callbacks use the injected manager for configure/get/register/resize/PWD/title/zoom/presentation/input/attach instead of reaching for `TerminalTabManager.shared`.
 
-- [ ] **Step 1: Add RED split surface callback boundary tests**
+- [x] **Step 1: Add RED split surface callback boundary tests**
 
 Create `TerminalSplitSurfaceCallbackBoundaryTests` with Test Context:
 - Protected behavior: split-pane terminal representable callbacks should report surface events to the injected TerminalSessions application owner.
@@ -5759,7 +5759,7 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: the focused suite fails because `TerminalPaneView` does not pass a manager into `SSHTerminalPaneWrapper`, and the split pane wrapper/coordinator still reach directly for `TerminalTabManager.shared` in surface callbacks.
 
-- [ ] **Step 2: Pass the injected TerminalTabManager into pane views and wrappers**
+- [x] **Step 2: Pass the injected TerminalTabManager into pane views and wrappers**
 
 Update split terminal UI:
 - Add `let tabManager: TerminalTabManager` to `TerminalPaneView`.
@@ -5769,7 +5769,7 @@ Update split terminal UI:
 - Add `let tabManager: TerminalTabManager` to `SSHTerminalPaneWrapper.Coordinator`.
 - Pass `tabManager: tabManager` from `makeCoordinator()`.
 
-- [ ] **Step 3: Route split pane surface callbacks through the injected manager**
+- [x] **Step 3: Route split pane surface callbacks through the injected manager**
 
 Within `SSHTerminalPaneWrapper` instance methods, replace `TerminalTabManager.shared` with `tabManager` for:
 - runtime configuration;
@@ -5786,7 +5786,7 @@ Within `Coordinator`, replace `TerminalTabManager.shared` with the stored `tabMa
 
 Do not change `static func dismantleNSView` in this task; because it has no access to instance properties, moving static teardown off the singleton requires a separate representable lifetime design slice.
 
-- [ ] **Step 4: Run focused verification**
+- [x] **Step 4: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSplitSurfaceCallbackBoundaryTests ENABLE_DEBUG_DYLIB=NO
@@ -5796,16 +5796,17 @@ git diff --check
 
 Expected GREEN result: focused tests pass; source scan shows split pane surface instance callbacks and coordinator callbacks use `tabManager.*`, while any remaining `TerminalTabManager.shared` hit in `SSHTerminalPaneWrapper` is confined to `static func dismantleNSView` and explicitly deferred.
 
-- [ ] **Step 5: API and boundary cleanup**
+- [x] **Step 5: API and boundary cleanup**
 
 Before review, verify split pane surface callbacks no longer bypass the injected manager, no new lifecycle work or untracked task was introduced, root `SSHTerminalWrapper` remains untouched and deferred, static representable teardown remains the only split-pane singleton exemption, and touched tests include complete Test Context plus Given / When / Then comments.
 
-- [ ] **Step 6: Request review and commit**
+- [x] **Step 6: Request review and commit**
 
 Request code review for Task 74. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
 ## Progress Ledger
 
+- 2026-06-21: Task 74 RED/GREEN completed with local lifecycle review. `TerminalPaneView` now receives the injected `TerminalTabManager` from `TerminalTabView`, uses it for pane state/terminal lookup, and passes it into `SSHTerminalPaneWrapper`; the split pane wrapper and its coordinator now route runtime configuration, terminal reuse/registration, resize, PWD/title metadata, zoom, presentation overrides, input, surface attach, and coordinator close callbacks through the injected manager instead of reaching directly for `TerminalTabManager.shared`. Initial RED failed as expected because `TerminalPaneView` did not pass a manager into the wrapper and wrapper/coordinator callbacks still used the singleton. GREEN focused verification passed 3 Swift Testing tests in `TerminalSplitSurfaceCallbackBoundaryTests`; source scan showed the scoped wrapper/coordinator callbacks use `tabManager.*`, with remaining split wrapper singleton usage confined to `static func dismantleNSView` and explicitly deferred. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Tool policy did not permit spawning an independent review subagent without explicit delegation, so review was local against the Swift lifecycle checklist; no Critical or Important issues were found. Root `SSHTerminalWrapper`, static teardown redesign, pane UI intent helper injection, terminal title/PWD/background parsing, Ghostty config reload, and other low-level Application/Core lifecycle slices remain open.
 - 2026-06-21: Post-Task-73 scan selected Task 74 as the next executable lifecycle slice. After split voice text send moved to the injected tab manager, split pane surface callbacks remain inconsistent: `TerminalTabView` already owns an injected `tabManager`, but `TerminalPaneView`, `SSHTerminalPaneWrapper`, and its coordinator still use `TerminalTabManager.shared` for pane runtime configuration, terminal lookup/registration, resize, PWD/title metadata, zoom, presentation overrides, input, and surface attach callbacks. Root `SSHTerminalWrapper` has broader `ConnectionSessionManager.shared` usage and should be deferred to a later root wrapper injection/lifetime task; `static dismantleNSView` also remains a separate representable lifetime design issue because it cannot access instance injection. Task 74 should keep the slice to split pane instance/coordinator callbacks and leave terminal title/PWD/background parsing, Ghostty config reload, and root wrapper callback injection open.
 - 2026-06-21: Task 73 RED/GREEN completed with local lifecycle review fix. `TerminalTabManager` now owns split-pane terminal-surface text insertion through `sendText(_:toPane:)`, and split `TerminalView` routes voice transcription completions through its injected `tabManager` instead of unwrapping `focusedTerminal`, dispatching back to the main queue, and calling `terminal.sendText(trimmed)` directly. The voice overlay and stop/send path both capture the voice request target before registering completion callbacks, so completed transcription text is sent to the intended pane target. Initial RED failed because split voice text send still used `focusedTerminal`, direct `terminal.sendText(trimmed)`, and `DispatchQueue.main.async`; follow-up RED failed because the completion closures did not capture the voice target; local review then found an Important dependency-boundary issue where `TerminalView` called `TerminalTabManager.shared` despite already receiving an injected manager. GREEN focused verification passed 4 Swift Testing tests in `TerminalVoiceInputIntentBoundaryTests`; source scan showed the scoped voice text path uses `tabManager.sendText(trimmed, toPane: paneId)` with no direct terminal write. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Tool policy did not permit spawning an independent review subagent without explicit delegation, so review was local against the Swift lifecycle checklist. Terminal title/PWD/background parsing, terminal interaction-state cleanup, Ghostty config reload, and other low-level Application/Core lifecycle slices remain open.
 - 2026-06-21: Post-Task-72 scan selected Task 73 as the next executable lifecycle slice. Task 56 intentionally left split-pane voice text-send ownership as a named limitation, and the current split `TerminalView.sendTranscriptionToTerminal(_:)` still unwraps `focusedTerminal`, dispatches back to the main queue, and calls `terminal.sendText(trimmed)` directly from SwiftUI. Root voice text already routes through `ConnectionSessionManager.sendText(_:to:)`, so Task 73 should add the matching `TerminalTabManager.sendText(_:toPane:)` boundary and route split voice completion by the voice target pane. Keep this slice synchronous and scoped because terminal-surface text insertion is not SSH transport teardown/auth/connect work. Terminal title/PWD/background parsing, terminal interaction-state cleanup, Ghostty config reload, and other low-level Application/Core lifecycle slices remain open.
