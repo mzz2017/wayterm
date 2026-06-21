@@ -6143,6 +6143,81 @@ Before review, verify no new lifecycle work or untracked task was introduced, st
 
 Perform local lifecycle review against the Swift checklist unless the user explicitly authorizes new subagents. Fix Critical and Important findings, update the Progress Ledger and Must-Fix status with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
+## Task 78: Split Terminal UI Injected-Manager Boundary
+
+**Files:**
+- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `VVTermTests/TerminalSplitUIInjectedManagerBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing `TerminalTabView.tabManager: TerminalTabManager`.
+  - Existing `TerminalPaneView.tabManager: TerminalTabManager`.
+  - Existing `TerminalTabManager` APIs: `getTerminal(for:)`, `requestTmuxInstall(for:)`, `disableTmux(for:)`, `requestPaneHostRetrust(paneId:server:onCompleted:)`, `shouldAutoReconnectPane(_:isSceneActive:autoReconnectEnabled:)`, `requestPaneRetry(paneId:server:onCompleted:)`, `requestPaneCredentialLoad(paneId:server:onCompleted:)`, `paneStates`, `scheduleConnectWatchdog(forPaneId:isReady:terminalExists:timeoutMessage:onTimeout:)`, and `requestMoshInstallAndReconnect(for:onCompleted:onFailed:)`.
+- Produces:
+  - Split terminal UI helper methods route focused terminal lookup, tmux/mosh prompts, host retrust, retry, credential load, watchdog, and pane-state stale callback guards through the injected `tabManager`.
+  - `TerminalView.swift` no longer resolves `TerminalTabManager.shared`.
+
+- [ ] **Step 1: Add RED split UI injected-manager boundary tests**
+
+Create `TerminalSplitUIInjectedManagerBoundaryTests` with Test Context:
+- Protected behavior: split terminal UI may send user intent, but it must send that intent through the injected TerminalSessions application owner.
+- Invariant: `TerminalTabView` and `TerminalPaneView` must use their injected `tabManager`; they must not resolve `TerminalTabManager.shared`.
+- Fake assumptions: these are source-boundary tests because the protected behavior is dependency ownership at the SwiftUI/application boundary.
+- Update guidance: update the tests only if split terminal UI ownership intentionally moves to a different injected application owner.
+
+Add `terminalTabViewUsesInjectedManagerForFocusedTerminalLookup`:
+- Read `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`.
+- Slice from `struct TerminalTabView` ending before `// MARK: - Terminal Pane View`.
+- Assert the slice contains `@ObservedObject var tabManager: TerminalTabManager`.
+- Assert the slice contains `tabManager.getTerminal(for: tab.focusedPaneId)`.
+- Assert the slice does not contain `TerminalTabManager.shared`.
+
+Add `terminalPaneViewUsesInjectedManagerForPaneLifecycleIntents`:
+- Slice from `struct TerminalPaneView` ending before `private func updateTerminalBackgroundColor`.
+- Assert the slice contains `let tabManager: TerminalTabManager`.
+- Assert the slice contains each injected manager call listed in this task's produced behavior.
+- Assert the slice does not contain `TerminalTabManager.shared`.
+
+Add `splitTerminalViewHasNoTerminalTabManagerSingletonReachThrough`:
+- Assert the full `TerminalView.swift` source does not contain `TerminalTabManager.shared`.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSplitUIInjectedManagerBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails because split terminal UI still resolves `TerminalTabManager.shared` for focused terminal lookup, tmux/mosh intent helpers, host retrust, retry, credential load, watchdog, and pane-state callback guards.
+
+- [ ] **Step 2: Route split UI helpers through the injected manager**
+
+Update `TerminalView.swift`:
+- In `TerminalTabView.focusedTerminal`, replace `TerminalTabManager.shared.getTerminal(for:)` with `tabManager.getTerminal(for:)`.
+- In the tmux install button, replace `TerminalTabManager.shared.requestTmuxInstall(for:)` with `tabManager.requestTmuxInstall(for:)`.
+- In `TerminalPaneView.disableTmuxForServer()`, `retrustHostAndRetry()`, `attemptAutoReconnectIfNeeded()`, `retryConnection()`, `requestCredentialLoad()`, `startConnectWatchdog()`, and `requestMoshInstallAndReconnect()`, replace every `TerminalTabManager.shared` call with `tabManager`.
+- In the credential-load callback stale guard, replace `TerminalTabManager.shared.paneStates[paneId]?.serverId` with `tabManager.paneStates[paneId]?.serverId`.
+- Do not change request APIs, callback behavior, prompt presentation, retry timing, background color parsing, rich-paste runtime construction, or split representable wrapper logic in this task.
+
+- [ ] **Step 3: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSplitUIInjectedManagerBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "TerminalTabManager\\.shared|tabManager\\.(getTerminal|requestTmuxInstall|disableTmux|requestPaneHostRetrust|shouldAutoReconnectPane|requestPaneRetry|requestPaneCredentialLoad|paneStates|scheduleConnectWatchdog|requestMoshInstallAndReconnect)" VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTermTests/TerminalSplitUIInjectedManagerBoundaryTests.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows `TerminalView.swift` has no `TerminalTabManager.shared` and routes the split UI helper intents through `tabManager.*`.
+
+- [ ] **Step 4: API and boundary cleanup**
+
+Before review, verify no new public API, no temporary helper/WIP state, no lifecycle-critical untracked task, no stale domain state decision, and no SwiftUI-owned multi-step lifecycle orchestration was introduced. Confirm remaining must-fix evidence moves to rich paste and cross-feature/Core items, not split `TerminalView.swift` singleton reach-through.
+
+- [ ] **Step 5: Review and commit**
+
+Perform local lifecycle review against the Swift checklist unless the user explicitly authorizes new subagents. Fix Critical and Important findings, update the Progress Ledger and Must-Fix status with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
 - 2026-06-21: Task 77 RED/GREEN completed with local lifecycle review and no new subagents. `SSHTerminalPaneWrapper.static dismantleNSView` now uses the Task 74 coordinator's injected `tabManager` for pane liveness checks, `detachSurfaceForPaneViewDisappeared(_:)`, and `detachSurfaceForClosedPane(_:)`. Static teardown still only pauses/reuses the UI surface locally and delegates pane lifecycle cleanup intent to the TerminalSessions Application owner; no new lifecycle task or behavior change was introduced. Initial RED failed as expected with 4 source-boundary issues because split static teardown still used `TerminalTabManager.shared` and lacked the `coordinator.tabManager.*` calls. GREEN focused verification passed 1 Swift Testing test in `TerminalSplitStaticTeardownBoundaryTests`; source scan showed split static teardown uses `coordinator.tabManager.*`. The remaining `TerminalTabManager.shared` hits in `TerminalView.swift` are outside static teardown and remain covered by Must-Fix item 2. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. API/boundary cleanup found no new public API, no temporary helper/WIP state, no new untracked task, and no stale state or SwiftUI lifecycle decision introduced by this task.
