@@ -8,7 +8,7 @@ import SwiftUI
 // MARK: - Sync Settings View
 
 struct SyncSettingsView: View {
-    @ObservedObject private var cloudKit = CloudKitManager.shared
+    @ObservedObject private var syncStore = SyncSettingsStore.shared
     @ObservedObject private var serverManager = ServerManager.shared
     @EnvironmentObject private var terminalThemeManager: TerminalThemeManager
     @EnvironmentObject private var terminalAccessory: TerminalAccessoryPreferencesManager
@@ -38,7 +38,7 @@ struct SyncSettingsView: View {
                         syncStatusView
                     }
 
-                    if let lastSync = cloudKit.lastSyncDate {
+                    if let lastSync = syncStore.lastSyncDate {
                         HStack {
                             Text("Last Synced")
                             Spacer()
@@ -47,7 +47,7 @@ struct SyncSettingsView: View {
                         }
                     }
 
-                    if case .error(let message) = cloudKit.syncStatus {
+                    if case .error(let message) = syncStore.syncStatus {
                         HStack {
                             Text("Error")
                             Spacer()
@@ -99,12 +99,12 @@ struct SyncSettingsView: View {
             }
 
             // Debug section when CloudKit is unavailable
-            if syncEnabled && !cloudKit.isAvailable {
+            if syncEnabled && !syncStore.isAvailable {
                 Section {
                     HStack {
                         Text("Account Status")
                         Spacer()
-                        Text(cloudKit.accountStatusDetail)
+                        Text(syncStore.accountStatusDetail)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.trailing)
@@ -119,7 +119,7 @@ struct SyncSettingsView: View {
                     }
 
                     Button {
-                        AppSyncCoordinator.shared.refreshCloudKitStatusFromSettings()
+                        syncStore.refreshCloudKitStatus()
                     } label: {
                         Label("Re-check iCloud Status", systemImage: "arrow.clockwise")
                     }
@@ -132,7 +132,7 @@ struct SyncSettingsView: View {
         }
         .formStyle(.grouped)
         .onChangeCompat(of: syncEnabled) { enabled in
-            AppSyncCoordinator.shared.handleSyncSettingsChanged(enabled)
+            syncStore.handleSyncEnabledChanged(enabled)
         }
     }
 
@@ -146,7 +146,7 @@ struct SyncSettingsView: View {
             Label("Disabled", systemImage: "pause.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-        } else if cloudKit.isAvailable {
+        } else if syncStore.isAvailable {
             Label("Connected", systemImage: "checkmark.circle.fill")
                 .font(.caption)
                 .foregroundStyle(.green)
@@ -159,7 +159,7 @@ struct SyncSettingsView: View {
 
     @ViewBuilder
     private var syncStatusView: some View {
-        switch cloudKit.syncStatus {
+        switch syncStore.syncStatus {
         case .idle:
             Label("Synced", systemImage: "checkmark.circle")
                 .foregroundStyle(.green)

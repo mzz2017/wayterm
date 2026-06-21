@@ -6,8 +6,8 @@ import Testing
 // persistence and cleanup actions. Settings views may send user intent, but they
 // must not own destructive cleanup tasks or call lower-level stores directly.
 // The tests inspect source placement only; update them only when the trusted
-// host, reusable SSH key, or custom terminal theme settings owner intentionally
-// moves to another application-layer type.
+// host, reusable SSH key, sync settings, or custom terminal theme settings owner
+// intentionally moves to another application-layer type.
 @Suite
 struct SettingsLifecycleBoundaryTests {
     @Test
@@ -72,6 +72,26 @@ struct SettingsLifecycleBoundaryTests {
         #expect(
             source.contains("let onDelete: (UUID) throws -> Void"),
             "ManageCustomThemesSheet should keep custom theme deletion as a throwing intent."
+        )
+    }
+
+    @Test
+    func syncSettingsDelegatesCloudKitStatusAndIntentToApplicationStore() throws {
+        // Given the sync settings SwiftUI source.
+        let root = try sourceRoot()
+        let source = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/UI/SyncSettingsView.swift")
+        )
+
+        // Then the view must observe the Settings application store rather than
+        // directly owning CloudKit status observation or app-sync coordination.
+        #expect(
+            !source.contains("CloudKitManager.shared"),
+            "SyncSettingsView should read CloudKit status through SyncSettingsStore instead of CloudKitManager.shared."
+        )
+        #expect(
+            !source.contains("AppSyncCoordinator.shared"),
+            "SyncSettingsView should send sync intent through SyncSettingsStore instead of AppSyncCoordinator.shared."
         )
     }
 

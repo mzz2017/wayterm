@@ -3417,8 +3417,76 @@ Request code review for Task 45. Fix Critical and Important findings, update the
 
 Review result: initial review found one Important behavior-preservation issue: automatic stored-key matching would surface the first unreadable stored-key candidate as a form error, while the old UI loop skipped broken candidates and could still match a later valid key. Follow-up RED coverage failed to compile until `matchingStoredSSHKey(in:...)` existed; GREEN passed after matching was scoped to the already loaded picker candidates and per-candidate read/decode failures were skipped. Direct explicit stored-key loading still preserves underlying read failures for user-visible error presentation. Re-review found no Critical or Important issues; the remaining Minor API clarity note was addressed by making matching non-throwing and removing the dead UI catch.
 
+## Task 46: Sync Settings CloudKit Status Boundary
+
+**Files:**
+- Create: `VVTerm/Features/Settings/Application/SyncSettingsStore.swift`
+- Modify: `VVTerm/Features/Settings/UI/SyncSettingsView.swift`
+- Test: `VVTermTests/SyncSettingsStoreTests.swift`
+- Test: `VVTermTests/SettingsLifecycleBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `CloudKitManager.syncStatus`
+  - `CloudKitManager.lastSyncDate`
+  - `CloudKitManager.isAvailable`
+  - `CloudKitManager.accountStatusDetail`
+  - `AppSyncCoordinator.handleSyncSettingsChanged(_:)`
+  - `AppSyncCoordinator.refreshCloudKitStatusFromSettings()`
+- Produces:
+  - `SyncSettingsCloudStatusProviding`: Settings Application protocol for observable CloudKit status values.
+  - `SyncSettingsCoordinating`: Settings Application protocol for sync-toggle and CloudKit-status refresh intent.
+  - `SyncSettingsStore`: Settings Application owner that bridges CloudKit status observation and sync intent for the SwiftUI settings view.
+  - `SyncSettingsView` dependency on `SyncSettingsStore.shared` instead of direct `CloudKitManager.shared` / `AppSyncCoordinator.shared` calls.
+
+- [x] **Step 1: Add RED store and boundary tests**
+
+Add `SyncSettingsStoreTests` with fakes for CloudKit status and sync coordination. Cover initial status snapshot, published status updates, sync-toggle intent delegation, and coalesced status refresh task reuse through the coordinator boundary. Extend `SettingsLifecycleBoundaryTests` so `SyncSettingsView.swift` fails while it directly references `CloudKitManager.shared` or `AppSyncCoordinator.shared`.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/SyncSettingsStoreTests -only-testing:VVTermTests/SettingsLifecycleBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: `SyncSettingsStoreTests` fails to compile because `SyncSettingsStore`, `SyncSettingsCloudStatusProviding`, and `SyncSettingsCoordinating` do not exist. If those compile unexpectedly, the boundary test must fail because `SyncSettingsView.swift` still directly references CloudKit/app-sync singletons.
+
+Actual RED result: focused `SyncSettingsStoreTests` / `SettingsLifecycleBoundaryTests` failed to compile because `SyncSettingsCloudStatusProviding`, `SyncSettingsCoordinating`, and `SyncSettingsStore` did not exist.
+
+- [x] **Step 2: Add Settings Application sync store**
+
+Create `SyncSettingsStore.swift` in Settings Application. Keep production defaults wired to `CloudKitManager.shared` and `AppSyncCoordinator.shared`, but expose only view-ready status values and explicit `handleSyncEnabledChanged(_:)` / `refreshCloudKitStatus()` intent methods. Store any Combine subscription and returned coordinator task inside the store so the UI does not own sync lifecycle state.
+
+- [x] **Step 3: Route SyncSettingsView through the store**
+
+Replace `@ObservedObject private var cloudKit = CloudKitManager.shared` with the application store. Use store-published status values for badges/status/details and send toggle/recheck intent through the store. Preserve existing copy, counts, labels, and visible behavior.
+
+- [x] **Step 4: Run focused verification**
+
+Run the focused store/boundary tests, source scans for direct singleton references in `SyncSettingsView.swift`, and `git diff --check`:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/SyncSettingsStoreTests -only-testing:VVTermTests/SettingsLifecycleBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "CloudKitManager\\.shared|AppSyncCoordinator\\.shared" VVTerm/Features/Settings/UI/SyncSettingsView.swift
+git diff --check
+```
+
+Actual GREEN result: focused `SyncSettingsStoreTests` / `SettingsLifecycleBoundaryTests` passed 9 Swift Testing tests after the store introduced CloudKit status snapshot bridging, tracked sync-toggle/recheck tasks, and `SyncSettingsView` stopped referencing CloudKit/app-sync singletons. The source scan found no direct `CloudKitManager.shared` or `AppSyncCoordinator.shared` in `SyncSettingsView.swift`; `git diff --check` passed; iOS build-for-testing passed after a sequential rerun because the first parallel build hit Xcode's `build.db` lock; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings.
+
+- [x] **Step 5: API and boundary cleanup**
+
+Before review, verify `SyncSettingsStore` lives in Settings Application, SwiftUI only renders state and sends intent, CloudKit/app sync singleton access stays behind application-layer protocols, task ownership is awaitable/tracked where relevant, and test files include complete context for future failures.
+
+- [x] **Step 6: Request review and commit**
+
+Request code review for Task 46. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
+
+Review result: subagent review was not spawned because the current tool contract permits spawning only when the user explicitly requests subagents. Local read-only review found one Important status-ordering issue: publishing a void event and then re-reading provider properties could lag behind `@Published` updates at the CloudKit boundary. Review-fix RED reproduced stale `.idle` / `available` values when the fake provider published before applying backing properties. GREEN passed after the status protocol published complete `SyncSettingsCloudStatusSnapshot` values and production `CloudKitManager` used `CombineLatest4` to carry publisher-emitted values into the store. Re-review found no remaining Critical or Important issues against the Swift lifecycle checklist.
+
 ## Progress Ledger
 
+- 2026-06-21: Task 46 RED/GREEN completed with review fix. `SyncSettingsView` no longer directly observes `CloudKitManager.shared` or calls `AppSyncCoordinator.shared`; it observes `SyncSettingsStore` in Settings Application and sends sync-toggle/recheck intent through that store. `SyncSettingsStore` owns CloudKit status bridging through `SyncSettingsCloudStatusProviding`, app-sync intent through `SyncSettingsCoordinating`, tracks returned coordinator tasks for sync-toggle and status refresh, and coalesces in-flight CloudKit status refresh requests. Initial RED failed to compile until the store/protocols existed. Review found a status-ordering issue where a void publisher plus post-publish property reads could lag behind real `@Published` updates; review-fix RED reproduced stale `.idle` / `available` state, and GREEN passed after the provider protocol emitted complete `SyncSettingsCloudStatusSnapshot` values with `CloudKitManager` using `CombineLatest4`. Final focused store/boundary tests passed 9 Swift Testing tests; source scan found no direct CloudKit/app-sync singleton references in `SyncSettingsView.swift`; `git diff --check` passed; iOS build-for-testing passed after a sequential rerun because an earlier parallel build hit Xcode's `build.db` lock; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings.
 - 2026-06-21: Task 45 RED/GREEN completed with review fix. `ServerFormSheet` no longer directly calls `KeychainManager.shared` for stored SSH key lists, stored key material, or edit-server credentials; it sends credential read intent through `ServerFormCredentialProvider` in Servers Application. The provider owns the server-form credential read boundary through `ServerFormCredentialLibrary`, decodes stored key data to form-ready values, preserves underlying keychain read errors for explicit stored-key loading, and matches reusable keys by private key plus passphrase outside SwiftUI. UI behavior is preserved for selected stored keys, including refreshing the public key field when stored private key data is absent. Initial RED failed to compile until the provider/protocol/value type existed. Review found automatic matching regressed by surfacing a broken candidate instead of skipping it; review-fix RED failed until candidate-scoped matching existed, and GREEN passed after matching used the loaded picker candidates and skipped per-candidate read/decode failures. Re-review found no Critical or Important issues, and the remaining Minor non-throwing API clarity note was addressed. Final focused provider/boundary tests passed 7 Swift Testing tests; source scan found no direct `KeychainManager.shared` in `ServerFormSheet.swift`; `git diff --check` passed; iOS build-for-testing passed after a sequential rerun because the first parallel build hit Xcode's `build.db` lock; signed macOS build-for-testing failed on missing local Mac Development signing assets, then macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO`. A task-introduced `ServerFormCredentialProvider.shared` main-actor warning was removed by keeping the provider non-main-actor; final macOS warning scan showed only existing unrelated Swift 6 / XCTest deployment warnings.
 - 2026-06-21: Task 44 RED/GREEN completed with review fix. Terminal accessory CloudKit sync now has TerminalAccessories application-layer protocol seams, manager-owned startup/foreground/sync-toggle/cloud-resolution tasks, DEBUG-only await hooks, and cancellation/sync-enabled guards that drop CloudKit results which resume after sync is disabled. Initial RED failed to compile until injectable cloud sync / pending drain dependencies and startup await hooks existed; review-fix RED failed because a stale remote custom action was merged after sync was disabled. GREEN `TerminalAccessoryPreferencesManagerTests` passed 5 XCTest tests; source scan found no old untracked startup/observer cloud sync task forms; `git diff --check` passed; iOS build-for-testing passed; signed macOS build-for-testing failed on missing local Mac Development signing assets, then macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing unrelated Swift 6 / XCTest deployment warnings. Guard warning for added `Task` was reviewed: the tasks are stored and tracked by `TerminalAccessoryPreferencesManager`.
 - 2026-06-21: Task 43 RED/GREEN completed with review fix. Store startup product/entitlement refresh and review-mode disable entitlement refresh are now owned by `StoreManager` as stored tasks, canceled in `deinit`, clear only their current task IDs, and expose DEBUG-only await hooks for lifecycle ordering tests. Review found a superseded review-mode refresh could still run entitlement work after cancellation; follow-up RED coverage failed with two refreshes until `startReviewModeRefresh()` checked cancellation before invoking the entitlement action, and re-review found no Critical or Important issues. Verification: initial RED failed because Store refresh operation injection and await hooks did not exist; review-fix RED failed because a canceled superseded refresh still ran entitlement work; GREEN `StoreManagerLifecycleTests` passed 7 Swift Testing tests; Store lifecycle source scan produced no matches for old untracked startup/review refresh task forms; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with existing Swift 6 isolation and XCTest deployment warnings. Guard warning for added `Task` was reviewed: the tasks are stored and tracked by `StoreManager`.
