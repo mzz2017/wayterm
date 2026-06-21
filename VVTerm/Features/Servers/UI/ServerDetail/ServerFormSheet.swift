@@ -1188,38 +1188,7 @@ struct ServerFormSheet: View {
                 }
 
                 if isEditing {
-                    try await serverManager.updateServer(newServer)
-                    // Store credentials based on auth method
-                    let publicKeyData = ServerFormCredentialBuilder.resolvedPublicKeyData(
-                        sshPublicKey: sshPublicKey,
-                        sshKey: sshKey,
-                        passphrase: sshPassphrase.isEmpty ? nil : sshPassphrase)
-                    if transportSelection != .tailscale {
-                        switch selectedAuthMethod {
-                        case .password:
-                            if !password.isEmpty {
-                                try KeychainManager.shared.storePassword(for: newServer.id, password: password)
-                            }
-                        case .sshKey:
-                            if !sshKey.isEmpty, let keyData = sshKey.data(using: .utf8) {
-                                try KeychainManager.shared.storeSSHKey(for: newServer.id, privateKey: keyData, passphrase: nil, publicKey: publicKeyData)
-                            }
-                        case .sshKeyWithPassphrase:
-                            if !sshKey.isEmpty, let keyData = sshKey.data(using: .utf8) {
-                                try KeychainManager.shared.storeSSHKey(for: newServer.id, privateKey: keyData, passphrase: sshPassphrase.isEmpty ? nil : sshPassphrase, publicKey: publicKeyData)
-                            }
-                        }
-                    }
-
-                    if transportSelection == .cloudflare, selectedCloudflareAccessMode == .serviceToken {
-                        try KeychainManager.shared.storeCloudflareServiceToken(
-                            for: newServer.id,
-                            clientID: cloudflareClientID,
-                            clientSecret: cloudflareClientSecret
-                        )
-                    } else {
-                        KeychainManager.shared.deleteCloudflareServiceToken(for: newServer.id)
-                    }
+                    try await serverManager.updateServer(newServer, credentials: credentials)
                 } else {
                     try await serverManager.addServer(newServer, credentials: credentials)
                 }

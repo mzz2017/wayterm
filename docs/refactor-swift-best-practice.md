@@ -2873,27 +2873,47 @@ Review result: initial review found upload close/free teardown diagnostics still
   - Voice model downloads are owned by an application/service object, not a leaf settings view.
   - AppKit singleton windows live in Application-style managers, not UI views.
 
-- [ ] **Step 1: Split this sweep into reviewable sub-tasks**
+- [x] **Step 1: Split this sweep into reviewable sub-tasks**
 
 Before editing, break this broad sweep into smaller Tasks if more than one feature requires production changes. Each sub-task must have its own RED/GREEN tests and commit boundary.
 
-- [ ] **Step 2: Run boundary scans**
+Sub-task split:
+- Task 40A: Server edit credential consistency. Move edit metadata+credential save into `ServerManager`, keep UI as intent sender, and test credential failure does not mutate server metadata.
+- Task 40B: Sync task ownership. Audit app foreground/background/settings sync calls and move lifecycle-critical task tracking into an app/application coordinator if current calls are untracked.
+- Task 40C: Voice model download ownership. Move download/cancel ownership out of leaf settings UI if the current flow starts or drops critical `URLSession` tasks from views.
+- Task 40D: AppKit window presentation ownership. Move singleton window lifetime helpers out of UI views if scan confirms UI-owned long-lived windows.
+- Task 40E: Remaining destructive action tracking. Audit delete/save flows not covered by 40A-40D and add focused tests for any dropped lifecycle result.
+
+- [x] **Step 2: Run boundary scans**
 
 ```bash
 rg -n "try\\?|Task \\{|Task\\.detached|URLSession|NSWindow|save|delete|sync" VVTerm/App VVTerm/Core VVTerm/Features -g '*.swift'
 ```
 
-- [ ] **Step 3: Implement the first selected cross-feature sub-task with TDD**
+Scan result: Task 40A selected server edit credential consistency as the first slice. Remaining scan hits stay assigned to later sub-tasks: app/sync `Task` ownership for 40B, Voice/URLSession download ownership for 40C, About/Pro AppKit window presenters for 40D, and remaining destructive save/delete flows for 40E.
+
+- [x] **Step 3: Implement the first selected cross-feature sub-task with TDD**
 
 Start with the highest-risk lifecycle-critical operation found by the scan, likely Server edit credential consistency or sync task tracking.
 
-- [ ] **Step 4: Run focused verification**
+Task 40A RED evidence: `ServerManagerBootstrapTests.updateServerWithCredentialsDoesNotMutateMetadataWhenCredentialStoreFails` failed to compile before `ServerManager` exposed a credential-store seam and `updateServer(_:credentials:)`.
+
+Task 40A GREEN evidence: `ServerManagerBootstrapTests` passed 11 Swift Testing tests after `ServerManager` owned edit credential+metadata ordering and `ServerFormSheet.saveServer()` stopped writing Keychain directly during edit saves. The first single-test filter run matched 0 tests and is not counted as GREEN evidence.
+
+- [x] **Step 4: Run focused verification**
 
 Run feature-specific tests plus `git diff --check`.
 
-- [ ] **Step 5: API and boundary cleanup**
+Verification evidence for Task 40A:
+- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO` passed 11 Swift Testing tests.
+- `git diff --check` passed.
+- `xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
+
+- [x] **Step 5: API and boundary cleanup**
 
 Verify each feature keeps Domain/Application/Infrastructure/UI boundaries intact and that no UI owns critical long-lived resources.
+
+Task 40A cleanup: server edit save now goes through `ServerManager.updateServer(_:credentials:)`, and `ServerFormSheet.saveServer()` no longer calls `storePassword`, `storeSSHKey`, `storeCloudflareServiceToken`, or `deleteCloudflareServiceToken` directly. Remaining `ServerFormSheet` Keychain reads/import helpers are outside the 40A save-consistency slice and should be classified separately before broader cleanup. Task 40 as a whole remains open for 40B-40E.
 
 - [ ] **Step 6: Request review and commit**
 
@@ -2907,6 +2927,7 @@ Commit each split sub-task atomically.
 - 2026-06-21: Task 37 slice 2 RED/GREEN completed. `ConnectionSessionManager` and `TerminalTabManager` now own connect watchdog timer tasks and generation cancellation; root and split SwiftUI views no longer store watchdog tokens, sleep for the 20-second timeout, or call timeout handlers directly. Task 37 remains open for moving remaining credential-loading and `reconnectInFlight` retry-state orchestration out of the views. Verification: focused Task 37 suite passed 67 Swift Testing tests, and `git diff --check` passed.
 - 2026-06-21: Task 37 final RED/GREEN, API cleanup, and review fixes completed. Root, split, and iOS terminal views no longer own retry in-flight state, call Keychain directly, execute reconnect directly, or derive foreground reconnect from registry state in SwiftUI. Managers now load credentials through application-layer providers, gate duplicate retry intent, revalidate liveness after awaited credential loading, execute foreground/open-active reconnect intent, return wrapper credentials or UI actions to views, and keep reconnect/watchdog/retrust/mosh sequencing in TerminalSessions Application. Boundary scan found no `reconnectInFlight`, direct `KeychainManager.shared.getCredentials`, old watchdog token/sleep, direct `reconnect(session:)`, direct live-runtime lookup, direct known-host reset, or direct reconnect policy calls in the target SwiftUI files. Verification: focused Task 37 suite passed 74 Swift Testing tests, and `git diff --check` passed.
 - 2026-06-21: Task 38 RED/GREEN and review fix completed. RED proved a same-server RemoteFiles operation could start while a dropped disconnect task was still closing the previous SFTP lease, and review added coverage for a second disconnect registered after the first wait. `RemoteFileBrowserStore` now tracks pending disconnect tasks and loops until no same-server disconnect remains before later service work; iOS active-connection and current-server disconnect flows now await the returned RemoteFiles disconnect task before terminal session teardown/navigation. Verification: `RemoteFileBrowserStoreTests` passed 6 Swift Testing tests, and `git diff --check` passed.
+- 2026-06-21: Task 40A RED/GREEN completed. Server edit save now runs through `ServerManager.updateServer(_:credentials:)`, so credential storage failure prevents metadata mutation instead of letting `ServerFormSheet` update metadata first and write Keychain later. `ServerFormSheet.saveServer()` no longer directly stores/deletes server credentials on edit save; remaining Keychain reads/import helpers are deferred to broader cleanup. Task 40 remains open for sync ownership, voice download ownership, AppKit window ownership, and remaining destructive action tracking. Verification: `ServerManagerBootstrapTests` passed 11 Swift Testing tests, `git diff --check` passed, and `xcodebuild build-for-testing -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
 - 2026-06-21: Task 31 completed, with Task 36 ledger correction. Terminal runtime/client factory ownership is centralized in `TerminalConnectionRuntime`; session and tab managers still hold temporary application-boundary bridge maps and shell registry leases for runtime lookup/registration, but runner finish ordering is protected by awaitable runtime close paths and late/missing shell registrations are rejected before runner follow-up callbacks mutate closed state.
 - 2026-06-21: Task 32 RED/GREEN and API cleanup completed. `TerminalConnectionRunner` now depends on `TerminalConnectionSurface` and abstract connection operations instead of `GhosttyTerminalView`; `GhosttyTerminalView` adaptation lives at the surface registry/application boundary, and runner tests cover fake-surface size reads, stream writes, and process-exit notification without constructing a UI surface.
 - 2026-06-21: Final audit after Task 32 found repo-wide drift against the Swift test context rule: multiple older `VVTermTests/**/*.swift` files still lack `Test Context` headers. Task 33 is added to close this rule before final ready-for-merge review.

@@ -4,11 +4,12 @@ import Testing
 
 // Test Context:
 // These tests protect ServerManager's local bootstrap, backfill, orphan repair,
-// and deletion-side cleanup rules without CloudKit or Keychain I/O. They use
-// value-only Server/Workspace fixtures so failures identify changes to local
-// state invariants rather than sync transport behavior. Update this context
-// only when bootstrap/backfill policy, known-host cleanup ownership, or server
-// deletion teardown ownership changes intentionally.
+// credential-save consistency, and deletion-side cleanup rules without CloudKit
+// or Keychain I/O. They use value-only Server/Workspace fixtures and injected
+// lifecycle closures so failures identify changes to local state invariants
+// rather than sync transport behavior. Update this context only when
+// bootstrap/backfill policy, known-host cleanup ownership, credential-save
+// ordering, or server deletion teardown ownership changes intentionally.
 @Suite(.serialized)
 @MainActor
 struct ServerManagerBootstrapTests {
@@ -248,6 +249,56 @@ struct ServerManagerBootstrapTests {
     }
 
     @Test
+    func updateServerWithCredentialsDoesNotMutateMetadataWhenCredentialStoreFails() async throws {
+        // Given an existing server and an application-layer credential store
+        // that fails before metadata should be changed.
+        let workspace = Workspace(id: UUID(), name: "Main", order: 0)
+        let server = Server(
+            id: UUID(),
+            workspaceId: workspace.id,
+            name: "Tencent",
+            host: "old.example.com",
+            username: "root"
+        )
+        var storeAttempted = false
+        let manager = ServerManager.makeForTesting(
+            servers: [server],
+            workspaces: [workspace],
+            storeCredentials: { storedServer, credentials in
+                storeAttempted = true
+                #expect(storedServer.id == server.id)
+                #expect(credentials.serverId == server.id)
+                throw ServerCredentialStoreFailure()
+            }
+        )
+        let editedServer = Server(
+            id: server.id,
+            workspaceId: workspace.id,
+            name: "Tencent Updated",
+            host: "new.example.com",
+            username: "root",
+            createdAt: server.createdAt
+        )
+        let credentials = ServerCredentials(serverId: server.id, password: "updated-password")
+
+        // When editing attempts to save credentials and metadata as one
+        // application-layer operation.
+        do {
+            try await manager.updateServer(editedServer, credentials: credentials)
+            Issue.record("Expected credential store failure")
+        } catch {
+            #expect(error is ServerCredentialStoreFailure)
+        }
+
+        // Then credential failure prevents metadata mutation, so UI cannot
+        // leave an edited server pointing at stale or missing credentials.
+        #expect(storeAttempted)
+        #expect(manager.servers.map(\.id) == [server.id])
+        #expect(manager.servers.first?.name == "Tencent")
+        #expect(manager.servers.first?.host == "old.example.com")
+    }
+
+    @Test
     func deleteWorkspaceAwaitsEachServerTeardownBeforeWorkspaceRemoval() async throws {
         // Given a workspace with two servers and injected deletion dependencies.
         let workspace = Workspace(id: UUID(), name: "Main", order: 0)
@@ -303,6 +354,8 @@ struct ServerManagerBootstrapTests {
         )
     }
 }
+
+private struct ServerCredentialStoreFailure: Error {}
 
 private actor ServerDeletionOrderProbe {
     private var recordedEvents: [String] = []

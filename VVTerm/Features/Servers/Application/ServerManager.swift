@@ -8,6 +8,7 @@ import os.log
 final class ServerManager: ObservableObject {
     typealias ServerDeletionTeardown = @MainActor @Sendable (Server) async -> Void
     typealias ServerCredentialDeletion = @MainActor @Sendable (UUID) async throws -> Void
+    typealias ServerCredentialStore = @MainActor @Sendable (Server, ServerCredentials) throws -> Void
 
     static let shared = ServerManager()
 
@@ -18,9 +19,9 @@ final class ServerManager: ObservableObject {
 
     private let cloudKit = CloudKitManager.shared
     private let syncCoordinator = CloudKitSyncCoordinator.shared
-    private let keychain = KeychainManager.shared
     private let deletionTeardown: ServerDeletionTeardown
     private let deleteCredentials: ServerCredentialDeletion
+    private let storeCredentials: ServerCredentialStore
     private let persistsLocalData: Bool
     private let recordsSyncMutations: Bool
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ServerManager")
@@ -47,11 +48,13 @@ final class ServerManager: ObservableObject {
         loadLocalDataOnInit: Bool = true,
         deletionTeardown: @escaping ServerDeletionTeardown = ServerManager.defaultDeletionTeardown,
         deleteCredentials: @escaping ServerCredentialDeletion = ServerManager.defaultCredentialDeletion,
+        storeCredentials: @escaping ServerCredentialStore = ServerManager.defaultCredentialStore,
         persistsLocalData: Bool = true,
         recordsSyncMutations: Bool = true
     ) {
         self.deletionTeardown = deletionTeardown
         self.deleteCredentials = deleteCredentials
+        self.storeCredentials = storeCredentials
         self.persistsLocalData = persistsLocalData
         self.recordsSyncMutations = recordsSyncMutations
 
@@ -70,17 +73,62 @@ final class ServerManager: ObservableObject {
         try KeychainManager.shared.deleteCredentials(for: serverId)
     }
 
+    private static func defaultCredentialStore(for server: Server, credentials: ServerCredentials) throws {
+        if server.connectionMode != .tailscale {
+            switch server.authMethod {
+            case .password:
+                if let password = credentials.password, !password.isEmpty {
+                    try KeychainManager.shared.storePassword(for: server.id, password: password)
+                }
+            case .sshKey:
+                if let sshKey = credentials.sshKey, !sshKey.isEmpty {
+                    try KeychainManager.shared.storeSSHKey(
+                        for: server.id,
+                        privateKey: sshKey,
+                        passphrase: nil,
+                        publicKey: credentials.publicKey
+                    )
+                }
+            case .sshKeyWithPassphrase:
+                if let sshKey = credentials.sshKey, !sshKey.isEmpty {
+                    let passphrase = credentials.sshPassphrase?.isEmpty == true ? nil : credentials.sshPassphrase
+                    try KeychainManager.shared.storeSSHKey(
+                        for: server.id,
+                        privateKey: sshKey,
+                        passphrase: passphrase,
+                        publicKey: credentials.publicKey
+                    )
+                }
+            }
+        }
+
+        if server.connectionMode == .cloudflare,
+           server.cloudflareAccessMode == .serviceToken,
+           let cloudflareClientID = credentials.cloudflareClientID,
+           let cloudflareClientSecret = credentials.cloudflareClientSecret {
+            try KeychainManager.shared.storeCloudflareServiceToken(
+                for: server.id,
+                clientID: cloudflareClientID,
+                clientSecret: cloudflareClientSecret
+            )
+        } else {
+            KeychainManager.shared.deleteCloudflareServiceToken(for: server.id)
+        }
+    }
+
     #if DEBUG
     static func makeForTesting(
         servers: [Server] = [],
         workspaces: [Workspace] = [],
         deletionTeardown: @escaping ServerDeletionTeardown = { _ in },
-        deleteCredentials: @escaping ServerCredentialDeletion = { _ in }
+        deleteCredentials: @escaping ServerCredentialDeletion = { _ in },
+        storeCredentials: @escaping ServerCredentialStore = { _, _ in }
     ) -> ServerManager {
         let manager = ServerManager(
             loadLocalDataOnInit: false,
             deletionTeardown: deletionTeardown,
             deleteCredentials: deleteCredentials,
+            storeCredentials: storeCredentials,
             persistsLocalData: false,
             recordsSyncMutations: false
         )
@@ -945,26 +993,7 @@ final class ServerManager: ObservableObject {
             updatedAt: Date()
         )
 
-        // Store credentials
-        if let password = credentials.password {
-            try keychain.storePassword(for: newServer.id, password: password)
-        }
-        if let sshKey = credentials.sshKey {
-            try keychain.storeSSHKey(
-                for: newServer.id,
-                privateKey: sshKey,
-                passphrase: credentials.sshPassphrase,
-                publicKey: credentials.publicKey
-            )
-        }
-        if let cloudflareClientID = credentials.cloudflareClientID,
-           let cloudflareClientSecret = credentials.cloudflareClientSecret {
-            try keychain.storeCloudflareServiceToken(
-                for: newServer.id,
-                clientID: cloudflareClientID,
-                clientSecret: cloudflareClientSecret
-            )
-        }
+        try storeCredentials(newServer, credentials)
 
         promotePendingBootstrapWorkspaceIfNeeded(for: newServer.workspaceId, reason: "adding a server")
         servers.append(newServer)
@@ -1003,6 +1032,11 @@ final class ServerManager: ObservableObject {
         }
         enqueuePendingServerUpsert(updatedServer)
         await persistLocalMutations(logMessage: "Updated server: \(updatedServer.name)")
+    }
+
+    func updateServer(_ server: Server, credentials: ServerCredentials) async throws {
+        try storeCredentials(server, credentials)
+        try await updateServer(server)
     }
 
     func deleteServer(_ server: Server) async throws {
