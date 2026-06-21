@@ -106,6 +106,101 @@ struct ServerStatsCollectorLifecycleTests {
     }
 
     @Test
+    func startRequestRemainsPendingUntilQueuedRestartExits() async throws {
+        let server = makeServer()
+        let firstClient = BlockingStatsLeaseClient()
+        let secondClient = RecordingStatsLeaseClient()
+        let factory = OneShotStatsOwnedConnectionFactory([
+            .init(lease: RemoteConnectionLease(client: firstClient, ownership: .owned)),
+            .init(lease: RemoteConnectionLease(client: secondClient, ownership: .owned))
+        ])
+        let collector = makeCollector(ownedConnectionFactory: factory)
+
+        // Given an active Stats collection whose stop is still closing the
+        // owned lease.
+        await collector.startCollecting(for: server)
+        let stopTask = collector.stopCollecting()
+        await firstClient.waitUntilDisconnectStarted()
+
+        // When a new visible/retry start intent arrives while stop is pending.
+        let requestID = try #require(collector.requestStartCollecting(for: server))
+
+        // Then the request remains visible and does not create the replacement
+        // lease until the pending stop has completed.
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(
+            collector.pendingStatsCollectionRequestIDs.contains(requestID),
+            "Queued Stats start request must stay pending while it waits for the prior stop to finish."
+        )
+        #expect(
+            factory.callCount == 1,
+            "Queued Stats start request must not create a replacement lease before pending stop completes."
+        )
+
+        await firstClient.releaseDisconnect()
+        await stopTask?.value
+        await collector.waitForStatsCollectionRequest(requestID)
+
+        #expect(
+            !collector.pendingStatsCollectionRequestIDs.contains(requestID),
+            "Stats start request should clear only after its tracked task exits."
+        )
+        #expect(
+            factory.callCount == 2,
+            "Stats start request should create the replacement lease after pending stop completes."
+        )
+    }
+
+    @Test
+    func stopRequestCancelsQueuedStartBeforeReplacementLeaseIsCreated() async throws {
+        let server = makeServer()
+        let firstClient = BlockingStatsLeaseClient()
+        let secondClient = RecordingStatsLeaseClient()
+        let factory = OneShotStatsOwnedConnectionFactory([
+            .init(lease: RemoteConnectionLease(client: firstClient, ownership: .owned)),
+            .init(lease: RemoteConnectionLease(client: secondClient, ownership: .owned))
+        ])
+        let collector = makeCollector(ownedConnectionFactory: factory)
+
+        // Given a queued start request waiting behind a still-running stop.
+        await collector.startCollecting(for: server)
+        let originalStopTask = collector.stopCollecting()
+        await firstClient.waitUntilDisconnectStarted()
+        let startRequestID = try #require(collector.requestStartCollecting(for: server))
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(
+            factory.callCount == 1,
+            "Queued Stats start should not create a replacement lease while the old lease is still closing."
+        )
+
+        // When a newer hidden/disappear stop intent wins over the queued start.
+        let stopRequestID = try #require(collector.requestStopCollecting())
+        await firstClient.releaseDisconnect()
+        await originalStopTask?.value
+        await collector.waitForStatsCollectionRequest(startRequestID)
+        await collector.waitForStatsCollectionRequest(stopRequestID)
+
+        // Then the canceled start remains awaitable until exit, does not publish
+        // an error, and never creates the replacement lease.
+        #expect(
+            factory.callCount == 1,
+            "Canceled queued Stats start must not create a replacement lease after a newer stop intent wins."
+        )
+        #expect(
+            collector.connectionError == nil,
+            "Stats request cancellation is lifecycle intent and must not publish a user-facing connection error."
+        )
+        #expect(
+            !collector.pendingStatsCollectionRequestIDs.contains(startRequestID),
+            "Canceled queued Stats start request should clear after its tracked task exits."
+        )
+        #expect(
+            !collector.pendingStatsCollectionRequestIDs.contains(stopRequestID),
+            "Stats stop request should clear after its tracked task exits."
+        )
+    }
+
+    @Test
     func stopCollectingDoesNotDisconnectBorrowedSharedClient() async throws {
         let server = makeServer()
         let client = RecordingStatsLeaseClient()

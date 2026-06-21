@@ -5199,7 +5199,7 @@ Request code review for Task 67. Fix Critical and Important findings, update the
   - Collector-owned start/stop request tasks that supersede stale visibility/retry intent, keep canceled work awaitable until task exit, and prevent a canceled queued start from creating a replacement lease after a newer stop intent wins.
   - `ServerStatsView` actions and lifecycle callbacks that synchronously send request intent instead of owning async collection tasks.
 
-- [ ] **Step 1: Add RED Stats request and boundary tests**
+- [x] **Step 1: Add RED Stats request and boundary tests**
 
 Extend `ServerStatsCollectorLifecycleTests` with Test Context-preserving async ordering tests:
 - a start request remains pending while it waits behind an already-running stop task, and clears only after the underlying start request exits;
@@ -5219,7 +5219,9 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: the focused suite fails to compile because `requestStartCollecting`, `requestStopCollecting`, `pendingStatsCollectionRequestIDs`, and `waitForStatsCollectionRequest(_:)` do not exist. If it compiles unexpectedly, the boundary test must fail because `ServerStatsView` still starts async collection work directly from SwiftUI.
 
-- [ ] **Step 2: Add collector-owned request tracking**
+Actual RED result: focused `ServerStatsCollectorLifecycleTests` / `ServerStatsIntentBoundaryTests` failed to build because `ServerStatsCollector` had no `requestStartCollecting`, `requestStopCollecting`, `pendingStatsCollectionRequestIDs`, or `waitForStatsCollectionRequest`.
+
+- [x] **Step 2: Add collector-owned request tracking**
 
 Update `ServerStatsCollector`:
 - store tracked collection request records by request ID, including the `Task<Void, Never>`;
@@ -5229,14 +5231,14 @@ Update `ServerStatsCollector`:
 - clear request records only from the request task's `defer` when the request ID is still present;
 - keep `CancellationError` and task cancellation from publishing a connection error.
 
-- [ ] **Step 3: Harden start cancellation around pending stop**
+- [x] **Step 3: Harden start cancellation around pending stop**
 
 Update `startCollecting(for:using:)` so cancellation cannot leak through the existing pending-stop wait:
 - after awaiting `pendingStopTask.value`, check `Task.isCancelled` before credentials lookup or lease creation;
 - after awaiting any previous `collectTask.value`, check cancellation again before replacing connection state;
 - leave existing direct async API behavior intact for tests and internal callers, but make it cancellation-aware for request-owned tasks.
 
-- [ ] **Step 4: Route Stats UI through request APIs**
+- [x] **Step 4: Route Stats UI through request APIs**
 
 Update `ServerStatsView`:
 - replace Retry's `Task { await statsCollector.startCollecting(...) }` with `statsCollector.requestStartCollecting(for:using:)`;
@@ -5244,7 +5246,7 @@ Update `ServerStatsView`:
 - keep `onDisappear` as `statsCollector.requestStopCollecting()`;
 - preserve existing copy, cards, error presentation, retry button, and borrowed lease behavior.
 
-- [ ] **Step 5: Run focused verification**
+- [x] **Step 5: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests -only-testing:VVTermTests/ServerStatsIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
@@ -5254,16 +5256,21 @@ git diff --check
 
 Expected GREEN result: focused tests pass; source scan shows Stats UI contains request API calls and no UI-owned async start/stop await; collector source contains the low-level async start/stop helpers and the tracked request APIs.
 
-- [ ] **Step 6: API and boundary cleanup**
+Actual GREEN result: focused Stats request suite passed 10 Swift Testing tests across `ServerStatsCollectorLifecycleTests` and `ServerStatsIntentBoundaryTests`. Expanded Stats verification passed 10 XCTest tests across `StatsParsingUtilsTests` and `ServerStatsDomainTests` plus the same 10 Swift Testing lifecycle/boundary tests. Source scan showed `ServerStatsView` only calls `requestStartCollecting` / `requestStopCollecting` and has no direct `await statsCollector.startCollecting`, `await statsCollector.stopCollectingAndWait`, or `.task(id: makeTaskKey())`; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`.
+
+- [x] **Step 6: API and boundary cleanup**
 
 Before review, verify `ServerStatsCollector` is the single owner of collection request tasks, request names match existing application-layer intent style, canceled requests remain awaitable until exit, start-after-stop ordering is deterministic, UI only sends visibility/retry/disappear intent, and touched Stats tests include complete Test Context plus Given / When / Then comments.
 
-- [ ] **Step 7: Request review and commit**
+- [x] **Step 7: Request review and commit**
 
 Request code review for Task 68. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
+Review result: subagent review was not spawned because the available multi-agent tool requires explicit user authorization for subagents. Local read-only review against the Swift lifecycle checklist found no Critical or Important issues: `ServerStatsCollector` is the single owner of collection request tasks, SwiftUI only sends intent, canceled queued starts remain awaitable until exit, `startCollecting` rechecks cancellation after pending-stop waits, and tests include the required context/comments.
+
 ## Progress Ledger
 
+- 2026-06-21: Task 68 RED/GREEN completed with local lifecycle review. `ServerStatsCollector` now owns tracked Stats collection request tasks through `requestStartCollecting(for:using:)` and `requestStopCollecting()`, exposes `pendingStatsCollectionRequestIDs` and `waitForStatsCollectionRequest(_:)`, cancels stale visibility/retry requests, waits canceled queued start work from stop requests, and makes `startCollecting(for:using:)` cancellation-aware after pending stop/collection waits so a canceled queued start cannot create a replacement lease after a newer stop intent wins. `ServerStatsView` no longer starts collection from Retry with `Task { await ... }` and no longer uses `.task(id: makeTaskKey())` to directly await start/stop; it sends visible/hidden/retry/disappear intent synchronously to the collector. Initial RED failed to build because the request APIs and wait hook did not exist. GREEN focused verification passed 10 Swift Testing tests across `ServerStatsCollectorLifecycleTests` and `ServerStatsIntentBoundaryTests`; expanded Stats verification passed 10 XCTest parsing/domain tests plus the 10 Swift Testing lifecycle/boundary tests; source scan showed Stats UI has only request API calls and no direct await start/stop; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Local review found no Critical or Important issues.
 - 2026-06-21: Post-Task-67 scan selected Task 68 as the next executable lifecycle slice. `ServerStatsView` still starts Stats collection work directly from SwiftUI: Retry wraps `await statsCollector.startCollecting(...)` in a `Task`, visibility uses `.task(id: makeTaskKey())` to await start/stop, and disappearance calls the low-level stop helper directly. Historical Task 18 allowed this as an intermediate state, but the current Swift lifecycle rule is stricter: UI should send intent while `ServerStatsCollector` owns tracked, awaitable lifecycle-critical tasks. Task 68 should add collector-owned start/stop request APIs, preserve borrowed lease behavior, and keep queued-start cancellation from creating a replacement Stats lease after a newer stop intent wins.
 - 2026-06-21: Task 67 RED/GREEN completed with review fixes. RED added `TerminalRichPasteUploadRequestTests` and `TerminalRichPasteIntentBoundaryTests`; after fixing test syntax, the focused suite failed to compile because `TerminalRichPasteUploadRequestResult`, session/pane rich paste request APIs, pending request IDs, wait hooks, and injectable upload/lease seams did not exist. GREEN adds `TerminalRichPasteUploadRequest` under TerminalSessions Application to own `lease.withExclusiveClient`, awaited `lease.close()`, progress/result mapping, and shell-escaped remote path input. `ConnectionSessionManager` and `TerminalTabManager` now own tracked rich paste upload request dictionaries, same-entity supersession, pending IDs, wait hooks, close/reset cancellation, default `TerminalRichPasteCoordinator` upload adaptation, and DEBUG lease/upload seams. `TerminalRichPasteSupport` now only intercepts paste, presents prompt/progress/banner state, and sends upload intent through `requestSessionRichPasteUpload(...)` / `requestPaneRichPasteUpload(...)`; it no longer stores `activePasteTask`, resolves leases, instantiates the coordinator, closes leases, or directly sends uploaded paths to terminal surfaces. `RemoteClipboardTransferService` no longer starts a delayed stale-file sweep task; cleanup is best-effort and awaited inside upload before the rich paste request closes its lease. Independent read-only review found two Important issues: close/reset cancellation dropped rich-paste request handles before tasks actually exited, and superseded requests could still clear newer visible progress. Follow-up RED reproduced early `closeSessionAndWait`/`closePaneAndWait` completion and stale progress cleanup; GREEN keeps canceled request handles until task defer cleanup, makes close/disconnect/reset await canceled rich-paste tasks before SSH unregister, and gates progress callbacks on the current request ID. Re-review then found root-session shell teardown still started before canceled rich-paste tasks exited because `closeSessionUI` created the shell teardown task immediately; strengthened RED proved the shell cancel handler started before the upload gate opened. Final GREEN carries an inert `ShellTeardownRequest` out of `closeSessionUI`, then runs shell/runtime teardown and unregister only after canceled rich-paste tasks exit. Focused GREEN verification passed `ConnectionLifecycleIntegrationTests`, `TerminalRichPasteIntentBoundaryTests`, and `TerminalRichPasteUploadRequestTests` with 102 Swift Testing tests using `ENABLE_DEBUG_DYLIB=NO`; source scan showed UI files contain only manager request APIs while application request code owns `withExclusiveClient` and `await lease.close()`, and `RemoteClipboardTransferService` has no `Task(priority: .utility)` stale sweep; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. The independent reviewer and re-review reported no Critical findings; all Important findings were fixed before commit.
 - 2026-06-21: Task 66 re-review completed clean after follow-up fixes. The reviewer confirmed the prior Critical queued-disconnect gap, wrong-server cancellation gap, and macOS inline-create ordering regression are resolved; no Critical, Important, or Minor findings remain. Task 67 is selected as the next executable lifecycle slice: Terminal rich paste image upload still has UI-owned `activePasteTask`, direct lease resolution/close, direct `TerminalRichPasteCoordinator.performRichPaste(...)`, and a delayed stale-file cleanup task in `RemoteClipboardTransferService` that can outlive the lease. The next task should move image upload request ownership into TerminalSessions Application/manager APIs while leaving prompt and notice presentation in UI.

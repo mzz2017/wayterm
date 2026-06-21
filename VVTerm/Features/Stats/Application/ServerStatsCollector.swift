@@ -30,6 +30,10 @@ struct StatsConnectionProvider {
 /// Main stats collector that uses a borrowed remote connection lease when available.
 @MainActor
 final class ServerStatsCollector: ObservableObject {
+    private struct StatsCollectionRequest {
+        let task: Task<Void, Never>
+    }
+
     struct StatsConnection {
         typealias ExecutorOperation = @Sendable (any RemoteCommandExecuting) async throws -> Void
         typealias ExecutorRunner = @Sendable (
@@ -86,6 +90,7 @@ final class ServerStatsCollector: ObservableObject {
 
     private var collectTask: Task<Void, Never>?
     private var pendingStopTask: Task<Void, Never>?
+    private var statsCollectionRequests: [UUID: StatsCollectionRequest] = [:]
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "Stats")
     private let connectionProvider: StatsConnectionProvider
     private let credentialsProvider: CredentialsProvider
@@ -112,17 +117,68 @@ final class ServerStatsCollector: ObservableObject {
 
     // MARK: - Collection Control
 
+    var pendingStatsCollectionRequestIDs: Set<UUID> {
+        Set(statsCollectionRequests.keys)
+    }
+
+    @discardableResult
+    func requestStartCollecting(for server: Server, using borrowedLease: RemoteConnectionLease? = nil) -> UUID? {
+        cancelStatsCollectionRequests()
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.statsCollectionRequests.removeValue(forKey: requestID) }
+
+            guard !Task.isCancelled else { return }
+            await self.startCollecting(for: server, using: borrowedLease)
+        }
+
+        statsCollectionRequests[requestID] = StatsCollectionRequest(task: task)
+        return requestID
+    }
+
+    @discardableResult
+    func requestStopCollecting() -> UUID? {
+        let canceledRequestTasks = cancelStatsCollectionRequests()
+        guard isCollecting || collectTask != nil || connectionLease != nil || pendingStopTask != nil || !canceledRequestTasks.isEmpty else {
+            return nil
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            for task in canceledRequestTasks {
+                await task.value
+            }
+
+            guard let self else { return }
+            defer { self.statsCollectionRequests.removeValue(forKey: requestID) }
+
+            await self.stopCollectingAndWait()
+        }
+
+        statsCollectionRequests[requestID] = StatsCollectionRequest(task: task)
+        return requestID
+    }
+
+    func waitForStatsCollectionRequest(_ requestID: UUID) async {
+        await statsCollectionRequests[requestID]?.task.value
+    }
+
     func startCollecting(for server: Server, using borrowedLease: RemoteConnectionLease? = nil) async {
         if let pendingStopTask {
             await pendingStopTask.value
             self.pendingStopTask = nil
+            guard !Task.isCancelled else { return }
         }
 
         if let collectTask, !isCollecting {
             await collectTask.value
             self.collectTask = nil
+            guard !Task.isCancelled else { return }
         }
 
+        guard !Task.isCancelled else { return }
         guard !isCollecting else { return }
         isCollecting = true
         connectionError = nil
@@ -170,6 +226,13 @@ final class ServerStatsCollector: ObservableObject {
     func stopCollectingAndWait() async {
         guard let stopTask = stopCollecting() else { return }
         await stopTask.value
+    }
+
+    @discardableResult
+    private func cancelStatsCollectionRequests() -> [Task<Void, Never>] {
+        let requests = statsCollectionRequests.values.map(\.task)
+        requests.forEach { $0.cancel() }
+        return requests
     }
 
     // MARK: - Stats Collection

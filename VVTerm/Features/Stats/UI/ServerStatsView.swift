@@ -134,9 +134,7 @@ struct ServerStatsView: View {
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                     Button("Retry") {
-                        Task {
-                            await statsCollector.startCollecting(for: server, using: borrowedLeaseProvider())
-                        }
+                        statsCollector.requestStartCollecting(for: server, using: borrowedLeaseProvider())
                     }
                     .buttonStyle(.bordered)
                 }
@@ -147,21 +145,27 @@ struct ServerStatsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(cardSurfaceStyle.pageBackground)
-        .task(id: makeTaskKey()) {
-            // Start/stop collection based on visibility
-            if isVisible {
-                await statsCollector.startCollecting(for: server, using: borrowedLeaseProvider())
-            } else {
-                await statsCollector.stopCollectingAndWait()
-            }
+        .onAppear {
+            requestCollectionForCurrentVisibility()
+        }
+        .onChange(of: makeTaskKey()) { _ in
+            requestCollectionForCurrentVisibility()
         }
         .onDisappear {
-            statsCollector.stopCollecting()
+            statsCollector.requestStopCollecting()
         }
     }
 
     private func makeTaskKey() -> String {
         "\(server.id.uuidString)-\(isVisible)"
+    }
+
+    private func requestCollectionForCurrentVisibility() {
+        if isVisible {
+            statsCollector.requestStartCollecting(for: server, using: borrowedLeaseProvider())
+        } else {
+            statsCollector.requestStopCollecting()
+        }
     }
 }
 
