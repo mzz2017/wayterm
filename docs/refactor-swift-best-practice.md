@@ -4139,8 +4139,95 @@ Before review, verify request API names are consistent between session and pane 
 
 Request code review for Task 55. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
 
+## Task 56: Terminal Voice Input Intent Boundary
+
+**Files:**
+- Create: `VVTerm/Features/TerminalSessions/Application/TerminalVoiceInputStore.swift`
+- Modify: `VVTerm/Features/VoiceInput/Infrastructure/AudioService.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/VoiceRecordingView.swift`
+- Test: `VVTermTests/TerminalVoiceInputStoreTests.swift`
+- Test: `VVTermTests/TerminalVoiceInputIntentBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `AudioService.startRecording()`, `stopRecording()`, `cancelRecording()`, and published voice state.
+  - `ConnectionSessionManager.sendText(_:to:)` for root sessions.
+  - `TerminalTabManager.getTerminal(for:)` / pane terminal send behavior for split panes until a narrower pane send-text API is introduced.
+  - Existing `onVoiceRecordingChange` and `onVoiceTranscriptionSent` presentation callbacks.
+- Produces:
+  - `TerminalVoiceInputTarget: Hashable` with `.session(UUID)` and `.pane(UUID)` cases.
+  - `TerminalVoiceInputStore`: TerminalSessions Application owner for terminal voice recording state and audio start/stop/cancel tasks.
+  - `TerminalVoiceInputStore.requestStart(for:onStarted:onFailed:) -> UUID`: tracked start request that owns permission/audio startup work and keeps UI to presentation callbacks.
+  - `TerminalVoiceInputStore.requestStopAndSend(for:onCompleted:) -> UUID`: tracked stop/transcribe request that publishes processing state and returns the final text to UI callbacks.
+  - `TerminalVoiceInputStore.requestCancel(for:onCancelled:) -> UUID`: tracked cancellation request that clears audio state without surfacing cancellation as a permission/transcription failure.
+  - `TerminalVoiceInputStore.waitForVoiceRequest(_:)` and `pendingVoiceRequestIDs` for awaitable lifecycle ordering tests.
+  - A narrow audio service protocol seam so tests can block start/stop/cancel without real microphone, Speech, MLX, or permissions.
+
+- [ ] **Step 1: Add RED voice input store and source-boundary tests**
+
+Add `TerminalVoiceInputStoreTests` with a Test Context header. Use a fake audio service whose start and stop operations can be blocked. Cover:
+- start request remains pending until audio startup completes and then calls `onStarted`;
+- failed start records a permission/user-facing message and calls `onFailed`;
+- stop request remains pending until transcription completes and then calls `onCompleted` with the final text, using partial transcription as fallback when the final text is empty;
+- cancel request clears recording/processing state and does not become a user-facing failure.
+
+Add `TerminalVoiceInputIntentBoundaryTests` with a Test Context header. The tests must inspect `TerminalContainerView.swift`, split `TerminalView.swift`, and `VoiceRecordingView.swift`, then fail while terminal UI:
+- declares `@StateObject private var audioService = AudioService()`;
+- calls `audioService.startRecording()`, `audioService.stopRecording()`, or `audioService.cancelRecording()` directly;
+- launches voice lifecycle `Task { ... }` blocks from button, keyboard, overlay, or trigger handlers.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalVoiceInputStoreTests -only-testing:VVTermTests/TerminalVoiceInputIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails to compile because `TerminalVoiceInputStore`, `TerminalVoiceInputTarget`, tracked request APIs, await hooks, and the fake-audio seam do not exist. If those compile unexpectedly, the source-boundary test fails because terminal voice UI still owns `AudioService` and direct start/stop/cancel tasks.
+
+- [ ] **Step 2: Add the application-layer voice input owner**
+
+Create `TerminalVoiceInputStore` under TerminalSessions Application. Keep the store `@MainActor` because it bridges published audio state into SwiftUI presentation, but keep actual microphone/Speech/MLX work inside the existing `AudioService` / VoiceInput infrastructure boundary. The store should:
+- own one stable `AudioService` instance by default;
+- expose published presentation state that `VoiceRecordingView` needs: recording, processing, partial/final transcription, audio level, and recording duration;
+- track voice request tasks by request ID;
+- coalesce duplicate start/stop/cancel intent for the same `TerminalVoiceInputTarget` while an equivalent request is pending;
+- treat cancellation as lifecycle completion, not as a permission or transcription error;
+- provide DEBUG/test initialization with a fake audio service.
+
+- [ ] **Step 3: Route root terminal voice UI through the store**
+
+Update `TerminalContainerView` so it observes the application voice store instead of creating `AudioService`. `startVoiceRecording()`, `toggleVoiceRecording()`, escape-key cancel, overlay cancel, and send actions should call the store request APIs synchronously. UI may still update overlay visibility, permission alerts, notice presentation, and `onVoiceRecordingChange` / `onVoiceTranscriptionSent` in callbacks, but it must not call audio start/stop/cancel directly or launch a voice lifecycle task.
+
+- [ ] **Step 4: Route split terminal voice UI through the same boundary**
+
+Update split `TerminalView` and `VoiceRecordingView` the same way. Preserve existing split-pane behavior: voice text is sent only to the focused terminal and only after a successful stop/send completion. If split pane text sending still requires direct `GhosttyTerminalView`, keep that as a named Task 56 limitation in the Progress Ledger; do not widen this task into pane text-send ownership unless the tests require it.
+
+- [ ] **Step 5: Run focused verification**
+
+Run focused tests, source scans, and whitespace check:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalVoiceInputStoreTests -only-testing:VVTermTests/TerminalVoiceInputIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "@StateObject private var audioService|audioService\\.(startRecording|stopRecording|cancelRecording)|Task \\{" VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTerm/Features/TerminalSessions/UI/Terminal/VoiceRecordingView.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; voice source scan shows no UI-owned `AudioService` or direct voice lifecycle tasks; any remaining `Task` hits in the scanned files are unrelated, previously classified terminal lifecycle tasks and must be named in the Progress Ledger.
+
+- [ ] **Step 6: API and boundary cleanup**
+
+Before review, verify the voice request API names are consistent with Task 54/55 request APIs, the long-lived audio service is owned by TerminalSessions Application / VoiceInput Infrastructure rather than SwiftUI views, UI callbacks remain presentation-only, cancellation is separate from permission/transcription failure, and touched tests include Test Context plus Given / When / Then comments and assertion messages.
+
+- [ ] **Step 7: Request review and commit**
+
+Request code review for Task 56. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-55 scan selected Task 56 as the next executable lifecycle slice. Current plan checkboxes were complete, so the codebase was rescanned for remaining SwiftUI-owned lifecycle tasks, direct resource ownership, and deferred ledger hits. RemoteFiles transfer/drop/file-promise and TerminalThemes persistence/sync were already completed under Task 40E4c and Task 40E5, so they are not the next slice. The clearest focused TerminalSessions gap is terminal voice input: `TerminalContainerView`, split `TerminalView`, and `VoiceRecordingView` still create or consume `AudioService` directly from SwiftUI, launch voice start/stop transcription tasks from buttons and keyboard handlers, and call `cancelRecording()` directly from view lifecycle or overlay callbacks. Task 56 should add a TerminalSessions Application voice intent owner with tracked start/stop/cancel request APIs, preserve existing root and split terminal voice UX, and leave broader iOS floating voice-return presentation and split-pane text-send API cleanup deferred unless required by the focused tests.
 - 2026-06-21: Task 55 RED/GREEN completed with review fix. `TerminalContainerView` and split `TerminalView` no longer launch retry work from SwiftUI-owned `Task` blocks or directly await `retrySessionConnection` / `retryPaneConnection`; retry buttons, timeout callbacks, and watchdog callbacks synchronously send intent to `ConnectionSessionManager.requestSessionRetry` or `TerminalTabManager.requestPaneRetry`. Both managers now own tracked retry request tasks, expose pending request IDs plus await hooks for ordering tests, coalesce duplicate same-session/pane retry intent, keep cancellation as lifecycle completion rather than credential failure, and call every duplicate caller's completion callback with the final `TerminalReconnectRequestResult`. RED failed to compile until the request APIs, pending request state, await hooks, and DEBUG retry-operation injection hooks existed. Review found no Critical issues and one Important source-boundary gap: the first `TerminalRetryIntentBoundaryTests` matched only narrow exact strings and could miss multiline `Task` wrappers or direct old helper calls outside the helper slice. The boundary tests were strengthened with regex full-source scans for UI-owned retry wrappers and direct old helper calls, and the new test file was staged with the implementation. Final focused tests passed 86 Swift Testing tests; terminal UI retry source scan produced no matches; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. The broad manager task scan still reports previously classified runtime/persist/detached tasks outside this retry slice.
 - 2026-06-21: Post-Task-54 scan selected Task 55 as the next executable lifecycle slice. Current plan checkboxes were complete, so the codebase was rescanned for remaining SwiftUI-owned `Task` work and deferred ledger hits. The clearest focused TerminalSessions gap is terminal retry intent: `TerminalContainerView` and split `TerminalView` still launch retry work from SwiftUI-owned `Task` wrappers and directly await `retrySessionConnection` / `retryPaneConnection`, while the managers expose only async low-level retry helpers rather than tracked request APIs. Task 55 should add manager-owned tracked request APIs for session and pane retry intent, preserve duplicate retry coalescing and credential-load result semantics, and leave broader voice recording, iOS active-connection action orchestration, mosh fallback banner timing, and RemoteFiles navigation/mutation tasks deferred to later slices.
 - 2026-06-21: Task 54 RED/GREEN completed with review fixes. `TerminalContainerView` and split `TerminalView` no longer launch tmux/mosh install work from SwiftUI-owned `Task` blocks; install buttons synchronously send intent to `ConnectionSessionManager` or `TerminalTabManager`. Both managers now own tracked tmux and mosh install request tasks, expose pending request IDs plus await hooks for ordering tests, coalesce duplicate same-session/pane tmux and mosh request intent, keep mosh cancellation separate from ordinary failure, and record ordinary mosh install failures. Close paths for sessions and panes now cancel pending install requests and run completion callbacks so presentation state can clear on lifecycle cancellation. The tmux install helpers now await the six-attempt availability poll in the request task instead of scheduling an internal untracked follow-up task. RED failed to compile until the manager request/testing APIs existed. Review found three Important lifecycle issues: close did not cancel pending install requests, cancellation could leave mosh UI cleanup callbacks unsent, and duplicate mosh callers lost callbacks. Review-fix RED reproduced missing duplicate callbacks and a pending close-cancellation wait; GREEN passed after callbacks were stored per duplicate request and close cancellation completed pending requests. Final focused tests passed 84 Swift Testing tests; the terminal UI install source scan produced no matches; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. The broad manager task scan still reports previously classified runtime/persist/detached tasks outside this install slice.
