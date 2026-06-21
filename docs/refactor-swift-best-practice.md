@@ -3915,8 +3915,77 @@ Request code review for Task 52. Fix Critical and Important findings, update the
 
 Actual review result: code review found no Critical issues. Important findings were that `CancellationError` was incorrectly surfaced as `lastErrorMessage` and that the new source-boundary test file was still untracked; both were fixed. Minor findings about touched legacy tests lacking Given/When/Then context and Task 52 ledger drift were also fixed before commit.
 
+## Task 53: App Lifecycle Intent Boundary
+
+**Files:**
+- Create: `VVTerm/App/Application/AppLifecycleCoordinator.swift`
+- Modify: `VVTerm/App/VVTermApp.swift`
+- Test: `VVTermTests/AppLifecycleCoordinatorTests.swift`
+- Test: `VVTermTests/AppLifecycleIntentBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `ConnectionSessionManager.shared.disconnectAllAndWait()`
+  - `TerminalTabManager.shared.disconnectAllAndWait()`
+  - `ConnectionSessionManager.shared.suspendAllForBackground()`
+  - `AppLockManager.shared.lockIfNeededForBackground()`
+  - `AppSyncCoordinator.shared.startChangeSubscription()`
+  - `AppSyncCoordinator.shared.refreshServerData(reason:)`
+  - `AppSyncCoordinator.shared.refreshServerDataAfterRemoteNotification(onComplete:)`
+  - `SyncSettings.isEnabled`
+  - `ServerManager.shared.handleAppLanguageChange()`
+- Produces:
+  - `AppLifecycleCoordinator.shared`: application-layer owner for app delegate lifecycle orchestration.
+  - `AppLifecycleCoordinator.requestLaunch()`: synchronous delegate intent for startup subscription work.
+  - `AppLifecycleCoordinator.requestForegroundRefresh()`: synchronous foreground intent that applies sync-enabled and throttling policy.
+  - `AppLifecycleCoordinator.requestRemoteNotificationRefresh(onComplete:)`: synchronous remote notification intent that preserves the completion callback contract.
+  - `AppLifecycleCoordinator.requestBackgroundSuspension() -> UUID`: tracked background suspend/lock request API.
+  - `AppLifecycleCoordinator.waitForBackgroundSuspensionRequest(_:)` and `pendingBackgroundSuspensionRequestIDs` for awaitable lifecycle ordering tests.
+  - `AppLifecycleCoordinator.tearDownTerminalManagersBeforeExit(timeout:)`: app-level termination helper that owns the semaphore bridge around awaitable terminal manager teardown.
+  - `AppLifecycleCoordinator.handleAppLanguageChange(_:)`: app-level locale intent that keeps SwiftUI from directly calling `ServerManager.shared`.
+
+- [ ] **Step 1: Add RED app lifecycle coordinator and source-boundary tests**
+
+Add `AppLifecycleCoordinatorTests` with a Test Context header. Use injected fake closures plus an async gate to cover: background suspension stays tracked until `suspendAllForBackground` finishes and then locks the app; termination teardown waits for both terminal-manager teardown closures before returning; foreground refresh respects sync-disabled and minimum-interval policy; remote notification completion waits on `AppSyncCoordinator` refresh completion. Add `AppLifecycleIntentBoundaryTests` with a Test Context header that reads `VVTermApp.swift` and fails while AppDelegate or the root SwiftUI locale hooks directly call lifecycle singletons or own `Task { ... }` wrappers for background suspension / termination teardown / app-language change.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/AppLifecycleCoordinatorTests -only-testing:VVTermTests/AppLifecycleIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: `AppLifecycleCoordinatorTests` fails to compile because `AppLifecycleCoordinator`, `requestBackgroundSuspension()`, `pendingBackgroundSuspensionRequestIDs`, `waitForBackgroundSuspensionRequest(_:)`, or `tearDownTerminalManagersBeforeExit(timeout:)` do not exist. If those compile unexpectedly, `AppLifecycleIntentBoundaryTests` fails because `VVTermApp.swift` still owns app lifecycle tasks or directly calls terminal/app-lock/sync/server-manager singletons from delegate/root lifecycle hooks.
+
+- [ ] **Step 2: Add App lifecycle coordinator owner**
+
+Create `AppLifecycleCoordinator` under App Application. Inject closures for terminal disconnect-all teardown, background suspend, app lock, app sync subscription/refresh, sync-enabled reads, time, and app-language handling. Store background suspension requests by UUID; expose pending IDs and an await hook. Keep cancellation as lifecycle state and clear tracked requests deterministically. Move the existing blocking termination semaphore bridge into this coordinator so `VVTermApp.swift` no longer owns the async teardown task directly.
+
+- [ ] **Step 3: Route AppDelegate and root app lifecycle hooks through the coordinator**
+
+Update macOS and iOS `AppDelegate` methods so they only send intent to `AppLifecycleCoordinator.shared`. Preserve behavior: launch starts CloudKit subscription and remote notifications, foreground refresh still respects `SyncSettings.isEnabled` and the 20-second throttle, remote notification completion still calls the system completion handler after refresh, termination waits up to the existing timeout for terminal teardown, and iOS background still suspends sessions before locking the app. Update `VVTermApp` `.onAppear` / `.onChange(of: appLanguage)` to apply the language selection and then call `AppLifecycleCoordinator.shared.handleAppLanguageChange(...)` instead of directly calling `ServerManager.shared`.
+
+- [ ] **Step 4: Run focused verification**
+
+Run focused tests, scoped source scans, and whitespace check:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/AppLifecycleCoordinatorTests -only-testing:VVTermTests/AppLifecycleIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "awaitTerminalManagersTeardownBeforeExit|ConnectionSessionManager\\.shared\\.(disconnectAllAndWait|suspendAllForBackground)|TerminalTabManager\\.shared\\.disconnectAllAndWait|AppLockManager\\.shared\\.lockIfNeededForBackground|ServerManager\\.shared\\.handleAppLanguageChange|AppSyncCoordinator\\.shared" VVTerm/App/VVTermApp.swift
+git diff --check
+```
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Before review, verify `AppLifecycleCoordinator` is the only owner of app delegate lifecycle task orchestration, request API names are imperative and side-effectful, delegate methods remain thin intent senders, the semaphore bridge is localized and timeout-bounded, fake tests avoid real CloudKit/app lifecycle calls, and touched tests include enough Test Context / Given / When / Then information for future failure triage.
+
+- [ ] **Step 6: Request review and commit**
+
+Request code review for Task 53. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-52 scan selected Task 53 as the next executable lifecycle slice. Current plan checkboxes were complete, so the codebase was rescanned for remaining SwiftUI/App-owned lifecycle `Task` work, direct app lifecycle singleton orchestration, and deferred ledger hits. The clearest focused App-layer gap is `VVTermApp.swift`: AppDelegate termination owns the semaphore bridge plus a `Task` that awaits terminal manager teardown, iOS background owns a `Task` that suspends sessions and locks the app, foreground/remote notification delegates directly call `AppSyncCoordinator.shared`, and root locale hooks call `ServerManager.shared.handleAppLanguageChange()` directly. Existing `AppSyncCoordinatorTests` already cover sync task coalescing, so Task 53 should not replace that owner; it should introduce an App Application lifecycle coordinator that receives delegate/root intent and delegates to the existing sync, terminal, app-lock, and server-language owners. Broader remaining hits in terminal UI retry/tmux/voice flows, RemoteFiles navigation/preview view tasks, and low-level Application/Core internally tracked tasks remain deferred to later slices.
 - 2026-06-21: Task 52 RED/GREEN completed with review fixes. `AppLockContainer`, `AppLockGateView`, and `GeneralSettingsView` no longer own biometric authentication `Task` work; they send synchronous intent to `AppLockManager.requestAppUnlock()` or `requestFullAppLockChange(_:)`. `AppLockManager` owns tracked request tasks, exposes pending request IDs plus `waitForAppLockRequest(_:)`, preserves existing async behavior boundaries, and treats `CancellationError` as lifecycle completion rather than a user-facing auth failure. RED failed to compile until the request APIs and tracking state existed; review-fix RED proved cancellation still polluted `lastErrorMessage`. Final focused tests passed 6 XCTest tests plus 2 Swift Testing tests; the source scan showed only manager-owned app-lock tasks; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings / AppIntents metadata skip warning. Broader SwiftUI task hits in terminal, RemoteFiles, Settings language change, App sync, and low-level Application/Core paths remain deferred to later slices.
 - 2026-06-21: Post-Task-51 scan selected Task 52 as the next executable lifecycle slice. Current plan checkboxes were all complete, so the codebase was rescanned for SwiftUI-owned lifecycle `Task` work, direct resource/singleton calls, and stale terminal runtime state. `AppLockContainer`, `AppLockGateView`, and the full-app-lock toggle in `GeneralSettingsView` are a focused remaining Security/Settings hit: SwiftUI launches authentication tasks directly for app unlock and full-lock enablement even though `AppLockManager` is already the stable Application owner for biometric authentication state. Broader hits remain intentionally deferred for later classification, including Terminal view retry/tmux/voice tasks, RemoteFiles navigation/preview tasks, App app-delegate sync calls, and low-level Application/Core tasks that are already tracked or need separate ownership audits.
 - 2026-06-21: Task 51 RED/GREEN completed with review fix. `ServerFormSheet` no longer owns the Test Connection async `Task`, no longer launches `Task.detached`, and no longer directly reaches `SSHConnectionOperationService.shared` or `RemoteMoshManager.shared`; it sends synchronous intent to `ServerConnectionTester` in Servers Application. `ServerConnectionTester` owns tracked connection-test request tasks, exposes pending request IDs plus `waitForConnectionTestRequest`, records ordinary `ServerConnectionTestFailure`, preserves cancellation as lifecycle state rather than failure, and always calls `onCompleted` so SwiftUI can clear transient testing state after success, failure, or cancellation. RED first failed to compile until the connection tester/protocol existed; review-fix RED failed until `onCompleted` existed. Final focused tests passed 6 Swift Testing tests; scoped source scans showed the UI helper only delegates to `connectionTester.requestConnectionTest`; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings. Broader SwiftUI task hits in terminal, RemoteFiles, Settings, and other low-level paths remain deferred to later slices.
