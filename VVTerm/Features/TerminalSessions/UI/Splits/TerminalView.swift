@@ -52,7 +52,7 @@ struct TerminalTabView: View {
     }
 
     private var focusedTerminal: GhosttyTerminalView? {
-        TerminalTabManager.shared.getTerminal(for: tab.focusedPaneId)
+        tabManager.getTerminal(for: tab.focusedPaneId)
     }
 
     private var hasFocusedTerminal: Bool {
@@ -633,7 +633,7 @@ struct TerminalPaneView: View {
         }
         .alert("Install tmux?", isPresented: $showingTmuxInstallPrompt) {
             Button("Install") {
-                TerminalTabManager.shared.requestTmuxInstall(for: paneId)
+                tabManager.requestTmuxInstall(for: paneId)
             }
             Button("Continue without persistence", role: .cancel) {
                 disableTmuxForServer()
@@ -775,11 +775,11 @@ struct TerminalPaneView: View {
     }
 
     private func disableTmuxForServer() {
-        TerminalTabManager.shared.disableTmux(for: server.id)
+        tabManager.disableTmux(for: server.id)
     }
 
     private func retrustHostAndRetry() {
-        TerminalTabManager.shared.requestPaneHostRetrust(
+        tabManager.requestPaneHostRetrust(
             paneId: paneId,
             server: server,
             onCompleted: { didReconnect in
@@ -790,7 +790,7 @@ struct TerminalPaneView: View {
     }
 
     private func attemptAutoReconnectIfNeeded() {
-        guard TerminalTabManager.shared.shouldAutoReconnectPane(
+        guard tabManager.shouldAutoReconnectPane(
             paneId,
             isSceneActive: scenePhase == .active,
             autoReconnectEnabled: autoReconnectEnabled
@@ -802,7 +802,7 @@ struct TerminalPaneView: View {
         credentialLoadErrorMessage = nil
         operationNotice = nil
         isReady = false
-        TerminalTabManager.shared.requestPaneRetry(
+        tabManager.requestPaneRetry(
             paneId: paneId,
             server: server,
             onCompleted: { result in
@@ -822,11 +822,11 @@ struct TerminalPaneView: View {
 
     private func requestCredentialLoad() {
         let serverId = server.id
-        TerminalTabManager.shared.requestPaneCredentialLoad(
+        tabManager.requestPaneCredentialLoad(
             paneId: paneId,
             server: server,
             onCompleted: { result in
-                guard TerminalTabManager.shared.paneStates[paneId]?.serverId == serverId else { return }
+                guard tabManager.paneStates[paneId]?.serverId == serverId else { return }
                 if let loadedCredentials = result.credentials {
                     credentials = loadedCredentials
                     credentialLoadErrorMessage = nil
@@ -838,7 +838,7 @@ struct TerminalPaneView: View {
     }
 
     private func startConnectWatchdog() {
-        TerminalTabManager.shared.scheduleConnectWatchdog(
+        tabManager.scheduleConnectWatchdog(
             forPaneId: paneId,
             isReady: isReady,
             terminalExists: terminalExists,
@@ -853,7 +853,7 @@ struct TerminalPaneView: View {
         isInstallingMosh = true
         operationNotice = nil
 
-        TerminalTabManager.shared.requestMoshInstallAndReconnect(
+        tabManager.requestMoshInstallAndReconnect(
             for: paneId,
             onCompleted: {
                 isInstallingMosh = false

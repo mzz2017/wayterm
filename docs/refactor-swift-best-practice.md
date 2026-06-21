@@ -6015,6 +6015,7 @@ Audit evidence:
 2. **Split terminal UI injected-manager boundary**
    - Evidence: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift` still uses `TerminalTabManager.shared` for focused terminal lookup, tmux install/disable, host retrust, auto-reconnect, retry, credential load, watchdog, and mosh install even though the view has an injected `tabManager`.
    - Required fix: route these split UI intent helpers through the injected manager and update source-boundary tests that still expect `.shared`.
+   - Status: completed by Task 78.
 
 3. **Rich paste runtime manager injection**
    - Evidence: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift` still resolves `ConnectionSessionManager.shared` / `TerminalTabManager.shared` inside rich-paste runtime factories for upload and clipboard paste actions.
@@ -6159,7 +6160,7 @@ Perform local lifecycle review against the Swift checklist unless the user expli
   - Split terminal UI helper methods route focused terminal lookup, tmux/mosh prompts, host retrust, retry, credential load, watchdog, and pane-state stale callback guards through the injected `tabManager`.
   - `TerminalView.swift` no longer resolves `TerminalTabManager.shared`.
 
-- [ ] **Step 1: Add RED split UI injected-manager boundary tests**
+- [x] **Step 1: Add RED split UI injected-manager boundary tests**
 
 Create `TerminalSplitUIInjectedManagerBoundaryTests` with Test Context:
 - Protected behavior: split terminal UI may send user intent, but it must send that intent through the injected TerminalSessions application owner.
@@ -6191,7 +6192,7 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: the focused suite fails because split terminal UI still resolves `TerminalTabManager.shared` for focused terminal lookup, tmux/mosh intent helpers, host retrust, retry, credential load, watchdog, and pane-state callback guards.
 
-- [ ] **Step 2: Route split UI helpers through the injected manager**
+- [x] **Step 2: Route split UI helpers through the injected manager**
 
 Update `TerminalView.swift`:
 - In `TerminalTabView.focusedTerminal`, replace `TerminalTabManager.shared.getTerminal(for:)` with `tabManager.getTerminal(for:)`.
@@ -6200,7 +6201,7 @@ Update `TerminalView.swift`:
 - In the credential-load callback stale guard, replace `TerminalTabManager.shared.paneStates[paneId]?.serverId` with `tabManager.paneStates[paneId]?.serverId`.
 - Do not change request APIs, callback behavior, prompt presentation, retry timing, background color parsing, rich-paste runtime construction, or split representable wrapper logic in this task.
 
-- [ ] **Step 3: Run focused verification**
+- [x] **Step 3: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSplitUIInjectedManagerBoundaryTests ENABLE_DEBUG_DYLIB=NO
@@ -6210,16 +6211,17 @@ git diff --check
 
 Expected GREEN result: focused tests pass; source scan shows `TerminalView.swift` has no `TerminalTabManager.shared` and routes the split UI helper intents through `tabManager.*`.
 
-- [ ] **Step 4: API and boundary cleanup**
+- [x] **Step 4: API and boundary cleanup**
 
 Before review, verify no new public API, no temporary helper/WIP state, no lifecycle-critical untracked task, no stale domain state decision, and no SwiftUI-owned multi-step lifecycle orchestration was introduced. Confirm remaining must-fix evidence moves to rich paste and cross-feature/Core items, not split `TerminalView.swift` singleton reach-through.
 
-- [ ] **Step 5: Review and commit**
+- [x] **Step 5: Review and commit**
 
 Perform local lifecycle review against the Swift checklist unless the user explicitly authorizes new subagents. Fix Critical and Important findings, update the Progress Ledger and Must-Fix status with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
 ## Progress Ledger
 
+- 2026-06-21: Task 78 RED/GREEN completed with local lifecycle review and no new subagents. `TerminalTabView` and `TerminalPaneView` now use the injected `tabManager` for focused terminal lookup, tmux install/disable, host retrust, auto-reconnect decisions, retry, credential load, stale pane callback guards, connect watchdog scheduling, and mosh install/reconnect intents. `TerminalView.swift` no longer resolves `TerminalTabManager.shared`; remaining split terminal manager reach-through evidence moves to rich-paste runtime construction in Must-Fix item 3. Initial RED failed as expected with 12 source-boundary issues because split UI helpers still used `TerminalTabManager.shared`. GREEN focused verification passed 3 Swift Testing tests in `TerminalSplitUIInjectedManagerBoundaryTests`; source scan showed no `TerminalTabManager.shared` hit in `TerminalView.swift` and the expected `tabManager.*` calls are present. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. API/boundary cleanup found no new public API, no temporary helper/WIP state, no new lifecycle-critical task, no changed request API or callback timing, and no new SwiftUI-owned multi-step lifecycle orchestration.
 - 2026-06-21: Task 77 RED/GREEN completed with local lifecycle review and no new subagents. `SSHTerminalPaneWrapper.static dismantleNSView` now uses the Task 74 coordinator's injected `tabManager` for pane liveness checks, `detachSurfaceForPaneViewDisappeared(_:)`, and `detachSurfaceForClosedPane(_:)`. Static teardown still only pauses/reuses the UI surface locally and delegates pane lifecycle cleanup intent to the TerminalSessions Application owner; no new lifecycle task or behavior change was introduced. Initial RED failed as expected with 4 source-boundary issues because split static teardown still used `TerminalTabManager.shared` and lacked the `coordinator.tabManager.*` calls. GREEN focused verification passed 1 Swift Testing test in `TerminalSplitStaticTeardownBoundaryTests`; source scan showed split static teardown uses `coordinator.tabManager.*`. The remaining `TerminalTabManager.shared` hits in `TerminalView.swift` are outside static teardown and remain covered by Must-Fix item 2. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. API/boundary cleanup found no new public API, no temporary helper/WIP state, no new untracked task, and no stale state or SwiftUI lifecycle decision introduced by this task.
 - 2026-06-21: Task 76 RED/GREEN completed with independent static lifecycle review from review agent Plato; no Critical, Important, or Minor findings were reported. `SSHTerminalWrapper` root static teardown now uses the Task 75 coordinator's injected `sessionManager` for session liveness checks, `detachSurfaceForViewDisappeared(from:)`, and `handleClosedSessionSurfaceTeardown(...)` on both macOS and iOS. Static teardown still only pauses/resigns UI surface state locally and delegates lifecycle cleanup intent to the TerminalSessions Application owner; no new lifecycle task or behavior change was introduced. Initial RED failed as expected with 8 source-boundary issues because both static teardown functions still used `ConnectionSessionManager.shared` and lacked `coordinator.sessionManager.*` calls. GREEN focused verification passed 2 Swift Testing tests in `TerminalRootStaticTeardownBoundaryTests`; source scan showed root static teardown uses `coordinator.sessionManager.*` and no `ConnectionSessionManager.shared` remains in `SSHTerminalWrapper.swift`. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Per the updated project objective, after Task 76 the next step is not another ordinary lifecycle slice; run a global closure audit, freeze remaining lifecycle/architecture/test-context issues into must-fix / accepted-exception / later, write that finite scope into this plan, then execute only must-fix items to ready-for-merge.
 - 2026-06-21: Post-Task-75 scan selected Task 76 as the next executable lifecycle slice. Task 75 intentionally left root `static dismantleNSView` / `static dismantleUIView` as the only root-wrapper `ConnectionSessionManager.shared` exemption, but both static functions receive the Task 75 coordinator, and that coordinator now carries the injected `sessionManager`. Task 76 should close this exemption by routing static liveness checks, surface detach intent, and closed-session surface teardown through `coordinator.sessionManager` while preserving current pause/rendering and keyboard cleanup behavior. Broader root teardown redesign, split-pane static teardown, pane UI intent helper injection, title/PWD/background parsing, Ghostty config reload, and other low-level Application/Core lifecycle slices remain open.
