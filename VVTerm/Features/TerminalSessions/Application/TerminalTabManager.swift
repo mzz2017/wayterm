@@ -44,6 +44,12 @@ final class TerminalTabManager: ObservableObject {
         var onFailed: [@MainActor (Error) -> Void]
     }
 
+    private struct PaneRetryRequest {
+        let paneId: UUID
+        let task: Task<Void, Never>
+        var onCompleted: [@MainActor (TerminalReconnectRequestResult) -> Void]
+    }
+
     private final class PaneRuntimeState {
         let paneId: UUID
         var server: Server
@@ -154,6 +160,9 @@ final class TerminalTabManager: ObservableObject {
     private var moshInstallRequestByPane: [UUID: UUID] = [:]
     private(set) var lastMoshInstallFailure: Error?
     var pendingMoshInstallRequestIDs: Set<UUID> { Set(moshInstallRequests.keys) }
+    private var paneRetryRequests: [UUID: PaneRetryRequest] = [:]
+    private var paneRetryRequestByPane: [UUID: UUID] = [:]
+    var pendingPaneRetryRequestIDs: Set<UUID> { Set(paneRetryRequests.keys) }
     private var serverUnlocker: @MainActor (Server) async -> Bool = { server in
         await AppLockManager.shared.ensureServerUnlocked(server)
     }
@@ -178,6 +187,7 @@ final class TerminalTabManager: ObservableObject {
     private var tmuxKillOperationForTesting: (@MainActor @Sendable () async -> Void)?
     private var tmuxInstallOperationForTesting: (@MainActor (UUID) async -> Void)?
     private var moshInstallAndReconnectOperationForTesting: (@MainActor (UUID) async throws -> Void)?
+    private var paneRetryOperationForTesting: (@MainActor (UUID, Server) async -> TerminalReconnectRequestResult)?
     #endif
 
     /// Pane state keyed by pane ID
@@ -1309,6 +1319,54 @@ final class TerminalTabManager: ObservableObject {
         }
     }
 
+    @discardableResult
+    func requestPaneRetry(
+        paneId: UUID,
+        server: Server,
+        onCompleted: @escaping @MainActor (TerminalReconnectRequestResult) -> Void = { _ in }
+    ) -> UUID {
+        if let requestID = paneRetryRequestByPane[paneId] {
+            paneRetryRequests[requestID]?.onCompleted.append(onCompleted)
+            return requestID
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.paneRetryRequests.removeValue(forKey: requestID)
+                if self.paneRetryRequestByPane[paneId] == requestID {
+                    self.paneRetryRequestByPane.removeValue(forKey: paneId)
+                }
+            }
+
+            #if DEBUG
+            let result: TerminalReconnectRequestResult
+            if let operation = self.paneRetryOperationForTesting {
+                result = await operation(paneId, server)
+            } else {
+                result = await self.retryPaneConnection(paneId: paneId, server: server)
+            }
+            #else
+            let result = await self.retryPaneConnection(paneId: paneId, server: server)
+            #endif
+
+            let callbacks = self.paneRetryRequests[requestID]?.onCompleted ?? []
+            callbacks.forEach { $0(Task.isCancelled ? .skipped : result) }
+        }
+        paneRetryRequests[requestID] = PaneRetryRequest(
+            paneId: paneId,
+            task: task,
+            onCompleted: [onCompleted]
+        )
+        paneRetryRequestByPane[paneId] = requestID
+        return requestID
+    }
+
+    func waitForPaneRetryRequest(_ requestID: UUID) async {
+        await paneRetryRequests[requestID]?.task.value
+    }
+
     private func canStartPaneReconnect(_ paneId: UUID) -> Bool {
         guard let state = paneStates[paneId]?.connectionState else { return false }
         return TerminalManualReconnectPolicy.shouldAttemptReconnect(
@@ -1605,6 +1663,7 @@ final class TerminalTabManager: ObservableObject {
             )
         }
         cancelInstallRequests(for: paneId)
+        cancelPaneRetryRequest(for: paneId)
         clearTmuxRuntimeState(for: paneId)
         unregisterTerminal(for: paneId)
         paneStates.removeValue(forKey: paneId)
@@ -1627,6 +1686,14 @@ final class TerminalTabManager: ObservableObject {
            let request = moshInstallRequests.removeValue(forKey: requestID) {
             request.task.cancel()
             request.onCompleted.forEach { $0() }
+        }
+    }
+
+    private func cancelPaneRetryRequest(for paneId: UUID) {
+        if let requestID = paneRetryRequestByPane.removeValue(forKey: paneId),
+           let request = paneRetryRequests.removeValue(forKey: requestID) {
+            request.task.cancel()
+            request.onCompleted.forEach { $0(.skipped) }
         }
     }
 
@@ -2379,6 +2446,9 @@ extension TerminalTabManager {
         moshInstallRequests.removeAll()
         moshInstallRequestByPane.removeAll()
         lastMoshInstallFailure = nil
+        paneRetryRequests.values.forEach { $0.task.cancel() }
+        paneRetryRequests.removeAll()
+        paneRetryRequestByPane.removeAll()
         paneReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
@@ -2397,6 +2467,7 @@ extension TerminalTabManager {
         tmuxKillOperationForTesting = nil
         tmuxInstallOperationForTesting = nil
         moshInstallAndReconnectOperationForTesting = nil
+        paneRetryOperationForTesting = nil
         tmuxCleanupServers.removeAll()
         isRestoring = false
 
@@ -2437,6 +2508,12 @@ extension TerminalTabManager {
         _ operation: (@MainActor (UUID) async throws -> Void)?
     ) {
         moshInstallAndReconnectOperationForTesting = operation
+    }
+
+    func setPaneRetryOperationForTesting(
+        _ operation: (@MainActor (UUID, Server) async -> TerminalReconnectRequestResult)?
+    ) {
+        paneRetryOperationForTesting = operation
     }
 
     func setCredentialsProviderForTesting(

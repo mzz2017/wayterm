@@ -511,6 +511,72 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerRetryRequestCoalescesDuplicateCallersUntilOperationCompletes() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .disconnected
+            )
+            let gate = InstallOperationGate()
+            let credentials = makeCredentials(serverId: server.id)
+            manager.sessions = [session]
+            manager.setSessionRetryOperationForTesting { requestSession, requestServer in
+                #expect(
+                    requestSession.id == session.id,
+                    "The tracked retry request should target the requested session."
+                )
+                #expect(
+                    requestServer?.id == server.id,
+                    "The tracked retry request should use the server passed by SwiftUI intent."
+                )
+                await gate.run()
+                return .started(credentials)
+            }
+            var firstResult: TerminalReconnectRequestResult?
+            var secondResult: TerminalReconnectRequestResult?
+
+            // Given SwiftUI sends retry intent and the application layer owns
+            // the blocking credential/reconnect operation.
+            let firstRequestID = manager.requestSessionRetry(
+                session: session,
+                server: server,
+                onCompleted: { firstResult = $0 }
+            )
+
+            // When the same session asks again before retry completion.
+            let secondRequestID = manager.requestSessionRetry(
+                session: session,
+                server: server,
+                onCompleted: { secondResult = $0 }
+            )
+            await gate.waitForCallCount(1)
+
+            // Then the manager coalesces duplicate intent and keeps the
+            // request awaitable until the retry operation finishes.
+            #expect(secondRequestID == firstRequestID)
+            #expect(
+                manager.pendingSessionRetryRequestIDs == [firstRequestID],
+                "Session retry must remain pending while manager-owned work is blocked."
+            )
+            #expect(firstResult == nil)
+            #expect(secondResult == nil)
+            #expect(await gate.callCount == 1)
+
+            await gate.release()
+            await manager.waitForSessionRetryRequest(firstRequestID)
+
+            #expect(firstResult?.credentials?.serverId == server.id)
+            #expect(secondResult?.credentials?.serverId == server.id)
+            #expect(
+                manager.pendingSessionRetryRequestIDs.isEmpty,
+                "Session retry request state should clear after callbacks receive the final result."
+            )
+        }
+    }
+
+    @Test
     func connectionManagerRetrySkipsIfRuntimeBecomesLiveWhileLoadingCredentials() async {
         await withCleanConnectionManager { manager in
             let server = makeServer()
@@ -865,6 +931,71 @@ struct ConnectionLifecycleIntegrationTests {
                 "Duplicate pane retry intent must not load credentials a second time."
             )
             #expect(manager.paneStates[paneId]?.connectionState == .reconnecting(attempt: 1))
+        }
+    }
+
+    @Test
+    func tabManagerRetryRequestCoalescesDuplicateCallersUntilOperationCompletes() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tabId = UUID()
+            let paneId = UUID()
+            var paneState = TerminalPaneState(paneId: paneId, tabId: tabId, serverId: server.id)
+            paneState.connectionState = .disconnected
+            let gate = InstallOperationGate()
+            let credentials = makeCredentials(serverId: server.id)
+            manager.paneStates[paneId] = paneState
+            manager.setPaneRetryOperationForTesting { requestPaneId, requestServer in
+                #expect(
+                    requestPaneId == paneId,
+                    "The tracked pane retry request should target the requested pane."
+                )
+                #expect(
+                    requestServer.id == server.id,
+                    "The tracked pane retry request should use the server passed by SwiftUI intent."
+                )
+                await gate.run()
+                return .started(credentials)
+            }
+            var firstResult: TerminalReconnectRequestResult?
+            var secondResult: TerminalReconnectRequestResult?
+
+            // Given split SwiftUI sends retry intent and TerminalTabManager
+            // owns the blocking credential/reconnect operation.
+            let firstRequestID = manager.requestPaneRetry(
+                paneId: paneId,
+                server: server,
+                onCompleted: { firstResult = $0 }
+            )
+
+            // When duplicate retry intent arrives before completion.
+            let secondRequestID = manager.requestPaneRetry(
+                paneId: paneId,
+                server: server,
+                onCompleted: { secondResult = $0 }
+            )
+            await gate.waitForCallCount(1)
+
+            // Then duplicate callers share one request and all receive the
+            // final retry result when the manager-owned task completes.
+            #expect(secondRequestID == firstRequestID)
+            #expect(
+                manager.pendingPaneRetryRequestIDs == [firstRequestID],
+                "Pane retry must remain pending while manager-owned work is blocked."
+            )
+            #expect(firstResult == nil)
+            #expect(secondResult == nil)
+            #expect(await gate.callCount == 1)
+
+            await gate.release()
+            await manager.waitForPaneRetryRequest(firstRequestID)
+
+            #expect(firstResult?.credentials?.serverId == server.id)
+            #expect(secondResult?.credentials?.serverId == server.id)
+            #expect(
+                manager.pendingPaneRetryRequestIDs.isEmpty,
+                "Pane retry request state should clear after callbacks receive the final result."
+            )
         }
     }
 

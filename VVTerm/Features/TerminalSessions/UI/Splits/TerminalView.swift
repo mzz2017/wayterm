@@ -812,22 +812,22 @@ struct TerminalPaneView: View {
         credentialLoadErrorMessage = nil
         operationNotice = nil
         isReady = false
-        Task { @MainActor in
-            let result = await TerminalTabManager.shared.retryPaneConnection(
-                paneId: paneId,
-                server: server
-            )
-            guard let loadedCredentials = result.credentials else {
-                if result.errorMessage != nil {
-                    credentialLoadErrorMessage = String(localized: "Failed to load credentials")
+        TerminalTabManager.shared.requestPaneRetry(
+            paneId: paneId,
+            server: server,
+            onCompleted: { result in
+                guard let loadedCredentials = result.credentials else {
+                    if result.errorMessage != nil {
+                        credentialLoadErrorMessage = String(localized: "Failed to load credentials")
+                    }
+                    return
                 }
-                return
+                credentials = loadedCredentials
+                credentialLoadErrorMessage = nil
+                reconnectToken = UUID()
+                startConnectWatchdog()
             }
-            credentials = loadedCredentials
-            credentialLoadErrorMessage = nil
-            reconnectToken = UUID()
-            startConnectWatchdog()
-        }
+        )
     }
 
     private func startConnectWatchdog() {

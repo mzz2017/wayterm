@@ -498,7 +498,7 @@ struct TerminalContainerView: View {
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                         Button("Retry") {
-                            Task { await retryConnection() }
+                            retryConnection()
                         }
                         .buttonStyle(.bordered)
                     }
@@ -551,7 +551,7 @@ struct TerminalContainerView: View {
                                     .multilineTextAlignment(.center)
                             }
                             Button("Reconnect") {
-                                Task { await retryConnection() }
+                                retryConnection()
                             }
                             .buttonStyle(.bordered)
                         }
@@ -576,7 +576,7 @@ struct TerminalContainerView: View {
                                 .buttonStyle(.borderedProminent)
                             }
                             Button("Retry") {
-                                Task { await retryConnection() }
+                                retryConnection()
                             }
                             .buttonStyle(.bordered)
                         }
@@ -668,7 +668,7 @@ struct TerminalContainerView: View {
             isSceneActive: scenePhase == .active,
             autoReconnectEnabled: autoReconnectEnabled
         ) else { return }
-        Task { await retryConnection() }
+        retryConnection()
     }
 
     private func startConnectWatchdog() {
@@ -678,32 +678,33 @@ struct TerminalContainerView: View {
             terminalExists: terminalAlreadyExists,
             timeoutMessage: String(localized: "Connection timed out. Please retry.")
         ) {
-            await retryConnection()
+            retryConnection()
         }
     }
 
-    @MainActor
-    private func retryConnection() async {
+    private func retryConnection() {
         isReady = false
         operationNotice = nil
-        let result = await ConnectionSessionManager.shared.retrySessionConnection(
+        ConnectionSessionManager.shared.requestSessionRetry(
             session: session,
-            server: server
-        )
-        guard let loadedCredentials = result.credentials else {
-            if let message = result.errorMessage {
-                credentialLoadErrorMessage = String(
-                    format: String(localized: "Failed to load credentials: %@"),
-                    message
-                )
+            server: server,
+            onCompleted: { result in
+                guard let loadedCredentials = result.credentials else {
+                    if let message = result.errorMessage {
+                        credentialLoadErrorMessage = String(
+                            format: String(localized: "Failed to load credentials: %@"),
+                            message
+                        )
+                    }
+                    return
+                }
+                credentials = loadedCredentials
+                credentialLoadErrorMessage = nil
+                ghosttyApp.startIfNeeded()
+                startConnectWatchdog()
+                reconnectToken = UUID()
             }
-            return
-        }
-        credentials = loadedCredentials
-        credentialLoadErrorMessage = nil
-        ghosttyApp.startIfNeeded()
-        startConnectWatchdog()
-        reconnectToken = UUID()
+        )
     }
 
     private func requestMoshInstallAndReconnect() {

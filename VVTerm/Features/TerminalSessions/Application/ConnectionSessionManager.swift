@@ -47,6 +47,12 @@ final class ConnectionSessionManager: ObservableObject {
         var onFailed: [@MainActor (Error) -> Void]
     }
 
+    private struct SessionRetryRequest {
+        let sessionId: UUID
+        let task: Task<Void, Never>
+        var onCompleted: [@MainActor (TerminalReconnectRequestResult) -> Void]
+    }
+
     private final class SessionRuntimeState {
         let sessionId: UUID
         var server: Server
@@ -228,6 +234,9 @@ final class ConnectionSessionManager: ObservableObject {
     private var moshInstallRequestBySession: [UUID: UUID] = [:]
     private(set) var lastMoshInstallFailure: Error?
     var pendingMoshInstallRequestIDs: Set<UUID> { Set(moshInstallRequests.keys) }
+    private var sessionRetryRequests: [UUID: SessionRetryRequest] = [:]
+    private var sessionRetryRequestBySession: [UUID: UUID] = [:]
+    var pendingSessionRetryRequestIDs: Set<UUID> { Set(sessionRetryRequests.keys) }
     private var sessionReconnectsInFlight: Set<UUID> = []
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
     private var serverDisconnectTasks: [UUID: Task<Void, Never>] = [:]
@@ -248,6 +257,7 @@ final class ConnectionSessionManager: ObservableObject {
     private var tmuxKillOperationForTesting: (@MainActor @Sendable () async -> Void)?
     private var tmuxInstallOperationForTesting: (@MainActor (UUID) async -> Void)?
     private var moshInstallAndReconnectOperationForTesting: (@MainActor (ConnectionSession) async throws -> Void)?
+    private var sessionRetryOperationForTesting: (@MainActor (ConnectionSession, Server?) async -> TerminalReconnectRequestResult)?
     #endif
     @Published private(set) var isSuspendingForBackground = false
 
@@ -833,6 +843,7 @@ final class ConnectionSessionManager: ObservableObject {
 
     private func clearRuntimeStateForClosedSession(_ sessionId: UUID) -> Task<Void, Never>? {
         cancelInstallRequests(for: sessionId)
+        cancelSessionRetryRequest(for: sessionId)
         let shellTeardownTask = cancelAndClearShellHandlers(for: sessionId)
         terminalsNeedingReconnectReset.remove(sessionId)
         terminalBrowseModeBySession.removeValue(forKey: sessionId)
@@ -852,6 +863,14 @@ final class ConnectionSessionManager: ObservableObject {
            let request = moshInstallRequests.removeValue(forKey: requestID) {
             request.task.cancel()
             request.onCompleted.forEach { $0() }
+        }
+    }
+
+    private func cancelSessionRetryRequest(for sessionId: UUID) {
+        if let requestID = sessionRetryRequestBySession.removeValue(forKey: sessionId),
+           let request = sessionRetryRequests.removeValue(forKey: requestID) {
+            request.task.cancel()
+            request.onCompleted.forEach { $0(.skipped) }
         }
     }
 
@@ -2027,6 +2046,54 @@ final class ConnectionSessionManager: ObservableObject {
         }
     }
 
+    @discardableResult
+    func requestSessionRetry(
+        session: ConnectionSession,
+        server: Server?,
+        onCompleted: @escaping @MainActor (TerminalReconnectRequestResult) -> Void = { _ in }
+    ) -> UUID {
+        if let requestID = sessionRetryRequestBySession[session.id] {
+            sessionRetryRequests[requestID]?.onCompleted.append(onCompleted)
+            return requestID
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.sessionRetryRequests.removeValue(forKey: requestID)
+                if self.sessionRetryRequestBySession[session.id] == requestID {
+                    self.sessionRetryRequestBySession.removeValue(forKey: session.id)
+                }
+            }
+
+            #if DEBUG
+            let result: TerminalReconnectRequestResult
+            if let operation = self.sessionRetryOperationForTesting {
+                result = await operation(session, server)
+            } else {
+                result = await self.retrySessionConnection(session: session, server: server)
+            }
+            #else
+            let result = await self.retrySessionConnection(session: session, server: server)
+            #endif
+
+            let callbacks = self.sessionRetryRequests[requestID]?.onCompleted ?? []
+            callbacks.forEach { $0(Task.isCancelled ? .skipped : result) }
+        }
+        sessionRetryRequests[requestID] = SessionRetryRequest(
+            sessionId: session.id,
+            task: task,
+            onCompleted: [onCompleted]
+        )
+        sessionRetryRequestBySession[session.id] = requestID
+        return requestID
+    }
+
+    func waitForSessionRetryRequest(_ requestID: UUID) async {
+        await sessionRetryRequests[requestID]?.task.value
+    }
+
     func loadCredentials(for server: Server) async -> TerminalCredentialLoadResult {
         do {
             return .loaded(try await credentialsProvider(server))
@@ -2707,6 +2774,9 @@ extension ConnectionSessionManager {
         moshInstallRequests.removeAll()
         moshInstallRequestBySession.removeAll()
         lastMoshInstallFailure = nil
+        sessionRetryRequests.values.forEach { $0.task.cancel() }
+        sessionRetryRequests.removeAll()
+        sessionRetryRequestBySession.removeAll()
         sessionReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
@@ -2725,6 +2795,7 @@ extension ConnectionSessionManager {
         tmuxKillOperationForTesting = nil
         tmuxInstallOperationForTesting = nil
         moshInstallAndReconnectOperationForTesting = nil
+        sessionRetryOperationForTesting = nil
         isRestoring = false
 
         UserDefaults.standard.removeObject(forKey: persistenceKey)
@@ -2772,6 +2843,12 @@ extension ConnectionSessionManager {
         _ operation: (@MainActor (ConnectionSession) async throws -> Void)?
     ) {
         moshInstallAndReconnectOperationForTesting = operation
+    }
+
+    func setSessionRetryOperationForTesting(
+        _ operation: (@MainActor (ConnectionSession, Server?) async -> TerminalReconnectRequestResult)?
+    ) {
+        sessionRetryOperationForTesting = operation
     }
 
     func setCredentialsProviderForTesting(
