@@ -1211,42 +1211,28 @@ struct ServerFormSheet: View {
         isSaving = true
         error = nil
 
-        Task {
-            do {
-                let (newServer, credentials) = await MainActor.run { () -> (Server, ServerCredentials) in
-                    let serverId = server?.id ?? UUID()
-                    let server = buildServer(id: serverId, createdAt: server?.createdAt ?? Date())
-                    let credentials = buildCredentials(for: serverId)
-                    return (server, credentials)
-                }
+        let serverId = server?.id ?? UUID()
+        let newServer = buildServer(id: serverId, createdAt: server?.createdAt ?? Date())
+        let credentials = buildCredentials(for: serverId)
 
-                if isEditing {
-                    try await serverManager.updateServer(newServer, credentials: credentials)
-                } else {
-                    try await serverManager.addServer(newServer, credentials: credentials)
-                }
-
-                await MainActor.run {
-                    isSaving = false
-                    onSave(newServer)
-                    dismiss()
-                }
-            } catch let error as VVTermError {
-                await MainActor.run {
-                    if case .proRequired = error {
-                        self.showingServerLimitAlert = true
-                    } else {
-                        self.error = error.localizedDescription
-                    }
-                    self.isSaving = false
-                }
-            } catch {
-                await MainActor.run {
-                    self.error = error.localizedDescription
-                    self.isSaving = false
-                }
+        serverManager.requestServerSave(
+            newServer,
+            credentials: credentials,
+            mode: isEditing ? .update : .create,
+            onSaved: { savedServer in
+                isSaving = false
+                onSave(savedServer)
+                dismiss()
+            },
+            onProRequired: {
+                showingServerLimitAlert = true
+                isSaving = false
+            },
+            onFailed: { message in
+                error = message
+                isSaving = false
             }
-        }
+        )
     }
 }
 

@@ -32,6 +32,11 @@ enum ServerEnvironmentSaveMode: Equatable {
     case update
 }
 
+enum ServerSaveMode: Equatable {
+    case create
+    case update
+}
+
 struct ServerWorkspaceSaveFailure: Identifiable, Equatable {
     enum Operation: Equatable {
         case createWorkspace(UUID)
@@ -66,6 +71,23 @@ struct ServerEnvironmentSaveFailure: Identifiable, Equatable {
     }
 }
 
+struct ServerSaveFailure: Identifiable, Equatable {
+    enum Operation: Equatable {
+        case createServer(UUID)
+        case updateServer(UUID)
+    }
+
+    let id: UUID
+    let operation: Operation
+    let message: String
+
+    init(id: UUID = UUID(), operation: Operation, error: Error) {
+        self.id = id
+        self.operation = operation
+        self.message = error.localizedDescription
+    }
+}
+
 @MainActor
 final class ServerManager: ObservableObject {
     typealias ServerDeletionTeardown = @MainActor @Sendable (Server) async -> Void
@@ -81,6 +103,7 @@ final class ServerManager: ObservableObject {
     @Published private(set) var deletionFailure: ServerDeletionFailure?
     @Published private(set) var workspaceSaveFailure: ServerWorkspaceSaveFailure?
     @Published private(set) var environmentSaveFailure: ServerEnvironmentSaveFailure?
+    @Published private(set) var serverSaveFailure: ServerSaveFailure?
 
     private let cloudKit = CloudKitManager.shared
     private let syncCoordinator = CloudKitSyncCoordinator.shared
@@ -94,9 +117,11 @@ final class ServerManager: ObservableObject {
     private var deletionRequests: [UUID: Task<Void, Never>] = [:]
     private var workspaceSaveRequests: [UUID: Task<Void, Never>] = [:]
     private var environmentSaveRequests: [UUID: Task<Void, Never>] = [:]
+    private var serverSaveRequests: [UUID: Task<Void, Never>] = [:]
     var pendingDeletionRequestIDs: Set<UUID> { Set(deletionRequests.keys) }
     var pendingWorkspaceSaveRequestIDs: Set<UUID> { Set(workspaceSaveRequests.keys) }
     var pendingEnvironmentSaveRequestIDs: Set<UUID> { Set(environmentSaveRequests.keys) }
+    var pendingServerSaveRequestIDs: Set<UUID> { Set(serverSaveRequests.keys) }
 
     // Local storage keys
     private let serversKey = CloudKitSyncConstants.serverStorageKey
@@ -1110,6 +1135,38 @@ final class ServerManager: ObservableObject {
         try await updateServer(server)
     }
 
+    @discardableResult
+    func requestServerSave(
+        _ server: Server,
+        credentials: ServerCredentials,
+        mode: ServerSaveMode,
+        onSaved: @escaping @MainActor (Server) -> Void = { _ in },
+        onProRequired: @escaping @MainActor () -> Void = {},
+        onFailed: @escaping @MainActor (String) -> Void = { _ in }
+    ) -> UUID {
+        let operation: ServerSaveFailure.Operation = switch mode {
+        case .create:
+            .createServer(server.id)
+        case .update:
+            .updateServer(server.id)
+        }
+
+        return trackServerSaveRequest(
+            operation: operation,
+            onProRequired: onProRequired,
+            onFailed: onFailed
+        ) { [weak self] in
+            guard let self else { return }
+            switch mode {
+            case .create:
+                try await self.addServer(server, credentials: credentials)
+            case .update:
+                try await self.updateServer(server, credentials: credentials)
+            }
+            onSaved(self.servers.first { $0.id == server.id } ?? server)
+        }
+    }
+
     func deleteServer(_ server: Server) async throws {
         await deletionTeardown(server)
         try await deleteCredentials(server.id)
@@ -1295,6 +1352,14 @@ final class ServerManager: ObservableObject {
         await environmentSaveRequests[requestID]?.value
     }
 
+    func clearServerSaveFailure() {
+        serverSaveFailure = nil
+    }
+
+    func waitForServerSaveRequest(_ requestID: UUID) async {
+        await serverSaveRequests[requestID]?.value
+    }
+
     private func trackDeletionRequest(
         operation: ServerDeletionFailure.Operation,
         onFailed: @escaping @MainActor (String) -> Void = { _ in },
@@ -1373,6 +1438,39 @@ final class ServerManager: ObservableObject {
         }
 
         environmentSaveRequests[requestID] = task
+        return requestID
+    }
+
+    private func trackServerSaveRequest(
+        operation: ServerSaveFailure.Operation,
+        onProRequired: @escaping @MainActor () -> Void = {},
+        onFailed: @escaping @MainActor (String) -> Void = { _ in },
+        _ action: @escaping @MainActor () async throws -> Void
+    ) -> UUID {
+        let requestID = UUID()
+        serverSaveFailure = nil
+
+        let task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await action()
+            } catch let error as VVTermError {
+                self.error = error.localizedDescription
+                self.serverSaveFailure = ServerSaveFailure(operation: operation, error: error)
+                if case .proRequired = error {
+                    onProRequired()
+                } else {
+                    onFailed(error.localizedDescription)
+                }
+            } catch {
+                self.error = error.localizedDescription
+                self.serverSaveFailure = ServerSaveFailure(operation: operation, error: error)
+                onFailed(error.localizedDescription)
+            }
+            self.serverSaveRequests.removeValue(forKey: requestID)
+        }
+
+        serverSaveRequests[requestID] = task
         return requestID
     }
 

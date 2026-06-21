@@ -3649,7 +3649,7 @@ Review result: subagent review was not spawned because the current tool contract
   - `ServerManager.waitForServerSaveRequest(_:)` and `pendingServerSaveRequestIDs` for awaitable tests and later lifecycle ordering.
   - `ServerFormSheet` save action that synchronously sends intent to `ServerManager` instead of owning async credential/metadata save tasks.
 
-- [ ] **Step 1: Add RED manager and boundary tests**
+- [x] **Step 1: Add RED manager and boundary tests**
 
 Extend `ServerManagerBootstrapTests` with request-save coverage for successful server create, successful server update, and credential-store failure. Add `ServerFormSaveIntentBoundaryTests` with a Test Context header. The source-boundary test must read `ServerFormSheet.swift` and fail while `saveServer()` owns a `Task { ... }` wrapper or directly calls:
 
@@ -3666,17 +3666,19 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: `ServerManagerBootstrapTests` fails to compile because server save request APIs, save mode, pending request IDs, await hook, or failure state do not exist. If those compile unexpectedly, `ServerFormSaveIntentBoundaryTests` fails because `ServerFormSheet.saveServer()` still owns async credential/metadata save `Task` work and directly calls server CRUD methods.
 
-- [ ] **Step 2: Add ServerManager server save request tracking**
+Actual RED result: the focused command failed with exit 65 before production changes. Compilation failed because `ServerManager` had no `requestServerSave`, no save mode, no `pendingServerSaveRequestIDs`, no `waitForServerSaveRequest`, and no `serverSaveFailure`.
+
+- [x] **Step 2: Add ServerManager server save request tracking**
 
 Add a small save mode enum/failure type and manager-owned request dictionary. The request API should clear prior server save failure, run create/update through existing application-layer methods, store the returned task by request ID, clear only its own ID, expose an await hook, call success only after credential and metadata save succeeds, and preserve Pro-required failures separately so UI can keep showing the upgrade sheet.
 
 For create mode, reuse `addServer(_:credentials:)` so Pro limits, credential storage, bootstrap workspace promotion, pending CloudKit upsert, and local persistence keep their existing behavior. For update mode, reuse `updateServer(_:credentials:)` so credential failure still prevents metadata mutation. In both modes, return the persisted server value from `servers.first(where: { $0.id == server.id }) ?? server` to avoid passing stale pre-save timestamps or metadata back to UI.
 
-- [ ] **Step 3: Route ServerFormSheet through request APIs**
+- [x] **Step 3: Route ServerFormSheet through request APIs**
 
 Replace the save form-owned `Task` block with a synchronous call to `requestServerSave`. Keep visible behavior: save sets `isSaving`, success calls `onSave` and dismisses, Pro-limit failure opens the existing server limit alert and clears saving, and ordinary failures show local error text and clear saving.
 
-- [ ] **Step 4: Run focused verification**
+- [x] **Step 4: Run focused verification**
 
 Run focused manager/boundary tests, source scans for old async CRUD ownership in `ServerFormSheet.swift`, and `git diff --check`:
 
@@ -3686,16 +3688,23 @@ rg -n "try await serverManager\\.(updateServer|addServer)\\(newServer, credentia
 git diff --check
 ```
 
-- [ ] **Step 5: API and boundary cleanup**
+Actual GREEN result: the focused test command passed 22 tests in 2 suites after review fixes. A scoped `saveServer()` source scan showed the form save action only builds values synchronously and calls `serverManager.requestServerSave(...)`; the broader `Task {` hits in `ServerFormSheet.swift` are outside Task 49 and remain assigned to later slices. `git diff --check`, iOS build-for-testing, and macOS build-for-testing with `CODE_SIGNING_ALLOWED=NO` completed successfully.
+
+- [x] **Step 5: API and boundary cleanup**
 
 Before review, verify save request APIs live in Servers Application, UI callbacks only update UI state after application-layer completion, request tasks clear deterministically, Pro-limit behavior remains user-visible, credential-store failure still prevents metadata mutation, no stale server copy is passed to UI on create/update success, and tests include enough context to distinguish behavior regressions from intentional ownership moves.
 
-- [ ] **Step 6: Request review and commit**
+Cleanup result: save request APIs live in Servers Application; `ServerFormSheet.saveServer()` only sends intent and updates UI from completion callbacks; request IDs clear from `serverSaveRequests`; Pro-limit, credential-store failure, and persisted-server callback behavior are covered by focused tests with Test Context headers.
+
+- [x] **Step 6: Request review and commit**
 
 Request code review for Task 49. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
 
+Review result: code review found no Critical issues and three Task-49 findings: missing Pro-required save coverage, missing positive `requestServerSave` boundary assertion, and a missing `When` comment in the source-boundary test. All were fixed before final verification.
+
 ## Progress Ledger
 
+- 2026-06-21: Task 49 RED/GREEN completed with review fixes. `ServerFormSheet.saveServer()` no longer owns an async server create/update save `Task` or directly calls `updateServer(_:credentials:)` / `addServer(_:credentials:)`; it sends synchronous intent to `ServerManager.requestServerSave`. `ServerManager` now owns tracked server create/update save request tasks, exposes pending request IDs plus `waitForServerSaveRequest`, records `ServerSaveFailure`, preserves Pro-required create failures for the upgrade sheet, returns the persisted server to UI callbacks, and keeps credential-store failures from mutating metadata through the existing application-layer update path. RED failed to compile until the save request APIs and failure state existed. Review found missing Pro-required coverage and source-boundary clarity gaps, all fixed. Final focused tests passed 22 Swift Testing tests; a scoped `saveServer()` source scan showed only `requestServerSave` ownership; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings. Broader `Task {` hits in `ServerFormSheet.swift` are connection-test and move-server flows intentionally deferred to later tasks.
 - 2026-06-21: Post-Task-48 scan selected Task 49 as the next executable lifecycle slice. Current plan checkboxes were all complete, so the codebase was rescanned for SwiftUI-owned lifecycle `Task` work, direct resource/singleton calls, and stale terminal runtime state. `ServerFormSheet.saveServer()` is the clearest remaining Servers feature hit: it starts a SwiftUI-owned `Task` and directly calls `updateServer(_:credentials:)` / `addServer(_:credentials:)` for credential-backed server persistence. `MoveServerSheet.moveServer()` is also lifecycle-critical, but it is intentionally deferred to a later, separate task so this slice stays focused on create/update save ownership and credential ordering.
 - 2026-06-21: Task 48 RED/GREEN completed. `EnvironmentFormSheet` no longer owns an async environment save `Task` or directly calls `updateEnvironment` / `updateWorkspace`; it sends synchronous intent to `ServerManager.requestEnvironmentSave`. `ServerManager` now owns tracked environment create/update request tasks, exposes pending request IDs plus `waitForEnvironmentSaveRequest`, records `ServerEnvironmentSaveFailure`, preserves Pro-required create failures in the application layer, returns the persisted workspace after create, and returns the `updateEnvironment(_:in:)` result after update so assigned servers keep existing behavior. RED failed to compile until save request APIs and failure state existed. GREEN focused tests passed 18 Swift Testing tests; the EnvironmentForm source boundary scan produced no matches; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings. Local review found no Critical or Important issues.
 - 2026-06-21: Post-Task-47 scan selected Task 48 as the next executable lifecycle slice. Current plan checkboxes were all complete, so the codebase was rescanned for SwiftUI-owned lifecycle `Task` work, direct resource/singleton calls, and stale terminal runtime state. `EnvironmentFormSheet.saveEnvironment()` is the clearest unplanned Servers feature hit: it starts a SwiftUI-owned `Task` and directly calls `updateEnvironment` / `updateWorkspace` for user-initiated environment persistence. Broader hits remain intentionally deferred for later classification, including Server form save/move request ownership, RemoteFiles preview/navigation UI tasks that mostly load view data, terminal voice recording intent ownership, and residual terminal display-state reads from `ConnectionState`.
