@@ -832,11 +832,16 @@ struct ConnectionTerminalContainer: View {
     }
 
     private func disconnectFromServer() {
-        Task { @MainActor in
-            await tabManager.disconnectServerAndWait(server.id)
-            await fileBrowser.disconnect(serverId: server.id).value
-            fileTabManager.disconnect(serverId: server.id)
-        }
+        ServerConnectionLifecycleCoordinator.shared.requestServerDisconnect(
+            serverId: server.id,
+            disconnectRemoteFiles: { serverId in
+                fileBrowser.disconnect(serverId: serverId)
+            },
+            disconnectFileTabs: { serverId in
+                fileTabManager.disconnect(serverId: serverId)
+            },
+            disconnectTerminals: tabManager.disconnectServerAndWait
+        )
     }
 
     private func splitFocusedPane(_ direction: TerminalSplitDirection) {

@@ -619,11 +619,13 @@ struct iOSServerListView: View {
     }
 
     private func disconnectActiveConnection(_ connection: ActiveConnection) {
-        let remoteFileDisconnectTask = fileBrowser.disconnect(serverId: connection.id)
-        Task {
-            await remoteFileDisconnectTask.value
-            await sessionManager.disconnectServerAndWait(connection.id)
-        }
+        ServerConnectionLifecycleCoordinator.shared.requestServerDisconnect(
+            serverId: connection.id,
+            disconnectRemoteFiles: { serverId in
+                fileBrowser.disconnect(serverId: serverId)
+            },
+            disconnectTerminals: sessionManager.disconnectServerAndWait
+        )
     }
 
     private func server(for serverId: UUID) -> Server? {
@@ -1765,13 +1767,19 @@ struct iOSTerminalView: View {
             onBack()
             return
         }
-        let remoteFileDisconnectTask = fileBrowser.disconnect(serverId: serverId)
-        fileTabs.disconnect(serverId: serverId)
-        Task {
-            await remoteFileDisconnectTask.value
-            await sessionManager.disconnectServerAndWait(serverId)
-            onBack()
-        }
+        ServerConnectionLifecycleCoordinator.shared.requestServerDisconnect(
+            serverId: serverId,
+            disconnectRemoteFiles: { serverId in
+                fileBrowser.disconnect(serverId: serverId)
+            },
+            disconnectFileTabs: { serverId in
+                fileTabs.disconnect(serverId: serverId)
+            },
+            disconnectTerminals: sessionManager.disconnectServerAndWait,
+            onCompleted: {
+                onBack()
+            }
+        )
     }
 
     private func synchronizeRecoveredTerminalState() {

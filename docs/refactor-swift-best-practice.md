@@ -4326,7 +4326,7 @@ Request code review for Task 57. Fix Critical and Important findings, update the
   - `ServerConnectionLifecycleCoordinator.pendingDisconnectRequestIDs: Set<UUID>` and `waitForDisconnectRequest(_:)` for lifecycle ordering tests.
   - Duplicate same-server disconnect intent should coalesce to one request ID and append completion callbacks rather than launching parallel teardown chains.
 
-- [ ] **Step 1: Add RED app-owned disconnect orchestration tests**
+- [x] **Step 1: Add RED app-owned disconnect orchestration tests**
 
 Add `ServerConnectionLifecycleCoordinatorTests` with the required Test Context. Cover:
 - a request remains pending while RemoteFiles teardown is blocked, does not call terminal disconnect or completion early, then runs RemoteFiles, file-tab cleanup, terminal disconnect, and completion in order;
@@ -4346,7 +4346,7 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: the focused suite fails to compile because `ServerConnectionLifecycleCoordinator` does not exist. If it compiles unexpectedly, the boundary tests fail because SwiftUI still owns the disconnect `Task` wrappers and direct multi-step teardown sequencing.
 
-- [ ] **Step 2: Add the App/Application disconnect coordinator**
+- [x] **Step 2: Add the App/Application disconnect coordinator**
 
 Implement `ServerConnectionLifecycleCoordinator` as a `@MainActor` final class with `shared`, request dictionaries keyed by request ID, and a reverse index keyed by server ID. Store the request `Task<Void, Never>` until teardown finishes. The task order must be:
 1. call `disconnectRemoteFiles(serverId)` and await its returned task;
@@ -4356,7 +4356,7 @@ Implement `ServerConnectionLifecycleCoordinator` as a `@MainActor` final class w
 
 Do not make the coordinator import RemoteFiles or TerminalSessions concrete managers directly for tests. Accept closures at the request boundary so iOS root sessions can pass `ConnectionSessionManager.disconnectServerAndWait(_:)` and split-tab UI can pass `TerminalTabManager.disconnectServerAndWait(_:)` while the coordinator still owns the request task and ordering.
 
-- [ ] **Step 3: Route iOS and tab disconnect UI through the coordinator**
+- [x] **Step 3: Route iOS and tab disconnect UI through the coordinator**
 
 Update:
 - `iOSContentView.disconnectActiveConnection(_:)` to call `ServerConnectionLifecycleCoordinator.shared.requestServerDisconnect(...)` with `fileBrowser.disconnect`, no file-tab disconnect callback, and `sessionManager.disconnectServerAndWait`.
@@ -4365,7 +4365,7 @@ Update:
 
 The UI functions should become synchronous intent senders. They may update presentation state from `onCompleted`, but must not own the async teardown sequence.
 
-- [ ] **Step 4: Run focused verification**
+- [x] **Step 4: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerConnectionLifecycleCoordinatorTests -only-testing:VVTermTests/ServerDisconnectIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
@@ -4375,16 +4375,17 @@ git diff --check
 
 Expected GREEN result: focused tests pass; source scan shows the three disconnect helpers use `requestServerDisconnect(...)`, contain no helper-local `Task {}` wrappers, and do not directly sequence RemoteFiles/file-tabs/terminal teardown in SwiftUI. Remaining `Task {}` hits in these files are existing non-disconnect paths and must be named in the Progress Ledger.
 
-- [ ] **Step 5: API and boundary cleanup**
+- [x] **Step 5: API and boundary cleanup**
 
 Before review, verify `ServerConnectionLifecycleCoordinator` belongs in App/Application because it coordinates App-shell cross-feature lifecycle work, the closure labels read as side-effectful actions, the coordinator does not own UI presentation state, duplicate same-server request coalescing cannot drop callbacks, and touched tests include the required Test Context plus Given / When / Then comments and assertion messages.
 
-- [ ] **Step 6: Request review and commit**
+- [x] **Step 6: Request review and commit**
 
 Request code review for Task 58. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
 
 ## Progress Ledger
 
+- 2026-06-21: Task 58 RED/GREEN completed with review fix. `iOSContentView.disconnectActiveConnection(_:)`, `iOSContentView.disconnectCurrentServerSessions()`, and `ConnectionTabsView.disconnectFromServer()` now synchronously send server-disconnect intent to `ServerConnectionLifecycleCoordinator.shared.requestServerDisconnect(...)` instead of launching SwiftUI-owned `Task` blocks that manually await terminal manager teardown. `ServerConnectionLifecycleCoordinator` lives in App/Application as the cross-feature owner for server-scoped disconnect request ordering; it tracks request tasks by request ID, coalesces duplicate same-server intent, awaits RemoteFiles teardown before file-tab cleanup and terminal disconnect, then drains queued presentation callbacks after teardown completes. Initial RED focused tests failed to compile because `ServerConnectionLifecycleCoordinator` did not exist. An intermediate GREEN attempt exposed boundary-test failures where UI closure literals still contained direct `await sessionManager.disconnectServerAndWait` / `await tabManager.disconnectServerAndWait`; passing the async manager methods as side-effectful actions fixed the boundary. Review found no Critical issues and one Important callback-coalescing edge: completion callbacks appended by synchronous same-server reentry during completion delivery were appended after the old snapshot and then dropped. Review-fix RED reproduced the missing `complete-2` callback; GREEN drains completion callbacks by index until no newly appended callbacks remain, preserving one teardown chain for reentrant duplicate intent. Narrow re-review found no remaining Critical, Important, or Minor issues. Final focused tests passed 6 Swift Testing tests in 2 suites. The scoped source scan shows the three disconnect helpers call `requestServerDisconnect(...)` and contain no helper-local `Task {}` wrappers or direct old await calls; remaining `Task {}` hits in the scanned files are existing non-disconnect file navigation, Active Connection open, terminal-state recovery, and deferred UI paths. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`.
 - 2026-06-21: Post-Task-57 scan selected Task 58 as the next executable lifecycle slice. Current plan checkboxes were complete and the working tree was clean after Task 57, so the codebase was rescanned for remaining SwiftUI-owned lifecycle work. Task 38 already made `RemoteFileBrowserStore.disconnect(serverId:)` trackable/awaitable, but iOS active-connection disconnect, iOS current-server disconnect, and shared tab-container server disconnect still create SwiftUI-owned `Task` blocks that manually sequence RemoteFiles teardown, file-tab cleanup, terminal manager disconnect, and navigation completion. This is lifecycle-critical cross-feature orchestration and should live in an App/Application owner. Task 58 should add a tracked `ServerConnectionLifecycleCoordinator`, preserve existing UI callbacks, and leave broader RemoteFiles navigation operations, terminal surface attach, rich paste, and resize/title task cleanup deferred to later slices.
 - 2026-06-21: Task 57 RED/GREEN completed with review fixes. `TerminalContainerView.retrustHostAndRetry()` and split `TerminalView.retrustHostAndRetry()` no longer create SwiftUI-owned retrust `Task` blocks or directly await `retrustHostAndReconnect`; they synchronously send host-retrust intent to `ConnectionSessionManager.requestSessionHostRetrust` or `TerminalTabManager.requestPaneHostRetrust` and only update `reconnectToken` from presentation callbacks when reconnect succeeds. Both managers now own tracked host-retrust request tasks, expose pending request IDs and await hooks for lifecycle tests, coalesce duplicate same-session/pane intent, keep trusted-host mutation plus reconnect inside the application layer, clear request state after completion, and cancel pending retrust requests with `false` callbacks when the owning session or pane closes. RED failed to compile until the request APIs, pending IDs, wait hooks, and DEBUG operation seams existed. A later focused run after adding close-cancellation tests hit an Xcode runner startup/finish hang without XCTest assertion output; after wiring close cancellation, the focused suite passed 90 Swift Testing tests in 2 suites. Review found no Critical issues and two Important cancellation gaps: canceled retrust tasks could still reach known-host mutation, and close-cancellation tests did not prove there was no later success callback. GREEN review fixes added preflight and post-mutation ownership/cancellation guards before retrust/reconnect work, and strengthened close-cancellation tests to keep callback history at `[false]` after blocked work returns. Final focused tests passed 90 Swift Testing tests in 2 suites; source scan shows the retrust helpers now call request APIs and contain no retrust-owned `Task {}` or direct old helper awaits; remaining `Task {}` hits in those files are existing non-retrust paths for credential reload, pane lifecycle, paste, and title/selection work. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`.
 - 2026-06-21: Post-Task-56 scan selected Task 57 as the next executable lifecycle slice. Current plan checkboxes were complete, so the codebase was rescanned for remaining SwiftUI-owned lifecycle tasks and direct resource mutation after terminal retry/install/voice ownership moved to manager/store request APIs. The clearest focused TerminalSessions gap is host-key retrust from terminal error alerts: root `TerminalContainerView` and split `TerminalView` still launch `Task {}` from `retrustHostAndRetry()` and directly await manager helpers that remove known-host entries and reconnect. This is lifecycle-critical because trusted-host mutation plus reconnect should be tracked by TerminalSessions Application owners, not by SwiftUI alert actions. Task 57 should add manager-owned tracked retrust request APIs, preserve existing alert/reconnectToken UX, and leave broader remaining iOS active-connection, RemoteFiles navigation, and terminal surface attach guard cleanup deferred to later slices.
