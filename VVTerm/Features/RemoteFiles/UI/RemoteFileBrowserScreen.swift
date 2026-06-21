@@ -673,6 +673,7 @@ struct RemoteFileBrowserScreen: View {
         }
 
         browser.requestTransfer(
+            serverId: server.id,
             operation: operation,
             onProgress: { progress in
                 let itemName = progress.currentItemName.isEmpty
@@ -745,6 +746,7 @@ struct RemoteFileBrowserScreen: View {
         operation: @escaping @MainActor () async throws -> Void
     ) {
         browser.requestMutation(
+            serverId: server.id,
             operation: operation,
             onFailure: { error in
                 if let onFailure {
@@ -762,6 +764,7 @@ struct RemoteFileBrowserScreen: View {
         onFailure: (@MainActor (Error) -> Void)? = nil
     ) {
         browser.requestMutation(
+            serverId: server.id,
             operation: operation,
             onSuccess: onSuccess,
             onFailure: { error in
@@ -1192,6 +1195,7 @@ struct RemoteFileBrowserScreen: View {
         completion: @escaping (URL?, Bool, Error?) -> Void
     ) {
         browser.requestTransfer(
+            serverId: server.id,
             operation: { _ in
                 let temporaryURL = try preparedTemporaryURL.get()
                 try await browser.downloadItem(entry, to: temporaryURL, server: server)

@@ -318,6 +318,163 @@ struct RemoteFileBrowserStoreTests {
     }
 
     @Test
+    func disconnectCancelsVisibleMutationRequestsForServerAndSkipsLateSuccess() async throws {
+        let server = makeServer()
+        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let gate = RemoteFileMutationGate()
+        let waitProbe = RemoteFileWaitProbe()
+        var operationEvents: [String] = []
+        var callbackEvents: [String] = []
+
+        // Given a same-server mutation is blocked in application-owned remote
+        // work when the server disconnects.
+        let requestID = store.requestMutation(
+            serverId: server.id,
+            operation: {
+                operationEvents.append("operation-started")
+                await gate.wait()
+                operationEvents.append("operation-finished")
+                return "created"
+            },
+            onSuccess: { result in
+                callbackEvents.append("success-\(result)")
+            },
+            onFailure: { _ in
+                callbackEvents.append("failure")
+            }
+        )
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(store.pendingMutationRequestIDs.contains(requestID))
+
+        // When the same server disconnects before the operation exits.
+        _ = store.disconnect(serverId: server.id)
+        let waitTask = Task {
+            await store.waitForMutationRequest(requestID)
+            await waitProbe.markReturned()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then visible pending state clears immediately, but the wait hook
+        // remains awaitable until the blocked mutation operation exits.
+        #expect(!store.pendingMutationRequestIDs.contains(requestID))
+        #expect(
+            await !waitProbe.didReturn,
+            "Canceled mutation wait hook should not return before blocked remote mutation work exits."
+        )
+
+        await gate.release()
+        await waitTask.value
+
+        #expect(await waitProbe.didReturn)
+        #expect(operationEvents == ["operation-started", "operation-finished"])
+        #expect(callbackEvents.isEmpty)
+    }
+
+    @Test
+    func disconnectCancelsVisibleTransferRequestsForServerAndSkipsLateProgressAndSuccess() async throws {
+        let server = makeServer()
+        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let gate = RemoteFileMutationGate()
+        let waitProbe = RemoteFileWaitProbe()
+        var operationEvents: [String] = []
+        var callbackEvents: [String] = []
+
+        // Given a same-server transfer is blocked before emitting progress.
+        let requestID = store.requestTransfer(
+            serverId: server.id,
+            operation: { onProgress in
+                operationEvents.append("operation-started")
+                await gate.wait()
+                onProgress(RemoteFileBrowserStore.TransferProgress(
+                    completedUnitCount: 1,
+                    totalUnitCount: 2,
+                    currentItemName: "logs.txt"
+                ))
+                operationEvents.append("operation-finished")
+                return "exported"
+            },
+            onProgress: { progress in
+                callbackEvents.append("progress-\(progress.completedUnitCount)-\(progress.totalUnitCount)-\(progress.currentItemName)")
+            },
+            onSuccess: { result in
+                callbackEvents.append("success-\(result)")
+            },
+            onFailure: { _ in
+                callbackEvents.append("failure")
+            }
+        )
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(store.pendingTransferRequestIDs.contains(requestID))
+
+        // When the same server disconnects before the transfer exits.
+        _ = store.disconnect(serverId: server.id)
+        let waitTask = Task {
+            await store.waitForTransferRequest(requestID)
+            await waitProbe.markReturned()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then visible pending state clears immediately, progress/success
+        // callbacks are suppressed, and the wait hook remains awaitable.
+        #expect(!store.pendingTransferRequestIDs.contains(requestID))
+        #expect(
+            await !waitProbe.didReturn,
+            "Canceled transfer wait hook should not return before blocked remote transfer work exits."
+        )
+
+        await gate.release()
+        await waitTask.value
+
+        #expect(await waitProbe.didReturn)
+        #expect(operationEvents == ["operation-started", "operation-finished"])
+        #expect(callbackEvents.isEmpty)
+    }
+
+    @Test
+    func disconnectLeavesOtherServerMutationAndTransferRequestsPending() async throws {
+        let disconnectingServer = makeServer()
+        let otherServer = makeServer()
+        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let mutationGate = RemoteFileMutationGate()
+        let transferGate = RemoteFileMutationGate()
+        var events: [String] = []
+
+        // Given mutation and transfer work belongs to a different server than
+        // the one being disconnected.
+        let mutationID = store.requestMutation(
+            serverId: otherServer.id,
+            operation: {
+                await mutationGate.wait()
+                return "mutated"
+            },
+            onSuccess: { events.append("mutation-\($0)") }
+        )
+        let transferID = store.requestTransfer(
+            serverId: otherServer.id,
+            operation: { _ in
+                await transferGate.wait()
+                return "transferred"
+            },
+            onSuccess: { events.append("transfer-\($0)") }
+        )
+        try await Task.sleep(for: .milliseconds(20))
+
+        // When an unrelated server disconnects.
+        _ = store.disconnect(serverId: disconnectingServer.id)
+
+        // Then other-server work remains visible and completes normally.
+        #expect(store.pendingMutationRequestIDs.contains(mutationID))
+        #expect(store.pendingTransferRequestIDs.contains(transferID))
+
+        await mutationGate.release()
+        await transferGate.release()
+        await store.waitForMutationRequest(mutationID)
+        await store.waitForTransferRequest(transferID)
+
+        #expect(events == ["mutation-mutated", "transfer-transferred"])
+    }
+
+    @Test
     func moveDestinationLoadRequestTracksDirectoryListingUntilCompletion() async throws {
         let server = makeServer()
         let client = BlockingNavigationRemoteFileClient(

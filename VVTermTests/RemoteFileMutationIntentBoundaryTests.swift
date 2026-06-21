@@ -28,6 +28,10 @@ struct RemoteFileMutationIntentBoundaryTests {
             "RemoteFileBrowserScreen.performOperation should delegate mutation task ownership to RemoteFileBrowserStore."
         )
         #expect(
+            containsRegex(#"browser\.requestMutation\(\s*serverId:\s*server\.id"#, in: source),
+            "RemoteFileBrowserScreen.performOperation should pass server identity so disconnect can cancel same-server mutations."
+        )
+        #expect(
             !source.contains("Task {\n            do {\n                try await operation()"),
             "RemoteFileBrowserScreen should not own the Void mutation Task in performOperation."
         )
@@ -118,6 +122,9 @@ struct RemoteFileMutationIntentBoundaryTests {
         let browserSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
         )
+        let macOSScreenSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift")
+        )
         let macOSSupportSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Platform/RemoteFileBrowserSupport.swift")
         )
@@ -127,6 +134,14 @@ struct RemoteFileMutationIntentBoundaryTests {
         #expect(
             browserSource.contains("browser.requestTransfer("),
             "RemoteFileBrowserScreen.performTransfer should delegate transfer task ownership to RemoteFileBrowserStore."
+        )
+        #expect(
+            containsRegex(#"browser\.requestTransfer\(\s*serverId:\s*server\.id"#, in: browserSource),
+            "RemoteFileBrowserScreen.performTransfer should pass server identity so disconnect can cancel same-server transfers."
+        )
+        #expect(
+            containsRegex(#"browser\.requestTransfer\(\s*serverId:\s*server\.id"#, in: macOSScreenSource),
+            "RemoteFileBrowserMacScreen file export should pass server identity into the store-owned transfer request."
         )
         #expect(
             !browserSource.contains("Task {\n            do {\n                try await operation { progress in"),

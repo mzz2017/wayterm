@@ -116,6 +116,18 @@ final class RemoteFileBrowserStore: ObservableObject {
         let task: Task<Void, Never>
     }
 
+    private struct MutationRequest {
+        let serverId: UUID?
+        let task: Task<Void, Never>
+        var isCancelled: Bool
+    }
+
+    private struct TransferRequest {
+        let serverId: UUID?
+        let task: Task<Void, Never>
+        var isCancelled: Bool
+    }
+
     private struct MoveDestinationLoadRequest {
         let key: MoveDestinationLoadRequestKey
         var task: Task<Void, Never>?
@@ -150,8 +162,8 @@ final class RemoteFileBrowserStore: ObservableObject {
     var navigationRequestByTab: [UUID: UUID] = [:]
     private var moveDestinationLoadRequests: [UUID: MoveDestinationLoadRequest] = [:]
     private var moveDestinationLoadRequestByKey: [MoveDestinationLoadRequestKey: UUID] = [:]
-    private var mutationRequests: [UUID: Task<Void, Never>] = [:]
-    private var transferRequests: [UUID: Task<Void, Never>] = [:]
+    private var mutationRequests: [UUID: MutationRequest] = [:]
+    private var transferRequests: [UUID: TransferRequest] = [:]
     private var pendingDisconnects: [UUID: PendingDisconnect] = [:]
     #if DEBUG
     private var pendingDisconnectWaitDidFinishForTesting: (@MainActor (UUID) async -> Void)?
@@ -164,11 +176,15 @@ final class RemoteFileBrowserStore: ObservableObject {
     static let maxMediaPreviewBytes = 64 * 1_024 * 1_024
 
     var pendingMutationRequestIDs: Set<UUID> {
-        Set(mutationRequests.keys)
+        Set(mutationRequests.compactMap { requestID, request in
+            request.isCancelled ? nil : requestID
+        })
     }
 
     var pendingTransferRequestIDs: Set<UUID> {
-        Set(transferRequests.keys)
+        Set(transferRequests.compactMap { requestID, request in
+            request.isCancelled ? nil : requestID
+        })
     }
 
     var pendingPreviewLoadRequestIDs: Set<UUID> {
@@ -238,11 +254,13 @@ final class RemoteFileBrowserStore: ObservableObject {
 
     @discardableResult
     func requestMutation(
+        serverId: UUID? = nil,
         operation: @escaping @MainActor () async throws -> Void,
         onSuccess: @escaping @MainActor () -> Void = {},
         onFailure: @escaping @MainActor (Error) -> Void = { _ in }
     ) -> UUID {
         requestMutation(
+            serverId: serverId,
             operation: {
                 try await operation()
                 return ()
@@ -256,57 +274,74 @@ final class RemoteFileBrowserStore: ObservableObject {
 
     @discardableResult
     func requestMutation<Result>(
+        serverId: UUID? = nil,
         operation: @escaping @MainActor () async throws -> Result,
         onSuccess: @escaping @MainActor (Result) -> Void,
         onFailure: @escaping @MainActor (Error) -> Void = { _ in }
     ) -> UUID {
         let requestID = UUID()
-        let task = Task { [weak self] in
+        let task = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                self.mutationRequests.removeValue(forKey: requestID)
+            }
+
             do {
                 let result = try await operation()
+                guard !Task.isCancelled, !isMutationRequestCancelled(requestID) else { return }
                 onSuccess(result)
+            } catch is CancellationError {
+                // Disconnect-driven cancellation is lifecycle state, not a user-facing mutation failure.
             } catch {
+                guard !Task.isCancelled, !isMutationRequestCancelled(requestID) else { return }
                 onFailure(error)
             }
-            self.mutationRequests.removeValue(forKey: requestID)
         }
 
-        mutationRequests[requestID] = task
+        mutationRequests[requestID] = MutationRequest(serverId: serverId, task: task, isCancelled: false)
         return requestID
     }
 
     func waitForMutationRequest(_ requestID: UUID) async {
-        await mutationRequests[requestID]?.value
+        await mutationRequests[requestID]?.task.value
     }
 
     @discardableResult
     func requestTransfer<Result>(
+        serverId: UUID? = nil,
         operation: @escaping @MainActor @Sendable (@escaping @MainActor @Sendable (TransferProgress) -> Void) async throws -> Result,
         onProgress: @escaping @MainActor @Sendable (TransferProgress) -> Void = { _ in },
         onSuccess: @escaping @MainActor @Sendable (Result) -> Void,
         onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in }
     ) -> UUID {
         let requestID = UUID()
-        let task = Task { [weak self] in
+        let task = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                self.transferRequests.removeValue(forKey: requestID)
+            }
+
             do {
                 let result = try await operation { progress in
+                    guard !Task.isCancelled, !self.isTransferRequestCancelled(requestID) else { return }
                     onProgress(progress)
                 }
+                guard !Task.isCancelled, !isTransferRequestCancelled(requestID) else { return }
                 onSuccess(result)
+            } catch is CancellationError {
+                // Disconnect-driven cancellation is lifecycle state, not a user-facing transfer failure.
             } catch {
+                guard !Task.isCancelled, !isTransferRequestCancelled(requestID) else { return }
                 onFailure(error)
             }
-            self.transferRequests.removeValue(forKey: requestID)
         }
 
-        transferRequests[requestID] = task
+        transferRequests[requestID] = TransferRequest(serverId: serverId, task: task, isCancelled: false)
         return requestID
     }
 
     func waitForTransferRequest(_ requestID: UUID) async {
-        await transferRequests[requestID]?.value
+        await transferRequests[requestID]?.task.value
     }
 
     func waitForPreviewLoadRequest(_ requestID: UUID) async {
@@ -573,6 +608,8 @@ final class RemoteFileBrowserStore: ObservableObject {
 
     @discardableResult
     func disconnect(serverId: UUID) -> Task<Void, Never> {
+        cancelMutationRequests(for: serverId)
+        cancelTransferRequests(for: serverId)
         cancelMoveDestinationLoadRequests(for: serverId)
 
         var affectedTabIDs = Set(
@@ -609,6 +646,32 @@ final class RemoteFileBrowserStore: ObservableObject {
         guard let requestID = previewLoadRequestByTab.removeValue(forKey: tabId) else { return }
         viewerRequestIDs.removeValue(forKey: tabId)
         previewLoadRequests[requestID]?.task.cancel()
+    }
+
+    func cancelMutationRequests(for serverId: UUID) {
+        for (requestID, request) in mutationRequests where request.serverId == serverId {
+            var canceledRequest = request
+            canceledRequest.isCancelled = true
+            mutationRequests[requestID] = canceledRequest
+            request.task.cancel()
+        }
+    }
+
+    func cancelTransferRequests(for serverId: UUID) {
+        for (requestID, request) in transferRequests where request.serverId == serverId {
+            var canceledRequest = request
+            canceledRequest.isCancelled = true
+            transferRequests[requestID] = canceledRequest
+            request.task.cancel()
+        }
+    }
+
+    private func isMutationRequestCancelled(_ requestID: UUID) -> Bool {
+        mutationRequests[requestID]?.isCancelled ?? true
+    }
+
+    private func isTransferRequestCancelled(_ requestID: UUID) -> Bool {
+        transferRequests[requestID]?.isCancelled ?? true
     }
 
     private func cancelMoveDestinationLoadRequests(for serverId: UUID) {

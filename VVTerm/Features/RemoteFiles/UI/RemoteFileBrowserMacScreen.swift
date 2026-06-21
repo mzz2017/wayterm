@@ -86,6 +86,7 @@ extension RemoteFileBrowserScreen {
             },
             exportEntry: { entry, destinationURL, completion in
                 browser.requestTransfer(
+                    serverId: server.id,
                     operation: { _ in
                         try await browser.downloadItem(entry, to: destinationURL, server: server)
                     },

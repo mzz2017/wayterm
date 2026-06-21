@@ -95,12 +95,13 @@ preserved in the archive.
   - Required fix: add cancellation/supersede semantics and stale-callback guards
     so changed form input cannot receive an old connection-test result.
   - Status: completed by Task 81.
-- [ ] 6. RemoteFiles transfer/mutation cancellation on disconnect.
+- [x] 6. RemoteFiles transfer/mutation cancellation on disconnect.
   - Evidence: `RemoteFileBrowserStore` stores remote operation requests, but
     `disconnect(serverId:)` cancels navigation/preview/move state only before
     closing the adapter; UI transfer calls ignore request IDs.
   - Required fix: expose cancel APIs for active transfer/mutation requests,
     cancel same-server operations on disconnect/close, and add ordering tests.
+  - Status: completed by Task 82.
 - [ ] 7. ServerManager startup load tracking.
   - Evidence: `ServerManager` starts `Task { await loadData() }` from init
     without storing or returning the task.
@@ -126,17 +127,16 @@ preserved in the archive.
 
 ## Current Focus
 
-Next executable slice: Must-Fix 6, RemoteFiles transfer/mutation cancellation on
-disconnect.
+Next executable slice: Must-Fix 7, ServerManager startup load tracking.
 
 Before code:
 
-1. Inspect `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
-   and transfer/mutation UI call sites.
-2. Add a compact Task 82 section here with files, interfaces, RED tests,
+1. Inspect `VVTerm/Features/Servers/Application/ServerManager.swift` and app
+   composition call sites that construct or observe `ServerManager`.
+2. Add a compact Task 83 section here with files, interfaces, RED tests,
    expected verification, API/boundary cleanup, and commit scope.
 3. Follow TDD: RED test first, then implementation, then focused verification.
-4. After Task 82, do API/boundary cleanup before moving to Must-Fix 7.
+4. After Task 83, do API/boundary cleanup before moving to Must-Fix 8.
 
 ## Task 81: Server Connection-Test Cancellation
 
@@ -254,7 +254,7 @@ Perform local lifecycle review against the Swift checklist unless the user expli
   - `disconnect(serverId:)` cancels same-server visible mutation and transfer requests while keeping wait hooks awaitable until blocked operations exit.
   - RemoteFiles UI helpers pass `server.id` into mutation/transfer requests.
 
-- [ ] **Step 1: Add RED disconnect cancellation tests**
+- [x] **Step 1: Add RED disconnect cancellation tests**
 
 Extend `RemoteFileBrowserStoreTests`:
 - `disconnectCancelsVisibleMutationRequestsForServerAndSkipsLateSuccess`
@@ -288,7 +288,7 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: tests fail because mutation/transfer request APIs do not accept `serverId`, disconnect does not cancel mutation/transfer requests, and UI helpers do not pass server identity.
 
-- [ ] **Step 2: Add server-scoped mutation and transfer request records**
+- [x] **Step 2: Add server-scoped mutation and transfer request records**
 
 Update `RemoteFileBrowserStore.swift`:
 - Replace mutation and transfer task dictionaries with private records containing `serverId: UUID?`, `task`, and cancellation state.
@@ -299,14 +299,14 @@ Update `RemoteFileBrowserStore.swift`:
 - Guard mutation success/failure callbacks, transfer progress callbacks, and transfer success/failure callbacks with request cancellation and `Task.isCancelled`.
 - Treat cancellation as lifecycle state, not a user-facing transfer/mutation failure.
 
-- [ ] **Step 3: Cancel same-server requests from disconnect**
+- [x] **Step 3: Cancel same-server requests from disconnect**
 
 Update `disconnect(serverId:)`:
 - Call `cancelMutationRequests(for: serverId)` and `cancelTransferRequests(for: serverId)` before adapter disconnect.
 - Keep existing move-destination/navigation/preview cancellation behavior unchanged.
 - Do not await mutation/transfer requests in `disconnect`; only keep their wait hooks available for tests and later lifecycle callers.
 
-- [ ] **Step 4: Pass server identity from UI helpers**
+- [x] **Step 4: Pass server identity from UI helpers**
 
 Update `RemoteFileBrowserScreen.swift`:
 - In both `performOperation` overloads, call `browser.requestMutation(serverId: server.id, ...)`.
@@ -316,7 +316,7 @@ Update `RemoteFileBrowserScreen.swift`:
 Update `RemoteFileBrowserMacScreen.swift`:
 - In AppKit file export, call `browser.requestTransfer(serverId: server.id, ...)`.
 
-- [ ] **Step 5: Run focused verification**
+- [x] **Step 5: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
@@ -326,11 +326,11 @@ git diff --check
 
 Expected GREEN result: focused tests pass; source scan shows UI passes server identity and disconnect cancels same-server mutation/transfer requests without stale progress/success/failure callbacks.
 
-- [ ] **Step 6: API and boundary cleanup**
+- [x] **Step 6: API and boundary cleanup**
 
 Before review, verify mutation/transfer request API naming remains source-compatible and grammatical, RemoteFiles UI still sends intent only, canceled visible pending state is distinct from awaitable running work, no temporary test-only production helpers were added, and disconnect ordering still waits for pending adapter teardown before new same-server SFTP operations.
 
-- [ ] **Step 7: Review and commit**
+- [x] **Step 7: Review and commit**
 
 Perform local lifecycle review against the Swift checklist unless the user explicitly authorizes new subagents. Fix Critical and Important findings, update Must-Fix 6 status plus Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
@@ -363,6 +363,23 @@ xcodebuild build-for-testing \
 
 ## Progress Ledger
 
+- 2026-06-21: Task 82 RED/GREEN completed with local lifecycle review and no
+  new subagents. `RemoteFileBrowserStore` now owns server-scoped mutation and
+  transfer request records with visible pending state, awaitable request tasks,
+  and `cancelMutationRequests(for:)` / `cancelTransferRequests(for:)`;
+  `disconnect(serverId:)` cancels same-server mutation/transfer requests before
+  adapter teardown while preserving wait hooks until blocked operations exit.
+  RemoteFiles UI helpers now pass `server.id` into store-owned mutation and
+  transfer requests instead of relying on unscoped request IDs. Initial RED
+  failed as expected because the request APIs did not accept `serverId`. GREEN
+  verification passed `RemoteFileBrowserStoreTests` and
+  `RemoteFileMutationIntentBoundaryTests` separately and together; source scan
+  showed server-scoped request calls, cancel APIs, pending IDs, and wait hooks
+  in the expected Application/UI/test files. `git diff --check` passed; iOS
+  `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. API/boundary cleanup
+  found the API source-compatible through default `serverId: nil`, RemoteFiles
+  UI still sends intent only, canceled visible state remains distinct from
+  awaitable running work, and no temporary test-only production helper remains.
 - 2026-06-21: Task 81 RED/GREEN completed with local lifecycle review and no
   new subagents. `ServerConnectionTester` now owns cancelable connection-test
   requests through caller-stable request IDs, visible pending state, awaitable
