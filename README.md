@@ -196,17 +196,12 @@ Swift package dependencies currently resolved by the Xcode project:
 - [CONTRIBUTING.md](CONTRIBUTING.md) for contribution workflow
 - [SECURITY.md](SECURITY.md) for vulnerability reporting
 - [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party notices
-- [CLA.md](CLA.md) for the contributor license agreement
 - `docs/specs/` for feature specs such as biometric locks, local discovery, terminal themes, terminal accessories, remote rich clipboard, and the SFTP browser
 
 ## License
 
-VVTerm uses a dual-license model:
-
-- Source code in this repository is licensed under GNU GPL v3.0 (`LICENSE`)
-- Official App Store binaries are distributed under VVTerm's custom App Store EULA (`LICENSE-APPSTORE.md`, https://vvterm.com/terms)
-
-If you obtain VVTerm from source and build it yourself, GPL-3.0 applies.
-If you obtain VVTerm via the App Store, App Store distribution terms apply to that binary.
+This fork is distributed under GPL-3.0 (`LICENSE`). Contributions are not
+submitted under the VVTerm CLA. No additional commercial or proprietary
+relicensing rights are granted.
 
 Copyright © 2026 Vivy Technologies Co., Limited

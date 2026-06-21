@@ -36,22 +36,8 @@ open VVTerm.xcodeproj
 4. Include screenshots or recordings for UI changes.
 5. Include clear validation notes for networking/terminal behavior changes.
 
-## CLA Requirement
-
-This repository requires signing the Contributor License Agreement before a PR can be merged.
-
-1. Read `CLA.md`.
-2. Comment on your pull request with the exact text below:
-
-```text
-I have read the CLA Document and I hereby sign the CLA
-```
-
-CLA checks are enforced by the repository bot configuration in `.clabot`.
-
 ## License
 
-By submitting contributions, you agree that your contributions may be distributed under the project's dual-license model:
-
-- Source code license: `LICENSE` (GPL-3.0)
-- Official App Store binary terms: `LICENSE-APPSTORE.md`
+This fork is distributed under GPL-3.0. Contributions are not submitted under
+the VVTerm CLA. No additional commercial or proprietary relicensing rights are
+granted.
