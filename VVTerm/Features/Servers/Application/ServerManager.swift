@@ -22,6 +22,28 @@ struct ServerDeletionFailure: Identifiable, Equatable {
     }
 }
 
+enum WorkspaceSaveMode: Equatable {
+    case create
+    case update
+}
+
+struct ServerWorkspaceSaveFailure: Identifiable, Equatable {
+    enum Operation: Equatable {
+        case createWorkspace(UUID)
+        case updateWorkspace(UUID)
+    }
+
+    let id: UUID
+    let operation: Operation
+    let message: String
+
+    init(id: UUID = UUID(), operation: Operation, error: Error) {
+        self.id = id
+        self.operation = operation
+        self.message = error.localizedDescription
+    }
+}
+
 @MainActor
 final class ServerManager: ObservableObject {
     typealias ServerDeletionTeardown = @MainActor @Sendable (Server) async -> Void
@@ -35,6 +57,7 @@ final class ServerManager: ObservableObject {
     @Published var isLoading = false
     @Published var error: String?
     @Published private(set) var deletionFailure: ServerDeletionFailure?
+    @Published private(set) var workspaceSaveFailure: ServerWorkspaceSaveFailure?
 
     private let cloudKit = CloudKitManager.shared
     private let syncCoordinator = CloudKitSyncCoordinator.shared
@@ -46,7 +69,9 @@ final class ServerManager: ObservableObject {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ServerManager")
     private var isSyncEnabled: Bool { SyncSettings.isEnabled }
     private var deletionRequests: [UUID: Task<Void, Never>] = [:]
+    private var workspaceSaveRequests: [UUID: Task<Void, Never>] = [:]
     var pendingDeletionRequestIDs: Set<UUID> { Set(deletionRequests.keys) }
+    var pendingWorkspaceSaveRequestIDs: Set<UUID> { Set(workspaceSaveRequests.keys) }
 
     // Local storage keys
     private let serversKey = CloudKitSyncConstants.serverStorageKey
@@ -1139,6 +1164,37 @@ final class ServerManager: ObservableObject {
         await persistLocalMutations(logMessage: "Updated workspace: \(updatedWorkspace.name)")
     }
 
+    @discardableResult
+    func requestWorkspaceSave(
+        _ workspace: Workspace,
+        mode: WorkspaceSaveMode,
+        onSaved: @escaping @MainActor (Workspace) -> Void = { _ in },
+        onProRequired: @escaping @MainActor () -> Void = {},
+        onFailed: @escaping @MainActor (String) -> Void = { _ in }
+    ) -> UUID {
+        let operation: ServerWorkspaceSaveFailure.Operation = switch mode {
+        case .create:
+            .createWorkspace(workspace.id)
+        case .update:
+            .updateWorkspace(workspace.id)
+        }
+
+        return trackWorkspaceSaveRequest(
+            operation: operation,
+            onProRequired: onProRequired,
+            onFailed: onFailed
+        ) { [weak self] in
+            guard let self else { return }
+            switch mode {
+            case .create:
+                try await self.addWorkspace(workspace)
+            case .update:
+                try await self.updateWorkspace(workspace)
+            }
+            onSaved(self.workspaces.first { $0.id == workspace.id } ?? workspace)
+        }
+    }
+
     func deleteWorkspace(_ workspace: Workspace) async throws {
         // Delete all servers in workspace
         let workspaceServers = servers.filter { $0.workspaceId == workspace.id }
@@ -1157,9 +1213,13 @@ final class ServerManager: ObservableObject {
     @discardableResult
     func requestWorkspaceDeletion(
         _ workspace: Workspace,
-        onDeleted: @escaping @MainActor () -> Void = {}
+        onDeleted: @escaping @MainActor () -> Void = {},
+        onFailed: @escaping @MainActor (String) -> Void = { _ in }
     ) -> UUID {
-        trackDeletionRequest(operation: .deleteWorkspace(workspace.id)) { [weak self] in
+        trackDeletionRequest(
+            operation: .deleteWorkspace(workspace.id),
+            onFailed: onFailed
+        ) { [weak self] in
             guard let self else { return }
             try await self.deleteWorkspace(workspace)
             onDeleted()
@@ -1194,8 +1254,17 @@ final class ServerManager: ObservableObject {
         await deletionRequests[requestID]?.value
     }
 
+    func clearWorkspaceSaveFailure() {
+        workspaceSaveFailure = nil
+    }
+
+    func waitForWorkspaceSaveRequest(_ requestID: UUID) async {
+        await workspaceSaveRequests[requestID]?.value
+    }
+
     private func trackDeletionRequest(
         operation: ServerDeletionFailure.Operation,
+        onFailed: @escaping @MainActor (String) -> Void = { _ in },
         _ action: @escaping @MainActor () async throws -> Void
     ) -> UUID {
         let requestID = UUID()
@@ -1208,11 +1277,45 @@ final class ServerManager: ObservableObject {
             } catch {
                 self.error = error.localizedDescription
                 self.deletionFailure = ServerDeletionFailure(operation: operation, error: error)
+                onFailed(error.localizedDescription)
             }
             self.deletionRequests.removeValue(forKey: requestID)
         }
 
         deletionRequests[requestID] = task
+        return requestID
+    }
+
+    private func trackWorkspaceSaveRequest(
+        operation: ServerWorkspaceSaveFailure.Operation,
+        onProRequired: @escaping @MainActor () -> Void = {},
+        onFailed: @escaping @MainActor (String) -> Void = { _ in },
+        _ action: @escaping @MainActor () async throws -> Void
+    ) -> UUID {
+        let requestID = UUID()
+        workspaceSaveFailure = nil
+
+        let task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await action()
+            } catch let error as VVTermError {
+                self.error = error.localizedDescription
+                self.workspaceSaveFailure = ServerWorkspaceSaveFailure(operation: operation, error: error)
+                if case .proRequired = error {
+                    onProRequired()
+                } else {
+                    onFailed(error.localizedDescription)
+                }
+            } catch {
+                self.error = error.localizedDescription
+                self.workspaceSaveFailure = ServerWorkspaceSaveFailure(operation: operation, error: error)
+                onFailed(error.localizedDescription)
+            }
+            self.workspaceSaveRequests.removeValue(forKey: requestID)
+        }
+
+        workspaceSaveRequests[requestID] = task
         return requestID
     }
 

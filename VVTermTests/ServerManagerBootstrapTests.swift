@@ -10,7 +10,7 @@ import Testing
 // rather than sync transport behavior. Update this context only when
 // bootstrap/backfill policy, known-host cleanup ownership, credential-save
 // ordering, server deletion teardown ownership, or user-initiated server,
-// workspace, and environment deletion intent tracking changes intentionally.
+// workspace, and environment save/delete intent tracking changes intentionally.
 @Suite(.serialized)
 @MainActor
 struct ServerManagerBootstrapTests {
@@ -352,6 +352,82 @@ struct ServerManagerBootstrapTests {
         #expect(
             !manager.workspaces.contains { $0.id == workspace.id },
             "Workspace metadata should be removed after contained server teardown completes."
+        )
+    }
+
+    @Test
+    func workspaceSaveIntentTracksUpdateAndRunsSuccessAfterApplicationSave() async throws {
+        // Given a workspace edit launched from a synchronous UI intent.
+        let workspace = Workspace(id: UUID(), name: "Main", order: 0)
+        let manager = ServerManager.makeForTesting(workspaces: [workspace])
+        let editedWorkspace = Workspace(
+            id: workspace.id,
+            name: "Main Updated",
+            colorHex: "#00AAFF",
+            order: workspace.order,
+            environments: workspace.environments,
+            lastSelectedEnvironmentId: workspace.lastSelectedEnvironmentId,
+            lastSelectedServerId: workspace.lastSelectedServerId,
+            createdAt: workspace.createdAt
+        )
+        var savedWorkspace: Workspace?
+
+        // When UI sends save intent without directly owning the async update
+        // task.
+        let requestID = manager.requestWorkspaceSave(editedWorkspace, mode: .update) { workspace in
+            savedWorkspace = workspace
+        }
+
+        // Then the application layer tracks the request and calls success only
+        // after the workspace metadata has been updated.
+        #expect(manager.pendingWorkspaceSaveRequestIDs.contains(requestID))
+        await manager.waitForWorkspaceSaveRequest(requestID)
+        #expect(!manager.pendingWorkspaceSaveRequestIDs.contains(requestID))
+        #expect(savedWorkspace?.id == workspace.id)
+        #expect(savedWorkspace?.name == "Main Updated")
+        #expect(manager.workspaces.first?.name == "Main Updated")
+        #expect(manager.workspaceSaveFailure == nil)
+    }
+
+    @Test
+    func workspaceSaveIntentTracksProFailureWithoutCallingSuccess() async throws {
+        // Given free-tier state already has the maximum workspace count.
+        let existingWorkspace = Workspace(id: UUID(), name: "Existing", order: 0)
+        let manager = ServerManager.makeForTesting(workspaces: [existingWorkspace])
+        let newWorkspace = Workspace(id: UUID(), name: "New Workspace", order: 1)
+        var savedWorkspace: Workspace?
+        var didShowProUpgrade = false
+        var failureMessage: String?
+
+        // When UI sends create intent that hits the Pro limit.
+        let requestID = manager.requestWorkspaceSave(
+            newWorkspace,
+            mode: .create,
+            onSaved: { workspace in
+                savedWorkspace = workspace
+            },
+            onProRequired: {
+                didShowProUpgrade = true
+            },
+            onFailed: { message in
+                failureMessage = message
+            }
+        )
+
+        // Then the manager captures the failure, keeps workspace metadata
+        // unchanged, and lets the UI show the existing upgrade path without
+        // pretending save succeeded.
+        #expect(manager.pendingWorkspaceSaveRequestIDs.contains(requestID))
+        await manager.waitForWorkspaceSaveRequest(requestID)
+        #expect(!manager.pendingWorkspaceSaveRequestIDs.contains(requestID))
+        #expect(savedWorkspace == nil)
+        #expect(didShowProUpgrade)
+        #expect(failureMessage == nil)
+        #expect(manager.workspaces.map(\.id) == [existingWorkspace.id])
+        #expect(manager.workspaceSaveFailure?.operation == .createWorkspace(newWorkspace.id))
+        #expect(
+            manager.workspaceSaveFailure?.message.contains("Upgrade") == true,
+            "Workspace save Pro failure should preserve the user-visible upgrade message."
         )
     }
 
