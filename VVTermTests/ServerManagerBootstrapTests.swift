@@ -432,6 +432,109 @@ struct ServerManagerBootstrapTests {
     }
 
     @Test
+    func environmentSaveIntentTracksUpdateAndRunsSuccessAfterApplicationSave() async throws {
+        // Given an environment edit launched from synchronous UI intent with a
+        // server assigned to that environment.
+        let environment = ServerEnvironment(
+            id: UUID(),
+            name: "QA",
+            shortName: "QA",
+            colorHex: "#FF00FF"
+        )
+        let workspace = Workspace(
+            id: UUID(),
+            name: "Main",
+            order: 0,
+            environments: ServerEnvironment.builtInEnvironments + [environment]
+        )
+        let server = Server(
+            id: UUID(),
+            workspaceId: workspace.id,
+            environment: environment,
+            name: "Tencent",
+            host: "environment-save.example.com",
+            username: "root"
+        )
+        let manager = ServerManager.makeForTesting(
+            servers: [server],
+            workspaces: [workspace]
+        )
+        let editedEnvironment = ServerEnvironment(
+            id: environment.id,
+            name: "Quality",
+            shortName: "Qual",
+            colorHex: "#00AAFF"
+        )
+        var savedWorkspace: Workspace?
+        var savedEnvironment: ServerEnvironment?
+
+        // When UI sends update intent without directly owning the async
+        // workspace/environment save task.
+        let requestID = manager.requestEnvironmentSave(
+            editedEnvironment,
+            in: workspace,
+            mode: .update
+        ) { workspace, environment in
+            savedWorkspace = workspace
+            savedEnvironment = environment
+        }
+
+        // Then the application layer tracks the request and calls success only
+        // after workspace metadata and assigned servers use the edited
+        // environment.
+        #expect(manager.pendingEnvironmentSaveRequestIDs.contains(requestID))
+        await manager.waitForEnvironmentSaveRequest(requestID)
+        #expect(!manager.pendingEnvironmentSaveRequestIDs.contains(requestID))
+        #expect(savedWorkspace?.environment(withId: environment.id)?.name == "Quality")
+        #expect(savedEnvironment?.name == "Quality")
+        #expect(manager.workspaces.first?.environment(withId: environment.id)?.name == "Quality")
+        #expect(
+            manager.servers.first?.environment.name == "Quality",
+            "Environment update intent must update servers assigned to that environment before success."
+        )
+        #expect(manager.environmentSaveFailure == nil)
+    }
+
+    @Test
+    func environmentSaveIntentTracksCreateAndReturnsPersistedWorkspace() async throws {
+        // Given an environment create launched from synchronous UI intent.
+        let wasPro = StoreManager.shared.isPro
+        StoreManager.shared.isPro = true
+        defer { StoreManager.shared.isPro = wasPro }
+
+        let workspace = Workspace(id: UUID(), name: "Main", order: 0)
+        let manager = ServerManager.makeForTesting(workspaces: [workspace])
+        let newEnvironment = ServerEnvironment(
+            id: UUID(),
+            name: "QA",
+            shortName: "QA",
+            colorHex: "#FF00FF"
+        )
+        var savedWorkspace: Workspace?
+        var savedEnvironment: ServerEnvironment?
+
+        // When UI sends create intent.
+        let requestID = manager.requestEnvironmentSave(
+            newEnvironment,
+            in: workspace,
+            mode: .create
+        ) { workspace, environment in
+            savedWorkspace = workspace
+            savedEnvironment = environment
+        }
+
+        // Then the callback receives the workspace state after the manager's
+        // persistence boundary, not the stale pre-save workspace passed by UI.
+        #expect(manager.pendingEnvironmentSaveRequestIDs.contains(requestID))
+        await manager.waitForEnvironmentSaveRequest(requestID)
+        #expect(!manager.pendingEnvironmentSaveRequestIDs.contains(requestID))
+        #expect(savedEnvironment?.id == newEnvironment.id)
+        #expect(savedWorkspace?.environment(withId: newEnvironment.id)?.name == "QA")
+        #expect(manager.workspaces.first?.environment(withId: newEnvironment.id)?.name == "QA")
+        #expect(manager.environmentSaveFailure == nil)
+    }
+
+    @Test
     func workspaceDeletionIntentTracksFailureInsteadOfDroppingResult() async throws {
         // Given a workspace deletion launched from a synchronous UI intent where
         // credential cleanup fails during the awaitable application delete path.

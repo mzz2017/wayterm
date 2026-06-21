@@ -27,10 +27,32 @@ enum WorkspaceSaveMode: Equatable {
     case update
 }
 
+enum ServerEnvironmentSaveMode: Equatable {
+    case create
+    case update
+}
+
 struct ServerWorkspaceSaveFailure: Identifiable, Equatable {
     enum Operation: Equatable {
         case createWorkspace(UUID)
         case updateWorkspace(UUID)
+    }
+
+    let id: UUID
+    let operation: Operation
+    let message: String
+
+    init(id: UUID = UUID(), operation: Operation, error: Error) {
+        self.id = id
+        self.operation = operation
+        self.message = error.localizedDescription
+    }
+}
+
+struct ServerEnvironmentSaveFailure: Identifiable, Equatable {
+    enum Operation: Equatable {
+        case createEnvironment(workspaceID: UUID, environmentID: UUID)
+        case updateEnvironment(workspaceID: UUID, environmentID: UUID)
     }
 
     let id: UUID
@@ -58,6 +80,7 @@ final class ServerManager: ObservableObject {
     @Published var error: String?
     @Published private(set) var deletionFailure: ServerDeletionFailure?
     @Published private(set) var workspaceSaveFailure: ServerWorkspaceSaveFailure?
+    @Published private(set) var environmentSaveFailure: ServerEnvironmentSaveFailure?
 
     private let cloudKit = CloudKitManager.shared
     private let syncCoordinator = CloudKitSyncCoordinator.shared
@@ -70,8 +93,10 @@ final class ServerManager: ObservableObject {
     private var isSyncEnabled: Bool { SyncSettings.isEnabled }
     private var deletionRequests: [UUID: Task<Void, Never>] = [:]
     private var workspaceSaveRequests: [UUID: Task<Void, Never>] = [:]
+    private var environmentSaveRequests: [UUID: Task<Void, Never>] = [:]
     var pendingDeletionRequestIDs: Set<UUID> { Set(deletionRequests.keys) }
     var pendingWorkspaceSaveRequestIDs: Set<UUID> { Set(workspaceSaveRequests.keys) }
+    var pendingEnvironmentSaveRequestIDs: Set<UUID> { Set(environmentSaveRequests.keys) }
 
     // Local storage keys
     private let serversKey = CloudKitSyncConstants.serverStorageKey
@@ -1262,6 +1287,14 @@ final class ServerManager: ObservableObject {
         await workspaceSaveRequests[requestID]?.value
     }
 
+    func clearEnvironmentSaveFailure() {
+        environmentSaveFailure = nil
+    }
+
+    func waitForEnvironmentSaveRequest(_ requestID: UUID) async {
+        await environmentSaveRequests[requestID]?.value
+    }
+
     private func trackDeletionRequest(
         operation: ServerDeletionFailure.Operation,
         onFailed: @escaping @MainActor (String) -> Void = { _ in },
@@ -1316,6 +1349,30 @@ final class ServerManager: ObservableObject {
         }
 
         workspaceSaveRequests[requestID] = task
+        return requestID
+    }
+
+    private func trackEnvironmentSaveRequest(
+        operation: ServerEnvironmentSaveFailure.Operation,
+        onFailed: @escaping @MainActor (String) -> Void = { _ in },
+        _ action: @escaping @MainActor () async throws -> Void
+    ) -> UUID {
+        let requestID = UUID()
+        environmentSaveFailure = nil
+
+        let task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await action()
+            } catch {
+                self.error = error.localizedDescription
+                self.environmentSaveFailure = ServerEnvironmentSaveFailure(operation: operation, error: error)
+                onFailed(error.localizedDescription)
+            }
+            self.environmentSaveRequests.removeValue(forKey: requestID)
+        }
+
+        environmentSaveRequests[requestID] = task
         return requestID
     }
 
@@ -1591,6 +1648,48 @@ final class ServerManager: ObservableObject {
             colorHex: color,
             isBuiltIn: false
         )
+    }
+
+    @discardableResult
+    func requestEnvironmentSave(
+        _ environment: ServerEnvironment,
+        in workspace: Workspace,
+        mode: ServerEnvironmentSaveMode,
+        onSaved: @escaping @MainActor (Workspace, ServerEnvironment) -> Void = { _, _ in },
+        onFailed: @escaping @MainActor (String) -> Void = { _ in }
+    ) -> UUID {
+        let operation: ServerEnvironmentSaveFailure.Operation = switch mode {
+        case .create:
+            .createEnvironment(workspaceID: workspace.id, environmentID: environment.id)
+        case .update:
+            .updateEnvironment(workspaceID: workspace.id, environmentID: environment.id)
+        }
+
+        return trackEnvironmentSaveRequest(
+            operation: operation,
+            onFailed: onFailed
+        ) { [weak self] in
+            guard let self else { return }
+            let currentWorkspace = self.workspace(withId: workspace.id) ?? workspace
+            let savedWorkspace: Workspace
+
+            switch mode {
+            case .create:
+                guard self.canCreateCustomEnvironment else {
+                    throw VVTermError.proRequired(String(localized: "Upgrade to Pro for custom environments"))
+                }
+                var updatedWorkspace = currentWorkspace
+                if !updatedWorkspace.environments.contains(where: { $0.id == environment.id }) {
+                    updatedWorkspace.environments.append(environment)
+                }
+                try await self.updateWorkspace(updatedWorkspace)
+                savedWorkspace = self.workspace(withId: workspace.id) ?? updatedWorkspace
+            case .update:
+                savedWorkspace = try await self.updateEnvironment(environment, in: currentWorkspace)
+            }
+
+            onSaved(savedWorkspace, environment)
+        }
     }
 
     func updateEnvironment(_ environment: ServerEnvironment, in workspace: Workspace) async throws -> Workspace {

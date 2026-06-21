@@ -111,43 +111,27 @@ struct EnvironmentFormSheet: View {
         isSaving = true
         error = nil
 
-        Task {
-            do {
-                if let environment {
-                    let updatedEnvironment = ServerEnvironment(
-                        id: environment.id,
-                        name: trimmedName,
-                        shortName: String(trimmedName.prefix(4)),
-                        colorHex: selectedColorHex,
-                        isBuiltIn: false
-                    )
-                    let updatedWorkspace = try await serverManager.updateEnvironment(updatedEnvironment, in: workspace)
-                    await MainActor.run {
-                        onSave(updatedWorkspace, updatedEnvironment)
-                        dismiss()
-                    }
-                } else {
-                    let newEnvironment = try serverManager.createCustomEnvironment(
-                        name: trimmedName,
-                        color: selectedColorHex
-                    )
-                    var updatedWorkspace = workspace
-                    updatedWorkspace.environments.append(newEnvironment)
+        let environmentToSave = ServerEnvironment(
+            id: environment?.id ?? UUID(),
+            name: trimmedName,
+            shortName: String(trimmedName.prefix(4)),
+            colorHex: selectedColorHex,
+            isBuiltIn: false
+        )
 
-                    try await serverManager.updateWorkspace(updatedWorkspace)
-
-                    await MainActor.run {
-                        onSave(updatedWorkspace, newEnvironment)
-                        dismiss()
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    self.error = error.localizedDescription
-                    self.isSaving = false
-                }
+        serverManager.requestEnvironmentSave(
+            environmentToSave,
+            in: workspace,
+            mode: isEditing ? .update : .create,
+            onSaved: { savedWorkspace, savedEnvironment in
+                onSave(savedWorkspace, savedEnvironment)
+                dismiss()
+            },
+            onFailed: { message in
+                error = message
+                isSaving = false
             }
-        }
+        )
     }
 }
 
