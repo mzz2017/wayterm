@@ -5804,8 +5804,123 @@ Before review, verify split pane surface callbacks no longer bypass the injected
 
 Request code review for Task 74. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
+## Task 75: Root Terminal Surface Callback Manager Injection
+
+**Files:**
+- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
+- Test: `VVTermTests/TerminalRootSurfaceCallbackBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing `ConnectionSessionManager` root-session APIs: `configureRuntime`, `getTerminal`, `peekTerminal`, `markTerminalUsed`, `registerTerminal`, `requestSessionResize`, `updateSessionWorkingDirectory`, `updateSessionTitle`, `handleTerminalZoom`, `presentationOverrides`, `requestSessionInput`, `requestSurfaceAttach`, and `handleClosedSessionSurfaceTeardown`.
+  - Existing `TerminalContainerView.session`, `TerminalContainerView.server`, credential load state, and `SSHTerminalWrapper` construction sites.
+  - Existing `SSHTerminalCoordinator` protocol and macOS/iOS `Coordinator` classes.
+- Produces:
+  - `TerminalContainerView` stores an injected root-session manager reference and passes it into every `SSHTerminalWrapper` construction.
+  - macOS `SSHTerminalWrapper` stores `let sessionManager: ConnectionSessionManager`.
+  - iOS `SSHTerminalWrapper` and private `SSHTerminalRepresentable` store `let sessionManager: ConnectionSessionManager`.
+  - `SSHTerminalCoordinator` and both root coordinators store the same manager for `sendToSSH(_:)` and `attachSurface(_:context:resetTerminal:)`.
+  - Root terminal surface callbacks use the injected manager for configure/get/peek/mark-used/register/resize/PWD/title/zoom/presentation/input/attach and update-time missing-session teardown instead of reaching for `ConnectionSessionManager.shared`.
+
+- [ ] **Step 1: Add RED root surface callback boundary tests**
+
+Create `TerminalRootSurfaceCallbackBoundaryTests` with Test Context:
+- Protected behavior: root terminal representable callbacks should report surface events to the injected TerminalSessions application owner.
+- Invariant: macOS and iOS root wrapper instance callbacks plus coordinator callbacks must use the injected `sessionManager`; static teardown in `dismantleNSView` / `dismantleUIView` may still use `ConnectionSessionManager.shared` until a later representable lifetime task.
+- Update guidance: update the tests only if root terminal surface callback ownership intentionally moves to a different injected application owner or static teardown is redesigned.
+
+Add `terminalContainerInjectsSessionManagerIntoRootWrapper`:
+- Read `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`.
+- Assert the source contains `private let sessionManager = ConnectionSessionManager.shared`.
+- Assert every `SSHTerminalWrapper(` construction in the file includes `sessionManager: sessionManager`.
+
+Add `macRootWrapperUsesInjectedManagerForSurfaceCallbacks`:
+- Read `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`.
+- Slice from `struct SSHTerminalWrapper: NSViewRepresentable` ending before `static func dismantleNSView`.
+- Assert the slice contains `let sessionManager: ConnectionSessionManager`.
+- Assert the slice contains `sessionManager.configureRuntime`, `sessionManager.getTerminal`, `sessionManager.requestSessionResize`, `sessionManager.updateSessionWorkingDirectory`, `sessionManager.updateSessionTitle`, `sessionManager.handleTerminalZoom`, `sessionManager.presentationOverrides`, `sessionManager.registerTerminal`, and `sessionManager.handleClosedSessionSurfaceTeardown`.
+- Assert the slice does not contain `ConnectionSessionManager.shared`.
+
+Add `iosRootRepresentableUsesInjectedManagerForSurfaceCallbacks`:
+- Slice from `private struct SSHTerminalRepresentable` ending before `static func dismantleUIView`.
+- Assert the slice contains `let sessionManager: ConnectionSessionManager`.
+- Assert the slice contains `sessionManager.configureRuntime`, `sessionManager.peekTerminal`, `sessionManager.markTerminalUsed`, `sessionManager.requestSessionResize`, `sessionManager.updateSessionWorkingDirectory`, `sessionManager.updateSessionTitle`, `sessionManager.handleTerminalZoom`, `sessionManager.presentationOverrides`, `sessionManager.registerTerminal`, and `sessionManager.handleClosedSessionSurfaceTeardown`.
+- Assert the slice does not contain `ConnectionSessionManager.shared`.
+
+Add `rootCoordinatorUsesInjectedManagerForInputAndAttach`:
+- Slice from `protocol SSHTerminalCoordinator` ending before `#if os(macOS)`.
+- Assert the protocol requires `var sessionManager: ConnectionSessionManager { get }`.
+- Assert `sendToSSH(_:)` calls `sessionManager.requestSessionInput`.
+- Assert `attachSurface(_:context:resetTerminal:)` calls `sessionManager.requestSurfaceAttach`.
+- Assert the slice does not contain `ConnectionSessionManager.shared`.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalRootSurfaceCallbackBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails because `TerminalContainerView` does not inject a manager into root wrappers, and the root wrapper/coordinator callbacks still reach directly for `ConnectionSessionManager.shared`.
+
+- [ ] **Step 2: Pass the injected ConnectionSessionManager into root wrappers**
+
+Update root terminal UI:
+- Add `private let sessionManager = ConnectionSessionManager.shared` to `TerminalContainerView`.
+- Replace `terminalAlreadyExists` with `sessionManager.hasTerminal(for: session.id)`.
+- Pass `sessionManager: sessionManager` into each `SSHTerminalWrapper(...)` construction.
+- Add `let sessionManager: ConnectionSessionManager` to macOS `SSHTerminalWrapper`.
+- Add `let sessionManager: ConnectionSessionManager` to iOS `SSHTerminalWrapper` and pass it into `SSHTerminalRepresentable`.
+- Add `let sessionManager: ConnectionSessionManager` to private iOS `SSHTerminalRepresentable`.
+- Add `var sessionManager: ConnectionSessionManager { get }` to `SSHTerminalCoordinator`.
+- Add `let sessionManager: ConnectionSessionManager` to both root coordinator classes and pass `sessionManager: sessionManager` from `makeCoordinator()`.
+
+- [ ] **Step 3: Route root surface callbacks through the injected manager**
+
+Within macOS `SSHTerminalWrapper` instance methods, replace `ConnectionSessionManager.shared` with `sessionManager` for:
+- runtime configuration;
+- existing terminal lookup;
+- resize/PWD/title/zoom callbacks;
+- presentation overrides;
+- terminal registration;
+- update-time missing-session teardown and presentation override checks.
+
+Within iOS `SSHTerminalRepresentable` instance methods, replace `ConnectionSessionManager.shared` with `sessionManager` for:
+- runtime configuration;
+- existing terminal lookup and mark-used;
+- resize/PWD/title/zoom callbacks;
+- presentation overrides;
+- terminal registration;
+- update-time missing-session teardown and presentation override checks.
+
+Within `SSHTerminalCoordinator`, replace `ConnectionSessionManager.shared` with the protocol's `sessionManager` for:
+- `requestSessionInput`;
+- `requestSurfaceAttach`.
+
+Do not change `static func dismantleNSView` or `static func dismantleUIView` in this task; static representable teardown cannot access instance properties and needs a later representable lifetime design slice.
+
+- [ ] **Step 4: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalRootSurfaceCallbackBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "SSHTerminalWrapper|SSHTerminalRepresentable|ConnectionSessionManager\\.shared|sessionManager\\.(configureRuntime|getTerminal|peekTerminal|markTerminalUsed|updateSessionWorkingDirectory|updateSessionTitle|handleTerminalZoom|presentationOverrides|registerTerminal|requestSessionResize|requestSessionInput|requestSurfaceAttach|handleClosedSessionSurfaceTeardown)" VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift VVTermTests/TerminalRootSurfaceCallbackBoundaryTests.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows root terminal surface instance callbacks and coordinator callbacks use `sessionManager.*`, while any remaining `ConnectionSessionManager.shared` hit in `SSHTerminalWrapper.swift` is confined to static teardown and explicitly deferred.
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Before review, verify root terminal surface callbacks no longer bypass the injected manager, `TerminalContainerView` is still UI-only and only sends intent/reads presentation state, no new lifecycle work or untracked task was introduced, static representable teardown remains the only root-wrapper singleton exemption, and touched tests include complete Test Context plus Given / When / Then comments.
+
+- [ ] **Step 6: Request review and commit**
+
+Request code review for Task 75. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-74 scan selected Task 75 as the next executable lifecycle slice. After split pane surface callbacks moved to an injected `TerminalTabManager`, the root `SSHTerminalWrapper` still has the same dependency-boundary smell on both macOS and iOS: representable instance callbacks and the shared `SSHTerminalCoordinator` extension directly call `ConnectionSessionManager.shared` for runtime configuration, terminal lookup/registration, resize, PWD/title metadata, zoom, presentation overrides, input, surface attach, and update-time missing-session teardown. Task 75 should mirror Task 74 for root-session callbacks by injecting the already app-owned `ConnectionSessionManager` through `TerminalContainerView` into `SSHTerminalWrapper`, `SSHTerminalRepresentable`, and both coordinators. Static `dismantleNSView` / `dismantleUIView` remain deferred because they cannot access instance injection; broader root lifecycle teardown, pane UI intent helper injection, terminal title/PWD/background parsing, Ghostty config reload, and other low-level Application/Core lifecycle slices remain open.
 - 2026-06-21: Task 74 RED/GREEN completed with local lifecycle review. `TerminalPaneView` now receives the injected `TerminalTabManager` from `TerminalTabView`, uses it for pane state/terminal lookup, and passes it into `SSHTerminalPaneWrapper`; the split pane wrapper and its coordinator now route runtime configuration, terminal reuse/registration, resize, PWD/title metadata, zoom, presentation overrides, input, surface attach, and coordinator close callbacks through the injected manager instead of reaching directly for `TerminalTabManager.shared`. Initial RED failed as expected because `TerminalPaneView` did not pass a manager into the wrapper and wrapper/coordinator callbacks still used the singleton. GREEN focused verification passed 3 Swift Testing tests in `TerminalSplitSurfaceCallbackBoundaryTests`; source scan showed the scoped wrapper/coordinator callbacks use `tabManager.*`, with remaining split wrapper singleton usage confined to `static func dismantleNSView` and explicitly deferred. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Tool policy did not permit spawning an independent review subagent without explicit delegation, so review was local against the Swift lifecycle checklist; no Critical or Important issues were found. Root `SSHTerminalWrapper`, static teardown redesign, pane UI intent helper injection, terminal title/PWD/background parsing, Ghostty config reload, and other low-level Application/Core lifecycle slices remain open.
 - 2026-06-21: Post-Task-73 scan selected Task 74 as the next executable lifecycle slice. After split voice text send moved to the injected tab manager, split pane surface callbacks remain inconsistent: `TerminalTabView` already owns an injected `tabManager`, but `TerminalPaneView`, `SSHTerminalPaneWrapper`, and its coordinator still use `TerminalTabManager.shared` for pane runtime configuration, terminal lookup/registration, resize, PWD/title metadata, zoom, presentation overrides, input, and surface attach callbacks. Root `SSHTerminalWrapper` has broader `ConnectionSessionManager.shared` usage and should be deferred to a later root wrapper injection/lifetime task; `static dismantleNSView` also remains a separate representable lifetime design issue because it cannot access instance injection. Task 74 should keep the slice to split pane instance/coordinator callbacks and leave terminal title/PWD/background parsing, Ghostty config reload, and root wrapper callback injection open.
 - 2026-06-21: Task 73 RED/GREEN completed with local lifecycle review fix. `TerminalTabManager` now owns split-pane terminal-surface text insertion through `sendText(_:toPane:)`, and split `TerminalView` routes voice transcription completions through its injected `tabManager` instead of unwrapping `focusedTerminal`, dispatching back to the main queue, and calling `terminal.sendText(trimmed)` directly. The voice overlay and stop/send path both capture the voice request target before registering completion callbacks, so completed transcription text is sent to the intended pane target. Initial RED failed because split voice text send still used `focusedTerminal`, direct `terminal.sendText(trimmed)`, and `DispatchQueue.main.async`; follow-up RED failed because the completion closures did not capture the voice target; local review then found an Important dependency-boundary issue where `TerminalView` called `TerminalTabManager.shared` despite already receiving an injected manager. GREEN focused verification passed 4 Swift Testing tests in `TerminalVoiceInputIntentBoundaryTests`; source scan showed the scoped voice text path uses `tabManager.sendText(trimmed, toPane: paneId)` with no direct terminal write. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Tool policy did not permit spawning an independent review subagent without explicit delegation, so review was local against the Swift lifecycle checklist. Terminal title/PWD/background parsing, terminal interaction-state cleanup, Ghostty config reload, and other low-level Application/Core lifecycle slices remain open.
