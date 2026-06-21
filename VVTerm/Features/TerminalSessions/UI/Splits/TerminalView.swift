@@ -783,14 +783,14 @@ struct TerminalPaneView: View {
     }
 
     private func retrustHostAndRetry() {
-        Task {
-            let didReconnect = await TerminalTabManager.shared.retrustHostAndReconnect(
-                paneId: paneId,
-                server: server
-            )
-            guard didReconnect else { return }
-            reconnectToken = UUID()
-        }
+        TerminalTabManager.shared.requestPaneHostRetrust(
+            paneId: paneId,
+            server: server,
+            onCompleted: { didReconnect in
+                guard didReconnect else { return }
+                reconnectToken = UUID()
+            }
+        )
     }
 
     private func attemptAutoReconnectIfNeeded() {

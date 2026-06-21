@@ -53,6 +53,12 @@ final class ConnectionSessionManager: ObservableObject {
         var onCompleted: [@MainActor (TerminalReconnectRequestResult) -> Void]
     }
 
+    private struct SessionHostRetrustRequest {
+        let sessionId: UUID
+        let task: Task<Void, Never>
+        var onCompleted: [@MainActor (Bool) -> Void]
+    }
+
     private final class SessionRuntimeState {
         let sessionId: UUID
         var server: Server
@@ -237,6 +243,9 @@ final class ConnectionSessionManager: ObservableObject {
     private var sessionRetryRequests: [UUID: SessionRetryRequest] = [:]
     private var sessionRetryRequestBySession: [UUID: UUID] = [:]
     var pendingSessionRetryRequestIDs: Set<UUID> { Set(sessionRetryRequests.keys) }
+    private var sessionHostRetrustRequests: [UUID: SessionHostRetrustRequest] = [:]
+    private var sessionHostRetrustRequestBySession: [UUID: UUID] = [:]
+    var pendingSessionHostRetrustRequestIDs: Set<UUID> { Set(sessionHostRetrustRequests.keys) }
     private var sessionReconnectsInFlight: Set<UUID> = []
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
     private var serverDisconnectTasks: [UUID: Task<Void, Never>] = [:]
@@ -258,6 +267,7 @@ final class ConnectionSessionManager: ObservableObject {
     private var tmuxInstallOperationForTesting: (@MainActor (UUID) async -> Void)?
     private var moshInstallAndReconnectOperationForTesting: (@MainActor (ConnectionSession) async throws -> Void)?
     private var sessionRetryOperationForTesting: (@MainActor (ConnectionSession, Server?) async -> TerminalReconnectRequestResult)?
+    private var sessionHostRetrustOperationForTesting: (@MainActor (ConnectionSession, Server) async -> Bool)?
     #endif
     @Published private(set) var isSuspendingForBackground = false
 
@@ -844,6 +854,7 @@ final class ConnectionSessionManager: ObservableObject {
     private func clearRuntimeStateForClosedSession(_ sessionId: UUID) -> Task<Void, Never>? {
         cancelInstallRequests(for: sessionId)
         cancelSessionRetryRequest(for: sessionId)
+        cancelSessionHostRetrustRequest(for: sessionId)
         let shellTeardownTask = cancelAndClearShellHandlers(for: sessionId)
         terminalsNeedingReconnectReset.remove(sessionId)
         terminalBrowseModeBySession.removeValue(forKey: sessionId)
@@ -871,6 +882,14 @@ final class ConnectionSessionManager: ObservableObject {
            let request = sessionRetryRequests.removeValue(forKey: requestID) {
             request.task.cancel()
             request.onCompleted.forEach { $0(.skipped) }
+        }
+    }
+
+    private func cancelSessionHostRetrustRequest(for sessionId: UUID) {
+        if let requestID = sessionHostRetrustRequestBySession.removeValue(forKey: sessionId),
+           let request = sessionHostRetrustRequests.removeValue(forKey: requestID) {
+            request.task.cancel()
+            request.onCompleted.forEach { $0(false) }
         }
     }
 
@@ -2103,14 +2122,76 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     func retrustHostAndReconnect(session: ConnectionSession, server: Server) async -> Bool {
+        guard canRunSessionHostRetrust(session: session, server: server) else { return false }
         await KnownHostsStore.shared.remove(host: server.host, port: server.port)
-        guard !Task.isCancelled else { return false }
+        guard canRunSessionHostRetrust(session: session, server: server) else { return false }
         do {
             try await reconnect(session: session)
             return true
         } catch {
             return false
         }
+    }
+
+    private func canRunSessionHostRetrust(session: ConnectionSession, server: Server) -> Bool {
+        guard !Task.isCancelled else { return false }
+        return sessions.contains { $0.id == session.id && $0.serverId == server.id }
+    }
+
+    @discardableResult
+    func requestSessionHostRetrust(
+        session: ConnectionSession,
+        server: Server,
+        onCompleted: @escaping @MainActor (Bool) -> Void = { _ in }
+    ) -> UUID {
+        if let requestID = sessionHostRetrustRequestBySession[session.id] {
+            sessionHostRetrustRequests[requestID]?.onCompleted.append(onCompleted)
+            return requestID
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.sessionHostRetrustRequests.removeValue(forKey: requestID)
+                if self.sessionHostRetrustRequestBySession[session.id] == requestID {
+                    self.sessionHostRetrustRequestBySession.removeValue(forKey: session.id)
+                }
+            }
+
+            guard self.canRunSessionHostRetrust(session: session, server: server) else {
+                let callbacks = self.sessionHostRetrustRequests[requestID]?.onCompleted ?? []
+                callbacks.forEach { $0(false) }
+                return
+            }
+
+            #if DEBUG
+            let didReconnect: Bool
+            if let operation = self.sessionHostRetrustOperationForTesting {
+                didReconnect = await operation(session, server)
+            } else {
+                didReconnect = await self.retrustHostAndReconnect(session: session, server: server)
+            }
+            #else
+            let didReconnect = await self.retrustHostAndReconnect(session: session, server: server)
+            #endif
+
+            let callbacks = self.sessionHostRetrustRequests[requestID]?.onCompleted ?? []
+            callbacks.forEach {
+                $0(self.canRunSessionHostRetrust(session: session, server: server) ? didReconnect : false)
+            }
+        }
+        sessionHostRetrustRequests[requestID] = SessionHostRetrustRequest(
+            sessionId: session.id,
+            task: task,
+            onCompleted: [onCompleted]
+        )
+        sessionHostRetrustRequestBySession[session.id] = requestID
+        return requestID
+    }
+
+    func waitForSessionHostRetrustRequest(_ requestID: UUID) async {
+        await sessionHostRetrustRequests[requestID]?.task.value
     }
 
     func installMoshServerAndReconnect(session: ConnectionSession) async throws {
@@ -2777,6 +2858,9 @@ extension ConnectionSessionManager {
         sessionRetryRequests.values.forEach { $0.task.cancel() }
         sessionRetryRequests.removeAll()
         sessionRetryRequestBySession.removeAll()
+        sessionHostRetrustRequests.values.forEach { $0.task.cancel() }
+        sessionHostRetrustRequests.removeAll()
+        sessionHostRetrustRequestBySession.removeAll()
         sessionReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
@@ -2796,6 +2880,7 @@ extension ConnectionSessionManager {
         tmuxInstallOperationForTesting = nil
         moshInstallAndReconnectOperationForTesting = nil
         sessionRetryOperationForTesting = nil
+        sessionHostRetrustOperationForTesting = nil
         isRestoring = false
 
         UserDefaults.standard.removeObject(forKey: persistenceKey)
@@ -2849,6 +2934,12 @@ extension ConnectionSessionManager {
         _ operation: (@MainActor (ConnectionSession, Server?) async -> TerminalReconnectRequestResult)?
     ) {
         sessionRetryOperationForTesting = operation
+    }
+
+    func setSessionHostRetrustOperationForTesting(
+        _ operation: (@MainActor (ConnectionSession, Server) async -> Bool)?
+    ) {
+        sessionHostRetrustOperationForTesting = operation
     }
 
     func setCredentialsProviderForTesting(

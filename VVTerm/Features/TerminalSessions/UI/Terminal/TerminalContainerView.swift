@@ -651,14 +651,14 @@ struct TerminalContainerView: View {
 
     private func retrustHostAndRetry() {
         guard let server else { return }
-        Task {
-            let didReconnect = await ConnectionSessionManager.shared.retrustHostAndReconnect(
-                session: session,
-                server: server
-            )
-            guard didReconnect else { return }
-            reconnectToken = UUID()
-        }
+        ConnectionSessionManager.shared.requestSessionHostRetrust(
+            session: session,
+            server: server,
+            onCompleted: { didReconnect in
+                guard didReconnect else { return }
+                reconnectToken = UUID()
+            }
+        )
     }
 
     private func attemptAutoReconnectIfNeeded() {

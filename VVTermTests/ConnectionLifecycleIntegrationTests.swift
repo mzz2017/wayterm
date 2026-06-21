@@ -616,6 +616,70 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerHostRetrustRequestCoalescesDuplicateCallersUntilOperationCompletes() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .failed("Host key verification failed")
+            )
+            let gate = InstallOperationGate()
+            manager.sessions = [session]
+            manager.setSessionHostRetrustOperationForTesting { requestSession, requestServer in
+                #expect(
+                    requestSession.id == session.id,
+                    "The tracked host-retrust request should target the requested session."
+                )
+                #expect(
+                    requestServer.id == server.id,
+                    "The tracked host-retrust request should use the server passed by SwiftUI intent."
+                )
+                await gate.run()
+                return true
+            }
+            var firstResult: Bool?
+            var secondResult: Bool?
+
+            // Given terminal UI sends host-retrust intent and the application
+            // layer owns the blocking trust-store mutation plus reconnect work.
+            let firstRequestID = manager.requestSessionHostRetrust(
+                session: session,
+                server: server,
+                onCompleted: { firstResult = $0 }
+            )
+
+            // When the same session asks again before retrust completion.
+            let secondRequestID = manager.requestSessionHostRetrust(
+                session: session,
+                server: server,
+                onCompleted: { secondResult = $0 }
+            )
+            await gate.waitForCallCount(1)
+
+            // Then duplicate callers share one awaitable manager-owned request.
+            #expect(secondRequestID == firstRequestID)
+            #expect(
+                manager.pendingSessionHostRetrustRequestIDs == [firstRequestID],
+                "Session host retrust must remain pending while manager-owned work is blocked."
+            )
+            #expect(firstResult == nil)
+            #expect(secondResult == nil)
+            #expect(await gate.callCount == 1)
+
+            await gate.release()
+            await manager.waitForSessionHostRetrustRequest(firstRequestID)
+
+            #expect(firstResult == true)
+            #expect(secondResult == true)
+            #expect(
+                manager.pendingSessionHostRetrustRequestIDs.isEmpty,
+                "Session host-retrust request state should clear after callbacks receive the final result."
+            )
+        }
+    }
+
+    @Test
     func connectionManagerForegroundReconnectIntentExecutesReconnectInApplicationLayer() async {
         await withCleanConnectionManager { manager in
             let server = makeServer()
@@ -1031,6 +1095,70 @@ struct ConnectionLifecycleIntegrationTests {
             #expect(
                 result.isSkipped,
                 "Pane retry must revalidate runtime liveness after awaited credential loading."
+            )
+        }
+    }
+
+    @Test
+    func tabManagerHostRetrustRequestCoalescesDuplicateCallersUntilOperationCompletes() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tabId = UUID()
+            let paneId = UUID()
+            let gate = InstallOperationGate()
+            var paneState = TerminalPaneState(paneId: paneId, tabId: tabId, serverId: server.id)
+            paneState.connectionState = .failed("Host key verification failed")
+            manager.paneStates[paneId] = paneState
+            manager.setPaneHostRetrustOperationForTesting { requestPaneId, requestServer in
+                #expect(
+                    requestPaneId == paneId,
+                    "The tracked pane host-retrust request should target the requested pane."
+                )
+                #expect(
+                    requestServer.id == server.id,
+                    "The tracked pane host-retrust request should use the server passed by SwiftUI intent."
+                )
+                await gate.run()
+                return true
+            }
+            var firstResult: Bool?
+            var secondResult: Bool?
+
+            // Given split terminal UI sends host-retrust intent and the tab
+            // manager owns the trust-store mutation plus reconnect work.
+            let firstRequestID = manager.requestPaneHostRetrust(
+                paneId: paneId,
+                server: server,
+                onCompleted: { firstResult = $0 }
+            )
+
+            // When duplicate intent arrives before the first request completes.
+            let secondRequestID = manager.requestPaneHostRetrust(
+                paneId: paneId,
+                server: server,
+                onCompleted: { secondResult = $0 }
+            )
+            await gate.waitForCallCount(1)
+
+            // Then duplicate callers share one request and all receive the
+            // final retrust result after manager-owned work finishes.
+            #expect(secondRequestID == firstRequestID)
+            #expect(
+                manager.pendingPaneHostRetrustRequestIDs == [firstRequestID],
+                "Pane host retrust must remain pending while manager-owned work is blocked."
+            )
+            #expect(firstResult == nil)
+            #expect(secondResult == nil)
+            #expect(await gate.callCount == 1)
+
+            await gate.release()
+            await manager.waitForPaneHostRetrustRequest(firstRequestID)
+
+            #expect(firstResult == true)
+            #expect(secondResult == true)
+            #expect(
+                manager.pendingPaneHostRetrustRequestIDs.isEmpty,
+                "Pane host-retrust request state should clear after callbacks receive the final result."
             )
         }
     }
@@ -2960,6 +3088,45 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerCloseSessionCancelsPendingHostRetrustRequest() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(serverId: server.id, title: server.name)
+            let gate = InstallOperationGate()
+            manager.sessions = [session]
+            manager.setSessionHostRetrustOperationForTesting { _, _ in
+                await gate.run()
+                return true
+            }
+            var results: [Bool] = []
+
+            // Given a host-retrust request is pending for a session.
+            let requestID = manager.requestSessionHostRetrust(
+                session: session,
+                server: server,
+                onCompleted: { results.append($0) }
+            )
+            await gate.waitForCallCount(1)
+
+            // When the owning session closes before trusted-host mutation and
+            // reconnect work returns.
+            await manager.closeSessionAndWait(session)
+            await manager.waitForSessionHostRetrustRequest(requestID)
+
+            // Then the pending request is treated as lifecycle cancellation
+            // and presentation callbacks receive a non-reconnect result.
+            #expect(manager.pendingSessionHostRetrustRequestIDs.isEmpty)
+            #expect(results == [false])
+            await gate.release()
+            try? await Task.sleep(for: .milliseconds(20))
+            #expect(
+                results == [false],
+                "A canceled session retrust request must not send a later success callback after blocked work returns."
+            )
+        }
+    }
+
+    @Test
     func connectionManagerRecordsMoshInstallFailureWithoutCallingSuccess() async {
         await withCleanConnectionManager { manager in
             let session = ConnectionSession(serverId: UUID(), title: "Session")
@@ -3088,6 +3255,49 @@ struct ConnectionLifecycleIntegrationTests {
             #expect(moshFailedCount == 0)
             await tmuxGate.release()
             await moshGate.release()
+        }
+    }
+
+    @Test
+    func tabManagerClosePaneCancelsPendingHostRetrustRequest() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tab = TerminalTab(serverId: server.id, title: server.name)
+            let gate = InstallOperationGate()
+            manager.tabsByServer[server.id] = [tab]
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+            manager.setPaneHostRetrustOperationForTesting { _, _ in
+                await gate.run()
+                return true
+            }
+            var results: [Bool] = []
+
+            // Given a host-retrust request is pending for a pane.
+            let requestID = manager.requestPaneHostRetrust(
+                paneId: tab.rootPaneId,
+                server: server,
+                onCompleted: { results.append($0) }
+            )
+            await gate.waitForCallCount(1)
+
+            // When the owning pane closes before retrust work returns.
+            await manager.closePaneAndWait(tab: tab, paneId: tab.rootPaneId)
+            await manager.waitForPaneHostRetrustRequest(requestID)
+
+            // Then the request clears as lifecycle cancellation, not a later
+            // successful reconnect callback.
+            #expect(manager.pendingPaneHostRetrustRequestIDs.isEmpty)
+            #expect(results == [false])
+            await gate.release()
+            try? await Task.sleep(for: .milliseconds(20))
+            #expect(
+                results == [false],
+                "A canceled pane retrust request must not send a later success callback after blocked work returns."
+            )
         }
     }
 }
