@@ -3226,8 +3226,70 @@ Request code review for Task 42. Fix Critical and Important findings, update the
 
 Review result: initial review found one Important issue: real `purchase(_:)` and `restorePurchases()` catch paths still translated `CancellationError` into failed Store UI state. The follow-up fix introduced cancellation-aware Store state helpers and regression tests; re-review found no Critical or Important issues. Minor accepted risk: cancellation coverage uses a narrow helper seam because StoreKit `Product.purchase()` and `AppStore.sync()` are not directly faked.
 
+## Task 43: Store Lifecycle Refresh Task Tracking
+
+**Files:**
+- Modify: `VVTerm/Features/Store/Application/StoreManager.swift`
+- Test: `VVTermTests/Features/Store/StoreManagerLifecycleTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `StoreManager.loadProducts()`
+  - `StoreManager.checkEntitlements()`
+  - Existing review mode enable/disable state.
+- Produces:
+  - StoreManager-owned startup refresh task tracking for product load plus entitlement check.
+  - StoreManager-owned review-mode disable entitlement refresh tracking.
+  - Awaitable test hooks that prove these lifecycle tasks do not disappear into untracked `Task {}` work.
+
+- [x] **Step 1: Add RED lifecycle tests**
+
+Extend `StoreManagerLifecycleTests` with fake load-products and check-entitlements operations. The tests must prove startup refresh remains tracked while product loading and entitlement checking are pending, and that disabling review mode tracks the entitlement refresh until completion.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/StoreManagerLifecycleTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the test fails to compile because StoreManager does not yet expose injectable lifecycle refresh operations or awaitable startup/review-mode refresh tracking hooks.
+
+Actual RED result: `StoreManagerLifecycleTests` failed to compile because `StoreManager.makeForTesting(...)` did not accept lifecycle operation injections.
+
+- [x] **Step 2: Track startup refresh**
+
+Replace the initialization `Task { await loadProducts(); await checkEntitlements() }` with a StoreManager-owned stored task. The task should be canceled in `deinit`, clear itself after completion, and remain awaitable for tests.
+
+- [x] **Step 3: Track review-mode disable refresh**
+
+Replace the `Task { await checkEntitlements() }` created when review mode is disabled with a StoreManager-owned stored task. The task should cancel any previous review-mode refresh, clear itself after completion, and remain awaitable for tests.
+
+- [x] **Step 4: Run focused verification**
+
+Run the focused Store lifecycle tests plus a source scan for the old untracked Store lifecycle tasks:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/StoreManagerLifecycleTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{\\s*(await loadProducts\\(\\)|await checkEntitlements\\(\\))|Task \\{ await checkEntitlements\\(\\) \\}" VVTerm/Features/Store/Application/StoreManager.swift
+git diff --check
+```
+
+Actual GREEN result: `StoreManagerLifecycleTests` passed 7 Swift Testing tests after startup refresh and review-mode disable refresh were stored on `StoreManager`, including review-fix coverage proving a superseded review-mode refresh does not run entitlement work after cancellation. The Store lifecycle source scan produced no matches for the old untracked load/check entitlement task forms, `git diff --check` passed, and iOS/macOS build-for-testing passed.
+
+- [x] **Step 5: API and boundary cleanup**
+
+Before review, verify the lifecycle hooks are test-only or private, StoreManager remains the single Store lifecycle owner, the new task names match the existing request-task style, and no new StoreKit work moved into SwiftUI.
+
+- [x] **Step 6: Request review and commit**
+
+Request code review for Task 43. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
+
+Review result: initial review found one Important issue: canceling a superseded review-mode refresh did not prevent that task from running entitlement work if it resumed before the new task completed. Follow-up RED coverage failed with two entitlement refreshes, then GREEN passed after `startReviewModeRefresh()` checked cancellation before invoking the entitlement refresh action. Re-review found no Critical or Important issues.
+
 ## Progress Ledger
 
+- 2026-06-21: Task 43 RED/GREEN completed with review fix. Store startup product/entitlement refresh and review-mode disable entitlement refresh are now owned by `StoreManager` as stored tasks, canceled in `deinit`, clear only their current task IDs, and expose DEBUG-only await hooks for lifecycle ordering tests. Review found a superseded review-mode refresh could still run entitlement work after cancellation; follow-up RED coverage failed with two refreshes until `startReviewModeRefresh()` checked cancellation before invoking the entitlement action, and re-review found no Critical or Important issues. Verification: initial RED failed because Store refresh operation injection and await hooks did not exist; review-fix RED failed because a canceled superseded refresh still ran entitlement work; GREEN `StoreManagerLifecycleTests` passed 7 Swift Testing tests; Store lifecycle source scan produced no matches for old untracked startup/review refresh task forms; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with existing Swift 6 isolation and XCTest deployment warnings. Guard warning for added `Task` was reviewed: the tasks are stored and tracked by `StoreManager`.
 - 2026-06-21: Task 42 RED/GREEN completed with review fix. Store purchase and restore buttons now send synchronous intent to `StoreManager.requestPurchase(of:)` and `StoreManager.requestRestorePurchases()` instead of starting SwiftUI-owned StoreKit tasks. `StoreManager` owns pending purchase/restore request tasks by request ID, exposes awaitable waits, records request-level failures, and keeps `purchase(_:)` / `restorePurchases()` as the StoreKit behavior boundary. Review found real purchase/restore catch paths still translated `CancellationError` into failed UI state; follow-up RED coverage failed until cancellation-aware Store state helpers existed, and re-review found no Critical or Important issues. Verification: initial RED failed because Store request tracking APIs did not exist; review-fix RED failed because cancellation helper seams did not exist; GREEN focused suite passed 3 XCTest tests plus 5 Swift Testing tests; Store UI boundary scan produced no matches; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with existing Swift 6 isolation and XCTest deployment warnings. Guard warning for added `Task` was reviewed: the tasks are owned and tracked by `StoreManager`, not SwiftUI.
 - 2026-06-21: Task 41 RED/GREEN completed before commit. Terminal open intent now flows through `TerminalTabManager.requestTabOpen(...)`, `TerminalTabManager.requestServerTerminalOpen(...)`, and `ConnectionSessionManager.requestConnectionOpen(...)`, so SwiftUI buttons, menus, duplicate-tab, macOS sidebar, and iOS server-list/new-tab flows no longer create their own terminal-open tasks, branch around the application owner for existing tabs, or hide open failures behind `try?`/no-op catches. Managers track pending request IDs, preserve cancellation separately from failures, expose awaitable request waits for tests, and reuse the existing `openTab`/`openConnection` teardown and duplicate-open gates. Review fixes closed two AppLock ordering gaps: existing-tab focus now unlocks before selecting, and `ServerSidebarView` selects the server only from the manager success callback. Verification: RED `TerminalOpenIntentBoundaryTests` failed with 5 issues before the route change; review-fix RED failed until `requestServerTerminalOpen(...)` exposed a manager-owned unlock boundary; second review-fix RED failed until the server sidebar stopped preselecting before unlock; GREEN focused suite passed 14 XCTest tests plus 79 Swift Testing tests; terminal-open UI boundary scan produced no matches; `git diff --check` passed; iOS and macOS build-for-testing passed with existing warnings only. Re-review found no Critical or Important issues.
 - 2026-06-21: Post-Task-35 closure audit found the plan was not actually ready for final merge review. Current non-exempt gaps are now tracked as Tasks 36-40: terminal runner close must await the stored runner finish path, terminal reconnect orchestration still lives in SwiftUI, iOS RemoteFiles disconnect drops returned teardown tasks, Core SSH needs tighter disconnect timeout/cancellation diagnostics, and cross-feature save/delete/sync/download/window ownership still needs a scoped sweep.

@@ -7,6 +7,8 @@ import os.log
 
 @MainActor
 final class StoreManager: ObservableObject {
+    private typealias StoreLifecycleAction = @MainActor (StoreManager) async -> Void
+
     static let shared = StoreManager()
     static let reviewModeCode = ReviewModeCode.value
 
@@ -27,9 +29,15 @@ final class StoreManager: ObservableObject {
     var pendingPurchaseRequestIDs: Set<UUID> { Set(purchaseRequestTasks.keys) }
     var pendingRestoreRequestIDs: Set<UUID> { Set(restoreRequestTasks.keys) }
 
+    private var startupRefreshTask: Task<Void, Never>?
+    private var startupRefreshTaskID: UUID?
+    private var reviewModeRefreshTask: Task<Void, Never>?
+    private var reviewModeRefreshTaskID: UUID?
     private var updateListenerTask: Task<Void, Error>?
     private var reviewModeExpiryTask: Task<Void, Never>?
     private var reviewModeExpiresAt: Date?
+    private let loadProductsAction: StoreLifecycleAction
+    private let checkEntitlementsAction: StoreLifecycleAction
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Store")
     private let reviewModeDuration: TimeInterval = 60 * 60 * 5
 
@@ -49,20 +57,73 @@ final class StoreManager: ObservableObject {
 
     // MARK: - Initialization
 
-    private init(startBackgroundTasks: Bool = true) {
+    private init(
+        startBackgroundTasks: Bool = true,
+        loadProductsAction: StoreLifecycleAction? = nil,
+        checkEntitlementsAction: StoreLifecycleAction? = nil
+    ) {
+        self.loadProductsAction = loadProductsAction ?? { manager in
+            await manager.loadProducts()
+        }
+        self.checkEntitlementsAction = checkEntitlementsAction ?? { manager in
+            await manager.checkEntitlements()
+        }
+
         if startBackgroundTasks {
             updateListenerTask = listenForTransactions()
-            Task {
-                await loadProducts()
-                await checkEntitlements()
-            }
+            startStartupRefresh()
         }
     }
 
     deinit {
         updateListenerTask?.cancel()
+        startupRefreshTask?.cancel()
+        reviewModeRefreshTask?.cancel()
         purchaseRequestTasks.values.forEach { $0.cancel() }
         restoreRequestTasks.values.forEach { $0.cancel() }
+    }
+
+    private func startStartupRefresh() {
+        startupRefreshTask?.cancel()
+        let taskID = UUID()
+        startupRefreshTaskID = taskID
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.startupRefreshTaskID == taskID {
+                    self.startupRefreshTaskID = nil
+                    self.startupRefreshTask = nil
+                }
+            }
+
+            await self.loadProductsAction(self)
+            guard !Task.isCancelled else { return }
+            await self.checkEntitlementsAction(self)
+        }
+
+        startupRefreshTask = task
+    }
+
+    private func startReviewModeRefresh() {
+        reviewModeRefreshTask?.cancel()
+        let taskID = UUID()
+        reviewModeRefreshTaskID = taskID
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.reviewModeRefreshTaskID == taskID {
+                    self.reviewModeRefreshTaskID = nil
+                    self.reviewModeRefreshTask = nil
+                }
+            }
+
+            guard !Task.isCancelled else { return }
+            await self.checkEntitlementsAction(self)
+        }
+
+        reviewModeRefreshTask = task
     }
 
     // MARK: - Load Products
@@ -321,7 +382,7 @@ final class StoreManager: ObservableObject {
             reviewModeExpiryTask?.cancel()
             reviewModeExpiryTask = nil
             logger.info("Review mode disabled")
-            Task { await checkEntitlements() }
+            startReviewModeRefresh()
         }
     }
 
@@ -400,8 +461,16 @@ final class StoreManager: ObservableObject {
 
 #if DEBUG
 extension StoreManager {
-    static func makeForTesting() -> StoreManager {
-        StoreManager(startBackgroundTasks: false)
+    static func makeForTesting(
+        startBackgroundTasks: Bool = false,
+        loadProductsAction: (@MainActor (StoreManager) async -> Void)? = nil,
+        checkEntitlementsAction: (@MainActor (StoreManager) async -> Void)? = nil
+    ) -> StoreManager {
+        StoreManager(
+            startBackgroundTasks: startBackgroundTasks,
+            loadProductsAction: loadProductsAction,
+            checkEntitlementsAction: checkEntitlementsAction
+        )
     }
 
     @discardableResult
@@ -424,6 +493,22 @@ extension StoreManager {
 
     func applyRestoreErrorForTesting(_ error: Error) {
         applyRestoreError(error)
+    }
+
+    var hasPendingStartupRefreshForTesting: Bool {
+        startupRefreshTask != nil
+    }
+
+    func waitForStartupRefreshForTesting() async {
+        await startupRefreshTask?.value
+    }
+
+    var hasPendingReviewModeRefreshForTesting: Bool {
+        reviewModeRefreshTask != nil
+    }
+
+    func waitForReviewModeRefreshForTesting() async {
+        await reviewModeRefreshTask?.value
     }
 }
 #endif

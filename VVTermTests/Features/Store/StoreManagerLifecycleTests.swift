@@ -3,11 +3,11 @@ import Testing
 
 // Test Context:
 // These tests protect StoreManager as the application-layer owner for StoreKit
-// purchase and restore request lifecycle. Fakes avoid real StoreKit products,
-// AppStore.sync, transaction streams, and network I/O. Update these tests only
-// when purchase/restore request ownership intentionally moves to another Store
-// application owner with equivalent pending-request tracking, awaitable
-// completion, and request-failure diagnostics.
+// purchase, restore, startup refresh, and review-mode refresh lifecycle. Fakes
+// avoid real StoreKit products, AppStore.sync, transaction streams, and network
+// I/O. Update these tests only when Store lifecycle ownership intentionally
+// moves to another application owner with equivalent pending-task tracking,
+// awaitable completion, and request-failure diagnostics.
 @MainActor
 @Suite
 struct StoreManagerLifecycleTests {
@@ -112,6 +112,109 @@ struct StoreManagerLifecycleTests {
             "Store restore cancellation must remain distinct from failed StoreKit operations."
         )
     }
+
+    @Test
+    func startupRefreshTracksLoadAndEntitlementsUntilCompletion() async {
+        let loadGate = StoreRequestGate()
+        let entitlementGate = StoreRequestGate()
+        var operationOrder: [String] = []
+
+        // Given StoreManager starts its launch refresh with fake StoreKit work
+        // that stays pending until the test releases each phase.
+        let manager = StoreManager.makeForTesting(
+            startBackgroundTasks: true,
+            loadProductsAction: { _ in
+                operationOrder.append("load")
+                await loadGate.waitForRelease()
+            },
+            checkEntitlementsAction: { _ in
+                operationOrder.append("entitlements")
+                await entitlementGate.waitForRelease()
+            }
+        )
+
+        await loadGate.waitForOperationStart()
+        #expect(
+            manager.hasPendingStartupRefreshForTesting,
+            "Store startup refresh must stay tracked while product loading is pending."
+        )
+
+        await loadGate.release()
+        await entitlementGate.waitForOperationStart()
+        #expect(
+            operationOrder == ["load", "entitlements"],
+            "Store startup refresh should load products before checking entitlements."
+        )
+        #expect(
+            manager.hasPendingStartupRefreshForTesting,
+            "Store startup refresh must stay tracked while entitlement checking is pending."
+        )
+
+        await entitlementGate.release()
+        await manager.waitForStartupRefreshForTesting()
+
+        #expect(
+            !manager.hasPendingStartupRefreshForTesting,
+            "StoreManager should clear startup refresh tracking after completion."
+        )
+    }
+
+    @Test
+    func disablingReviewModeTracksEntitlementRefreshUntilCompletion() async {
+        let entitlementGate = StoreRequestGate()
+        var entitlementRefreshCount = 0
+        let manager = StoreManager.makeForTesting(
+            checkEntitlementsAction: { _ in
+                entitlementRefreshCount += 1
+                await entitlementGate.waitForRelease()
+            }
+        )
+
+        // Given review mode is enabled and then disabled by user/app intent.
+        #expect(manager.enableReviewMode(code: StoreManager.reviewModeCode))
+        manager.setReviewModeEnabled(false)
+
+        await entitlementGate.waitForOperationStart()
+        #expect(
+            manager.hasPendingReviewModeRefreshForTesting,
+            "Disabling review mode must track the entitlement refresh while it is pending."
+        )
+
+        await entitlementGate.release()
+        await manager.waitForReviewModeRefreshForTesting()
+
+        #expect(entitlementRefreshCount == 1, "Review-mode disable should request one entitlement refresh.")
+        #expect(
+            !manager.hasPendingReviewModeRefreshForTesting,
+            "StoreManager should clear review-mode refresh tracking after completion."
+        )
+    }
+
+    @Test
+    func disablingReviewModeCancelsSupersededEntitlementRefreshBeforeItRuns() async {
+        let recorder = StoreRefreshRecorder()
+        let manager = StoreManager.makeForTesting(
+            checkEntitlementsAction: { _ in
+                await recorder.recordRefresh()
+            }
+        )
+
+        // Given review mode is disabled twice before the first queued refresh
+        // gets a chance to run.
+        #expect(manager.enableReviewMode(code: StoreManager.reviewModeCode))
+        manager.setReviewModeEnabled(false)
+        #expect(manager.enableReviewMode(code: StoreManager.reviewModeCode))
+        manager.setReviewModeEnabled(false)
+
+        await manager.waitForReviewModeRefreshForTesting()
+        await Task.yield()
+
+        let refreshCount = await recorder.refreshCount()
+        #expect(
+            refreshCount == 1,
+            "A superseded review-mode refresh task must not run entitlement work after cancellation."
+        )
+    }
 }
 
 private actor StoreRequestGate {
@@ -151,4 +254,16 @@ private actor StoreRequestGate {
 
 private enum StoreRequestTestError: Error {
     case restoreFailed
+}
+
+private actor StoreRefreshRecorder {
+    private var count = 0
+
+    func recordRefresh() {
+        count += 1
+    }
+
+    func refreshCount() -> Int {
+        count
+    }
 }
