@@ -177,14 +177,13 @@ struct TerminalSettingsView: View {
 
     @EnvironmentObject private var terminalThemeManager: TerminalThemeManager
     @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var trustedHostsStore = TrustedHostsSettingsStore.shared
 
     @State private var availableFonts: [String] = []
     @State private var builtInThemeNames: [String] = []
     @State private var customThemeErrorMessage: String?
     @State private var showingCustomThemeManager = false
     @State private var showingResetKnownHostsConfirmation = false
-    @State private var knownHostCount = 0
-    @State private var knownHostsTask: Task<Void, Never>?
 
     private var builtInThemeOptions: [String] {
         Set(builtInThemeNames)
@@ -517,7 +516,7 @@ struct TerminalSettingsView: View {
                     .foregroundStyle(.red)
             }
             .tint(.red)
-            .disabled(knownHostCount == 0)
+            .disabled(trustedHostsStore.knownHostCount == 0)
         } header: {
             Text("Danger Zone")
         } footer: {
@@ -528,7 +527,7 @@ struct TerminalSettingsView: View {
     }
 
     private var knownHostsFooterText: String {
-        let count = Int64(knownHostCount)
+        let count = Int64(trustedHostsStore.knownHostCount)
         if count == 1 {
             return String(localized: "VVTerm has 1 trusted SSH host on this device. Resetting trusted hosts makes VVTerm trust the host key presented on the next connection.")
         }
@@ -627,27 +626,11 @@ struct TerminalSettingsView: View {
     }
 
     private func refreshKnownHostCount() {
-        knownHostsTask?.cancel()
-        knownHostsTask = Task {
-            let count = await KnownHostsStore.shared.entries().count
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                knownHostCount = count
-            }
-        }
+        trustedHostsStore.refreshKnownHostCount()
     }
 
     private func resetKnownHosts() {
-        knownHostsTask?.cancel()
-        knownHostsTask = Task {
-            await KnownHostsStore.shared.removeAll()
-            guard !Task.isCancelled else { return }
-            let count = await KnownHostsStore.shared.entries().count
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                knownHostCount = count
-            }
-        }
+        trustedHostsStore.resetTrustedHosts()
     }
 
     #if os(macOS)
