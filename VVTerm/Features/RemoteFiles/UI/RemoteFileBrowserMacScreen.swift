@@ -155,8 +155,15 @@ extension RemoteFileBrowserScreen {
             onClose: {
                 browser.clearViewer(for: fileTab)
             },
-            onSaveText: { entry, text in
-                try await browser.saveTextPreview(text, for: entry, in: fileTab, server: server)
+            onSaveText: { request in
+                browser.requestTextPreviewSave(
+                    request.text,
+                    for: request.entry,
+                    in: fileTab,
+                    server: server,
+                    onSaved: request.onSaved,
+                    onFailure: request.onFailure
+                )
             }
         )
         .frame(maxHeight: .infinity, alignment: .top)

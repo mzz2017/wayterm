@@ -207,6 +207,24 @@ extension RemoteFileBrowserStore {
         }
     }
 
+    @discardableResult
+    func requestTextPreviewSave(
+        _ text: String,
+        for entry: RemoteFileEntry,
+        in tab: RemoteFileTab,
+        server: Server,
+        onSaved: @escaping @MainActor () -> Void = {},
+        onFailure: @escaping @MainActor (Error) -> Void = { _ in }
+    ) -> UUID {
+        requestMutation(
+            operation: {
+                try await self.saveTextPreview(text, for: entry, in: tab, server: server)
+            },
+            onSuccess: onSaved,
+            onFailure: onFailure
+        )
+    }
+
     func makePreviewFileURL(for entry: RemoteFileEntry) throws -> URL {
         try temporaryStorage.makePreviewFileURL(for: entry)
     }

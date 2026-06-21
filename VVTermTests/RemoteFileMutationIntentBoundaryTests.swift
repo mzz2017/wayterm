@@ -36,6 +36,41 @@ struct RemoteFileMutationIntentBoundaryTests {
         )
     }
 
+    @Test
+    func previewTextSaveDelegatesTaskOwnershipToStore() throws {
+        // Given shared, macOS, and iOS RemoteFiles preview UI sources.
+        let root = try sourceRoot()
+        let previewSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Preview/RemoteFilePreviewViews.swift")
+        )
+        let platformSources = try [
+            "VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift",
+            "VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserIOSScreen.swift"
+        ].map { path in
+            try source(at: root.appendingPathComponent(path))
+        }.joined(separator: "\n")
+
+        // Then the preview view must send save intent synchronously, and the
+        // platform containers must delegate the actual save task to the
+        // application store.
+        #expect(
+            !previewSource.contains("Task {\n                        await saveEditedText(for: entry)"),
+            "RemoteFileInspectorView should not own edited preview save Task state."
+        )
+        #expect(
+            !previewSource.contains("private func saveEditedText(for entry: RemoteFileEntry) async"),
+            "Edited preview save helper should not be async if the view is only sending intent."
+        )
+        #expect(
+            platformSources.contains("browser.requestTextPreviewSave("),
+            "Preview save UI should delegate task ownership to RemoteFileBrowserStore.requestTextPreviewSave."
+        )
+        #expect(
+            !platformSources.contains("try await browser.saveTextPreview"),
+            "Platform preview UI should not call the async preview-save implementation directly."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

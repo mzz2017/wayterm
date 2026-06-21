@@ -99,8 +99,15 @@ extension RemoteFileBrowserScreen {
                     deleteTargetEntry = entry
                 },
                 onClose: nil,
-                onSaveText: { entry, text in
-                    try await browser.saveTextPreview(text, for: entry, in: fileTab, server: server)
+                onSaveText: { request in
+                    browser.requestTextPreviewSave(
+                        request.text,
+                        for: request.entry,
+                        in: fileTab,
+                        server: server,
+                        onSaved: request.onSaved,
+                        onFailure: request.onFailure
+                    )
                 }
             )
             .navigationTitle(snapshot.selectedEntry?.name ?? snapshot.viewerPayload?.entry.name ?? String(localized: "Preview"))
