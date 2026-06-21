@@ -5614,8 +5614,99 @@ Before review, verify `RemoteFileBrowserStore` is the single owner of remote mov
 
 Request code review for Task 72. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
+## Task 73: Terminal Split Voice Text Intent Boundary
+
+**Files:**
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `VVTermTests/TerminalVoiceInputIntentBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing `TerminalTabManager.getTerminal(for:) -> GhosttyTerminalView?`
+  - Existing root voice text boundary `ConnectionSessionManager.sendText(_:to:)`
+  - Existing split-pane voice lifecycle owner `TerminalVoiceInputStore`
+  - Existing split-pane voice target `TerminalVoiceInputTarget.pane(UUID)`
+- Produces:
+  - `TerminalTabManager.sendText(_ text: String, toPane paneId: UUID)`
+  - Split `TerminalView` voice transcription completion that sends text intent through `TerminalTabManager` instead of directly retaining or writing a `GhosttyTerminalView`.
+  - Split voice text delivery keyed to the voice request target pane, so stop/send completion does not drift to a newly focused pane before delivery.
+
+- [ ] **Step 1: Add RED split voice text boundary tests**
+
+Extend `TerminalVoiceInputIntentBoundaryTests`:
+- Add `splitTerminalDelegatesVoiceTextSendToTabManager`.
+- Read `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`.
+- Slice from `private var voiceOverlay` through `private func sendTranscriptionToTerminal`.
+- Assert the slice contains `TerminalTabManager.shared.sendText(trimmed, toPane: paneId)`.
+- Assert the slice contains `case .pane(let paneId)`.
+- Assert the slice does not contain `guard let terminal = focusedTerminal`.
+- Assert the slice does not contain `terminal.sendText(trimmed)`.
+- Assert the slice does not contain `DispatchQueue.main.async`.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalVoiceInputIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails because split `TerminalView.sendTranscriptionToTerminal(_:)` still unwraps `focusedTerminal` and dispatches `terminal.sendText(trimmed)` from SwiftUI instead of delegating text-send intent to `TerminalTabManager`.
+
+- [ ] **Step 2: Add TerminalTabManager-owned pane text send API**
+
+Update `TerminalTabManager` near `getTerminal(for:)`:
+
+```swift
+/// Send text to the terminal surface for a given split pane.
+func sendText(_ text: String, toPane paneId: UUID) {
+    guard let terminal = terminalSurfaceRegistry.surface(for: .pane(paneId)) else { return }
+    terminal.sendText(text)
+}
+```
+
+This API mirrors root `ConnectionSessionManager.sendText(_:to:)`. It is intentionally synchronous because voice transcription text insertion is a terminal-surface write, not SSH transport teardown/auth/connect work. Do not add request-task tracking unless the implementation starts awaiting external work.
+
+- [ ] **Step 3: Route split voice transcription through pane text intent**
+
+Update split `TerminalView`:
+- Change both voice completion call sites to pass the request target into `sendTranscriptionToTerminal`.
+- In `voiceOverlay`, keep `showingVoiceRecording = false` after send, but call `sendTranscriptionToTerminal(transcribedText, target: voiceTarget)`.
+- In `toggleVoiceRecording`, keep `voiceInput.requestStopAndSend(for: voiceTarget, ...)`, but call `sendTranscriptionToTerminal(text, target: voiceTarget)`.
+- Replace `private func sendTranscriptionToTerminal(_ text: String)` with:
+
+```swift
+private func sendTranscriptionToTerminal(_ text: String, target: TerminalVoiceInputTarget) {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    guard case .pane(let paneId) = target else { return }
+    TerminalTabManager.shared.sendText(trimmed, toPane: paneId)
+}
+```
+
+Do not change root `TerminalContainerView` in this task; it already routes voice text through `ConnectionSessionManager.sendText(_:to:)`.
+
+- [ ] **Step 4: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalVoiceInputIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "sendTranscriptionToTerminal|focusedTerminal|terminal\\.sendText\\(trimmed\\)|DispatchQueue\\.main\\.async|TerminalTabManager\\.shared\\.sendText|func sendText\\(_ text: String, toPane" VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/TerminalVoiceInputIntentBoundaryTests.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows split voice text send uses `TerminalTabManager.shared.sendText(trimmed, toPane: paneId)`, has no direct `focusedTerminal` unwrap inside `sendTranscriptionToTerminal`, has no direct `terminal.sendText(trimmed)`, and has no local `DispatchQueue.main.async` bridge for this path.
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Before review, verify `TerminalTabManager` is the application owner for split-pane terminal surface text insertion, split `TerminalView` keeps only voice presentation and intent sending, no asynchronous lifecycle work was introduced, and touched tests include the Test Context plus Given / When / Then comments required by the Swift test-context rule.
+
+- [ ] **Step 6: Request review and commit**
+
+Request code review for Task 73. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-72 scan selected Task 73 as the next executable lifecycle slice. Task 56 intentionally left split-pane voice text-send ownership as a named limitation, and the current split `TerminalView.sendTranscriptionToTerminal(_:)` still unwraps `focusedTerminal`, dispatches back to the main queue, and calls `terminal.sendText(trimmed)` directly from SwiftUI. Root voice text already routes through `ConnectionSessionManager.sendText(_:to:)`, so Task 73 should add the matching `TerminalTabManager.sendText(_:toPane:)` boundary and route split voice completion by the voice target pane. Keep this slice synchronous and scoped because terminal-surface text insertion is not SSH transport teardown/auth/connect work. Terminal title/PWD/background parsing, terminal interaction-state cleanup, Ghostty config reload, and other low-level Application/Core lifecycle slices remain open.
 - 2026-06-21: Task 72 RED/GREEN completed with review fix and reviewer Minor covered by an additional ordering test. `RemoteFileBrowserStore` now owns tracked move-destination directory-load requests through `requestMoveDestinationLoad(path:server:onCompleted:)`, exposes `pendingMoveDestinationLoadRequestIDs` plus `waitForMoveDestinationLoadRequest(_:)`, coalesces duplicate same-server/same-path loads, keeps canceled request handles awaitable until remote list exit, skips canceled/stale callbacks, and cancels visible move-destination loads from `disconnect(serverId:)`. `RemoteFileMoveSheet` now keeps only presentation state and sends synchronous `onRequestDirectories` intent from `.task(id:)` and Retry, with a stale-current-directory guard before applying completions; `RemoteFileBrowserScreen.moveSheet(entry:)` delegates loading to `browser.requestMoveDestinationLoad(...)` instead of awaiting `fileBrowser.listDirectories(...)`. Initial RED failed to build because the request API, pending IDs, wait hook, and DEBUG cancellation hook did not exist. Follow-up RED reproduced disconnect cleanup: the same-server move-destination request stayed visible and delivered a success callback after disconnect. GREEN focused verification passed 27 Swift Testing tests across `RemoteFileBrowserStoreTests` and `RemoteFileMutationIntentBoundaryTests`; source scan showed no `onLoadDirectories`, no Retry `Task { await loadDirectories() }`, no direct `try await fileBrowser.listDirectories`, and the stale directory guard is present. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Independent review found no Critical issues and one Important doc-sync issue, fixed here; the reviewer Minor about same-key replacement after cancellation is covered by `replacementMoveDestinationLoadAfterCancellationRemainsCurrent`. Broader terminal split-pane voice text injection, terminal title/PWD/background parsing, terminal interaction-state cleanup, Ghostty config reload, and other low-level Application/Core lifecycle slices remain open.
 - 2026-06-21: Post-Task-71 scan selected Task 72 as the next executable lifecycle slice. `RemoteFileMoveSheet` still starts move-destination directory loading from SwiftUI `.task(id: currentDirectory)` and Retry still launches `Task { await loadDirectories() }`, while `RemoteFileBrowserScreen.moveSheet(entry:)` passes an async closure that directly awaits `fileBrowser.listDirectories(at:server:)`. This is remote SFTP directory-list lifecycle work and matches the RemoteFiles move-destination loading gap repeatedly deferred in the ledger. Task 72 should move this load into `RemoteFileBrowserStore` as a tracked, awaitable, coalesced request while keeping only sheet presentation state in SwiftUI. Terminal split-pane voice text injection, terminal title/PWD/background parsing, terminal interaction-state cleanup, Ghostty config reload, and broader low-level Application/Core tracked tasks remain deferred.
 - 2026-06-21: Task 71 RED/GREEN completed with local lifecycle review fix. `ConnectionSessionManager` now owns tracked iOS Active Connection open requests through `requestActiveConnectionOpen(session:preferredViewId:onOpened:)`, exposes `pendingActiveConnectionOpenRequestIDs` plus `waitForActiveConnectionOpenRequest(_:)`, coalesces duplicate same-session open intent, checks/reconnects inactive runtimes, selects the session, restores the preferred terminal view, and runs presentation callbacks only after manager-owned reconnect/select work completes. `iOSContentView.openActiveConnection(_:)` now sends server-unlock intent and then active-connection open intent; it no longer owns the reconnect/select/show-terminal `Task`. Initial RED failed to build because the active-connection open request API, pending IDs, wait hook, and DEBUG ordering/cancel hooks did not exist. A follow-up RED reproduced close-path cancellation: closing a session hid the pending request but the wait hook returned before blocked reconnect work exited. GREEN keeps canceled request task handles until task defer cleanup while deriving visible pending state from the session-to-request index. Final focused verification passed 97 Swift Testing tests across `ConnectionLifecycleIntegrationTests` and `IOSActiveConnectionOpenIntentBoundaryTests`; source scan showed `openActiveConnection(_:)` uses `requestServerUnlock` plus `requestActiveConnectionOpen` with no helper-local `Task {}` or direct `reconnectSessionIfRuntimeInactive` call. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Tool policy did not permit spawning an independent review subagent without explicit user delegation, so review was local against the Swift lifecycle checklist; no remaining Critical or Important issues were found. Broader RemoteFiles move-destination loading, split-pane voice text injection, terminal title/PWD/background parsing, terminal interaction-state cleanup, and other deferred lifecycle slices remain open.
