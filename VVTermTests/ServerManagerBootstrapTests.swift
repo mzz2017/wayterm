@@ -15,6 +15,85 @@ import Testing
 @MainActor
 struct ServerManagerBootstrapTests {
     @Test
+    func startupLoadRequestTracksOperationUntilCompletion() async throws {
+        let gate = ServerStartupLoadGate()
+        let waitProbe = ServerStartupLoadWaitProbe()
+
+        // Given app startup constructs ServerManager with a startup data load
+        // that is blocked inside the application-layer load boundary.
+        let manager = ServerManager.makeForTesting(
+            startStartupLoad: true,
+            startupLoadAction: { _ in
+                await gate.markStarted()
+                await gate.waitForRelease()
+            }
+        )
+
+        await gate.waitForStart()
+        let pendingIDs = manager.pendingStartupLoadRequestIDs
+        #expect(
+            pendingIDs.count == 1,
+            "ServerManager startup load must expose one pending request while the fake load is blocked."
+        )
+        let requestID = try #require(pendingIDs.first)
+
+        // When a caller waits for the startup load while it is still pending.
+        let waitTask = Task {
+            await manager.waitForStartupLoadRequest(requestID)
+            await waitProbe.markReturned()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then wait remains ordered behind the underlying load task instead of
+        // returning just because init already finished.
+        #expect(
+            await !waitProbe.didReturn,
+            "Startup load wait should not return before the fake load task exits."
+        )
+
+        await gate.release()
+        await waitTask.value
+
+        #expect(await waitProbe.didReturn)
+        #expect(
+            manager.pendingStartupLoadRequestIDs.isEmpty,
+            "ServerManager should clear startup load request state after the tracked task exits."
+        )
+    }
+
+    @Test
+    func serverManagerInitDoesNotLaunchUntrackedLoadTask() throws {
+        // Given the ServerManager application owner source.
+        let root = try sourceRoot()
+        let source = try String(contentsOf: root.appendingPathComponent(
+            "VVTerm/Features/Servers/Application/ServerManager.swift"
+        ))
+
+        // Then initialization should route startup loading through a named
+        // manager-owned request path instead of an untracked loadData task.
+        #expect(
+            !source.contains("Task { await loadData() }"),
+            "ServerManager init must not launch an untracked startup loadData task."
+        )
+        #expect(
+            source.contains("startStartupLoad()"),
+            "ServerManager init should use a named startup load owner method so request tracking stays auditable."
+        )
+    }
+
+    private func sourceRoot() throws -> URL {
+        var url = URL(fileURLWithPath: #filePath)
+        while url.lastPathComponent != "VVTermTests" {
+            let next = url.deletingLastPathComponent()
+            if next.path == url.path {
+                throw SourceRootError.notFound
+            }
+            url = next
+        }
+        return url.deletingLastPathComponent()
+    }
+
+    @Test
     func bootstrapCreationRunsOnlyBeforeAnyFirstRunMarkerExists() {
         #expect(
             ServerManager.shouldCreateBootstrapWorkspace(
@@ -990,6 +1069,53 @@ struct ServerManagerBootstrapTests {
 
 private struct ServerCredentialStoreFailure: Error {}
 private struct ServerDeletionIntentFailure: Error {}
+
+private enum SourceRootError: Error {
+    case notFound
+}
+
+private actor ServerStartupLoadGate {
+    private var didStart = false
+    private var didRelease = false
+    private var startContinuations: [CheckedContinuation<Void, Never>] = []
+    private var releaseContinuations: [CheckedContinuation<Void, Never>] = []
+
+    func markStarted() {
+        didStart = true
+        let continuations = startContinuations
+        startContinuations.removeAll()
+        continuations.forEach { $0.resume() }
+    }
+
+    func waitForStart() async {
+        guard !didStart else { return }
+        await withCheckedContinuation { continuation in
+            startContinuations.append(continuation)
+        }
+    }
+
+    func waitForRelease() async {
+        guard !didRelease else { return }
+        await withCheckedContinuation { continuation in
+            releaseContinuations.append(continuation)
+        }
+    }
+
+    func release() {
+        didRelease = true
+        let continuations = releaseContinuations
+        releaseContinuations.removeAll()
+        continuations.forEach { $0.resume() }
+    }
+}
+
+private actor ServerStartupLoadWaitProbe {
+    private(set) var didReturn = false
+
+    func markReturned() {
+        didReturn = true
+    }
+}
 
 private actor ServerDeletionOrderProbe {
     private var recordedEvents: [String] = []

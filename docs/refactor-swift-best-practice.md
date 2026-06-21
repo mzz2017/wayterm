@@ -102,12 +102,13 @@ preserved in the archive.
   - Required fix: expose cancel APIs for active transfer/mutation requests,
     cancel same-server operations on disconnect/close, and add ordering tests.
   - Status: completed by Task 82.
-- [ ] 7. ServerManager startup load tracking.
+- [x] 7. ServerManager startup load tracking.
   - Evidence: `ServerManager` starts `Task { await loadData() }` from init
     without storing or returning the task.
   - Required fix: store/return the startup load task or move startup load into
     an application lifecycle coordinator so startup load ordering is observable
     and awaitable.
+  - Status: completed by Task 83.
 - [ ] 8. SSHClient untracked channel cleanup tasks.
   - Evidence: `SSHClient` uses untracked `Task {}` from stream termination /
     exec cancellation paths that eventually close/free libssh2 channels.
@@ -127,16 +128,16 @@ preserved in the archive.
 
 ## Current Focus
 
-Next executable slice: Must-Fix 7, ServerManager startup load tracking.
+Next executable slice: Must-Fix 8, SSHClient untracked channel cleanup tasks.
 
 Before code:
 
-1. Inspect `VVTerm/Features/Servers/Application/ServerManager.swift` and app
-   composition call sites that construct or observe `ServerManager`.
-2. Add a compact Task 83 section here with files, interfaces, RED tests,
+1. Inspect `VVTerm/Core/SSH/SSHClient.swift` stream termination and exec
+   cancellation paths that close or free libssh2 channels.
+2. Add a compact Task 84 section here with files, interfaces, RED tests,
    expected verification, API/boundary cleanup, and commit scope.
 3. Follow TDD: RED test first, then implementation, then focused verification.
-4. After Task 83, do API/boundary cleanup before moving to Must-Fix 8.
+4. After Task 84, do API/boundary cleanup before moving to Must-Fix 9.
 
 ## Task 81: Server Connection-Test Cancellation
 
@@ -334,6 +335,103 @@ Before review, verify mutation/transfer request API naming remains source-compat
 
 Perform local lifecycle review against the Swift checklist unless the user explicitly authorizes new subagents. Fix Critical and Important findings, update Must-Fix 6 status plus Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
+## Task 83: ServerManager Startup Load Tracking
+
+**Files:**
+- Modify: `VVTerm/Features/Servers/Application/ServerManager.swift`
+- Test: `VVTermTests/ServerManagerBootstrapTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing `ServerManager` initialization path.
+  - Existing `ServerManager.loadData()`.
+  - Existing `ServerManager.makeForTesting(...)`.
+- Produces:
+  - `ServerManager.pendingStartupLoadRequestIDs`.
+  - `ServerManager.waitForStartupLoadRequest(_:)`.
+  - `ServerManager.makeForTesting(startStartupLoad:startupLoadAction:...)`.
+  - Startup load launched from initialization is owned by `ServerManager`,
+    visible as pending while running, and awaitable for tests or later
+    lifecycle ordering.
+
+- [x] **Step 1: Add RED startup-load lifecycle tests**
+
+Extend `ServerManagerBootstrapTests`:
+- `startupLoadRequestTracksOperationUntilCompletion`
+  - Create a testing manager with `startStartupLoad: true` and a gated fake
+    startup load action.
+  - Assert exactly one startup request ID is visible while the fake load is
+    blocked.
+  - Start a waiter with `waitForStartupLoadRequest(_:)` and assert it does not
+    return before the fake load is released.
+  - Release the gate, await the request, and assert pending startup load state
+    clears.
+- `serverManagerInitDoesNotLaunchUntrackedLoadTask`
+  - Inspect `ServerManager.swift`.
+  - Assert the init path no longer contains raw `Task { await loadData() }`.
+  - Assert startup load is routed through a named owner method such as
+    `startStartupLoad()`.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: tests fail because `pendingStartupLoadRequestIDs`,
+`waitForStartupLoadRequest(_:)`, startup-load injection, and named startup task
+ownership do not exist.
+
+- [x] **Step 2: Add tracked startup-load ownership**
+
+Update `ServerManager.swift`:
+- Add a private `StartupLoadAction` dependency defaulting to
+  `await manager.loadData()`.
+- Add private `startupLoadRequestID` and `startupLoadTask` storage.
+- Replace `Task { await loadData() }` in initialization with
+  `startStartupLoad()`.
+- `startStartupLoad()` creates one request ID, stores the task, runs
+  `startupLoadAction(self)`, and clears request/task storage in `defer` only
+  when the request ID still matches.
+- Expose `pendingStartupLoadRequestIDs` and
+  `waitForStartupLoadRequest(_:)`.
+- Keep `loadLocalData()` synchronous local bootstrap behavior unchanged.
+
+- [x] **Step 3: Extend testing factory only as needed**
+
+Update `makeForTesting(...)`:
+- Add `startStartupLoad: Bool = false`.
+- Add `startupLoadAction: StartupLoadAction? = nil`.
+- Preserve existing call sites and defaults.
+- If `startStartupLoad` is true, allow tests to exercise the same tracked
+  startup load path without real CloudKit.
+
+- [x] **Step 4: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
+rg -n "pendingStartupLoadRequestIDs|waitForStartupLoadRequest|startStartupLoad|startupLoadTask|Task \\{ await loadData\\(\\) \\}" VVTerm/Features/Servers/Application/ServerManager.swift VVTermTests/ServerManagerBootstrapTests.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows startup load is
+named/tracked/awaitable and the old untracked init task is gone.
+
+- [x] **Step 5: API and boundary cleanup**
+
+Before review, verify startup-load API naming matches existing
+pending/wait request APIs, `ServerManager` remains the application-layer owner,
+test-only injection does not leak production behavior, local bootstrap is still
+synchronous, and no stale startup request state remains after completion.
+
+- [x] **Step 6: Review and commit**
+
+Perform local lifecycle review against the Swift checklist unless the user
+explicitly authorizes new subagents. Fix Critical and Important findings,
+update Must-Fix 7 status plus Progress Ledger with RED/GREEN evidence,
+verification, review outcome, and cleanup notes, then commit atomically.
+
 ## Verification Template
 
 Focused iOS tests:
@@ -363,6 +461,21 @@ xcodebuild build-for-testing \
 
 ## Progress Ledger
 
+- 2026-06-22: Task 83 RED/GREEN completed with local lifecycle review and no
+  new subagents. `ServerManager` now owns startup data loading through a named
+  `startStartupLoad()` path with `startupLoadTask`, visible
+  `pendingStartupLoadRequestIDs`, and `waitForStartupLoadRequest(_:)`; the
+  initialization path no longer launches raw `Task { await loadData() }`.
+  `makeForTesting(startStartupLoad:startupLoadAction:)` lets tests exercise the
+  same startup ownership path without CloudKit. Initial RED failed as expected
+  because the testing factory and pending/wait startup APIs did not exist.
+  GREEN focused verification passed `ServerManagerBootstrapTests`; source scan
+  showed the startup owner method, task storage, pending IDs, wait hook, and no
+  production raw init load task. `git diff --check` passed; iOS
+  `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. API/boundary cleanup
+  found naming consistent with existing pending/wait request APIs, local
+  bootstrap remains synchronous, test-only injection does not change production
+  load behavior, and startup request state clears after completion.
 - 2026-06-21: Task 82 RED/GREEN completed with local lifecycle review and no
   new subagents. `RemoteFileBrowserStore` now owns server-scoped mutation and
   transfer request records with visible pending state, awaitable request tasks,

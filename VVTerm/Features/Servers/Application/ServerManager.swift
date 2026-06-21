@@ -109,6 +109,7 @@ final class ServerManager: ObservableObject {
     typealias ServerDeletionTeardown = @MainActor @Sendable (Server) async -> Void
     typealias ServerCredentialDeletion = @MainActor @Sendable (UUID) async throws -> Void
     typealias ServerCredentialStore = @MainActor @Sendable (Server, ServerCredentials) throws -> Void
+    typealias ServerStartupLoadAction = @MainActor @Sendable (ServerManager) async -> Void
 
     static let shared = ServerManager()
 
@@ -127,15 +128,22 @@ final class ServerManager: ObservableObject {
     private let deletionTeardown: ServerDeletionTeardown
     private let deleteCredentials: ServerCredentialDeletion
     private let storeCredentials: ServerCredentialStore
+    private let startupLoadAction: ServerStartupLoadAction
     private let persistsLocalData: Bool
     private let recordsSyncMutations: Bool
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ServerManager")
     private var isSyncEnabled: Bool { SyncSettings.isEnabled }
+    private var startupLoadRequestID: UUID?
+    private var startupLoadTask: Task<Void, Never>?
     private var deletionRequests: [UUID: Task<Void, Never>] = [:]
     private var workspaceSaveRequests: [UUID: Task<Void, Never>] = [:]
     private var environmentSaveRequests: [UUID: Task<Void, Never>] = [:]
     private var serverSaveRequests: [UUID: Task<Void, Never>] = [:]
     private var serverMoveRequests: [UUID: Task<Void, Never>] = [:]
+    var pendingStartupLoadRequestIDs: Set<UUID> {
+        guard let startupLoadRequestID else { return [] }
+        return [startupLoadRequestID]
+    }
     var pendingDeletionRequestIDs: Set<UUID> { Set(deletionRequests.keys) }
     var pendingWorkspaceSaveRequestIDs: Set<UUID> { Set(workspaceSaveRequests.keys) }
     var pendingEnvironmentSaveRequestIDs: Set<UUID> { Set(environmentSaveRequests.keys) }
@@ -161,22 +169,29 @@ final class ServerManager: ObservableObject {
 
     private init(
         loadLocalDataOnInit: Bool = true,
+        startStartupLoad: Bool = true,
         deletionTeardown: @escaping ServerDeletionTeardown = ServerManager.defaultDeletionTeardown,
         deleteCredentials: @escaping ServerCredentialDeletion = ServerManager.defaultCredentialDeletion,
         storeCredentials: @escaping ServerCredentialStore = ServerManager.defaultCredentialStore,
+        startupLoadAction: ServerStartupLoadAction? = nil,
         persistsLocalData: Bool = true,
         recordsSyncMutations: Bool = true
     ) {
         self.deletionTeardown = deletionTeardown
         self.deleteCredentials = deleteCredentials
         self.storeCredentials = storeCredentials
+        self.startupLoadAction = startupLoadAction ?? { manager in
+            await manager.loadData()
+        }
         self.persistsLocalData = persistsLocalData
         self.recordsSyncMutations = recordsSyncMutations
 
-        guard loadLocalDataOnInit else { return }
-
-        loadLocalData()
-        Task { await loadData() }
+        if loadLocalDataOnInit {
+            loadLocalData()
+        }
+        if startStartupLoad {
+            self.startStartupLoad()
+        }
     }
 
     private static func defaultDeletionTeardown(for server: Server) async {
@@ -235,15 +250,19 @@ final class ServerManager: ObservableObject {
     static func makeForTesting(
         servers: [Server] = [],
         workspaces: [Workspace] = [],
+        startStartupLoad: Bool = false,
         deletionTeardown: @escaping ServerDeletionTeardown = { _ in },
         deleteCredentials: @escaping ServerCredentialDeletion = { _ in },
-        storeCredentials: @escaping ServerCredentialStore = { _, _ in }
+        storeCredentials: @escaping ServerCredentialStore = { _, _ in },
+        startupLoadAction: ServerStartupLoadAction? = nil
     ) -> ServerManager {
         let manager = ServerManager(
             loadLocalDataOnInit: false,
+            startStartupLoad: startStartupLoad,
             deletionTeardown: deletionTeardown,
             deleteCredentials: deleteCredentials,
             storeCredentials: storeCredentials,
+            startupLoadAction: startupLoadAction,
             persistsLocalData: false,
             recordsSyncMutations: false
         )
@@ -632,6 +651,34 @@ final class ServerManager: ObservableObject {
     }
 
     // MARK: - Data Loading
+
+    private func startStartupLoad() {
+        startupLoadTask?.cancel()
+
+        let requestID = UUID()
+        startupLoadRequestID = requestID
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.startupLoadRequestID == requestID {
+                    self.startupLoadRequestID = nil
+                    self.startupLoadTask = nil
+                }
+            }
+
+            await self.startupLoadAction(self)
+        }
+
+        if startupLoadRequestID == requestID {
+            startupLoadTask = task
+        }
+    }
+
+    func waitForStartupLoadRequest(_ requestID: UUID) async {
+        guard startupLoadRequestID == requestID else { return }
+        await startupLoadTask?.value
+    }
 
     func loadData() async {
         isLoading = true
