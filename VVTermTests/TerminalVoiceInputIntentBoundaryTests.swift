@@ -60,6 +60,53 @@ struct TerminalVoiceInputIntentBoundaryTests {
     }
 
     @Test
+    func splitTerminalDelegatesVoiceTextSendToTabManager() throws {
+        let root = try sourceRoot()
+        let source = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift")
+        )
+        let textSendSlice = try slice(
+            startingAt: "private var voiceOverlay",
+            endingBefore: "// MARK: - Terminal Pane View",
+            in: source
+        )
+
+        // Given split-pane voice transcription completes inside SwiftUI.
+        #expect(
+            textSendSlice.contains("case .pane(let paneId)"),
+            "Split voice transcription should preserve the voice request target pane."
+        )
+        #expect(
+            textSendSlice.contains("let target = voiceTarget"),
+            "Split voice completion should capture the request target before handing work to the voice store."
+        )
+        #expect(
+            textSendSlice.contains("target: target"),
+            "The recording overlay should receive the same captured target used by its completion closure."
+        )
+        #expect(
+            textSendSlice.contains("for: target"),
+            "Stop-and-send should use the same captured target as its completion closure."
+        )
+
+        // When transcription text is ready, the UI must send text intent to the
+        // application manager instead of retaining or writing a terminal surface.
+        #expect(
+            textSendSlice.contains("tabManager.sendText(trimmed, toPane: paneId)"),
+            "Split voice text insertion should be owned by TerminalTabManager."
+        )
+        #expect(
+            !textSendSlice.contains("TerminalTabManager.shared.sendText"),
+            "Split TerminalView should use its injected tab manager instead of reaching for the singleton."
+        )
+
+        // Then SwiftUI must not unwrap or write GhosttyTerminalView directly.
+        #expect(!textSendSlice.contains("guard let terminal = focusedTerminal"))
+        #expect(!textSendSlice.contains("terminal.sendText(trimmed)"))
+        #expect(!textSendSlice.contains("DispatchQueue.main.async"))
+    }
+
+    @Test
     func voiceOverlayDelegatesSendAndCancelToApplicationStore() throws {
         let root = try sourceRoot()
         let source = try source(

@@ -239,11 +239,12 @@ struct TerminalTabView: View {
     // MARK: - Voice Input (macOS)
 
     private var voiceOverlay: some View {
+        let target = voiceTarget
         VoiceRecordingView(
             voiceInput: voiceInput,
-            target: voiceTarget,
+            target: target,
             onSend: { transcribedText in
-                sendTranscriptionToTerminal(transcribedText)
+                sendTranscriptionToTerminal(transcribedText, target: target)
                 showingVoiceRecording = false
             },
             onCancel: {
@@ -304,10 +305,11 @@ struct TerminalTabView: View {
 
     private func toggleVoiceRecording() {
         if showingVoiceRecording {
+            let target = voiceTarget
             voiceInput.requestStopAndSend(
-                for: voiceTarget,
+                for: target,
                 onCompleted: { text in
-                    sendTranscriptionToTerminal(text)
+                    sendTranscriptionToTerminal(text, target: target)
                     showingVoiceRecording = false
                 }
             )
@@ -341,13 +343,11 @@ struct TerminalTabView: View {
         )
     }
 
-    private func sendTranscriptionToTerminal(_ text: String) {
+    private func sendTranscriptionToTerminal(_ text: String, target: TerminalVoiceInputTarget) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        guard let terminal = focusedTerminal else { return }
-        DispatchQueue.main.async {
-            terminal.sendText(trimmed)
-        }
+        guard case .pane(let paneId) = target else { return }
+        tabManager.sendText(trimmed, toPane: paneId)
     }
 }
 

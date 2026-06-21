@@ -780,6 +780,12 @@ final class TerminalTabManager: ObservableObject {
         terminalSurfaceRegistry.surface(for: .pane(paneId))
     }
 
+    /// Send text to the terminal surface for a given split pane.
+    func sendText(_ text: String, toPane paneId: UUID) {
+        guard let terminal = terminalSurfaceRegistry.surface(for: .pane(paneId)) else { return }
+        terminal.sendText(text)
+    }
+
     func configureRuntime(
         forPane paneId: UUID,
         server: Server,
