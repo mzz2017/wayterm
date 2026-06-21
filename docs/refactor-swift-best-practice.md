@@ -121,26 +121,74 @@ preserved in the archive.
   - Required fix: track/await this teardown from the owning `SSHClient` /
     runtime before merge.
   - Status: completed by Task 85.
-- [ ] 10. SSH exec/upload raw libssh2 error preservation.
+- [x] 10. SSH exec/upload raw libssh2 error preservation.
   - Evidence: `SSHClient` still collapses non-EAGAIN exec channel open/startup/
     write and upload close/wait errors to generic errors after reading or
     encountering raw libssh2 state.
   - Required fix: preserve/log `LibSSH2RawError` before translation on these
     exec/upload paths.
+  - Status: completed by Task 86.
 
 ## Current Focus
 
-Next executable slice: Must-Fix 10, SSH exec/upload raw libssh2 error preservation.
+Next executable slice: final closure scan and ready-for-merge gate review.
 
-Before code:
+Before merge readiness:
 
-1. Inspect `VVTerm/Core/SSH/SSHClient.swift` exec request and upload channel
-   open/startup/write/close/wait error paths.
-2. Add a compact Task 86 section here with files, interfaces, RED tests,
-   expected verification, API/boundary cleanup, and commit scope.
-3. Follow TDD: RED test first, then implementation, then focused verification.
-4. After Task 86, do API/boundary cleanup, closure scan, and ready-for-merge
-   gate review.
+1. Confirm every Must-Fix item is complete or explicitly reclassified.
+2. Run final source scans against the closure-audit evidence patterns.
+3. Run focused lifecycle tests, `git diff --check`, and iOS
+   `build-for-testing` with `ENABLE_DEBUG_DYLIB=NO`.
+4. Perform local lifecycle review against the Swift checklist unless the user
+   explicitly authorizes new subagents.
+
+## Task 86: SSH Exec/Upload Raw libssh2 Error Preservation
+
+**Files:**
+- Modify: `VVTerm/Core/SSH/SSHClient.swift`
+- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `LibSSH2SessionDriving.lastError(session:operation:fallbackCode:)`
+  - `LibSSH2RawError`
+  - `SSHError.libssh2`
+- Preserves:
+  - Public `SSHSession.execute(_:)` and `SSHSession.upload(_:to:permissions:strategy:)`
+    signatures.
+  - EAGAIN retry behavior for channel open/startup/write/EOF/close/wait paths.
+  - Existing user-facing SSH error rendering.
+
+**RED Tests:**
+- Add focused fake-driver tests proving:
+  - exec command channel-open failure throws `SSHError.libssh2(.channelOpen)`.
+  - exec command startup failure throws `SSHError.libssh2(.channelProcessStartup)`.
+  - exec upload channel-open/startup/write failures throw raw libssh2 errors.
+  - exec upload send-EOF/wait-EOF failures throw raw libssh2 errors.
+  - exec upload wait-closed failure throws `SSHError.libssh2(.channelWaitClosed)`.
+- Tests must keep the file-level Test Context and Given/When/Then comments so
+  future failures distinguish product regressions from intentional C-boundary
+  policy changes.
+
+**Implementation:**
+- Add narrow private helpers only if they reduce duplicated raw-error
+  translation at the SSH infrastructure boundary.
+- Do not add test-only production APIs.
+- Keep raw error preservation internal; UI-facing copy remains controlled by
+  existing `SSHError` localization.
+
+**Verification:**
+- RED: focused `LibSSH2SessionLifecycleTests` must fail for the expected raw
+  error assertions before implementation.
+- GREEN: same focused suite passes.
+- Run raw-error source scan, `git diff --check`, and iOS
+  `build-for-testing`.
+
+**API/Boundary Cleanup:**
+- Confirm helpers remain private to `SSHSession`.
+- Confirm no Domain/Application/UI layer learns about libssh2 raw errors.
+- Confirm no stale Task 86 temporary state remains in this plan before commit.
 
 ## Task 81: Server Connection-Test Cancellation
 
@@ -664,6 +712,24 @@ xcodebuild build-for-testing \
 
 ## Progress Ledger
 
+- 2026-06-22: Task 86 RED/GREEN completed with local lifecycle review and no
+  new subagents. `SSHSession` now preserves and logs `LibSSH2RawError` through
+  a private `libSSH2Error(session:operation:fallbackCode:)` helper for exec
+  command channel-open/startup failures and exec-upload channel-open/startup/
+  write/send-EOF/wait-EOF/close/wait-closed failures. Initial RED failed as
+  expected because exec command open/startup and exec-upload open/startup/write/
+  send-EOF/wait-EOF/wait-closed tests received generic `channelOpenFailed`,
+  `unknown`, or `socketError` values instead of `SSHError.libssh2`. GREEN
+  verification passed `LibSSH2SessionLifecycleTests`; source scan found no
+  pending Must-Fix entries and showed remaining upload `socketError` strings
+  only in fallback branches where no active libssh2 session is available for
+  `lastError`. Focused lifecycle suites passed when split into stable groups
+  after one combined multi-suite xcodebuild invocation produced no XCTest
+  output for several minutes and was interrupted. `git diff --check` passed;
+  iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. API/boundary
+  cleanup found the new helper private to SSH infrastructure, no public API
+  change, no Domain/Application/UI libssh2 leakage, no test-only production
+  helper, and no Critical or Important local review findings.
 - 2026-06-22: Task 85 RED/GREEN completed with local lifecycle review and no
   new subagents. `SSHClient` now owns mosh stream teardown through
   `MoshShellRuntime` stream-task storage, `trackMoshTeardownTask(_:)`, and
@@ -769,14 +835,14 @@ xcodebuild build-for-testing \
 
 ## Ready-For-Merge Gate
 
-- [ ] Every Must-Fix item above is complete or explicitly reclassified with
+- [x] Every Must-Fix item above is complete or explicitly reclassified with
   evidence.
-- [ ] Every Must-Fix item has focused RED/GREEN test coverage or a documented
+- [x] Every Must-Fix item has focused RED/GREEN test coverage or a documented
   source-boundary reason.
-- [ ] Final source scan confirms no unresolved Must-Fix evidence remains.
-- [ ] `git diff --check` passes.
-- [ ] Focused lifecycle tests pass with `ENABLE_DEBUG_DYLIB=NO`.
-- [ ] iOS `build-for-testing` passes or any Xcode hang is reported honestly
+- [x] Final source scan confirms no unresolved Must-Fix evidence remains.
+- [x] `git diff --check` passes.
+- [x] Focused lifecycle tests pass with `ENABLE_DEBUG_DYLIB=NO`.
+- [x] iOS `build-for-testing` passes or any Xcode hang is reported honestly
   with command and symptom.
-- [ ] Final local or authorized subagent review reports no Critical or Important
+- [x] Final local or authorized subagent review reports no Critical or Important
   findings against the remaining diff.

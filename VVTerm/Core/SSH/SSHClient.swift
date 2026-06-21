@@ -1776,6 +1776,22 @@ actor SSHSession {
         )
     }
 
+    private func libSSH2Error(
+        session: OpaquePointer,
+        operation: LibSSH2RawError.Operation,
+        fallbackCode: Int32
+    ) -> SSHError {
+        let rawError = driver.lastError(
+            session: session,
+            operation: operation,
+            fallbackCode: fallbackCode
+        )
+        logger.debug(
+            "libssh2 \(operation.rawValue) returned \(rawError.code) [message: \(rawError.message ?? "none", privacy: .public)]"
+        )
+        return SSHError.libssh2(rawError)
+    }
+
     private func closeAndFreeChannel(_ channel: OpaquePointer) {
         let closeResult = driver.closeChannel(channel)
         if closeResult != 0, closeResult != LIBSSH2_ERROR_EAGAIN {
@@ -2105,7 +2121,7 @@ actor SSHSession {
                 if rawError.code == LIBSSH2_ERROR_EAGAIN {
                     return false
                 }
-                finishExecRequest(request.id, error: SSHError.channelOpenFailed)
+                finishExecRequest(request.id, error: SSHError.libssh2(rawError))
                 return false
             }
         }
@@ -2116,7 +2132,12 @@ actor SSHSession {
                 return false
             }
             if execResult != 0 {
-                finishExecRequest(request.id, error: SSHError.unknown("Exec failed: \(execResult)"))
+                let error = libSSH2Error(
+                    session: session,
+                    operation: .channelProcessStartup,
+                    fallbackCode: execResult
+                )
+                finishExecRequest(request.id, error: error)
                 return false
             }
             request.isStarted = true
@@ -2326,7 +2347,7 @@ actor SSHSession {
                     await waitForSocket()
                     continue
                 }
-                throw SSHError.socketError("Exec upload channel open failed: \(rawError.code)")
+                throw SSHError.libssh2(rawError)
             }
 
             guard let openedExecChannel = execChannel else {
@@ -2348,7 +2369,11 @@ actor SSHSession {
                     await waitForSocket()
                     continue
                 }
-                throw SSHError.socketError("Exec upload startup failed: \(execResult)")
+                throw libSSH2Error(
+                    session: session,
+                    operation: .channelProcessStartup,
+                    fallbackCode: execResult
+                )
             }
 
             let bytes = [UInt8](data)
@@ -2368,7 +2393,11 @@ actor SSHSession {
                 } else if written == Int(LIBSSH2_ERROR_EAGAIN) {
                     await waitForSocket()
                 } else {
-                    throw SSHError.socketError("Exec upload write failed: \(written)")
+                    throw libSSH2Error(
+                        session: session,
+                        operation: .channelWrite,
+                        fallbackCode: Int32(written)
+                    )
                 }
             }
 
@@ -2400,6 +2429,13 @@ actor SSHSession {
                 await waitForSocket()
                 continue
             }
+            if let session = libssh2Session {
+                throw libSSH2Error(
+                    session: session,
+                    operation: .channelEOF,
+                    fallbackCode: sendEOFResult
+                )
+            }
             throw SSHError.socketError("SCP send EOF failed: \(sendEOFResult)")
         }
 
@@ -2416,6 +2452,13 @@ actor SSHSession {
                 await waitForSocket()
                 continue
             }
+            if let session = libssh2Session {
+                throw libSSH2Error(
+                    session: session,
+                    operation: .channelWaitEOF,
+                    fallbackCode: waitEOFResult
+                )
+            }
             throw SSHError.socketError("SCP wait EOF failed: \(waitEOFResult)")
         }
 
@@ -2430,12 +2473,11 @@ actor SSHSession {
                 continue
             }
             if let session = libssh2Session {
-                let rawError = driver.lastError(
+                throw libSSH2Error(
                     session: session,
                     operation: .channelClose,
                     fallbackCode: closeResult
                 )
-                throw SSHError.libssh2(rawError)
             }
             throw SSHError.socketError("SCP close failed: \(closeResult)")
         }
@@ -2449,6 +2491,13 @@ actor SSHSession {
             if waitClosedResult == Int32(LIBSSH2_ERROR_EAGAIN) {
                 await waitForSocket()
                 continue
+            }
+            if let session = libssh2Session {
+                throw libSSH2Error(
+                    session: session,
+                    operation: .channelWaitClosed,
+                    fallbackCode: waitClosedResult
+                )
             }
             throw SSHError.socketError("SCP wait close failed: \(waitClosedResult)")
         }

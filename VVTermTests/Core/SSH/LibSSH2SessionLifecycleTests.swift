@@ -347,6 +347,78 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         )
     }
 
+    func testExecuteChannelOpenFailurePreservesRawLibSSH2Error() async throws {
+        // Given an exec request whose channel open fails for a concrete libssh2
+        // transport reason instead of ordinary EAGAIN retry pressure.
+        let rawOpenError = LibSSH2RawError(
+            operation: .channelOpen,
+            code: LIBSSH2_ERROR_SOCKET_RECV,
+            message: "socket recv failed while opening exec channel"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: nil,
+            rawErrors: [rawOpenError]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When command execution attempts to open its channel.
+        try await session.connect()
+        do {
+            _ = try await SSHClient.runWithTimeout(.seconds(1)) {
+                try await session.execute("whoami")
+            }
+            XCTFail("Expected raw libssh2 exec channel-open failure")
+        } catch SSHError.libssh2(let rawError) {
+            // Then the C-boundary operation, code, and message survive
+            // translation for diagnostics instead of collapsing to a generic
+            // channel-open error.
+            XCTAssertEqual(rawError.operation, .channelOpen)
+            XCTAssertEqual(rawError.code, LIBSSH2_ERROR_SOCKET_RECV)
+            XCTAssertEqual(rawError.message, "socket recv failed while opening exec channel")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+    }
+
+    func testExecuteStartupFailurePreservesRawLibSSH2Error() async throws {
+        // Given an exec request whose process startup fails after the channel
+        // was opened successfully.
+        let rawStartupError = LibSSH2RawError(
+            operation: .channelProcessStartup,
+            code: LIBSSH2_ERROR_CHANNEL_REQUEST_DENIED,
+            message: "exec request denied by server"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x33),
+            execStartResult: rawStartupError.code,
+            rawErrors: [rawStartupError]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When command execution starts the remote exec process.
+        try await session.connect()
+        do {
+            _ = try await SSHClient.runWithTimeout(.seconds(1)) {
+                try await session.execute("whoami")
+            }
+            XCTFail("Expected raw libssh2 exec startup failure")
+        } catch SSHError.libssh2(let rawError) {
+            // Then startup remains distinguishable from command stderr,
+            // channel-open failure, and generic unknown errors.
+            XCTAssertEqual(rawError.operation, .channelProcessStartup)
+            XCTAssertEqual(rawError.code, LIBSSH2_ERROR_CHANNEL_REQUEST_DENIED)
+            XCTAssertEqual(rawError.message, "exec request denied by server")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+    }
+
     func testShellAndExecCleanupTasksAreTrackedBySessionOwner() throws {
         // Given the SSHSession implementation that owns libssh2 shell and exec
         // channels.
@@ -531,6 +603,233 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
             driver.lastErrorOperations().contains(.channelFree),
             "Upload channel free failures must preserve raw teardown diagnostics"
         )
+    }
+
+    func testExecUploadChannelOpenFailurePreservesRawLibSSH2Error() async throws {
+        // Given exec-preferred upload cannot open its channel and libssh2 has a
+        // concrete raw diagnostic for the failure.
+        let payload = Data("payload".utf8)
+        let rawOpenError = LibSSH2RawError(
+            operation: .channelOpen,
+            code: LIBSSH2_ERROR_SOCKET_RECV,
+            message: "socket recv failed while opening upload channel"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: nil,
+            rawErrors: [rawOpenError]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When upload attempts to open the exec channel.
+        try await session.connect()
+        do {
+            try await session.upload(payload, to: "/tmp/vvterm-upload", strategy: SSHUploadStrategy.execPreferred)
+            XCTFail("Expected raw libssh2 exec upload channel-open failure")
+        } catch SSHError.libssh2(let rawError) {
+            // Then upload channel-open diagnostics preserve the raw C-boundary
+            // operation rather than only exposing a formatted socket string.
+            XCTAssertEqual(rawError.operation, .channelOpen)
+            XCTAssertEqual(rawError.code, LIBSSH2_ERROR_SOCKET_RECV)
+            XCTAssertEqual(rawError.message, "socket recv failed while opening upload channel")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+    }
+
+    func testExecUploadStartupFailurePreservesRawLibSSH2Error() async throws {
+        // Given exec-preferred upload opens a channel but the remote `cat`
+        // startup request fails with a libssh2 diagnostic.
+        let payload = Data("payload".utf8)
+        let rawStartupError = LibSSH2RawError(
+            operation: .channelProcessStartup,
+            code: LIBSSH2_ERROR_CHANNEL_REQUEST_DENIED,
+            message: "upload exec request denied by server"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x44),
+            execStartResult: rawStartupError.code,
+            rawErrors: [rawStartupError]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When upload starts its remote exec process.
+        try await session.connect()
+        do {
+            try await session.upload(payload, to: "/tmp/vvterm-upload", strategy: SSHUploadStrategy.execPreferred)
+            XCTFail("Expected raw libssh2 exec upload startup failure")
+        } catch SSHError.libssh2(let rawError) {
+            // Then the startup failure remains distinguishable from later data
+            // write, close, and wait-closed failures.
+            XCTAssertEqual(rawError.operation, .channelProcessStartup)
+            XCTAssertEqual(rawError.code, LIBSSH2_ERROR_CHANNEL_REQUEST_DENIED)
+            XCTAssertEqual(rawError.message, "upload exec request denied by server")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+    }
+
+    func testExecUploadWriteFailurePreservesRawLibSSH2Error() async throws {
+        // Given exec-preferred upload starts successfully, but writing payload
+        // bytes fails for a raw libssh2 transport reason.
+        let payload = Data("payload".utf8)
+        let rawWriteError = LibSSH2RawError(
+            operation: .channelWrite,
+            code: LIBSSH2_ERROR_SOCKET_SEND,
+            message: "socket send failed while writing upload payload"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x44),
+            rawErrors: [rawWriteError],
+            channelWriteResults: [
+                Int(rawWriteError.code)
+            ]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When upload writes the payload.
+        try await session.connect()
+        do {
+            try await session.upload(payload, to: "/tmp/vvterm-upload", strategy: SSHUploadStrategy.execPreferred)
+            XCTFail("Expected raw libssh2 exec upload write failure")
+        } catch SSHError.libssh2(let rawError) {
+            // Then payload write diagnostics keep the raw channel-write
+            // operation instead of becoming a generic socket error string.
+            XCTAssertEqual(rawError.operation, .channelWrite)
+            XCTAssertEqual(rawError.code, LIBSSH2_ERROR_SOCKET_SEND)
+            XCTAssertEqual(rawError.message, "socket send failed while writing upload payload")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+    }
+
+    func testExecUploadSendEOFFailurePreservesRawLibSSH2Error() async throws {
+        // Given exec-preferred upload writes all data, but sending channel EOF
+        // fails with a raw libssh2 teardown diagnostic.
+        let payload = Data("payload".utf8)
+        let rawEOFError = LibSSH2RawError(
+            operation: .channelEOF,
+            code: LIBSSH2_ERROR_SOCKET_SEND,
+            message: "socket send failed while sending upload EOF"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x44),
+            channelSendEOFResult: rawEOFError.code,
+            rawErrors: [rawEOFError],
+            channelWriteResults: [
+                payload.count
+            ]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When upload finishes writing and starts channel teardown.
+        try await session.connect()
+        do {
+            try await session.upload(payload, to: "/tmp/vvterm-upload", strategy: SSHUploadStrategy.execPreferred)
+            XCTFail("Expected raw libssh2 exec upload EOF failure")
+        } catch SSHError.libssh2(let rawError) {
+            // Then EOF send diagnostics keep their raw operation and message.
+            XCTAssertEqual(rawError.operation, .channelEOF)
+            XCTAssertEqual(rawError.code, LIBSSH2_ERROR_SOCKET_SEND)
+            XCTAssertEqual(rawError.message, "socket send failed while sending upload EOF")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+    }
+
+    func testExecUploadWaitEOFFailurePreservesRawLibSSH2Error() async throws {
+        // Given exec-preferred upload sends EOF successfully, but waiting for
+        // remote EOF fails with a raw libssh2 diagnostic.
+        let payload = Data("payload".utf8)
+        let rawWaitEOFError = LibSSH2RawError(
+            operation: .channelWaitEOF,
+            code: LIBSSH2_ERROR_SOCKET_RECV,
+            message: "socket recv failed while waiting for upload EOF"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x44),
+            channelWaitEOFResult: rawWaitEOFError.code,
+            rawErrors: [rawWaitEOFError],
+            channelReadResults: [
+                .eagain,
+                .eagain
+            ],
+            channelWriteResults: [
+                payload.count
+            ]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When upload waits for remote EOF during channel teardown.
+        try await session.connect()
+        do {
+            try await session.upload(payload, to: "/tmp/vvterm-upload", strategy: SSHUploadStrategy.execPreferred)
+            XCTFail("Expected raw libssh2 exec upload wait-EOF failure")
+        } catch SSHError.libssh2(let rawError) {
+            // Then wait-EOF diagnostics stay separate from close and
+            // wait-closed failures.
+            XCTAssertEqual(rawError.operation, .channelWaitEOF)
+            XCTAssertEqual(rawError.code, LIBSSH2_ERROR_SOCKET_RECV)
+            XCTAssertEqual(rawError.message, "socket recv failed while waiting for upload EOF")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+    }
+
+    func testExecUploadWaitClosedFailurePreservesRawLibSSH2Error() async throws {
+        // Given exec-preferred upload finishes data transfer and close succeeds,
+        // but libssh2 reports a raw error while waiting for close completion.
+        let payload = Data("payload".utf8)
+        let rawWaitClosedError = LibSSH2RawError(
+            operation: .channelWaitClosed,
+            code: LIBSSH2_ERROR_SOCKET_RECV,
+            message: "socket recv failed while waiting for upload close"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x44),
+            channelWaitClosedResult: rawWaitClosedError.code,
+            rawErrors: [rawWaitClosedError],
+            channelReadResults: [
+                .eagain,
+                .eagain
+            ],
+            channelWriteResults: [
+                payload.count
+            ]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When upload waits for the remote channel to report closed.
+        try await session.connect()
+        do {
+            try await session.upload(payload, to: "/tmp/vvterm-upload", strategy: SSHUploadStrategy.execPreferred)
+            XCTFail("Expected raw libssh2 exec upload wait-closed failure")
+        } catch SSHError.libssh2(let rawError) {
+            // Then wait-closed diagnostics are preserved separately from the
+            // preceding successful channel close.
+            XCTAssertEqual(rawError.operation, .channelWaitClosed)
+            XCTAssertEqual(rawError.code, LIBSSH2_ERROR_SOCKET_RECV)
+            XCTAssertEqual(rawError.message, "socket recv failed while waiting for upload close")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
     }
 
     func testSFTPDirectoryReadFailureClosesHandleExactlyOnce() async throws {
@@ -735,6 +1034,9 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
     private let channelOpenResult: OpaquePointer?
     private let channelCloseResult: Int32
     private let channelFreeResult: Int32
+    private let channelSendEOFResult: Int32
+    private let channelWaitEOFResult: Int32
+    private let channelWaitClosedResult: Int32
     private let ptyResult: Int32
     private let shellStartResult: Int32
     private let execStartResult: Int32
@@ -768,6 +1070,9 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         channelOpenResult: OpaquePointer? = nil,
         channelCloseResult: Int32 = 0,
         channelFreeResult: Int32 = 0,
+        channelSendEOFResult: Int32 = 0,
+        channelWaitEOFResult: Int32 = 0,
+        channelWaitClosedResult: Int32 = 0,
         ptyResult: Int32 = 0,
         shellStartResult: Int32 = 0,
         execStartResult: Int32 = 0,
@@ -792,6 +1097,9 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
         self.channelOpenResult = channelOpenResult
         self.channelCloseResult = channelCloseResult
         self.channelFreeResult = channelFreeResult
+        self.channelSendEOFResult = channelSendEOFResult
+        self.channelWaitEOFResult = channelWaitEOFResult
+        self.channelWaitClosedResult = channelWaitClosedResult
         self.ptyResult = ptyResult
         self.shellStartResult = shellStartResult
         self.execStartResult = execStartResult
@@ -1119,15 +1427,15 @@ private final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2S
     }
 
     nonisolated func sendChannelEOF(_ channel: OpaquePointer) -> Int32 {
-        0
+        channelSendEOFResult
     }
 
     nonisolated func waitChannelEOF(_ channel: OpaquePointer) -> Int32 {
-        0
+        channelWaitEOFResult
     }
 
     nonisolated func waitChannelClosed(_ channel: OpaquePointer) -> Int32 {
-        0
+        channelWaitClosedResult
     }
 
     nonisolated func channelExitStatus(_ channel: OpaquePointer) -> Int32 {
