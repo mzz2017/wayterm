@@ -4890,8 +4890,100 @@ Before review, verify request API names match the existing `requestMutation`, `r
 
 Request code review for Task 64. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
 
+## Task 65: Terminal Credential Load Intent Boundary
+
+**Files:**
+- Modify: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Create: `VVTermTests/TerminalCredentialLoadIntentBoundaryTests.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing low-level credential helper: `ConnectionSessionManager.loadCredentials(for:) -> TerminalCredentialLoadResult`.
+  - Existing low-level credential helper: `TerminalTabManager.loadCredentials(for:) -> TerminalCredentialLoadResult`.
+  - Existing test seam: `setCredentialsProviderForTesting(_:)`.
+  - Existing close paths: `ConnectionSessionManager.closeSessionAndWait(_:)` and `TerminalTabManager.closePaneAndWait(...)`.
+- Produces:
+  - `ConnectionSessionManager.requestSessionCredentialLoad(session: ConnectionSession, server: Server, onCompleted: @escaping @MainActor (TerminalCredentialLoadResult) -> Void = { _ in }) -> UUID`: validates the session/server pair, coalesces duplicate same-session credential-load intent, tracks the load task by request ID, skips stale/canceled completions, and keeps `loadCredentials(for:)` as the low-level implementation.
+  - `ConnectionSessionManager.pendingSessionCredentialLoadRequestIDs` and `waitForSessionCredentialLoadRequest(_:)` for lifecycle tests.
+  - `TerminalTabManager.requestPaneCredentialLoad(paneId: UUID, server: Server, onCompleted: @escaping @MainActor (TerminalCredentialLoadResult) -> Void = { _ in }) -> UUID`: validates the pane/server pair, coalesces duplicate same-pane credential-load intent, tracks the load task by request ID, skips stale/canceled completions, and keeps `loadCredentials(for:)` as the low-level implementation.
+  - `TerminalTabManager.pendingPaneCredentialLoadRequestIDs` and `waitForPaneCredentialLoadRequest(_:)` for lifecycle tests.
+
+- [ ] **Step 1: Add RED credential-load request and boundary tests**
+
+Extend `ConnectionLifecycleIntegrationTests`:
+- a session credential-load request stays pending while the injected credentials provider is blocked, then calls completion and clears after release;
+- duplicate same-session credential-load requests coalesce to one request ID and one provider call, while preserving both completion callbacks;
+- `closeSessionAndWait(_:)` cancels and clears a pending session credential-load request before session teardown completes;
+- a pane credential-load request has the same pending, duplicate coalescing, and close-cancellation behavior through `TerminalTabManager.closePaneAndWait(...)`.
+
+Create `TerminalCredentialLoadIntentBoundaryTests`:
+- `TerminalContainerView.swift` must call `ConnectionSessionManager.shared.requestSessionCredentialLoad(...)` from credential-load intent helpers and must not contain `Task { await loadCredentialsIfNeeded(...) }` or direct `await ConnectionSessionManager.shared.loadCredentials(...)` in UI code;
+- `TerminalView.swift` must call `TerminalTabManager.shared.requestPaneCredentialLoad(...)` from credential-load intent helpers and must not directly await `TerminalTabManager.shared.loadCredentials(...)` in SwiftUI `.task` work;
+- source-boundary assertions must include a `Test Context` header and Given / When / Then comments.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalCredentialLoadIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails to compile because `requestSessionCredentialLoad(...)`, `requestPaneCredentialLoad(...)`, pending request ID properties, and wait hooks do not exist. If it compiles unexpectedly, the source-boundary tests fail because SwiftUI still awaits credential loading directly.
+
+- [ ] **Step 2: Add tracked manager-owned credential-load requests**
+
+Add request bookkeeping to `ConnectionSessionManager` and `TerminalTabManager`, matching existing retry/host-retrust request style:
+- store task records by request ID and keep a session-to-request or pane-to-request index;
+- append duplicate caller callbacks and return the existing request ID for the same session/pane while a credential load is pending;
+- validate session/pane ownership before loading and before invoking callbacks;
+- treat cancellation as lifecycle completion, not a user-facing credential failure;
+- leave `loadCredentials(for:)` as the low-level helper used by request tasks and existing non-UI internals.
+
+- [ ] **Step 3: Wire close/reset cleanup**
+
+Update cleanup paths:
+- `closeSessionAndWait(_:)` cancels and clears pending session credential-load requests for the closing session;
+- `closePaneAndWait(...)` cancels and clears pending pane credential-load requests for the closing pane;
+- `resetForTesting()` cancels and clears both new request registries and test-only state.
+
+Do not widen this task into terminal retry, host retrust, rich paste upload/lease lifecycle, title/PWD/background callbacks, iOS active-connection open orchestration, RemoteFiles navigation, Stats retry, Ghostty config reload, Store product reload, or AppLock server unlock.
+
+- [ ] **Step 4: Route root and split UI through request APIs**
+
+Update `TerminalContainerView`:
+- replace async `loadCredentialsIfNeeded(force:)` with a synchronous credential-load intent helper;
+- `.task` and `server?.id` change should send credential-load intent only, not create a UI-owned credential-load task;
+- preserve the existing UI behavior where successful loads update `credentials` and failures update `credentialLoadErrorMessage`, guarded against stale server IDs.
+
+Update split `TerminalView`:
+- the initial `.task` may keep presentation-only setup, prompt checks, watchdog start, and reconnect intent, but credential loading must be sent through `TerminalTabManager.shared.requestPaneCredentialLoad(...)`;
+- successful loads update `credentials`, and failures update `credentialLoadErrorMessage`, guarded against stale pane/server identity.
+
+- [ ] **Step 5: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalCredentialLoadIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "requestSessionCredentialLoad|requestPaneCredentialLoad|loadCredentialsIfNeeded|Task \\{ await loadCredentialsIfNeeded|await ConnectionSessionManager\\.shared\\.loadCredentials|await TerminalTabManager\\.shared\\.loadCredentials" VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows root/split UI uses request APIs and no UI-owned credential-load task or direct manager `loadCredentials` await remains; any remaining `loadCredentials(for:)` hits are application-layer low-level helpers or tests.
+
+- [ ] **Step 6: API and boundary cleanup**
+
+Before review, verify request API names match existing `requestSessionRetry`, `requestPaneRetry`, `requestSessionHostRetrust`, and `requestPaneHostRetrust` style; UI supplies only credential-load intent and presentation callbacks; managers own task tracking, duplicate coalescing, cancellation, and stale completion guards; close/reset cleanup drains new request state; touched tests include the required Test Context and Given / When / Then comments.
+
+- [ ] **Step 7: Request review and commit**
+
+Request code review for Task 65. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-64 scan selected Task 65 as the next executable lifecycle slice after two read-only explorer reviews plus local scans. The TerminalSessions explorer recommended terminal credential-load ownership as the smallest high-risk remaining terminal slice: `TerminalContainerView` starts credential loading from `.task` and `Task { await loadCredentialsIfNeeded(force:) }`, directly awaits `ConnectionSessionManager.loadCredentials(for:)`, and split `TerminalView` directly awaits `TerminalTabManager.loadCredentials(for:)` inside SwiftUI `.task` work. Credential loading reads Keychain-backed server credentials and gates terminal surface creation/reconnect, so it is more lifecycle-critical than display metadata callbacks. The non-Terminal explorer recommended RemoteFiles directory navigation/activation as a clean follow-up because UI still wraps `goUp`, `refresh`, `openDirectory`, `openBreadcrumb`, and `activate` in `Task {}`; that remains deferred to a later task. Rich paste upload/lease lifecycle, title/PWD/background callbacks, iOS active-connection open orchestration, RemoteFiles navigation, Stats retry, Ghostty config reload, Store product reload, and AppLock server unlock are explicitly out of Task 65.
 - 2026-06-21: Task 64 RED/GREEN completed with review fixes. Initial RED failed to compile because `RemoteFileBrowserStore.requestPreviewLoad(...)`, `pendingPreviewLoadRequestIDs`, and `waitForPreviewLoadRequest(_:)` did not exist; a review-cycle RED then reproduced missing `focus(_:in:)` cleanup. GREEN routes macOS/iOS preview callbacks through synchronous `requestPreviewLoad(...)` intent, while `RemoteFileBrowserStore` owns tracked preview-load tasks, duplicate same-tab/same-entry/same-flag coalescing, cancellation, and cleanup. Review found Critical awaitability/stale-completion gaps: cancellation removed the task handle before work exited, and canceled reads that ignored cancellation could still pass stale `viewerRequestIDs` checks. Fixes keep canceled task handles until task `defer` cleanup, unpublish only the active tab request on cancel, invalidate `viewerRequestIDs`, check `Task.isCancelled` after remote awaits and before success/error writes, remove unused request state, and reset `isLoadingViewer` during directory loads. Important review coverage gaps were closed with tests for `clearViewer(for:)`, `focus(_:in:)`, `loadDirectory(path:in:server:)`, `removeRuntimeState(for:)`, and `disconnect(serverId:)` proving visible pending state clears immediately, canceled work remains awaitable until the blocked fake read exits, and stale payload/error writes do not return. Focused GREEN verification passed 14 Swift Testing tests in 2 suites with `ENABLE_DEBUG_DYLIB=NO`; source scan and full build verification are recorded before commit.
 - 2026-06-21: Post-Task-63 scan selected Task 64 as the next executable lifecycle slice. Terminal root/split process-exit, input, resize, surface attach, retry, host retrust, and voice ownership have request APIs in TerminalSessions, so the next repeatedly deferred non-TerminalSessions hotspot is RemoteFiles preview loading. `RemoteFileInspectorView` only sends synchronous `onLoadPreview` intent from `.task(id:)`, but the macOS and iOS platform containers still wrap that intent in `Task { await browser.loadPreview(...) }`, causing SwiftUI to own remote preview read/download work and making cleanup depend on request IDs rather than an awaitable/tracked task. Task 64 should add a store-owned `requestPreviewLoad(...)` boundary and route platform preview callbacks through it. Do not widen Task 64 into directory navigation/goUp/breadcrumbs, file activation, transfers, drops/file promises, preview text save, rich paste, credential reload, Stats retry, or terminal title/PWD/background parsing.
 - 2026-06-21: Task 63 RED/GREEN completed with independent review. `ConnectionSessionManager` now owns tracked root process-exit requests via `requestSessionProcessExit(forSession:)`, with pending request IDs, an await hook, duplicate same-session coalescing, missing-session rejection, DEBUG operation seam, and close/reset cleanup. Root `TerminalContainerView` process-exit callbacks now synchronously send intent through the manager request API and no longer wrap process exit in `DispatchQueue.main.async { ConnectionSessionManager.shared.handleShellExit(for:) }`. RED focused verification failed to compile because `setProcessExitOperationForTesting(...)` and the request bookkeeping APIs did not exist on `ConnectionSessionManager`. GREEN focused verification passed 12 Swift Testing tests in 2 suites with `ENABLE_DEBUG_DYLIB=NO`. Source scan showed only the two root `requestSessionProcessExit` callbacks in `TerminalContainerView`; remaining `DispatchQueue.main.async` hits in `SSHTerminalWrapper` are non-process-exit callback bridges and stay deferred with rich paste, credential reload, title/PWD/background parsing, RemoteFiles navigation/preview, Stats retry, and theme/background color parsing. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. API cleanup matched the existing `requestSessionInput`, `requestSessionResize`, and `requestPaneProcessExit` request style; UI supplies only intent while manager-owned work handles tracking, coalescing, cancellation, and low-level exit invocation. Independent code review found no Critical or Important issues.
