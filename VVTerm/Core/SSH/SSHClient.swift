@@ -61,9 +61,76 @@ private final class SSHClientAbortState: @unchecked Sendable {
     }
 }
 
+// Mosh stream termination is a synchronous callback outside SSHClient actor
+// isolation; this registry lets the client own and await teardown tasks without
+// exposing actor-isolated mosh runtime state.
+private final class SSHMoshTeardownTaskRegistry: @unchecked Sendable {
+    private final class Record {
+        var task: Task<Void, Never>?
+    }
+
+    private let lock = NSLock()
+    private var records: [UUID: Record] = [:]
+
+    @discardableResult
+    func track(_ operation: @escaping @Sendable () async -> Void) -> UUID {
+        let requestID = UUID()
+        let record = Record()
+
+        lock.lock()
+        records[requestID] = record
+        lock.unlock()
+
+        let task = Task { [weak self] in
+            await operation()
+            self?.remove(requestID)
+        }
+
+        lock.lock()
+        if records[requestID] === record {
+            record.task = task
+        }
+        lock.unlock()
+
+        return requestID
+    }
+
+    func tasks() -> [Task<Void, Never>] {
+        lock.lock()
+        defer { lock.unlock() }
+        return records.values.compactMap(\.task)
+    }
+
+    private func remove(_ requestID: UUID) {
+        lock.lock()
+        records.removeValue(forKey: requestID)
+        lock.unlock()
+    }
+}
+
 actor SSHClient {
-    private struct MoshShellRuntime {
+    private final class MoshShellRuntime: @unchecked Sendable {
         let session: MoshClientSession
+        private let lock = NSLock()
+        private var streamTask: Task<Void, Never>?
+
+        init(session: MoshClientSession) {
+            self.session = session
+        }
+
+        func setStreamTask(_ task: Task<Void, Never>) {
+            lock.lock()
+            streamTask = task
+            lock.unlock()
+        }
+
+        func cancelStreamTask() {
+            lock.lock()
+            let task = streamTask
+            streamTask = nil
+            lock.unlock()
+            task?.cancel()
+        }
     }
 
     private var session: SSHSession?
@@ -76,6 +143,7 @@ actor SSHClient {
     private var resolvedRemoteEnvironment: RemoteEnvironment?
     private var resolvedRemoteTerminalType: RemoteTerminalType?
     private var moshShells: [UUID: MoshShellRuntime] = [:]
+    nonisolated private let moshTeardownTasks = SSHMoshTeardownTaskRegistry()
     private let cloudflareTransportManager = CloudflareTransportManager()
     private let moshStartupTimeout: Duration = .seconds(8)
     private let connectTimeout: Duration = .seconds(30)
@@ -228,8 +296,12 @@ actor SSHClient {
         let activeMoshShells = Array(moshShells.values)
         moshShells.removeAll()
         for runtime in activeMoshShells {
-            await runtime.session.stop()
+            trackMoshTeardownTask {
+                runtime.cancelStreamTask()
+                await runtime.session.stop()
+            }
         }
+        await waitForMoshTeardownTasks()
 
         keepAliveTask?.cancel()
         keepAliveTask = nil
@@ -579,6 +651,7 @@ actor SSHClient {
 
     func closeShell(_ shellId: UUID) async {
         if let runtime = moshShells.removeValue(forKey: shellId) {
+            runtime.cancelStreamTask()
             await runtime.session.stop()
             return
         }
@@ -714,6 +787,8 @@ actor SSHClient {
         }
         let hostOpStream = await moshSession.hostOpStream()
         let moshLogger = logger
+        let runtime = MoshShellRuntime(session: moshSession)
+        moshShells[shellId] = runtime
         let stream = AsyncStream<Data> { continuation in
             // Replay any ops that arrived before the stream was created
             for op in pendingOps {
@@ -745,21 +820,35 @@ actor SSHClient {
                 continuation.finish()
                 await self?.closeShell(shellId)
             }
+            runtime.setStreamTask(streamTask)
 
             continuation.onTermination = { [weak self] _ in
-                streamTask.cancel()
-                Task { [weak self] in
+                runtime.cancelStreamTask()
+                self?.trackMoshTeardownTask { [weak self] in
                     await self?.closeShell(shellId)
                 }
             }
         }
 
-        moshShells[shellId] = MoshShellRuntime(session: moshSession)
         return ShellHandle(
             id: shellId,
             stream: stream,
             transport: .mosh
         )
+    }
+
+    nonisolated private func trackMoshTeardownTask(_ operation: @escaping @Sendable () async -> Void) {
+        moshTeardownTasks.track(operation)
+    }
+
+    private func waitForMoshTeardownTasks() async {
+        while true {
+            let tasks = moshTeardownTasks.tasks()
+            guard !tasks.isEmpty else { return }
+            for task in tasks {
+                await task.value
+            }
+        }
     }
 
     nonisolated static func runWithTimeout<T: Sendable>(

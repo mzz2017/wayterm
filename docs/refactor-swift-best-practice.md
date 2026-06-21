@@ -115,11 +115,12 @@ preserved in the archive.
   - Required fix: track these cleanup tasks in the owning `SSHClient` / runtime
     or make later disconnect/close paths await them.
   - Status: completed by Task 84.
-- [ ] 9. SSHClient mosh stream teardown tracking.
+- [x] 9. SSHClient mosh stream teardown tracking.
   - Evidence: `SSHClient` mosh stream termination cancels the stream task and
     starts untracked shell teardown, which can stop a live `MoshClientSession`.
   - Required fix: track/await this teardown from the owning `SSHClient` /
     runtime before merge.
+  - Status: completed by Task 85.
 - [ ] 10. SSH exec/upload raw libssh2 error preservation.
   - Evidence: `SSHClient` still collapses non-EAGAIN exec channel open/startup/
     write and upload close/wait errors to generic errors after reading or
@@ -129,16 +130,17 @@ preserved in the archive.
 
 ## Current Focus
 
-Next executable slice: Must-Fix 9, SSHClient mosh stream teardown tracking.
+Next executable slice: Must-Fix 10, SSH exec/upload raw libssh2 error preservation.
 
 Before code:
 
-1. Inspect `VVTerm/Core/SSH/SSHClient.swift` mosh stream termination and
-   `MoshClientSession` teardown paths.
-2. Add a compact Task 85 section here with files, interfaces, RED tests,
+1. Inspect `VVTerm/Core/SSH/SSHClient.swift` exec request and upload channel
+   open/startup/write/close/wait error paths.
+2. Add a compact Task 86 section here with files, interfaces, RED tests,
    expected verification, API/boundary cleanup, and commit scope.
 3. Follow TDD: RED test first, then implementation, then focused verification.
-4. After Task 85, do API/boundary cleanup before moving to Must-Fix 10.
+4. After Task 86, do API/boundary cleanup, closure scan, and ready-for-merge
+   gate review.
 
 ## Task 81: Server Connection-Test Cancellation
 
@@ -533,6 +535,106 @@ explicitly authorizes new subagents. Fix Critical and Important findings,
 update Must-Fix 8 status plus Progress Ledger with RED/GREEN evidence,
 verification, review outcome, and cleanup notes, then commit atomically.
 
+## Task 85: SSHClient Mosh Stream Teardown Tracking
+
+**Files:**
+- Modify: `VVTerm/Core/SSH/SSHClient.swift`
+- Test: `VVTermTests/RemoteMoshManagerTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing `SSHClient.MoshShellRuntime`.
+  - Existing `SSHClient.startMoshShell(...)` host-op stream task.
+  - Existing `SSHClient.closeShell(_:)`.
+  - Existing `SSHClient.disconnect()`.
+- Produces:
+  - Mosh runtime stores its host-op stream task.
+  - Mosh stream termination routes close/stop through a tracked teardown helper
+    instead of raw `Task { await closeShell(...) }`.
+  - `disconnect()` cancels mosh stream tasks, tracks mosh session stops, and
+    awaits mosh teardown before finishing disconnect.
+
+- [x] **Step 1: Add RED mosh teardown ownership tests**
+
+Extend `RemoteMoshManagerTests`:
+- `sshClientMoshStreamTeardownIsTrackedByClientOwner`
+  - Inspect `SSHClient.swift`.
+  - Assert `MoshShellRuntime` stores or can cancel the host-op stream task.
+  - Assert mosh stream termination calls a named tracked teardown helper.
+  - Assert the mosh stream termination block does not launch raw
+    `Task { await closeShell(shellId) }`.
+  - Assert `disconnect()` awaits tracked mosh teardown work.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteMoshManagerTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the source-boundary test fails because mosh runtime stores
+only `MoshClientSession`, the stream task is local to `AsyncStream`, termination
+starts an untracked close task, and disconnect does not await tracked mosh
+teardown.
+
+- [x] **Step 2: Add mosh runtime task ownership**
+
+Update `SSHClient.swift`:
+- Convert or extend `MoshShellRuntime` so it owns the `MoshClientSession` and
+  the host-op stream task behind a small lock-protected helper.
+- Provide methods to set and cancel the stream task without exposing mutable
+  runtime state outside `SSHClient`.
+- Keep `MoshClientSession` as the mosh transport owner; do not move mosh logic
+  into SwiftUI or terminal managers.
+
+- [x] **Step 3: Add tracked mosh teardown helper**
+
+Update `SSHClient.swift`:
+- Add a client-owned mosh teardown task registry or reuse a narrowly named
+  helper that tracks teardown tasks from synchronous stream termination
+  callbacks.
+- Add `trackMoshTeardownTask(_:)` and `waitForMoshTeardownTasks()`.
+- Keep this separate from `SSHSession` channel cleanup tracking.
+
+- [x] **Step 4: Route stream termination and disconnect through tracker**
+
+Update `startMoshShell(...)`:
+- Store the stream task in `MoshShellRuntime`.
+- In `continuation.onTermination`, cancel the runtime stream task and register
+  the close/stop work through `trackMoshTeardownTask`.
+- Avoid creating raw untracked `Task` for mosh close/stop work.
+
+Update `disconnect()`:
+- Remove active mosh runtimes, cancel their stream tasks, stop their sessions
+  through tracked teardown tasks, and await tracked mosh teardown before
+  reporting disconnect complete.
+- Preserve existing SSH session and Cloudflare disconnect ordering.
+
+- [x] **Step 5: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteMoshManagerTests ENABLE_DEBUG_DYLIB=NO
+rg -n "MoshShellRuntime|setStreamTask|cancelStreamTask|trackMoshTeardownTask|waitForMoshTeardownTasks|hostOpStream|onTermination|Task \\{" VVTerm/Core/SSH/SSHClient.swift VVTermTests/RemoteMoshManagerTests.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows mosh stream task
+ownership, tracked termination teardown, and disconnect awaiting mosh teardown.
+
+- [x] **Step 6: API and boundary cleanup**
+
+Before review, verify mosh teardown APIs stay private to SSH infrastructure,
+ordinary SSH channel cleanup remains unchanged, disconnect ordering is still
+awaitable, no temporary test-only production helper was added, and Must-Fix 10
+raw libssh2 error work remains untouched.
+
+- [x] **Step 7: Review and commit**
+
+Perform local lifecycle review against the Swift checklist unless the user
+explicitly authorizes new subagents. Fix Critical and Important findings,
+update Must-Fix 9 status plus Progress Ledger with RED/GREEN evidence,
+verification, review outcome, and cleanup notes, then commit atomically.
+
 ## Verification Template
 
 Focused iOS tests:
@@ -562,6 +664,21 @@ xcodebuild build-for-testing \
 
 ## Progress Ledger
 
+- 2026-06-22: Task 85 RED/GREEN completed with local lifecycle review and no
+  new subagents. `SSHClient` now owns mosh stream teardown through
+  `MoshShellRuntime` stream-task storage, `trackMoshTeardownTask(_:)`, and
+  `waitForMoshTeardownTasks()`; mosh stream termination cancels the host-op
+  stream task and registers close/stop work instead of launching raw close
+  tasks, while `disconnect()` tracks and awaits mosh session stops before
+  continuing. Initial RED failed as expected because mosh runtime did not store
+  the stream task, termination created an untracked close task, and disconnect
+  did not await tracked mosh teardown. GREEN verification passed
+  `RemoteMoshManagerTests`; source scan showed runtime stream-task ownership,
+  tracked mosh teardown helpers, and disconnect wait coverage. Diff check
+  passed; iOS `build-for-testing` passed with
+  `ENABLE_DEBUG_DYLIB=NO`. API/boundary cleanup found the new helpers private
+  to SSH infrastructure, ordinary SSH channel cleanup unchanged, no test-only
+  production helper added, and Must-Fix 10 raw libssh2 error paths untouched.
 - 2026-06-22: Task 84 RED/GREEN completed with local lifecycle review and no
   new subagents. `SSHSession` now owns shell/exec channel cleanup tasks through
   `SSHChannelCleanupTaskRegistry`, `trackChannelCleanupTask(_:)`, and
