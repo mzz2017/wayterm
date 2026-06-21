@@ -207,7 +207,9 @@ struct VVTermCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
             Button("About VVTerm") {
-                AboutWindowController.shared.show()
+                AboutWindowPresenter.shared.show {
+                    AboutView()
+                }
             }
         }
 
