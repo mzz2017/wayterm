@@ -225,19 +225,19 @@ struct SSHTerminalWrapper: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
-        let sessionStillExists = ConnectionSessionManager.shared.sessions.contains { $0.id == coordinator.sessionId }
+        let sessionStillExists = coordinator.sessionManager.sessions.contains { $0.id == coordinator.sessionId }
 
         if sessionStillExists {
             if let scrollView = nsView as? TerminalScrollView {
                 scrollView.surfaceView.pauseRendering()
             }
             coordinator.isReusingTerminal = true
-            ConnectionSessionManager.shared.detachSurfaceForViewDisappeared(from: coordinator.sessionId)
+            coordinator.sessionManager.detachSurfaceForViewDisappeared(from: coordinator.sessionId)
             return
         }
 
         coordinator.terminalView = nil
-        ConnectionSessionManager.shared.handleClosedSessionSurfaceTeardown(
+        coordinator.sessionManager.handleClosedSessionSurfaceTeardown(
             sessionId: coordinator.sessionId,
             serverId: coordinator.server.id,
             reason: "mac dismantle closed session"
@@ -573,7 +573,7 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
 
         // Check if session still exists - if it does, user just navigated away
         // Keep terminal alive for when they come back
-        let sessionStillExists = ConnectionSessionManager.shared.sessions.contains { $0.id == coordinator.sessionId }
+        let sessionStillExists = coordinator.sessionManager.sessions.contains { $0.id == coordinator.sessionId }
 
         if sessionStillExists {
             // Session still active - user just navigated away
@@ -586,13 +586,13 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             // The SSH output loop checks terminalView != nil to continue running.
             // Setting it to nil would break the loop and close the connection.
             coordinator.preserveSession = true
-            ConnectionSessionManager.shared.detachSurfaceForViewDisappeared(from: coordinator.sessionId)
+            coordinator.sessionManager.detachSurfaceForViewDisappeared(from: coordinator.sessionId)
             return
         }
 
         // Session was closed - full cleanup
         coordinator.terminalView = nil
-        ConnectionSessionManager.shared.handleClosedSessionSurfaceTeardown(
+        coordinator.sessionManager.handleClosedSessionSurfaceTeardown(
             sessionId: coordinator.sessionId,
             serverId: coordinator.server.id,
             reason: "ios dismantle closed session"
