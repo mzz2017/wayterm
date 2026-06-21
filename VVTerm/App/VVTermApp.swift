@@ -270,10 +270,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let foregroundSyncMinimumInterval: TimeInterval = 20
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Subscribe to CloudKit changes
-        Task {
-            await CloudKitManager.shared.subscribeToChanges()
-        }
+        AppSyncCoordinator.shared.startChangeSubscription()
         NSApplication.shared.registerForRemoteNotifications()
     }
 
@@ -284,9 +281,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard now.timeIntervalSince(lastForegroundSyncAt) >= foregroundSyncMinimumInterval else { return }
         lastForegroundSyncAt = now
 
-        Task {
-            await ServerManager.shared.loadData()
-        }
+        AppSyncCoordinator.shared.refreshServerData(reason: .foreground)
     }
 
     func applicationDidResignActive(_ notification: Notification) {
@@ -305,9 +300,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, didReceiveRemoteNotification userInfo: [String: Any]) {
         guard SyncSettings.isEnabled else { return }
-        Task {
-            await ServerManager.shared.loadData()
-        }
+        AppSyncCoordinator.shared.refreshServerData(reason: .remoteNotification)
     }
 }
 #else
@@ -321,10 +314,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        // Subscribe to CloudKit changes
-        Task {
-            await CloudKitManager.shared.subscribeToChanges()
-        }
+        AppSyncCoordinator.shared.startChangeSubscription()
         application.registerForRemoteNotifications()
 
         return true
@@ -337,9 +327,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         guard now.timeIntervalSince(lastForegroundSyncAt) >= foregroundSyncMinimumInterval else { return }
         lastForegroundSyncAt = now
 
-        Task {
-            await ServerManager.shared.loadData()
-        }
+        AppSyncCoordinator.shared.refreshServerData(reason: .foreground)
     }
 
     func application(
@@ -352,8 +340,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             return
         }
 
-        Task {
-            await ServerManager.shared.loadData()
+        AppSyncCoordinator.shared.refreshServerDataAfterRemoteNotification {
             completionHandler(.newData)
         }
     }

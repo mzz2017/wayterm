@@ -2890,7 +2890,7 @@ Sub-task split:
 rg -n "try\\?|Task \\{|Task\\.detached|URLSession|NSWindow|save|delete|sync" VVTerm/App VVTerm/Core VVTerm/Features -g '*.swift'
 ```
 
-Scan result: Task 40A selected server edit credential consistency as the first slice. Remaining scan hits stay assigned to later sub-tasks: app/sync `Task` ownership for 40B, Voice/URLSession download ownership for 40C, About/Pro AppKit window presenters for 40D, and remaining destructive save/delete flows for 40E.
+Scan result: Task 40A selected server edit credential consistency as the first slice. Task 40B then selected AppDelegate/SyncSettingsView sync task ownership. Remaining scan hits stay assigned to later sub-tasks: Voice/URLSession download ownership for 40C, About/Pro AppKit window presenters for 40D, and remaining destructive save/delete flows for 40E.
 
 - [x] **Step 3: Implement the first selected cross-feature sub-task with TDD**
 
@@ -2899,6 +2899,10 @@ Start with the highest-risk lifecycle-critical operation found by the scan, like
 Task 40A RED evidence: `ServerManagerBootstrapTests.updateServerWithCredentialsDoesNotMutateMetadataWhenCredentialStoreFails` failed to compile before `ServerManager` exposed a credential-store seam and `updateServer(_:credentials:)`.
 
 Task 40A GREEN evidence: `ServerManagerBootstrapTests` passed 11 Swift Testing tests after `ServerManager` owned edit credential+metadata ordering and `ServerFormSheet.saveServer()` stopped writing Keychain directly during edit saves. The first single-test filter run matched 0 tests and is not counted as GREEN evidence.
+
+Task 40B RED evidence: `AppSyncCoordinatorTests` failed to compile because `AppSyncCoordinator` and `ServerRefreshReason` did not exist.
+
+Task 40B GREEN evidence: `AppSyncCoordinatorTests` passed 5 Swift Testing tests after adding app-layer sync task ownership, coalesced server refresh tracking, remote-notification completion waiting, settings enable ordering, settings-owned post-toggle reload after an existing foreground refresh, and cancellation of stale settings enable work when a later disable intent arrives.
 
 - [x] **Step 4: Run focused verification**
 
@@ -2909,11 +2913,19 @@ Verification evidence for Task 40A:
 - `git diff --check` passed.
 - `xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
 
+Verification evidence for Task 40B:
+- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/AppSyncCoordinatorTests ENABLE_DEBUG_DYLIB=NO` passed 5 Swift Testing tests.
+- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/AppSyncCoordinatorTests -only-testing:VVTermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO` passed 16 Swift Testing tests.
+- `git diff --check` passed.
+- `xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
+
 - [x] **Step 5: API and boundary cleanup**
 
 Verify each feature keeps Domain/Application/Infrastructure/UI boundaries intact and that no UI owns critical long-lived resources.
 
 Task 40A cleanup: server edit save now goes through `ServerManager.updateServer(_:credentials:)`, and `ServerFormSheet.saveServer()` no longer calls `storePassword`, `storeSSHKey`, `storeCloudflareServiceToken`, or `deleteCloudflareServiceToken` directly. Remaining `ServerFormSheet` Keychain reads/import helpers are outside the 40A save-consistency slice and should be classified separately before broader cleanup. Task 40 as a whole remains open for 40B-40E.
+
+Task 40B cleanup: app launch, foreground, and remote notification sync intents now go through `AppSyncCoordinator`; `SyncSettingsView` sends recheck/toggle intent to the same application-layer owner instead of composing CloudKit/server/accessory work in SwiftUI. `CloudKitManager.handleSyncToggle(_:)` is now awaitable and cancellation-aware after account status checks, and subscription setup rechecks cancellation/sync-enabled state before treating existing subscriptions or saves as valid. Remaining `Task` hits in the scan are classified as existing app-lock/teardown paths, stored CloudKit fetch/zone tasks, or later Task 40C-40E candidates.
 
 - [ ] **Step 6: Request review and commit**
 
@@ -2928,6 +2940,7 @@ Commit each split sub-task atomically.
 - 2026-06-21: Task 37 final RED/GREEN, API cleanup, and review fixes completed. Root, split, and iOS terminal views no longer own retry in-flight state, call Keychain directly, execute reconnect directly, or derive foreground reconnect from registry state in SwiftUI. Managers now load credentials through application-layer providers, gate duplicate retry intent, revalidate liveness after awaited credential loading, execute foreground/open-active reconnect intent, return wrapper credentials or UI actions to views, and keep reconnect/watchdog/retrust/mosh sequencing in TerminalSessions Application. Boundary scan found no `reconnectInFlight`, direct `KeychainManager.shared.getCredentials`, old watchdog token/sleep, direct `reconnect(session:)`, direct live-runtime lookup, direct known-host reset, or direct reconnect policy calls in the target SwiftUI files. Verification: focused Task 37 suite passed 74 Swift Testing tests, and `git diff --check` passed.
 - 2026-06-21: Task 38 RED/GREEN and review fix completed. RED proved a same-server RemoteFiles operation could start while a dropped disconnect task was still closing the previous SFTP lease, and review added coverage for a second disconnect registered after the first wait. `RemoteFileBrowserStore` now tracks pending disconnect tasks and loops until no same-server disconnect remains before later service work; iOS active-connection and current-server disconnect flows now await the returned RemoteFiles disconnect task before terminal session teardown/navigation. Verification: `RemoteFileBrowserStoreTests` passed 6 Swift Testing tests, and `git diff --check` passed.
 - 2026-06-21: Task 40A RED/GREEN completed. Server edit save now runs through `ServerManager.updateServer(_:credentials:)`, so credential storage failure prevents metadata mutation instead of letting `ServerFormSheet` update metadata first and write Keychain later. `ServerFormSheet.saveServer()` no longer directly stores/deletes server credentials on edit save; remaining Keychain reads/import helpers are deferred to broader cleanup. Task 40 remains open for sync ownership, voice download ownership, AppKit window ownership, and remaining destructive action tracking. Verification: `ServerManagerBootstrapTests` passed 11 Swift Testing tests, `git diff --check` passed, and `xcodebuild build-for-testing -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
+- 2026-06-21: Task 40B RED/GREEN completed with review fixes. AppDelegate launch/foreground/remote-notification sync and `SyncSettingsView` recheck/toggle sync now send intent to `AppSyncCoordinator`, which stores/coalesces sync tasks, waits for tracked refresh before remote notification completion, queues a settings-owned reload after any already-running foreground refresh, and cancels stale settings enable work when a later disable intent arrives. `CloudKitManager.handleSyncToggle(_:)` is awaitable and cancellation-aware after account status checks, and subscription setup rechecks cancellation/sync-enabled state before treating existing subscriptions or saves as valid. Task 40 remains open for voice download ownership, AppKit window ownership, and remaining destructive action tracking. Verification: `AppSyncCoordinatorTests` passed 5 Swift Testing tests; `AppSyncCoordinatorTests` + `ServerManagerBootstrapTests` passed 16 Swift Testing tests; `git diff --check` passed; `xcodebuild build-for-testing -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
 - 2026-06-21: Task 31 completed, with Task 36 ledger correction. Terminal runtime/client factory ownership is centralized in `TerminalConnectionRuntime`; session and tab managers still hold temporary application-boundary bridge maps and shell registry leases for runtime lookup/registration, but runner finish ordering is protected by awaitable runtime close paths and late/missing shell registrations are rejected before runner follow-up callbacks mutate closed state.
 - 2026-06-21: Task 32 RED/GREEN and API cleanup completed. `TerminalConnectionRunner` now depends on `TerminalConnectionSurface` and abstract connection operations instead of `GhosttyTerminalView`; `GhosttyTerminalView` adaptation lives at the surface registry/application boundary, and runner tests cover fake-surface size reads, stream writes, and process-exit notification without constructing a UI surface.
 - 2026-06-21: Final audit after Task 32 found repo-wide drift against the Swift test context rule: multiple older `VVTermTests/**/*.swift` files still lack `Test Context` headers. Task 33 is added to close this rule before final ready-for-merge review.

@@ -119,9 +119,7 @@ struct SyncSettingsView: View {
                     }
 
                     Button {
-                        Task {
-                            await cloudKit.forceSync()
-                        }
+                        AppSyncCoordinator.shared.refreshCloudKitStatusFromSettings()
                     } label: {
                         Label("Re-check iCloud Status", systemImage: "arrow.clockwise")
                     }
@@ -134,13 +132,7 @@ struct SyncSettingsView: View {
         }
         .formStyle(.grouped)
         .onChangeCompat(of: syncEnabled) { enabled in
-            cloudKit.handleSyncToggle(enabled)
-            if enabled {
-                Task {
-                    await serverManager.loadData()
-                    await terminalAccessory.refreshFromCloud()
-                }
-            }
+            AppSyncCoordinator.shared.handleSyncSettingsChanged(enabled)
         }
     }
 
