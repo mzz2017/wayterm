@@ -8,24 +8,6 @@ import SwiftUI
 import AppKit
 #endif
 
-@MainActor
-private func awaitTerminalManagersTeardownBeforeExit(timeout: TimeInterval = 2) {
-    let semaphore = DispatchSemaphore(value: 0)
-    Task { @MainActor in
-        await ConnectionSessionManager.shared.disconnectAllAndWait()
-        await TerminalTabManager.shared.disconnectAllAndWait()
-        semaphore.signal()
-    }
-
-    let deadline = Date().addingTimeInterval(timeout)
-    while Date() < deadline {
-        if semaphore.wait(timeout: .now()) == .success {
-            return
-        }
-        _ = RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.01))
-    }
-}
-
 @main
 struct VVTermApp: App {
     init() {
@@ -133,11 +115,11 @@ struct VVTermApp: App {
                     .environment(\.privacyModeEnabled, privacyModeEnabled)
                     .onAppear {
                         AppLanguage.applySelection(appLanguage)
-                        ServerManager.shared.handleAppLanguageChange()
+                        AppLifecycleCoordinator.shared.handleAppLanguageChange(appLanguage)
                     }
                     .onChange(of: appLanguage) { newValue in
                         AppLanguage.applySelection(newValue)
-                        ServerManager.shared.handleAppLanguageChange()
+                        AppLifecycleCoordinator.shared.handleAppLanguageChange(newValue)
                     }
                 }
             }
@@ -268,32 +250,24 @@ struct VVTermCommands: Commands {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    private var lastForegroundSyncAt: Date = .distantPast
-    private let foregroundSyncMinimumInterval: TimeInterval = 20
-
     func applicationDidFinishLaunching(_ notification: Notification) {
-        AppSyncCoordinator.shared.startChangeSubscription()
+        AppLifecycleCoordinator.shared.requestLaunch()
         NSApplication.shared.registerForRemoteNotifications()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        guard SyncSettings.isEnabled else { return }
-
-        let now = Date()
-        guard now.timeIntervalSince(lastForegroundSyncAt) >= foregroundSyncMinimumInterval else { return }
-        lastForegroundSyncAt = now
-
-        AppSyncCoordinator.shared.refreshServerData(reason: .foreground)
+        AppLifecycleCoordinator.shared.requestForegroundRefresh()
     }
 
     func applicationDidResignActive(_ notification: Notification) {
-        Task { @MainActor in
-            AppLockManager.shared.lockIfNeededForBackground()
-        }
+        AppLifecycleCoordinator.shared.requestBackgroundLock()
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        awaitTerminalManagersTeardownBeforeExit()
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        AppLifecycleCoordinator.shared.requestTerminationTeardown {
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -301,35 +275,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, didReceiveRemoteNotification userInfo: [String: Any]) {
-        guard SyncSettings.isEnabled else { return }
-        AppSyncCoordinator.shared.refreshServerData(reason: .remoteNotification)
+        AppLifecycleCoordinator.shared.requestRemoteNotificationRefresh()
     }
 }
 #else
 // MARK: - iOS App Delegate
 
 class AppDelegate: NSObject, UIApplicationDelegate {
-    private var lastForegroundSyncAt: Date = .distantPast
-    private let foregroundSyncMinimumInterval: TimeInterval = 20
-
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        AppSyncCoordinator.shared.startChangeSubscription()
+        AppLifecycleCoordinator.shared.requestLaunch()
         application.registerForRemoteNotifications()
 
         return true
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        guard SyncSettings.isEnabled else { return }
-
-        let now = Date()
-        guard now.timeIntervalSince(lastForegroundSyncAt) >= foregroundSyncMinimumInterval else { return }
-        lastForegroundSyncAt = now
-
-        AppSyncCoordinator.shared.refreshServerData(reason: .foreground)
+        AppLifecycleCoordinator.shared.requestForegroundRefresh()
     }
 
     func application(
@@ -337,26 +301,18 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
-        guard SyncSettings.isEnabled else {
-            completionHandler(.noData)
-            return
-        }
-
-        AppSyncCoordinator.shared.refreshServerDataAfterRemoteNotification {
-            completionHandler(.newData)
+        AppLifecycleCoordinator.shared.requestRemoteNotificationRefresh { didRefresh in
+            completionHandler(didRefresh ? .newData : .noData)
         }
     }
 
     func applicationWillTerminate(_ application: UIApplication) {
-        awaitTerminalManagersTeardownBeforeExit()
+        AppLifecycleCoordinator.shared.requestTerminationTeardown()
     }
 
     // Handle app going to background - suspend connections to save resources
     func applicationDidEnterBackground(_ application: UIApplication) {
-        Task { @MainActor in
-            await ConnectionSessionManager.shared.suspendAllForBackground()
-            AppLockManager.shared.lockIfNeededForBackground()
-        }
+        AppLifecycleCoordinator.shared.requestBackgroundSuspension()
     }
 }
 #endif
