@@ -5519,8 +5519,99 @@ Before review, verify `ConnectionSessionManager` is the single owner of active-c
 
 Request code review for Task 71. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
+## Task 72: RemoteFiles Move Destination Load Request Boundary
+
+**Files:**
+- Modify: `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
+- Modify: `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift`
+- Modify: `VVTerm/Features/RemoteFiles/UI/Sheets/RemoteFileBrowserSheets.swift`
+- Test: `VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
+- Test: `VVTermTests/RemoteFileMutationIntentBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing `RemoteFileBrowserStore.listDirectories(at:server:) async throws -> [RemoteFileEntry]`
+  - Existing `RemoteFileMoveSheet`
+  - Existing `RemoteFileBrowserScreen.moveSheet(entry:)`
+  - Existing `RemoteFileBrowserStore.withRemoteFileService(for:operation:)`
+- Produces:
+  - `RemoteFileBrowserStore.requestMoveDestinationLoad(path:server:onCompleted:) -> UUID`
+  - `RemoteFileBrowserStore.pendingMoveDestinationLoadRequestIDs`
+  - `RemoteFileBrowserStore.waitForMoveDestinationLoadRequest(_:) async`
+  - Path/server move-destination load coalescing so repeated sheet reloads do not start duplicate remote directory-list work.
+  - Move destination UI that sends load intent synchronously and keeps only presentation state.
+
+- [ ] **Step 1: Add RED move-destination lifecycle and boundary tests**
+
+Extend `RemoteFileBrowserStoreTests`:
+- `moveDestinationLoadRequestTracksDirectoryListingUntilCompletion`: create a store with a fake delayed RemoteFiles service for one server, call `requestMoveDestinationLoad(path:server:onCompleted:)`, assert the returned ID is visible in `pendingMoveDestinationLoadRequestIDs` while the fake listing is blocked, release it, wait for the request, then assert the callback receives only directory entries sorted by name and pending tracking clears.
+- `duplicateMoveDestinationLoadRequestsCoalesceUntilCompletion`: call the request API twice for the same normalized path/server while the fake listing is blocked, assert both calls return the same request ID, the fake list operation starts once, both callbacks receive the result, and pending tracking clears.
+- `moveDestinationLoadCancellationRemainsAwaitableUntilListingExits`: cancel the returned request through a DEBUG testing hook while the fake listing is blocked, assert visible pending state clears immediately but `waitForMoveDestinationLoadRequest(_:)` does not return until the fake list exits, then assert no completion callback runs.
+
+Extend `RemoteFileMutationIntentBoundaryTests`:
+- scan `VVTerm/Features/RemoteFiles/UI/Sheets/RemoteFileBrowserSheets.swift`;
+- slice `struct RemoteFileMoveSheet`;
+- assert the sheet accepts a synchronous move-destination load request closure instead of an async `onLoadDirectories`;
+- assert the sheet uses `.task(id: currentDirectory)` only to send intent;
+- assert the sheet does not contain `Task { await loadDirectories() }` or `try await onLoadDirectories`.
+- scan `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift`;
+- assert `moveSheet(entry:)` calls `browser.requestMoveDestinationLoad(...)`;
+- assert `moveSheet(entry:)` does not pass `try await fileBrowser.listDirectories(...)` into the sheet.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails to compile because `requestMoveDestinationLoad`, `pendingMoveDestinationLoadRequestIDs`, `waitForMoveDestinationLoadRequest`, and DEBUG cancellation hooks do not exist. If it compiles unexpectedly, the boundary test must fail because `RemoteFileMoveSheet` still owns async directory loading through `onLoadDirectories` and retry starts `Task { await loadDirectories() }`.
+
+- [ ] **Step 2: Add RemoteFileBrowserStore-owned move-destination load tracking**
+
+Update `RemoteFileBrowserStore`:
+- add a `MoveDestinationLoadRequest` record keyed by request ID, with `serverId`, normalized `path`, `task`, and completion callbacks;
+- add a `MoveDestinationLoadRequestKey: Hashable` for same-server/same-path coalescing;
+- expose `pendingMoveDestinationLoadRequestIDs` from the visible key-to-request index;
+- implement `requestMoveDestinationLoad(path:server:onCompleted:)` so it creates one store-owned task per key, calls `listDirectories(at:server:)`, filters to directory entries, sorts by name, and calls every completion only if the request is still current and not canceled;
+- duplicate same-key intent appends callbacks and returns the existing request ID;
+- cancellation must remove visible pending state immediately, keep the task record until task exit, skip callbacks after cancellation, and keep the wait hook awaitable until the blocked listing exits;
+- add DEBUG-only cancellation hook for ordering tests.
+
+- [ ] **Step 3: Route move destination sheet loading through request intent**
+
+Update `RemoteFileMoveSheet`:
+- replace `let onLoadDirectories: (String) async throws -> [RemoteFileEntry]` with an intent-style closure such as `let onRequestDirectories: (String, @escaping @MainActor (Result<[RemoteFileEntry], Error>) -> Void) -> Void`;
+- replace `private func loadDirectories() async` with a synchronous helper that sets `isLoading`, clears `errorMessage`, and calls `onRequestDirectories(currentDirectory)`;
+- change `.task(id: currentDirectory)` to call the synchronous helper;
+- change Retry to call the synchronous helper directly, with no local `Task`;
+- keep UI-only presentation state (`directories`, `isLoading`, `errorMessage`, selected destination) in the sheet.
+
+Update `RemoteFileBrowserScreen.moveSheet(entry:)`:
+- pass a closure that calls `browser.requestMoveDestinationLoad(path:server:onCompleted:)`;
+- keep existing move behavior and sheet sizing unchanged.
+
+- [ ] **Step 4: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "RemoteFileMoveSheet|onLoadDirectories|onRequestDirectories|requestMoveDestinationLoad|Task \\{ await loadDirectories|try await fileBrowser\\.listDirectories|pendingMoveDestinationLoad" VVTerm/Features/RemoteFiles/UI/Sheets/RemoteFileBrowserSheets.swift VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift VVTermTests/RemoteFileMutationIntentBoundaryTests.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows `RemoteFileMoveSheet` sends synchronous load intent, has no retry `Task { await loadDirectories() }`, and no longer awaits `onLoadDirectories`; `RemoteFileBrowserScreen.moveSheet(entry:)` delegates remote directory listing to `RemoteFileBrowserStore.requestMoveDestinationLoad(...)`.
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Before review, verify `RemoteFileBrowserStore` is the single owner of remote move-destination directory listing work, duplicate same-path requests cannot create duplicate SFTP list work, cancellation is visible lifecycle completion while remaining awaitable, `RemoteFileMoveSheet` owns only presentation state, and touched tests include complete Test Context plus Given / When / Then comments.
+
+- [ ] **Step 6: Request review and commit**
+
+Request code review for Task 72. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-71 scan selected Task 72 as the next executable lifecycle slice. `RemoteFileMoveSheet` still starts move-destination directory loading from SwiftUI `.task(id: currentDirectory)` and Retry still launches `Task { await loadDirectories() }`, while `RemoteFileBrowserScreen.moveSheet(entry:)` passes an async closure that directly awaits `fileBrowser.listDirectories(at:server:)`. This is remote SFTP directory-list lifecycle work and matches the RemoteFiles move-destination loading gap repeatedly deferred in the ledger. Task 72 should move this load into `RemoteFileBrowserStore` as a tracked, awaitable, coalesced request while keeping only sheet presentation state in SwiftUI. Terminal split-pane voice text injection, terminal title/PWD/background parsing, terminal interaction-state cleanup, Ghostty config reload, and broader low-level Application/Core tracked tasks remain deferred.
 - 2026-06-21: Task 71 RED/GREEN completed with local lifecycle review fix. `ConnectionSessionManager` now owns tracked iOS Active Connection open requests through `requestActiveConnectionOpen(session:preferredViewId:onOpened:)`, exposes `pendingActiveConnectionOpenRequestIDs` plus `waitForActiveConnectionOpenRequest(_:)`, coalesces duplicate same-session open intent, checks/reconnects inactive runtimes, selects the session, restores the preferred terminal view, and runs presentation callbacks only after manager-owned reconnect/select work completes. `iOSContentView.openActiveConnection(_:)` now sends server-unlock intent and then active-connection open intent; it no longer owns the reconnect/select/show-terminal `Task`. Initial RED failed to build because the active-connection open request API, pending IDs, wait hook, and DEBUG ordering/cancel hooks did not exist. A follow-up RED reproduced close-path cancellation: closing a session hid the pending request but the wait hook returned before blocked reconnect work exited. GREEN keeps canceled request task handles until task defer cleanup while deriving visible pending state from the session-to-request index. Final focused verification passed 97 Swift Testing tests across `ConnectionLifecycleIntegrationTests` and `IOSActiveConnectionOpenIntentBoundaryTests`; source scan showed `openActiveConnection(_:)` uses `requestServerUnlock` plus `requestActiveConnectionOpen` with no helper-local `Task {}` or direct `reconnectSessionIfRuntimeInactive` call. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Tool policy did not permit spawning an independent review subagent without explicit user delegation, so review was local against the Swift lifecycle checklist; no remaining Critical or Important issues were found. Broader RemoteFiles move-destination loading, split-pane voice text injection, terminal title/PWD/background parsing, terminal interaction-state cleanup, and other deferred lifecycle slices remain open.
 - 2026-06-21: Post-Task-70 scan selected Task 71 as the next executable lifecycle slice. Task 70 moved biometric server unlock ownership out of `iOSContentView.openActiveConnection(_:)`, but the unlocked continuation still starts a SwiftUI-owned `Task` that awaits `ConnectionSessionManager.reconnectSessionIfRuntimeInactive(_:)`, selects the session, sets `selectedViewByServer`, and presents the terminal. This open-active-connection path is directly tied to the original Active Connections reconnect/auth symptoms and should be owned by `ConnectionSessionManager` as a tracked request. Broader RemoteFiles move-destination loading, split-pane voice text injection, terminal title/PWD/background parsing, and terminal interaction-state cleanup remain deferred.
 - 2026-06-21: Post-Task-69 scan selected Task 70 as the next executable lifecycle slice. `ServerSidebarView.selectServer(_:)` and iOS `openActiveConnection(_:)` still create SwiftUI-owned tasks that directly await `AppLockManager.shared.ensureServerUnlocked(server)`. This is biometric authentication lifecycle work, and `AppLockManager` already owns nearby app-unlock/full-lock request tracking, so Task 70 should add a server-specific request API with same-server coalescing and route these UI paths through intent callbacks. Broader Active Connection reconnect orchestration, RemoteFiles move-destination directory loading, split-pane voice text injection, and terminal interaction-state cleanup remain deferred.
