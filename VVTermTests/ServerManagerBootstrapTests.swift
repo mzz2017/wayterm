@@ -500,6 +500,158 @@ struct ServerManagerBootstrapTests {
     }
 
     @Test
+    func serverMoveIntentTracksSuccessAfterMetadataAndSelectionUpdates() async throws {
+        // Given a user-initiated server move where the source workspace
+        // currently selects the server and the destination has not selected it.
+        let wasPro = StoreManager.shared.isPro
+        StoreManager.shared.isPro = true
+        defer { StoreManager.shared.isPro = wasPro }
+
+        let sourceWorkspace = Workspace(
+            id: UUID(),
+            name: "Source",
+            order: 0,
+            lastSelectedServerId: nil
+        )
+        let destinationWorkspace = Workspace(
+            id: UUID(),
+            name: "Destination",
+            order: 1,
+            lastSelectedServerId: nil
+        )
+        let server = Server(
+            id: UUID(),
+            workspaceId: sourceWorkspace.id,
+            environment: .staging,
+            name: "Tencent",
+            host: "move-success.example.com",
+            username: "root"
+        )
+        var selectedSource = sourceWorkspace
+        selectedSource.lastSelectedServerId = server.id
+        let manager = ServerManager.makeForTesting(
+            servers: [server],
+            workspaces: [selectedSource, destinationWorkspace]
+        )
+        var movedServer: Server?
+
+        // When UI sends move intent without owning the async move task.
+        let requestID = manager.requestServerMove(
+            server,
+            to: destinationWorkspace,
+            preferredEnvironment: .production
+        ) { server in
+            movedServer = server
+        }
+
+        // Then the manager tracks the request and calls success only after the
+        // server metadata and workspace selection metadata are updated.
+        #expect(manager.pendingServerMoveRequestIDs.contains(requestID))
+        await manager.waitForServerMoveRequest(requestID)
+        #expect(!manager.pendingServerMoveRequestIDs.contains(requestID))
+        #expect(movedServer?.workspaceId == destinationWorkspace.id)
+        #expect(movedServer?.environment == .production)
+        #expect(manager.servers.first?.workspaceId == destinationWorkspace.id)
+        #expect(manager.workspace(withId: sourceWorkspace.id)?.lastSelectedServerId == nil)
+        #expect(manager.workspace(withId: destinationWorkspace.id)?.lastSelectedServerId == server.id)
+        #expect(manager.serverMoveFailure == nil)
+    }
+
+    @Test
+    func serverMoveIntentTracksProFailureWithoutCallingMoveContinuations() async throws {
+        // Given a free-tier move request into a locked destination workspace.
+        let wasPro = StoreManager.shared.isPro
+        StoreManager.shared.isPro = false
+        defer { StoreManager.shared.isPro = wasPro }
+
+        let sourceWorkspace = Workspace(id: UUID(), name: "Unlocked", order: 0)
+        let lockedDestination = Workspace(id: UUID(), name: "Locked", order: 1)
+        let server = Server(
+            id: UUID(),
+            workspaceId: sourceWorkspace.id,
+            name: "Tencent",
+            host: "move-pro.example.com",
+            username: "root"
+        )
+        let manager = ServerManager.makeForTesting(
+            servers: [server],
+            workspaces: [sourceWorkspace, lockedDestination]
+        )
+        var didMove = false
+        var didShowProRequired = false
+        var failureMessage: String?
+
+        // When UI sends move intent through the application-layer request API.
+        let requestID = manager.requestServerMove(
+            server,
+            to: lockedDestination,
+            onMoved: { _ in didMove = true },
+            onProRequired: { didShowProRequired = true },
+            onFailed: { message in failureMessage = message }
+        )
+
+        // Then Pro-limit failure stays distinguishable from ordinary move
+        // failure, no success continuation runs, and server metadata is not
+        // moved as if the request had succeeded.
+        #expect(manager.pendingServerMoveRequestIDs.contains(requestID))
+        await manager.waitForServerMoveRequest(requestID)
+        #expect(!manager.pendingServerMoveRequestIDs.contains(requestID))
+        #expect(!didMove)
+        #expect(didShowProRequired)
+        #expect(failureMessage == nil)
+        #expect(manager.serverMoveFailure?.operation == .moveServer(server.id, lockedDestination.id))
+        #expect(manager.servers.first?.workspaceId == sourceWorkspace.id)
+    }
+
+    @Test
+    func serverMoveIntentRoutesOrdinaryFailureToFailureContinuation() async throws {
+        // Given a move request whose destination workspace has disappeared
+        // before the application-layer move starts.
+        let wasPro = StoreManager.shared.isPro
+        StoreManager.shared.isPro = true
+        defer { StoreManager.shared.isPro = wasPro }
+
+        let sourceWorkspace = Workspace(id: UUID(), name: "Source", order: 0)
+        let missingDestination = Workspace(id: UUID(), name: "Missing", order: 1)
+        let server = Server(
+            id: UUID(),
+            workspaceId: sourceWorkspace.id,
+            name: "Tencent",
+            host: "move-failure.example.com",
+            username: "root"
+        )
+        let manager = ServerManager.makeForTesting(
+            servers: [server],
+            workspaces: [sourceWorkspace]
+        )
+        var didMove = false
+        var didShowProRequired = false
+        var failureMessage: String?
+
+        // When UI sends move intent for a destination that is no longer
+        // available.
+        let requestID = manager.requestServerMove(
+            server,
+            to: missingDestination,
+            onMoved: { _ in didMove = true },
+            onProRequired: { didShowProRequired = true },
+            onFailed: { message in failureMessage = message }
+        )
+
+        // Then the ordinary failure routes to onFailed, does not show the Pro
+        // upgrade path, skips success, and preserves server metadata.
+        #expect(manager.pendingServerMoveRequestIDs.contains(requestID))
+        await manager.waitForServerMoveRequest(requestID)
+        #expect(!manager.pendingServerMoveRequestIDs.contains(requestID))
+        #expect(!didMove)
+        #expect(!didShowProRequired)
+        #expect(failureMessage != nil)
+        #expect(failureMessage?.isEmpty == false)
+        #expect(manager.serverMoveFailure?.operation == .moveServer(server.id, missingDestination.id))
+        #expect(manager.servers.first?.workspaceId == sourceWorkspace.id)
+    }
+
+    @Test
     func deleteWorkspaceAwaitsEachServerTeardownBeforeWorkspaceRemoval() async throws {
         // Given a workspace with two servers and injected deletion dependencies.
         let workspace = Workspace(id: UUID(), name: "Main", order: 0)

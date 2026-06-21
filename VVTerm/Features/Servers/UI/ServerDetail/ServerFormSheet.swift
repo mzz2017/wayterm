@@ -1520,35 +1520,24 @@ struct MoveServerSheet: View {
         isMoving = true
         error = nil
 
-        Task {
-            do {
-                let updatedServer = try await serverManager.moveServer(
-                    server,
-                    to: destination,
-                    preferredEnvironment: selectedEnvironment
-                )
-
-                await MainActor.run {
-                    isMoving = false
-                    onMove(updatedServer)
-                    dismiss()
-                }
-            } catch let error as VVTermError {
-                await MainActor.run {
-                    isMoving = false
-                    if case .proRequired = error {
-                        showingUpgrade = true
-                    } else {
-                        self.error = error.localizedDescription
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    isMoving = false
-                    self.error = error.localizedDescription
-                }
+        serverManager.requestServerMove(
+            server,
+            to: destination,
+            preferredEnvironment: selectedEnvironment,
+            onMoved: { updatedServer in
+                isMoving = false
+                onMove(updatedServer)
+                dismiss()
+            },
+            onProRequired: {
+                isMoving = false
+                showingUpgrade = true
+            },
+            onFailed: { message in
+                isMoving = false
+                error = message
             }
-        }
+        )
     }
 
     private func sectionHeader(_ title: LocalizedStringKey) -> some View {

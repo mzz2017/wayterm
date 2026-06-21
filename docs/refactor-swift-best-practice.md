@@ -3722,7 +3722,7 @@ Review result: code review found no Critical issues and three Task-49 findings: 
   - `ServerManager.waitForServerMoveRequest(_:)` and `pendingServerMoveRequestIDs` for awaitable tests and later lifecycle ordering.
   - `MoveServerSheet` move action that synchronously sends intent to `ServerManager` instead of owning async move tasks.
 
-- [ ] **Step 1: Add RED manager and boundary tests**
+- [x] **Step 1: Add RED manager and boundary tests**
 
 Extend `ServerManagerBootstrapTests` with request-move coverage for successful move and move failure. Add `ServerMoveIntentBoundaryTests` with a Test Context header. The source-boundary test must read `ServerFormSheet.swift`, isolate `MoveServerSheet.moveServer()`, and fail while the SwiftUI move action owns a `Task { ... }` wrapper or directly calls:
 
@@ -3738,17 +3738,19 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: `ServerManagerBootstrapTests` fails to compile because server move request APIs, pending request IDs, await hook, or failure state do not exist. If those compile unexpectedly, `ServerMoveIntentBoundaryTests` fails because `MoveServerSheet.moveServer()` still owns async server move `Task` work and directly calls `moveServer`.
 
-- [ ] **Step 2: Add ServerManager server move request tracking**
+Actual RED result: the focused command failed to compile because `ServerManager` did not yet expose `requestServerMove`, `pendingServerMoveRequestIDs`, `waitForServerMoveRequest`, or `serverMoveFailure`.
+
+- [x] **Step 2: Add ServerManager server move request tracking**
 
 Add a move failure type and manager-owned move request dictionary. The request API should clear prior move failure, run through existing `moveServer(_:to:preferredEnvironment:)`, store the returned task by request ID, clear only its own ID, expose an await hook, call success only after server metadata and workspace selection metadata update succeed, preserve Pro-required failures for the existing upgrade sheet, and route ordinary failures through the UI error callback.
 
 Reuse `moveServer(_:to:preferredEnvironment:)` so destination refresh, move restrictions, environment fallback, `updateServer`, and `updateWorkspaceSelectionMetadataAfterMove` remain the single application-layer move behavior.
 
-- [ ] **Step 3: Route MoveServerSheet through request APIs**
+- [x] **Step 3: Route MoveServerSheet through request APIs**
 
 Replace the move sheet-owned `Task` block with a synchronous call to `requestServerMove`. Keep visible behavior: move sets `isMoving`, success calls `onMove` and dismisses, Pro-limit failure opens the existing upgrade sheet and clears moving, and ordinary failures show local error text and clear moving.
 
-- [ ] **Step 4: Run focused verification**
+- [x] **Step 4: Run focused verification**
 
 Run focused manager/boundary tests, source scans for old async move ownership in `MoveServerSheet.moveServer()`, and `git diff --check`:
 
@@ -3758,16 +3760,23 @@ awk '/private func moveServer\\(\\)/,/private func sectionHeader/' VVTerm/Featur
 git diff --check
 ```
 
-- [ ] **Step 5: API and boundary cleanup**
+Actual GREEN result: the focused command passed 25 Swift Testing tests in 2 suites. A scoped `MoveServerSheet.moveServer()` source scan showed only `serverManager.requestServerMove(...)`, with no local `Task` creation and no direct `serverManager.moveServer(...)` call. `git diff --check` completed with no output. iOS build-for-testing completed successfully. macOS build-for-testing completed successfully with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment-target warnings.
+
+- [x] **Step 5: API and boundary cleanup**
 
 Before review, verify move request APIs live in Servers Application, UI callbacks only update UI state after application-layer completion, request tasks clear deterministically, Pro-limit behavior remains user-visible, move restriction failures remain distinguishable internally, and tests include enough context to distinguish behavior regressions from intentional ownership moves.
 
-- [ ] **Step 6: Request review and commit**
+Actual cleanup result: `requestServerMove` lives in `ServerManager`, move request tasks are tracked by request ID and awaitable through `waitForServerMoveRequest`, UI callbacks are invoked from the manager-owned task only after the existing application-layer move path returns, Pro-limit failures route to the upgrade continuation, ordinary failures remain distinguishable through `ServerMoveFailure`, and the new boundary test includes the required Test Context.
+
+- [x] **Step 6: Request review and commit**
 
 Request code review for Task 50. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
 
+Actual review result: code review found an Important coverage gap for ordinary non-Pro move failures and a Minor source-boundary literalness issue. Added missing ordinary failure coverage, strengthened the boundary test for `Task(` / `Task.detached` / direct `moveServer`, and verified the new ordinary failure test with a mutation RED that suppressed `onFailed` and failed as expected before restoration.
+
 ## Progress Ledger
 
+- 2026-06-21: Task 50 RED/GREEN completed with review fixes. `MoveServerSheet.moveServer()` no longer owns an async move `Task` or directly calls `moveServer(_:to:preferredEnvironment:)`; it sends synchronous intent to `ServerManager.requestServerMove`. `ServerManager` now owns tracked server move request tasks, exposes pending request IDs plus `waitForServerMoveRequest`, records `ServerMoveFailure`, preserves Pro-required move failures for the existing upgrade sheet, routes ordinary failures to the UI error callback, and calls success only after the existing application-layer move path updates server metadata plus workspace selection metadata. RED failed to compile until the move request APIs and failure state existed. Review found missing ordinary failure coverage and a literal source-boundary check; both were fixed, and a mutation RED proved suppressing `onFailed` breaks the ordinary failure test. Final focused tests passed 25 Swift Testing tests; a scoped `moveServer()` source scan showed only `requestServerMove` ownership; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings. Broader `Task {` hits in `ServerFormSheet.swift` are outside Task 50 and remain deferred to later slices.
 - 2026-06-21: Post-Task-49 scan selected Task 50 as the next executable lifecycle slice. Current plan checkboxes were all complete, so the codebase was rescanned for SwiftUI-owned lifecycle `Task` work, direct resource/singleton calls, and stale terminal runtime state. `MoveServerSheet.moveServer()` is the clearest remaining Servers feature hit: it starts a SwiftUI-owned `Task` and directly calls `moveServer(_:to:preferredEnvironment:)` for user-initiated server relocation. Broader hits remain intentionally deferred for later classification, including RemoteFiles preview/navigation UI tasks, terminal voice recording intent ownership, residual terminal display-state reads from `ConnectionState`, and low-level Application/Core tasks that are already tracked or need separate ownership audits.
 - 2026-06-21: Task 49 RED/GREEN completed with review fixes. `ServerFormSheet.saveServer()` no longer owns an async server create/update save `Task` or directly calls `updateServer(_:credentials:)` / `addServer(_:credentials:)`; it sends synchronous intent to `ServerManager.requestServerSave`. `ServerManager` now owns tracked server create/update save request tasks, exposes pending request IDs plus `waitForServerSaveRequest`, records `ServerSaveFailure`, preserves Pro-required create failures for the upgrade sheet, returns the persisted server to UI callbacks, and keeps credential-store failures from mutating metadata through the existing application-layer update path. RED failed to compile until the save request APIs and failure state existed. Review found missing Pro-required coverage and source-boundary clarity gaps, all fixed. Final focused tests passed 22 Swift Testing tests; a scoped `saveServer()` source scan showed only `requestServerSave` ownership; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings. Broader `Task {` hits in `ServerFormSheet.swift` are connection-test and move-server flows intentionally deferred to later tasks.
 - 2026-06-21: Post-Task-48 scan selected Task 49 as the next executable lifecycle slice. Current plan checkboxes were all complete, so the codebase was rescanned for SwiftUI-owned lifecycle `Task` work, direct resource/singleton calls, and stale terminal runtime state. `ServerFormSheet.saveServer()` is the clearest remaining Servers feature hit: it starts a SwiftUI-owned `Task` and directly calls `updateServer(_:credentials:)` / `addServer(_:credentials:)` for credential-backed server persistence. `MoveServerSheet.moveServer()` is also lifecycle-critical, but it is intentionally deferred to a later, separate task so this slice stays focused on create/update save ownership and credential ordering.

@@ -88,6 +88,22 @@ struct ServerSaveFailure: Identifiable, Equatable {
     }
 }
 
+struct ServerMoveFailure: Identifiable, Equatable {
+    enum Operation: Equatable {
+        case moveServer(UUID, UUID)
+    }
+
+    let id: UUID
+    let operation: Operation
+    let message: String
+
+    init(id: UUID = UUID(), operation: Operation, error: Error) {
+        self.id = id
+        self.operation = operation
+        self.message = error.localizedDescription
+    }
+}
+
 @MainActor
 final class ServerManager: ObservableObject {
     typealias ServerDeletionTeardown = @MainActor @Sendable (Server) async -> Void
@@ -104,6 +120,7 @@ final class ServerManager: ObservableObject {
     @Published private(set) var workspaceSaveFailure: ServerWorkspaceSaveFailure?
     @Published private(set) var environmentSaveFailure: ServerEnvironmentSaveFailure?
     @Published private(set) var serverSaveFailure: ServerSaveFailure?
+    @Published private(set) var serverMoveFailure: ServerMoveFailure?
 
     private let cloudKit = CloudKitManager.shared
     private let syncCoordinator = CloudKitSyncCoordinator.shared
@@ -118,10 +135,12 @@ final class ServerManager: ObservableObject {
     private var workspaceSaveRequests: [UUID: Task<Void, Never>] = [:]
     private var environmentSaveRequests: [UUID: Task<Void, Never>] = [:]
     private var serverSaveRequests: [UUID: Task<Void, Never>] = [:]
+    private var serverMoveRequests: [UUID: Task<Void, Never>] = [:]
     var pendingDeletionRequestIDs: Set<UUID> { Set(deletionRequests.keys) }
     var pendingWorkspaceSaveRequestIDs: Set<UUID> { Set(workspaceSaveRequests.keys) }
     var pendingEnvironmentSaveRequestIDs: Set<UUID> { Set(environmentSaveRequests.keys) }
     var pendingServerSaveRequestIDs: Set<UUID> { Set(serverSaveRequests.keys) }
+    var pendingServerMoveRequestIDs: Set<UUID> { Set(serverMoveRequests.keys) }
 
     // Local storage keys
     private let serversKey = CloudKitSyncConstants.serverStorageKey
@@ -1360,6 +1379,14 @@ final class ServerManager: ObservableObject {
         await serverSaveRequests[requestID]?.value
     }
 
+    func clearServerMoveFailure() {
+        serverMoveFailure = nil
+    }
+
+    func waitForServerMoveRequest(_ requestID: UUID) async {
+        await serverMoveRequests[requestID]?.value
+    }
+
     private func trackDeletionRequest(
         operation: ServerDeletionFailure.Operation,
         onFailed: @escaping @MainActor (String) -> Void = { _ in },
@@ -1474,6 +1501,39 @@ final class ServerManager: ObservableObject {
         return requestID
     }
 
+    private func trackServerMoveRequest(
+        operation: ServerMoveFailure.Operation,
+        onProRequired: @escaping @MainActor () -> Void = {},
+        onFailed: @escaping @MainActor (String) -> Void = { _ in },
+        _ action: @escaping @MainActor () async throws -> Void
+    ) -> UUID {
+        let requestID = UUID()
+        serverMoveFailure = nil
+
+        let task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await action()
+            } catch let error as VVTermError {
+                self.error = error.localizedDescription
+                self.serverMoveFailure = ServerMoveFailure(operation: operation, error: error)
+                if case .proRequired = error {
+                    onProRequired()
+                } else {
+                    onFailed(error.localizedDescription)
+                }
+            } catch {
+                self.error = error.localizedDescription
+                self.serverMoveFailure = ServerMoveFailure(operation: operation, error: error)
+                onFailed(error.localizedDescription)
+            }
+            self.serverMoveRequests.removeValue(forKey: requestID)
+        }
+
+        serverMoveRequests[requestID] = task
+        return requestID
+    }
+
     func reorderWorkspaces(from source: IndexSet, to destination: Int) async throws {
         workspaces.move(fromOffsets: source, toOffset: destination)
         pendingBootstrapWorkspaceID = nil
@@ -1584,6 +1644,30 @@ final class ServerManager: ObservableObject {
             return true
         }
         return moveDestinationIDs(for: server).contains(destination.id)
+    }
+
+    @discardableResult
+    func requestServerMove(
+        _ server: Server,
+        to destination: Workspace,
+        preferredEnvironment: ServerEnvironment? = nil,
+        onMoved: @escaping @MainActor (Server) -> Void = { _ in },
+        onProRequired: @escaping @MainActor () -> Void = {},
+        onFailed: @escaping @MainActor (String) -> Void = { _ in }
+    ) -> UUID {
+        trackServerMoveRequest(
+            operation: .moveServer(server.id, destination.id),
+            onProRequired: onProRequired,
+            onFailed: onFailed
+        ) { [weak self] in
+            guard let self else { return }
+            let movedServer = try await self.moveServer(
+                server,
+                to: destination,
+                preferredEnvironment: preferredEnvironment
+            )
+            onMoved(movedServer)
+        }
     }
 
     func moveServer(
