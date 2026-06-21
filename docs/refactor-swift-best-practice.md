@@ -6078,6 +6078,70 @@ Before this branch is considered ready for merge:
 - A final source scan must confirm no unresolved Must-Fix evidence remains.
 - A final code review must report no Critical or Important findings against the remaining diff.
 
+## Task 77: Split Static Teardown Manager Boundary
+
+**Files:**
+- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `VVTermTests/TerminalSplitStaticTeardownBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Task 74's injected `tabManager` on `SSHTerminalPaneWrapper.Coordinator`.
+  - Existing split coordinator state: `paneId`, `terminal`, and `isReusingTerminal`.
+  - Existing `TerminalTabManager` APIs: `paneStates`, `detachSurfaceForPaneViewDisappeared(_:)`, and `detachSurfaceForClosedPane(_:)`.
+- Produces:
+  - Split `static func dismantleNSView` reads pane liveness and sends detach/teardown intent through `coordinator.tabManager`.
+  - `SSHTerminalPaneWrapper` static teardown no longer resolves `TerminalTabManager.shared`.
+
+- [ ] **Step 1: Add RED split static teardown boundary tests**
+
+Create `TerminalSplitStaticTeardownBoundaryTests` with Test Context:
+- Protected behavior: split-pane representable static teardown must still delegate pane liveness, surface detach, and closed-pane surface cleanup to the injected TerminalSessions application owner available through the coordinator.
+- Invariant: static teardown may pause UI surfaces locally, but it must not resolve `TerminalTabManager.shared`; it must use `coordinator.tabManager`.
+- Fake assumptions: these are source-boundary tests because constructing `NSViewRepresentable` teardown inputs would require platform UI surfaces and Ghostty.
+- Update guidance: update the tests only if split static teardown is redesigned to call a different injected application owner or moves out of representable static lifecycle methods entirely.
+
+Add `splitStaticTeardownUsesCoordinatorManager`:
+- Read `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`.
+- Slice from `static func dismantleNSView` ending before `func makeCoordinator`.
+- Assert the slice contains `coordinator.tabManager.paneStates`, `coordinator.tabManager.detachSurfaceForPaneViewDisappeared`, and `coordinator.tabManager.detachSurfaceForClosedPane`.
+- Assert the slice does not contain `TerminalTabManager.shared`.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSplitStaticTeardownBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails because split static teardown still resolves `TerminalTabManager.shared` for pane liveness and surface cleanup.
+
+- [ ] **Step 2: Route split static teardown through the coordinator manager**
+
+Update `TerminalView.swift`:
+- In `SSHTerminalPaneWrapper.static func dismantleNSView`, replace `TerminalTabManager.shared.paneStates` with `coordinator.tabManager.paneStates`.
+- Replace `TerminalTabManager.shared.detachSurfaceForPaneViewDisappeared(coordinator.paneId)` with `coordinator.tabManager.detachSurfaceForPaneViewDisappeared(coordinator.paneId)`.
+- Replace `TerminalTabManager.shared.detachSurfaceForClosedPane(coordinator.paneId)` with `coordinator.tabManager.detachSurfaceForClosedPane(coordinator.paneId)`.
+- Do not change pane close semantics, rendering pause behavior, terminal reuse, or process-exit behavior in this task.
+
+- [ ] **Step 3: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSplitStaticTeardownBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "static func dismantleNSView|TerminalTabManager\\.shared|coordinator\\.tabManager\\.(paneStates|detachSurfaceForPaneViewDisappeared|detachSurfaceForClosedPane)" VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTermTests/TerminalSplitStaticTeardownBoundaryTests.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows split static teardown uses `coordinator.tabManager.*`, and the remaining `TerminalTabManager.shared` hits in `TerminalView.swift` are outside split representable static teardown.
+
+- [ ] **Step 4: API and boundary cleanup**
+
+Before review, verify no new lifecycle work or untracked task was introduced, static teardown still only releases UI surface state or calls application-layer lifecycle APIs, and the new test file includes complete Test Context plus Given / When / Then comments.
+
+- [ ] **Step 5: Review and commit**
+
+Perform local lifecycle review against the Swift checklist unless the user explicitly authorizes new subagents. Fix Critical and Important findings, update the Progress Ledger and Must-Fix status with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
 - 2026-06-21: Task 76 RED/GREEN completed with independent static lifecycle review from review agent Plato; no Critical, Important, or Minor findings were reported. `SSHTerminalWrapper` root static teardown now uses the Task 75 coordinator's injected `sessionManager` for session liveness checks, `detachSurfaceForViewDisappeared(from:)`, and `handleClosedSessionSurfaceTeardown(...)` on both macOS and iOS. Static teardown still only pauses/resigns UI surface state locally and delegates lifecycle cleanup intent to the TerminalSessions Application owner; no new lifecycle task or behavior change was introduced. Initial RED failed as expected with 8 source-boundary issues because both static teardown functions still used `ConnectionSessionManager.shared` and lacked `coordinator.sessionManager.*` calls. GREEN focused verification passed 2 Swift Testing tests in `TerminalRootStaticTeardownBoundaryTests`; source scan showed root static teardown uses `coordinator.sessionManager.*` and no `ConnectionSessionManager.shared` remains in `SSHTerminalWrapper.swift`. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Per the updated project objective, after Task 76 the next step is not another ordinary lifecycle slice; run a global closure audit, freeze remaining lifecycle/architecture/test-context issues into must-fix / accepted-exception / later, write that finite scope into this plan, then execute only must-fix items to ready-for-merge.
