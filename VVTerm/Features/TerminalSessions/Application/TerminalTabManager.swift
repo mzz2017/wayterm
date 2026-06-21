@@ -73,6 +73,11 @@ final class TerminalTabManager: ObservableObject {
         let task: Task<Void, Never>
     }
 
+    private struct ProcessExitRequest {
+        let paneId: UUID
+        let task: Task<Void, Never>
+    }
+
     private final class PaneRuntimeState {
         let paneId: UUID
         var server: Server
@@ -199,6 +204,9 @@ final class TerminalTabManager: ObservableObject {
     private var resizeRequests: [UUID: ResizeRequest] = [:]
     private var resizeRequestByPane: [UUID: UUID] = [:]
     var pendingResizeRequestIDs: Set<UUID> { Set(resizeRequests.keys) }
+    private var processExitRequests: [UUID: ProcessExitRequest] = [:]
+    private var processExitRequestByPane: [UUID: UUID] = [:]
+    var pendingProcessExitRequestIDs: Set<UUID> { Set(processExitRequests.keys) }
     private var serverUnlocker: @MainActor (Server) async -> Bool = { server in
         await AppLockManager.shared.ensureServerUnlocked(server)
     }
@@ -228,6 +236,7 @@ final class TerminalTabManager: ObservableObject {
     private var surfaceAttachOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
     private var inputOperationForTesting: (@MainActor (Data, TerminalEntityID) async -> Void)?
     private var resizeOperationForTesting: (@MainActor (TerminalResizeRequestSize, TerminalEntityID) async -> Void)?
+    private var processExitOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
     #endif
 
     /// Pane state keyed by pane ID
@@ -420,6 +429,10 @@ final class TerminalTabManager: ObservableObject {
 
     func waitForResizeRequest(_ requestID: UUID) async {
         await resizeRequests[requestID]?.task.value
+    }
+
+    func waitForProcessExitRequest(_ requestID: UUID) async {
+        await processExitRequests[requestID]?.task.value
     }
 
     /// Open a new tab for a server
@@ -1776,6 +1789,43 @@ final class TerminalTabManager: ObservableObject {
         await unregisterSSHClient(for: paneId)
     }
 
+    @discardableResult
+    func requestPaneProcessExit(forPane paneId: UUID) -> UUID? {
+        guard paneStates[paneId] != nil else { return nil }
+
+        if let existingRequestID = processExitRequestByPane[paneId],
+           processExitRequests[existingRequestID] != nil {
+            return existingRequestID
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.processExitRequests.removeValue(forKey: requestID)
+                if self.processExitRequestByPane[paneId] == requestID {
+                    self.processExitRequestByPane.removeValue(forKey: paneId)
+                }
+            }
+
+            guard !Task.isCancelled else { return }
+            guard self.paneStates[paneId] != nil else { return }
+
+            #if DEBUG
+            if let processExitOperationForTesting = self.processExitOperationForTesting {
+                await processExitOperationForTesting(.pane(paneId))
+                return
+            }
+            #endif
+
+            await self.handlePaneExit(for: paneId)
+        }
+
+        processExitRequests[requestID] = ProcessExitRequest(paneId: paneId, task: task)
+        processExitRequestByPane[paneId] = requestID
+        return requestID
+    }
+
     func shouldScheduleConnectWatchdog(
         forPaneId paneId: UUID,
         isReady: Bool,
@@ -1933,6 +1983,7 @@ final class TerminalTabManager: ObservableObject {
         cancelPaneHostRetrustRequest(for: paneId)
         cancelInputRequests(for: paneId)
         cancelResizeRequests(for: paneId)
+        cancelProcessExitRequests(for: paneId)
         clearTmuxRuntimeState(for: paneId)
         unregisterTerminal(for: paneId)
         paneStates.removeValue(forKey: paneId)
@@ -1981,6 +2032,18 @@ final class TerminalTabManager: ObservableObject {
         }
 
         resizeRequestByPane.removeValue(forKey: paneId)
+    }
+
+    private func cancelProcessExitRequests(for paneId: UUID) {
+        let requestIDs = processExitRequests.compactMap { requestID, request in
+            request.paneId == paneId ? requestID : nil
+        }
+
+        for requestID in requestIDs {
+            processExitRequests.removeValue(forKey: requestID)?.task.cancel()
+        }
+
+        processExitRequestByPane.removeValue(forKey: paneId)
     }
 
     private func cancelPaneRetryRequest(for paneId: UUID) {
@@ -2764,6 +2827,9 @@ extension TerminalTabManager {
         resizeRequests.values.forEach { $0.task.cancel() }
         resizeRequests.removeAll()
         resizeRequestByPane.removeAll()
+        processExitRequests.values.forEach { $0.task.cancel() }
+        processExitRequests.removeAll()
+        processExitRequestByPane.removeAll()
         paneReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
@@ -2787,6 +2853,7 @@ extension TerminalTabManager {
         surfaceAttachOperationForTesting = nil
         inputOperationForTesting = nil
         resizeOperationForTesting = nil
+        processExitOperationForTesting = nil
         tmuxCleanupServers.removeAll()
         isRestoring = false
 
@@ -2821,6 +2888,12 @@ extension TerminalTabManager {
         _ operation: (@MainActor (TerminalResizeRequestSize, TerminalEntityID) async -> Void)?
     ) {
         resizeOperationForTesting = operation
+    }
+
+    func setProcessExitOperationForTesting(
+        _ operation: (@MainActor (TerminalEntityID) async -> Void)?
+    ) {
+        processExitOperationForTesting = operation
     }
 
     @discardableResult

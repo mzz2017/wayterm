@@ -209,9 +209,7 @@ struct TerminalTabView: View {
     }
 
     private func handlePaneExit(paneId: UUID) {
-        Task {
-            await tabManager.handlePaneExit(for: paneId)
-        }
+        tabManager.requestPaneProcessExit(forPane: paneId)
     }
 
     // MARK: - Split Actions
