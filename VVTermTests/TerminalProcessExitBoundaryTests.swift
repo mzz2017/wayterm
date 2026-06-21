@@ -2,13 +2,48 @@ import Foundation
 import Testing
 
 // Test Context:
-// These source-boundary tests protect split-pane process-exit ownership. The
-// invariant is that SwiftUI may receive terminal process-exit callbacks, but it
-// must forward them as synchronous intent while TerminalTabManager owns async
-// request tracking, coalescing, and close cleanup. Update these tests only if
-// pane process-exit orchestration intentionally moves to another non-UI owner.
+// These source-boundary tests protect root and split terminal process-exit
+// ownership. The invariant is that SwiftUI may receive terminal process-exit
+// callbacks, but it must forward them as synchronous intent while
+// TerminalSessions application managers own async request tracking, coalescing,
+// and close cleanup. Update these tests only if process-exit orchestration
+// intentionally moves to another non-UI owner.
 @Suite(.serialized)
 struct TerminalProcessExitBoundaryTests {
+    @Test
+    func rootTerminalContainerUsesSessionProcessExitRequestBoundary() throws {
+        let root = try sourceRoot()
+        let source = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift")
+        )
+
+        // Given the root terminal process-exit path.
+        #expect(
+            source.contains("requestSessionProcessExit"),
+            "Root terminal process exit should send intent to ConnectionSessionManager."
+        )
+
+        // Then SwiftUI must not bridge process exit with a direct dispatch to the low-level handler.
+        #expect(!source.contains("ConnectionSessionManager.shared.handleShellExit"))
+        #expect(!source.containsRegex(#"DispatchQueue\.main\.async\s*\{[^}]*handleShellExit"#))
+    }
+
+    @Test
+    func rootTerminalWrapperDoesNotCallLowLevelSessionExitDirectly() throws {
+        let root = try sourceRoot()
+        let source = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift")
+        )
+
+        // Given the root terminal representable.
+        #expect(source.contains("terminalView.onProcessExit = onProcessExit"))
+
+        // Then the representable forwards the callback instead of owning session exit handling.
+        #expect(!source.contains("handleShellExit(for:"))
+        #expect(!source.contains("requestSessionProcessExit"))
+        #expect(!source.containsRegex(#"Task\s*(?:\([^)]*\))?\s*\{[^}]*ProcessExit"#))
+    }
+
     @Test
     func splitTerminalViewUsesPaneProcessExitRequestBoundary() throws {
         let root = try sourceRoot()

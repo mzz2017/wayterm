@@ -97,6 +97,11 @@ final class ConnectionSessionManager: ObservableObject {
         let task: Task<Void, Never>
     }
 
+    private struct ProcessExitRequest {
+        let sessionId: UUID
+        let task: Task<Void, Never>
+    }
+
     private final class SessionRuntimeState {
         let sessionId: UUID
         var server: Server
@@ -294,6 +299,9 @@ final class ConnectionSessionManager: ObservableObject {
     private var resizeRequests: [UUID: ResizeRequest] = [:]
     private var resizeRequestBySession: [UUID: UUID] = [:]
     var pendingResizeRequestIDs: Set<UUID> { Set(resizeRequests.keys) }
+    private var processExitRequests: [UUID: ProcessExitRequest] = [:]
+    private var processExitRequestBySession: [UUID: UUID] = [:]
+    var pendingProcessExitRequestIDs: Set<UUID> { Set(processExitRequests.keys) }
     private var sessionReconnectsInFlight: Set<UUID> = []
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
     private var serverDisconnectTasks: [UUID: Task<Void, Never>] = [:]
@@ -319,6 +327,7 @@ final class ConnectionSessionManager: ObservableObject {
     private var surfaceAttachOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
     private var inputOperationForTesting: (@MainActor (Data, TerminalEntityID) async -> Void)?
     private var resizeOperationForTesting: (@MainActor (TerminalResizeRequestSize, TerminalEntityID) async -> Void)?
+    private var processExitOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
     #endif
     @Published private(set) var isSuspendingForBackground = false
 
@@ -526,6 +535,10 @@ final class ConnectionSessionManager: ObservableObject {
 
     func waitForResizeRequest(_ requestID: UUID) async {
         await resizeRequests[requestID]?.task.value
+    }
+
+    func waitForProcessExitRequest(_ requestID: UUID) async {
+        await processExitRequests[requestID]?.task.value
     }
 
     /// Opens a connection to a server
@@ -920,6 +933,7 @@ final class ConnectionSessionManager: ObservableObject {
         cancelSessionHostRetrustRequest(for: sessionId)
         cancelInputRequests(for: sessionId)
         cancelResizeRequests(for: sessionId)
+        cancelProcessExitRequests(for: sessionId)
         let shellTeardownTask = cancelAndClearShellHandlers(for: sessionId)
         terminalsNeedingReconnectReset.remove(sessionId)
         terminalBrowseModeBySession.removeValue(forKey: sessionId)
@@ -965,6 +979,18 @@ final class ConnectionSessionManager: ObservableObject {
         }
 
         resizeRequestBySession.removeValue(forKey: sessionId)
+    }
+
+    private func cancelProcessExitRequests(for sessionId: UUID) {
+        let requestIDs = processExitRequests.compactMap { requestID, request in
+            request.sessionId == sessionId ? requestID : nil
+        }
+
+        for requestID in requestIDs {
+            processExitRequests.removeValue(forKey: requestID)?.task.cancel()
+        }
+
+        processExitRequestBySession.removeValue(forKey: sessionId)
     }
 
     private func cancelSessionRetryRequest(for sessionId: UUID) {
@@ -1099,6 +1125,43 @@ final class ConnectionSessionManager: ObservableObject {
         updateSessionState(sessionId, to: .disconnected)
         markTerminalForReconnectReset(for: sessionId)
         scheduleSSHUnregister(for: sessionId)
+    }
+
+    @discardableResult
+    func requestSessionProcessExit(forSession sessionId: UUID) -> UUID? {
+        guard sessionWithID(sessionId) != nil else { return nil }
+
+        if let existingRequestID = processExitRequestBySession[sessionId],
+           processExitRequests[existingRequestID] != nil {
+            return existingRequestID
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.processExitRequests.removeValue(forKey: requestID)
+                if self.processExitRequestBySession[sessionId] == requestID {
+                    self.processExitRequestBySession.removeValue(forKey: sessionId)
+                }
+            }
+
+            guard !Task.isCancelled else { return }
+            guard self.sessionWithID(sessionId) != nil else { return }
+
+            #if DEBUG
+            if let processExitOperationForTesting = self.processExitOperationForTesting {
+                await processExitOperationForTesting(.session(sessionId))
+                return
+            }
+            #endif
+
+            self.handleShellExit(for: sessionId)
+        }
+
+        processExitRequests[requestID] = ProcessExitRequest(sessionId: sessionId, task: task)
+        processExitRequestBySession[sessionId] = requestID
+        return requestID
     }
 
     /// Disconnect all sessions for a specific server
@@ -3127,6 +3190,9 @@ extension ConnectionSessionManager {
         resizeRequests.values.forEach { $0.task.cancel() }
         resizeRequests.removeAll()
         resizeRequestBySession.removeAll()
+        processExitRequests.values.forEach { $0.task.cancel() }
+        processExitRequests.removeAll()
+        processExitRequestBySession.removeAll()
         sessionReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
@@ -3150,6 +3216,7 @@ extension ConnectionSessionManager {
         surfaceAttachOperationForTesting = nil
         inputOperationForTesting = nil
         resizeOperationForTesting = nil
+        processExitOperationForTesting = nil
         isRestoring = false
 
         UserDefaults.standard.removeObject(forKey: persistenceKey)
@@ -3181,6 +3248,12 @@ extension ConnectionSessionManager {
         _ operation: (@MainActor (TerminalResizeRequestSize, TerminalEntityID) async -> Void)?
     ) {
         resizeOperationForTesting = operation
+    }
+
+    func setProcessExitOperationForTesting(
+        _ operation: (@MainActor (TerminalEntityID) async -> Void)?
+    ) {
+        processExitOperationForTesting = operation
     }
 
     @discardableResult

@@ -427,9 +427,7 @@ struct TerminalContainerView: View {
             isActive: isActive,
             shouldPreserveKeyboardDuringReconnect: true,
             onProcessExit: {
-                DispatchQueue.main.async {
-                    ConnectionSessionManager.shared.handleShellExit(for: session.id)
-                }
+                ConnectionSessionManager.shared.requestSessionProcessExit(forSession: session.id)
             },
             onReady: {
                 isReady = true
@@ -444,9 +442,7 @@ struct TerminalContainerView: View {
             richPasteUIModel: richPasteUI,
             isActive: isActive,
             onProcessExit: {
-                DispatchQueue.main.async {
-                    ConnectionSessionManager.shared.handleShellExit(for: session.id)
-                }
+                ConnectionSessionManager.shared.requestSessionProcessExit(forSession: session.id)
             },
             onReady: {
                 isReady = true

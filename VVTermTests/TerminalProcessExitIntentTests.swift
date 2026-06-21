@@ -3,16 +3,148 @@ import Testing
 @testable import VVTerm
 
 // Test Context:
-// These tests protect split-pane terminal process-exit ownership. Terminal UI
-// may receive `onProcessExit` from Ghostty surfaces, but request tracking,
-// duplicate coalescing, and pane-close cancellation must be owned by the
-// TerminalSessions application manager. Fakes use a DEBUG process-exit seam
-// and do not construct GhosttyTerminalView or open network connections. Update
-// these tests only if pane process-exit orchestration intentionally moves to
+// These tests protect terminal process-exit ownership for root sessions and
+// split panes. Terminal UI may receive `onProcessExit` from Ghostty surfaces,
+// but request tracking, duplicate coalescing, and close cancellation must be
+// owned by TerminalSessions application managers. Fakes use DEBUG process-exit
+// seams and do not construct GhosttyTerminalView or open network connections.
+// Update these tests only if process-exit orchestration intentionally moves to
 // another non-UI owner with equivalent tracking and close-cancellation rules.
 @Suite(.serialized)
 @MainActor
 struct TerminalProcessExitIntentTests {
+    @Test
+    func rootProcessExitRejectsMissingSessionWithoutCreatingRequest() async {
+        await withCleanConnectionManager { manager in
+            let sessionId = UUID()
+            let recorder = TerminalProcessExitRecorder()
+            manager.setProcessExitOperationForTesting { entityId in
+                recorder.recordSync("exit-\(entityId)")
+            }
+
+            // Given no matching root session exists.
+            let requestID = manager.requestSessionProcessExit(forSession: sessionId)
+
+            // Then the manager rejects the process-exit intent without creating work.
+            #expect(requestID == nil)
+            #expect(manager.pendingProcessExitRequestIDs.isEmpty)
+            #expect(recorder.events.isEmpty)
+        }
+    }
+
+    @Test
+    func rootProcessExitRequestStaysTrackedUntilOperationCompletes() async {
+        await withCleanConnectionManager { manager in
+            let session = ConnectionSession(
+                serverId: UUID(),
+                title: "Tencent",
+                connectionState: .connected
+            )
+            manager.sessions = [session]
+
+            let recorder = TerminalProcessExitRecorder()
+            let gate = TerminalProcessExitGate()
+            manager.setProcessExitOperationForTesting { entityId in
+                recorder.recordSync("start-\(entityId)")
+                await gate.wait()
+                recorder.recordSync("end-\(entityId)")
+            }
+
+            // When a root process-exit callback sends intent.
+            let requestID = try! #require(
+                manager.requestSessionProcessExit(forSession: session.id)
+            )
+            await recorder.waitForCount(1)
+
+            // Then the manager keeps the request tracked while exit handling is blocked.
+            #expect(manager.pendingProcessExitRequestIDs == [requestID])
+
+            await gate.open()
+            await manager.waitForProcessExitRequest(requestID)
+
+            // And the manager clears bookkeeping after completion.
+            #expect(
+                recorder.events == [
+                    "start-session(\(session.id))",
+                    "end-session(\(session.id))"
+                ]
+            )
+            #expect(manager.pendingProcessExitRequestIDs.isEmpty)
+        }
+    }
+
+    @Test
+    func duplicateRootProcessExitRequestsCoalesceToOneOperation() async {
+        await withCleanConnectionManager { manager in
+            let session = ConnectionSession(
+                serverId: UUID(),
+                title: "Tencent",
+                connectionState: .connected
+            )
+            manager.sessions = [session]
+
+            let recorder = TerminalProcessExitRecorder()
+            manager.setProcessExitOperationForTesting { entityId in
+                recorder.recordSync("exit-\(entityId)")
+            }
+
+            // When the same session reports process exit twice before the request task runs.
+            let firstRequestID = try! #require(
+                manager.requestSessionProcessExit(forSession: session.id)
+            )
+            let secondRequestID = try! #require(
+                manager.requestSessionProcessExit(forSession: session.id)
+            )
+            await manager.waitForProcessExitRequest(firstRequestID)
+
+            // Then both callbacks share one tracked request and run exit handling once.
+            #expect(firstRequestID == secondRequestID)
+            #expect(
+                recorder.events == ["exit-session(\(session.id))"],
+                "Duplicate root process-exit callbacks should not queue duplicate teardown work."
+            )
+            #expect(manager.pendingProcessExitRequestIDs.isEmpty)
+        }
+    }
+
+    @Test
+    func rootProcessExitRequestIsClearedWhenSessionCloses() async {
+        await withCleanConnectionManager { manager in
+            let session = ConnectionSession(
+                serverId: UUID(),
+                title: "Tencent",
+                connectionState: .connected
+            )
+            manager.sessions = [session]
+
+            let recorder = TerminalProcessExitRecorder()
+            let gate = TerminalProcessExitGate()
+            manager.setProcessExitOperationForTesting { entityId in
+                recorder.recordSync("start-\(entityId)")
+                await gate.wait()
+                recorder.recordSync("end-\(entityId)")
+            }
+
+            // Given a root process-exit request is running.
+            let requestID = try! #require(
+                manager.requestSessionProcessExit(forSession: session.id)
+            )
+            await recorder.waitForCount(1)
+
+            // When the real session close path completes.
+            await manager.closeSessionAndWait(session)
+
+            // Then close owns cancellation/cleanup for pending process-exit requests.
+            #expect(
+                manager.pendingProcessExitRequestIDs.isEmpty,
+                "Closing a session must clear manager-owned process-exit request bookkeeping."
+            )
+
+            await gate.open()
+            await manager.waitForProcessExitRequest(requestID)
+        }
+    }
+
     @Test
     func paneProcessExitRejectsMissingPaneWithoutCreatingRequest() async {
         await withCleanTabManager { manager in
@@ -137,6 +269,15 @@ struct TerminalProcessExitIntentTests {
         _ body: @MainActor (TerminalTabManager) async -> Void
     ) async {
         let manager = TerminalTabManager.shared
+        await manager.resetForTesting()
+        await body(manager)
+        await manager.resetForTesting()
+    }
+
+    private func withCleanConnectionManager(
+        _ body: @MainActor (ConnectionSessionManager) async -> Void
+    ) async {
+        let manager = ConnectionSessionManager.shared
         await manager.resetForTesting()
         await body(manager)
         await manager.resetForTesting()
