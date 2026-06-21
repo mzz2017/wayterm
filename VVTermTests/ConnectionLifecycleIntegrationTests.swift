@@ -710,6 +710,236 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func foregroundReconnectRequestTracksReconnectUntilCompletion() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .disconnected
+            )
+            manager.sessions = [session]
+            manager.selectedSessionId = session.id
+            let reconnectGate = RunnerTaskGate()
+            var reconnectCalls: [UUID] = []
+            var actions: [TerminalForegroundReconnectAction] = []
+
+            manager.setForegroundReconnectOperationForTesting { requestSession in
+                reconnectCalls.append(requestSession.id)
+                await reconnectGate.waitForRelease()
+                return true
+            }
+
+            // Given iOS foreground/scene/selection intent asks the application
+            // owner to reconnect the selected disconnected session.
+            guard let requestID = manager.requestForegroundReconnectForSelectedSession(
+                selectedViewId: "terminal",
+                terminalViewId: "terminal",
+                refreshTerminal: true,
+                autoReconnectEnabled: true,
+                onAction: { actions.append($0) }
+            ) else {
+                Issue.record("Foreground reconnect intent should produce a tracked request for the selected session.")
+                return
+            }
+
+            // Then the request remains visible while reconnect work is blocked.
+            #expect(
+                manager.pendingForegroundReconnectRequestIDs.contains(requestID),
+                "Foreground reconnect request should stay pending while reconnect work is in flight."
+            )
+            #expect(actions.isEmpty)
+
+            await reconnectGate.release()
+            await manager.waitForForegroundReconnectRequest(requestID)
+
+            #expect(reconnectCalls == [session.id])
+            #expect(actions.count == 1)
+            #expect(actions.first?.sessionId == session.id)
+            #expect(actions.first?.shouldRefreshTerminal == true)
+            #expect(actions.first?.shouldReconnect == true)
+            #expect(actions.first?.shouldForceTerminalVisible == true)
+            #expect(!manager.pendingForegroundReconnectRequestIDs.contains(requestID))
+        }
+    }
+
+    @Test
+    func duplicateForegroundReconnectRequestsCoalesceUntilCompletion() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .disconnected
+            )
+            manager.sessions = [session]
+            manager.selectedSessionId = session.id
+            let reconnectGate = RunnerTaskGate()
+            var reconnectCalls: [UUID] = []
+            var callbacks: [String] = []
+
+            manager.setForegroundReconnectOperationForTesting { requestSession in
+                reconnectCalls.append(requestSession.id)
+                await reconnectGate.waitForRelease()
+                return true
+            }
+
+            // Given foreground reconnect intent is repeated before the first
+            // reconnect/runtime-liveness request finishes.
+            let firstID = manager.requestForegroundReconnectForSelectedSession(
+                selectedViewId: "terminal",
+                terminalViewId: "terminal",
+                refreshTerminal: true,
+                autoReconnectEnabled: true,
+                onAction: { _ in callbacks.append("first") }
+            )
+            let secondID = manager.requestForegroundReconnectForSelectedSession(
+                selectedViewId: "terminal",
+                terminalViewId: "terminal",
+                refreshTerminal: true,
+                autoReconnectEnabled: true,
+                onAction: { _ in callbacks.append("second") }
+            )
+
+            guard let firstID else {
+                Issue.record("First foreground reconnect intent should produce a request.")
+                return
+            }
+
+            // Then duplicate same-session intent joins the existing manager
+            // request instead of launching duplicate reconnect work.
+            #expect(firstID == secondID)
+            #expect(manager.pendingForegroundReconnectRequestIDs == [firstID])
+
+            await reconnectGate.release()
+            await manager.waitForForegroundReconnectRequest(firstID)
+
+            #expect(reconnectCalls == [session.id])
+            #expect(callbacks == ["first", "second"])
+            #expect(!manager.pendingForegroundReconnectRequestIDs.contains(firstID))
+        }
+    }
+
+    @Test
+    func duplicateForegroundReconnectRequestsPreserveEachCallbackAction() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .disconnected
+            )
+            manager.sessions = [session]
+            manager.selectedSessionId = session.id
+            let reconnectGate = RunnerTaskGate()
+            var callbackActions: [TerminalForegroundReconnectAction] = []
+
+            manager.setForegroundReconnectOperationForTesting { _ in
+                await reconnectGate.waitForRelease()
+                return true
+            }
+
+            // Given duplicate foreground intents ask for different presentation
+            // refresh behavior while sharing the same reconnect operation.
+            let firstID = manager.requestForegroundReconnectForSelectedSession(
+                selectedViewId: "terminal",
+                terminalViewId: "terminal",
+                refreshTerminal: false,
+                autoReconnectEnabled: true,
+                onAction: { callbackActions.append($0) }
+            )
+            let secondID = manager.requestForegroundReconnectForSelectedSession(
+                selectedViewId: "terminal",
+                terminalViewId: "terminal",
+                refreshTerminal: true,
+                autoReconnectEnabled: true,
+                onAction: { callbackActions.append($0) }
+            )
+
+            guard let firstID else {
+                Issue.record("First foreground reconnect intent should produce a request.")
+                return
+            }
+
+            // Then the reconnect work is coalesced but each callback keeps the
+            // presentation action computed for the intent that registered it.
+            #expect(firstID == secondID)
+
+            await reconnectGate.release()
+            await manager.waitForForegroundReconnectRequest(firstID)
+
+            #expect(callbackActions.map(\.shouldRefreshTerminal) == [false, true])
+            #expect(callbackActions.map(\.shouldReconnect) == [true, true])
+            #expect(callbackActions.map(\.shouldForceTerminalVisible) == [true, true])
+        }
+    }
+
+    @Test
+    func closeSessionCancelsPendingForegroundReconnectRequest() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .disconnected
+            )
+            manager.sessions = [session]
+            manager.selectedSessionId = session.id
+            let reconnectGate = RunnerTaskGate()
+            let reconnectStartedProbe = AsyncWaitProbe()
+            var actions: [TerminalForegroundReconnectAction] = []
+
+            manager.setForegroundReconnectOperationForTesting { _ in
+                await reconnectStartedProbe.markReturned()
+                await reconnectGate.waitForRelease()
+                return true
+            }
+
+            // Given foreground reconnect work is pending when the owning
+            // session closes.
+            guard let requestID = manager.requestForegroundReconnectForSelectedSession(
+                selectedViewId: "terminal",
+                terminalViewId: "terminal",
+                refreshTerminal: true,
+                autoReconnectEnabled: true,
+                onAction: { actions.append($0) }
+            ) else {
+                Issue.record("Foreground reconnect intent should produce a request before session close.")
+                return
+            }
+            #expect(manager.pendingForegroundReconnectRequestIDs.contains(requestID))
+            while await !reconnectStartedProbe.didReturn {
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+
+            await manager.closeSessionAndWait(session)
+            let waitProbe = AsyncWaitProbe()
+            let waitTask = Task {
+                await manager.waitForForegroundReconnectRequest(requestID)
+                await waitProbe.markReturned()
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+
+            // Then close clears visible pending state immediately but keeps the
+            // request awaitable until the blocked reconnect operation exits.
+            #expect(
+                !manager.pendingForegroundReconnectRequestIDs.contains(requestID),
+                "Closing a session should cancel visible foreground reconnect intent for that session."
+            )
+            #expect(
+                await !waitProbe.didReturn,
+                "Foreground reconnect wait hook must remain tracked until blocked reconnect work exits."
+            )
+
+            await reconnectGate.release()
+            await waitTask.value
+
+            #expect(await waitProbe.didReturn)
+            #expect(actions.isEmpty)
+        }
+    }
+
+    @Test
     func connectionManagerLoadsCredentialsThroughApplicationBoundary() async {
         await withCleanConnectionManager { manager in
             let server = makeServer()

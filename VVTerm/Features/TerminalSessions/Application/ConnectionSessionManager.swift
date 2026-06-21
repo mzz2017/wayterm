@@ -86,6 +86,17 @@ final class ConnectionSessionManager: ObservableObject {
         var onOpened: [@MainActor () -> Void]
     }
 
+    private struct ForegroundReconnectRequest {
+        let sessionId: UUID
+        var task: Task<Void, Never>?
+        var callbacks: [ForegroundReconnectCallback]
+    }
+
+    private struct ForegroundReconnectCallback {
+        let action: TerminalForegroundReconnectAction
+        let onAction: @MainActor (TerminalForegroundReconnectAction) -> Void
+    }
+
     private struct SessionHostRetrustRequest {
         let sessionId: UUID
         let task: Task<Void, Never>
@@ -312,6 +323,9 @@ final class ConnectionSessionManager: ObservableObject {
     private var activeConnectionOpenRequests: [UUID: ActiveConnectionOpenRequest] = [:]
     private var activeConnectionOpenRequestBySession: [UUID: UUID] = [:]
     var pendingActiveConnectionOpenRequestIDs: Set<UUID> { Set(activeConnectionOpenRequestBySession.values) }
+    private var foregroundReconnectRequests: [UUID: ForegroundReconnectRequest] = [:]
+    private var foregroundReconnectRequestBySession: [UUID: UUID] = [:]
+    var pendingForegroundReconnectRequestIDs: Set<UUID> { Set(foregroundReconnectRequestBySession.values) }
     private var sessionHostRetrustRequests: [UUID: SessionHostRetrustRequest] = [:]
     private var sessionHostRetrustRequestBySession: [UUID: UUID] = [:]
     var pendingSessionHostRetrustRequestIDs: Set<UUID> { Set(sessionHostRetrustRequests.keys) }
@@ -356,6 +370,7 @@ final class ConnectionSessionManager: ObservableObject {
     private var moshInstallAndReconnectOperationForTesting: (@MainActor (ConnectionSession) async throws -> Void)?
     private var sessionRetryOperationForTesting: (@MainActor (ConnectionSession, Server?) async -> TerminalReconnectRequestResult)?
     private var activeConnectionOpenReconnectOperationForTesting: (@MainActor (ConnectionSession) async -> Bool)?
+    private var foregroundReconnectOperationForTesting: (@MainActor (ConnectionSession) async -> Bool)?
     private var sessionHostRetrustOperationForTesting: (@MainActor (ConnectionSession, Server) async -> Bool)?
     private var surfaceAttachOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
     private var inputOperationForTesting: (@MainActor (Data, TerminalEntityID) async -> Void)?
@@ -582,6 +597,10 @@ final class ConnectionSessionManager: ObservableObject {
 
     func waitForActiveConnectionOpenRequest(_ requestID: UUID) async {
         await activeConnectionOpenRequests[requestID]?.task?.value
+    }
+
+    func waitForForegroundReconnectRequest(_ requestID: UUID) async {
+        await foregroundReconnectRequests[requestID]?.task?.value
     }
 
     /// Opens a connection to a server
@@ -983,6 +1002,7 @@ final class ConnectionSessionManager: ObservableObject {
         cancelInstallRequests(for: sessionId)
         cancelSessionRetryRequest(for: sessionId)
         cancelActiveConnectionOpenRequest(for: sessionId)
+        cancelForegroundReconnectRequest(for: sessionId)
         cancelSessionHostRetrustRequest(for: sessionId)
         cancelSessionCredentialLoadRequest(for: sessionId)
         cancelInputRequests(for: sessionId)
@@ -1076,6 +1096,11 @@ final class ConnectionSessionManager: ObservableObject {
     private func cancelActiveConnectionOpenRequest(for sessionId: UUID) {
         guard let requestID = activeConnectionOpenRequestBySession.removeValue(forKey: sessionId) else { return }
         activeConnectionOpenRequests[requestID]?.task?.cancel()
+    }
+
+    private func cancelForegroundReconnectRequest(for sessionId: UUID) {
+        guard let requestID = foregroundReconnectRequestBySession.removeValue(forKey: sessionId) else { return }
+        foregroundReconnectRequests[requestID]?.task?.cancel()
     }
 
     private func cancelSessionHostRetrustRequest(for sessionId: UUID) {
@@ -2596,6 +2621,75 @@ final class ConnectionSessionManager: ObservableObject {
         return requestID
     }
 
+    @discardableResult
+    func requestForegroundReconnectForSelectedSession(
+        selectedViewId: String,
+        terminalViewId: String,
+        refreshTerminal: Bool,
+        autoReconnectEnabled: Bool,
+        onAction: @escaping @MainActor (TerminalForegroundReconnectAction) -> Void = { _ in }
+    ) -> UUID? {
+        guard let action = foregroundReconnectActionForSelectedSession(
+            selectedViewId: selectedViewId,
+            terminalViewId: terminalViewId,
+            refreshTerminal: refreshTerminal,
+            autoReconnectEnabled: autoReconnectEnabled
+        ) else {
+            return nil
+        }
+
+        if let requestID = foregroundReconnectRequestBySession[action.sessionId] {
+            foregroundReconnectRequests[requestID]?.callbacks.append(
+                ForegroundReconnectCallback(action: action, onAction: onAction)
+            )
+            return requestID
+        }
+
+        let requestID = UUID()
+        foregroundReconnectRequests[requestID] = ForegroundReconnectRequest(
+            sessionId: action.sessionId,
+            task: nil,
+            callbacks: [ForegroundReconnectCallback(action: action, onAction: onAction)]
+        )
+        foregroundReconnectRequestBySession[action.sessionId] = requestID
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.foregroundReconnectRequests.removeValue(forKey: requestID)
+                if self.foregroundReconnectRequestBySession[action.sessionId] == requestID {
+                    self.foregroundReconnectRequestBySession.removeValue(forKey: action.sessionId)
+                }
+            }
+
+            if action.shouldReconnect,
+               let session = self.sessionWithID(action.sessionId) {
+                #if DEBUG
+                if let operation = self.foregroundReconnectOperationForTesting {
+                    _ = await operation(session)
+                } else {
+                    _ = await self.reconnectSessionIfRuntimeInactive(session)
+                }
+                #else
+                _ = await self.reconnectSessionIfRuntimeInactive(session)
+                #endif
+            }
+
+            guard !Task.isCancelled else { return }
+            guard self.selectedSessionId == action.sessionId else { return }
+            guard self.sessionWithID(action.sessionId) != nil else { return }
+
+            let callbacks = self.foregroundReconnectRequests[requestID]?.callbacks ?? []
+            callbacks.forEach { $0.onAction($0.action) }
+        }
+
+        if foregroundReconnectRequests[requestID]?.sessionId == action.sessionId {
+            foregroundReconnectRequests[requestID]?.task = task
+        }
+
+        return requestID
+    }
+
     private func canStartSessionReconnect(_ sessionId: UUID) -> Bool {
         guard let state = sessionState(for: sessionId) else { return false }
         return TerminalManualReconnectPolicy.shouldAttemptReconnect(
@@ -3481,6 +3575,9 @@ extension ConnectionSessionManager {
         activeConnectionOpenRequests.values.compactMap(\.task).forEach { $0.cancel() }
         activeConnectionOpenRequests.removeAll()
         activeConnectionOpenRequestBySession.removeAll()
+        foregroundReconnectRequests.values.compactMap(\.task).forEach { $0.cancel() }
+        foregroundReconnectRequests.removeAll()
+        foregroundReconnectRequestBySession.removeAll()
         sessionHostRetrustRequests.values.forEach { $0.task.cancel() }
         sessionHostRetrustRequests.removeAll()
         sessionHostRetrustRequestBySession.removeAll()
@@ -3652,6 +3749,12 @@ extension ConnectionSessionManager {
 
     func cancelActiveConnectionOpenRequestForTesting(_ requestID: UUID) {
         activeConnectionOpenRequests[requestID]?.task?.cancel()
+    }
+
+    func setForegroundReconnectOperationForTesting(
+        _ operation: (@MainActor (ConnectionSession) async -> Bool)?
+    ) {
+        foregroundReconnectOperationForTesting = operation
     }
 
     func setSessionHostRetrustOperationForTesting(

@@ -1009,15 +1009,12 @@ struct iOSTerminalView: View {
     }
 
     private func attemptForegroundReconnectIfNeeded(refreshTerminal: Bool = false) {
-        Task { @MainActor in
-            guard let action = await sessionManager.handleForegroundReconnectForSelectedSession(
-                selectedViewId: selectedView,
-                terminalViewId: ConnectionViewTab.terminal.id,
-                refreshTerminal: refreshTerminal,
-                autoReconnectEnabled: autoReconnectEnabled
-            ) else {
-                return
-            }
+        sessionManager.requestForegroundReconnectForSelectedSession(
+            selectedViewId: selectedView,
+            terminalViewId: ConnectionViewTab.terminal.id,
+            refreshTerminal: refreshTerminal,
+            autoReconnectEnabled: autoReconnectEnabled
+        ) { action in
             guard let session = sessionManager.sessions.first(where: { $0.id == action.sessionId }) else { return }
 
             if action.shouldRefreshTerminal {
