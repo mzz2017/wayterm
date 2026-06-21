@@ -731,6 +731,103 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func connectionManagerCredentialLoadRequestCoalescesDuplicateCallersUntilProviderCompletes() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(serverId: server.id, title: server.name)
+            let credentialGate = CredentialProviderGate(credentials: makeCredentials(serverId: server.id))
+            manager.sessions = [session]
+            manager.setCredentialsProviderForTesting { _ in
+                await credentialGate.load()
+            }
+            var firstResult: TerminalCredentialLoadResult?
+            var secondResult: TerminalCredentialLoadResult?
+
+            // Given root terminal UI sends credential-load intent and the
+            // Keychain-backed provider is still blocked.
+            let firstRequestID = manager.requestSessionCredentialLoad(
+                session: session,
+                server: server,
+                onCompleted: { firstResult = $0 }
+            )
+            let secondRequestID = manager.requestSessionCredentialLoad(
+                session: session,
+                server: server,
+                onCompleted: { secondResult = $0 }
+            )
+            await credentialGate.waitForLoadCount(1)
+
+            // Then duplicate intent shares one manager-owned request.
+            #expect(secondRequestID == firstRequestID)
+            #expect(
+                manager.pendingSessionCredentialLoadRequestIDs == [firstRequestID],
+                "Session credential load should stay pending while Keychain work is blocked."
+            )
+            #expect(firstResult == nil)
+            #expect(secondResult == nil)
+            #expect(await credentialGate.loadCount == 1)
+
+            await credentialGate.release()
+            await manager.waitForSessionCredentialLoadRequest(firstRequestID)
+
+            #expect(firstResult?.credentials?.serverId == server.id)
+            #expect(secondResult?.credentials?.serverId == server.id)
+            #expect(
+                manager.pendingSessionCredentialLoadRequestIDs.isEmpty,
+                "Session credential-load request state should clear after callbacks receive the final result."
+            )
+        }
+    }
+
+    @Test
+    func connectionManagerCloseSessionCancelsPendingCredentialLoadRequest() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(serverId: server.id, title: server.name)
+            let credentialGate = CredentialProviderGate(credentials: makeCredentials(serverId: server.id))
+            manager.sessions = [session]
+            manager.setCredentialsProviderForTesting { _ in
+                await credentialGate.load()
+            }
+            var results: [TerminalCredentialLoadResult] = []
+
+            // Given a credential-load request is pending for a session.
+            let requestID = manager.requestSessionCredentialLoad(
+                session: session,
+                server: server,
+                onCompleted: { results.append($0) }
+            )
+            await credentialGate.waitForLoadCount(1)
+
+            // When the owning session closes before the provider returns.
+            await manager.closeSessionAndWait(session)
+            let waitProbe = AsyncWaitProbe()
+            let waitTask = Task {
+                await manager.waitForSessionCredentialLoadRequest(requestID)
+                await waitProbe.markReturned()
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+
+            // Then request state clears as lifecycle cancellation, not as a
+            // user-facing credential failure.
+            #expect(manager.pendingSessionCredentialLoadRequestIDs.isEmpty)
+            #expect(results.isEmpty)
+            #expect(
+                await !waitProbe.didReturn,
+                "Credential-load wait hook must remain tracked until the blocked provider exits."
+            )
+            await credentialGate.release()
+            await waitTask.value
+            #expect(await waitProbe.didReturn)
+            try? await Task.sleep(for: .milliseconds(20))
+            #expect(
+                results.isEmpty,
+                "A canceled session credential-load request must not send a later success or failure callback."
+            )
+        }
+    }
+
+    @Test
     func connectionManagerRefreshesLiveActivityWithRegistryActiveSessionsOnly() async {
         await withCleanConnectionManager { manager in
             let server = makeServer()
@@ -1179,6 +1276,113 @@ struct ConnectionLifecycleIntegrationTests {
             #expect(
                 result.credentials?.serverId == server.id,
                 "TerminalPaneView should obtain wrapper credentials through TerminalTabManager."
+            )
+        }
+    }
+
+    @Test
+    func tabManagerCredentialLoadRequestCoalescesDuplicateCallersUntilProviderCompletes() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tab = TerminalTab(serverId: server.id, title: server.name)
+            let credentialGate = CredentialProviderGate(credentials: makeCredentials(serverId: server.id))
+            manager.tabsByServer[server.id] = [tab]
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+            manager.setCredentialsProviderForTesting { _ in
+                await credentialGate.load()
+            }
+            var firstResult: TerminalCredentialLoadResult?
+            var secondResult: TerminalCredentialLoadResult?
+
+            // Given split terminal UI sends credential-load intent and the
+            // Keychain-backed provider is still blocked.
+            let firstRequestID = manager.requestPaneCredentialLoad(
+                paneId: tab.rootPaneId,
+                server: server,
+                onCompleted: { firstResult = $0 }
+            )
+            let secondRequestID = manager.requestPaneCredentialLoad(
+                paneId: tab.rootPaneId,
+                server: server,
+                onCompleted: { secondResult = $0 }
+            )
+            await credentialGate.waitForLoadCount(1)
+
+            // Then duplicate intent shares one tab-manager-owned request.
+            #expect(secondRequestID == firstRequestID)
+            #expect(
+                manager.pendingPaneCredentialLoadRequestIDs == [firstRequestID],
+                "Pane credential load should stay pending while Keychain work is blocked."
+            )
+            #expect(firstResult == nil)
+            #expect(secondResult == nil)
+            #expect(await credentialGate.loadCount == 1)
+
+            await credentialGate.release()
+            await manager.waitForPaneCredentialLoadRequest(firstRequestID)
+
+            #expect(firstResult?.credentials?.serverId == server.id)
+            #expect(secondResult?.credentials?.serverId == server.id)
+            #expect(
+                manager.pendingPaneCredentialLoadRequestIDs.isEmpty,
+                "Pane credential-load request state should clear after callbacks receive the final result."
+            )
+        }
+    }
+
+    @Test
+    func tabManagerClosePaneCancelsPendingCredentialLoadRequest() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tab = TerminalTab(serverId: server.id, title: server.name)
+            let credentialGate = CredentialProviderGate(credentials: makeCredentials(serverId: server.id))
+            manager.tabsByServer[server.id] = [tab]
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+            manager.setCredentialsProviderForTesting { _ in
+                await credentialGate.load()
+            }
+            var results: [TerminalCredentialLoadResult] = []
+
+            // Given a credential-load request is pending for a split pane.
+            let requestID = manager.requestPaneCredentialLoad(
+                paneId: tab.rootPaneId,
+                server: server,
+                onCompleted: { results.append($0) }
+            )
+            await credentialGate.waitForLoadCount(1)
+
+            // When the owning pane closes before the provider returns.
+            await manager.closePaneAndWait(tab: tab, paneId: tab.rootPaneId)
+            let waitProbe = AsyncWaitProbe()
+            let waitTask = Task {
+                await manager.waitForPaneCredentialLoadRequest(requestID)
+                await waitProbe.markReturned()
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+
+            // Then request state clears as lifecycle cancellation, not as a
+            // user-facing credential failure.
+            #expect(manager.pendingPaneCredentialLoadRequestIDs.isEmpty)
+            #expect(results.isEmpty)
+            #expect(
+                await !waitProbe.didReturn,
+                "Pane credential-load wait hook must remain tracked until the blocked provider exits."
+            )
+            await credentialGate.release()
+            await waitTask.value
+            #expect(await waitProbe.didReturn)
+            try? await Task.sleep(for: .milliseconds(20))
+            #expect(
+                results.isEmpty,
+                "A canceled pane credential-load request must not send a later success or failure callback."
             )
         }
     }
@@ -3376,9 +3580,18 @@ private actor RunnerTaskGate {
     }
 }
 
+private actor AsyncWaitProbe {
+    private(set) var didReturn = false
+
+    func markReturned() {
+        didReturn = true
+    }
+}
+
 private actor CredentialProviderGate {
     private let credentials: ServerCredentials
     private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var loadCountContinuations: [(Int, CheckedContinuation<Void, Never>)] = []
     private(set) var loadCount = 0
 
     init(credentials: ServerCredentials) {
@@ -3387,15 +3600,29 @@ private actor CredentialProviderGate {
 
     func load() async -> ServerCredentials {
         loadCount += 1
+        resumeLoadCountContinuations()
         await withCheckedContinuation { continuation in
             releaseContinuation = continuation
         }
         return credentials
     }
 
+    func waitForLoadCount(_ expectedCount: Int) async {
+        if loadCount >= expectedCount { return }
+        await withCheckedContinuation { continuation in
+            loadCountContinuations.append((expectedCount, continuation))
+        }
+    }
+
     func release() {
         releaseContinuation?.resume()
         releaseContinuation = nil
+    }
+
+    private func resumeLoadCountContinuations() {
+        let ready = loadCountContinuations.filter { loadCount >= $0.0 }
+        loadCountContinuations.removeAll { loadCount >= $0.0 }
+        ready.forEach { $0.1.resume() }
     }
 }
 

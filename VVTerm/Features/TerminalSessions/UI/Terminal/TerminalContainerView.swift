@@ -239,12 +239,12 @@ struct TerminalContainerView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
-            await loadCredentialsIfNeeded(force: true)
+            requestCredentialLoadIfNeeded(force: true)
         }
         .onChange(of: server?.id) { _ in
             credentials = nil
             credentialLoadErrorMessage = nil
-            Task { await loadCredentialsIfNeeded(force: true) }
+            requestCredentialLoadIfNeeded(force: true)
         }
         .onAppear {
             updateTerminalBackgroundColor()
@@ -730,21 +730,26 @@ struct TerminalContainerView: View {
     }
 
     @MainActor
-    private func loadCredentialsIfNeeded(force: Bool) async {
+    private func requestCredentialLoadIfNeeded(force: Bool) {
         guard let server else { return }
         if !force, credentials != nil { return }
         let serverId = server.id
-        let result = await ConnectionSessionManager.shared.loadCredentials(for: server)
-        guard self.server?.id == serverId else { return }
-        if let loadedCredentials = result.credentials {
-            credentials = loadedCredentials
-            credentialLoadErrorMessage = nil
-        } else if let message = result.errorMessage {
-            credentialLoadErrorMessage = String(
-                format: String(localized: "Failed to load credentials: %@"),
-                message
-            )
-        }
+        ConnectionSessionManager.shared.requestSessionCredentialLoad(
+            session: session,
+            server: server,
+            onCompleted: { result in
+                guard self.server?.id == serverId else { return }
+                if let loadedCredentials = result.credentials {
+                    credentials = loadedCredentials
+                    credentialLoadErrorMessage = nil
+                } else if let message = result.errorMessage {
+                    credentialLoadErrorMessage = String(
+                        format: String(localized: "Failed to load credentials: %@"),
+                        message
+                    )
+                }
+            }
+        )
     }
 
     // MARK: - Voice Input (macOS / iOS)

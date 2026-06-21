@@ -56,6 +56,12 @@ final class TerminalTabManager: ObservableObject {
         var onCompleted: [@MainActor (Bool) -> Void]
     }
 
+    private struct PaneCredentialLoadRequest {
+        let paneId: UUID
+        let task: Task<Void, Never>
+        var onCompleted: [@MainActor (TerminalCredentialLoadResult) -> Void]
+    }
+
     private struct SurfaceAttachRequest {
         let paneId: UUID
         var context: TerminalSurfaceAttachContext
@@ -194,6 +200,9 @@ final class TerminalTabManager: ObservableObject {
     private var paneHostRetrustRequests: [UUID: PaneHostRetrustRequest] = [:]
     private var paneHostRetrustRequestByPane: [UUID: UUID] = [:]
     var pendingPaneHostRetrustRequestIDs: Set<UUID> { Set(paneHostRetrustRequests.keys) }
+    private var paneCredentialLoadRequests: [UUID: PaneCredentialLoadRequest] = [:]
+    private var paneCredentialLoadRequestByPane: [UUID: UUID] = [:]
+    var pendingPaneCredentialLoadRequestIDs: Set<UUID> { Set(paneCredentialLoadRequestByPane.values) }
     private var surfaceAttachRequests: [UUID: SurfaceAttachRequest] = [:]
     private var surfaceAttachRequestByPane: [UUID: UUID] = [:]
     var pendingSurfaceAttachRequestIDs: Set<UUID> { Set(surfaceAttachRequests.keys) }
@@ -1601,6 +1610,52 @@ final class TerminalTabManager: ObservableObject {
         }
     }
 
+    private func canRunPaneCredentialLoad(paneId: UUID, server: Server) -> Bool {
+        guard !Task.isCancelled else { return false }
+        return paneStates[paneId]?.serverId == server.id
+    }
+
+    @discardableResult
+    func requestPaneCredentialLoad(
+        paneId: UUID,
+        server: Server,
+        onCompleted: @escaping @MainActor (TerminalCredentialLoadResult) -> Void = { _ in }
+    ) -> UUID {
+        if let requestID = paneCredentialLoadRequestByPane[paneId] {
+            paneCredentialLoadRequests[requestID]?.onCompleted.append(onCompleted)
+            return requestID
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.paneCredentialLoadRequests.removeValue(forKey: requestID)
+                if self.paneCredentialLoadRequestByPane[paneId] == requestID {
+                    self.paneCredentialLoadRequestByPane.removeValue(forKey: paneId)
+                }
+            }
+
+            guard self.canRunPaneCredentialLoad(paneId: paneId, server: server) else { return }
+            let result = await self.loadCredentials(for: server)
+            guard self.canRunPaneCredentialLoad(paneId: paneId, server: server) else { return }
+
+            let callbacks = self.paneCredentialLoadRequests[requestID]?.onCompleted ?? []
+            callbacks.forEach { $0(result) }
+        }
+        paneCredentialLoadRequests[requestID] = PaneCredentialLoadRequest(
+            paneId: paneId,
+            task: task,
+            onCompleted: [onCompleted]
+        )
+        paneCredentialLoadRequestByPane[paneId] = requestID
+        return requestID
+    }
+
+    func waitForPaneCredentialLoadRequest(_ requestID: UUID) async {
+        await paneCredentialLoadRequests[requestID]?.task.value
+    }
+
     func retrustHostAndReconnect(paneId: UUID, server: Server) async -> Bool {
         guard canRunPaneHostRetrust(paneId: paneId, server: server) else { return false }
         await KnownHostsStore.shared.remove(host: server.host, port: server.port)
@@ -1981,6 +2036,7 @@ final class TerminalTabManager: ObservableObject {
         cancelInstallRequests(for: paneId)
         cancelPaneRetryRequest(for: paneId)
         cancelPaneHostRetrustRequest(for: paneId)
+        cancelPaneCredentialLoadRequest(for: paneId)
         cancelInputRequests(for: paneId)
         cancelResizeRequests(for: paneId)
         cancelProcessExitRequests(for: paneId)
@@ -2060,6 +2116,11 @@ final class TerminalTabManager: ObservableObject {
             request.task.cancel()
             request.onCompleted.forEach { $0(false) }
         }
+    }
+
+    private func cancelPaneCredentialLoadRequest(for paneId: UUID) {
+        guard let requestID = paneCredentialLoadRequestByPane.removeValue(forKey: paneId) else { return }
+        paneCredentialLoadRequests[requestID]?.task.cancel()
     }
 
     private func finishTabClose(_ closeResult: TabCloseResult) async {
@@ -2817,6 +2878,9 @@ extension TerminalTabManager {
         paneHostRetrustRequests.values.forEach { $0.task.cancel() }
         paneHostRetrustRequests.removeAll()
         paneHostRetrustRequestByPane.removeAll()
+        paneCredentialLoadRequests.values.forEach { $0.task.cancel() }
+        paneCredentialLoadRequests.removeAll()
+        paneCredentialLoadRequestByPane.removeAll()
         surfaceAttachRequests.values.forEach { $0.task.cancel() }
         surfaceAttachRequests.removeAll()
         surfaceAttachRequestByPane.removeAll()

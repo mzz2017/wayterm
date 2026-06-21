@@ -80,6 +80,12 @@ final class ConnectionSessionManager: ObservableObject {
         var onCompleted: [@MainActor (Bool) -> Void]
     }
 
+    private struct SessionCredentialLoadRequest {
+        let sessionId: UUID
+        let task: Task<Void, Never>
+        var onCompleted: [@MainActor (TerminalCredentialLoadResult) -> Void]
+    }
+
     private struct SurfaceAttachRequest {
         let sessionId: UUID
         var context: TerminalSurfaceAttachContext
@@ -289,6 +295,9 @@ final class ConnectionSessionManager: ObservableObject {
     private var sessionHostRetrustRequests: [UUID: SessionHostRetrustRequest] = [:]
     private var sessionHostRetrustRequestBySession: [UUID: UUID] = [:]
     var pendingSessionHostRetrustRequestIDs: Set<UUID> { Set(sessionHostRetrustRequests.keys) }
+    private var sessionCredentialLoadRequests: [UUID: SessionCredentialLoadRequest] = [:]
+    private var sessionCredentialLoadRequestBySession: [UUID: UUID] = [:]
+    var pendingSessionCredentialLoadRequestIDs: Set<UUID> { Set(sessionCredentialLoadRequestBySession.values) }
     private var surfaceAttachRequests: [UUID: SurfaceAttachRequest] = [:]
     private var surfaceAttachRequestBySession: [UUID: UUID] = [:]
     var pendingSurfaceAttachRequestIDs: Set<UUID> { Set(surfaceAttachRequests.keys) }
@@ -931,6 +940,7 @@ final class ConnectionSessionManager: ObservableObject {
         cancelInstallRequests(for: sessionId)
         cancelSessionRetryRequest(for: sessionId)
         cancelSessionHostRetrustRequest(for: sessionId)
+        cancelSessionCredentialLoadRequest(for: sessionId)
         cancelInputRequests(for: sessionId)
         cancelResizeRequests(for: sessionId)
         cancelProcessExitRequests(for: sessionId)
@@ -2440,6 +2450,57 @@ final class ConnectionSessionManager: ObservableObject {
         }
     }
 
+    private func canRunSessionCredentialLoad(session: ConnectionSession, server: Server) -> Bool {
+        guard !Task.isCancelled else { return false }
+        return sessions.contains { $0.id == session.id && $0.serverId == server.id }
+    }
+
+    @discardableResult
+    func requestSessionCredentialLoad(
+        session: ConnectionSession,
+        server: Server,
+        onCompleted: @escaping @MainActor (TerminalCredentialLoadResult) -> Void = { _ in }
+    ) -> UUID {
+        if let requestID = sessionCredentialLoadRequestBySession[session.id] {
+            sessionCredentialLoadRequests[requestID]?.onCompleted.append(onCompleted)
+            return requestID
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.sessionCredentialLoadRequests.removeValue(forKey: requestID)
+                if self.sessionCredentialLoadRequestBySession[session.id] == requestID {
+                    self.sessionCredentialLoadRequestBySession.removeValue(forKey: session.id)
+                }
+            }
+
+            guard self.canRunSessionCredentialLoad(session: session, server: server) else { return }
+            let result = await self.loadCredentials(for: server)
+            guard self.canRunSessionCredentialLoad(session: session, server: server) else { return }
+
+            let callbacks = self.sessionCredentialLoadRequests[requestID]?.onCompleted ?? []
+            callbacks.forEach { $0(result) }
+        }
+        sessionCredentialLoadRequests[requestID] = SessionCredentialLoadRequest(
+            sessionId: session.id,
+            task: task,
+            onCompleted: [onCompleted]
+        )
+        sessionCredentialLoadRequestBySession[session.id] = requestID
+        return requestID
+    }
+
+    func waitForSessionCredentialLoadRequest(_ requestID: UUID) async {
+        await sessionCredentialLoadRequests[requestID]?.task.value
+    }
+
+    private func cancelSessionCredentialLoadRequest(for sessionId: UUID) {
+        guard let requestID = sessionCredentialLoadRequestBySession.removeValue(forKey: sessionId) else { return }
+        sessionCredentialLoadRequests[requestID]?.task.cancel()
+    }
+
     func retrustHostAndReconnect(session: ConnectionSession, server: Server) async -> Bool {
         guard canRunSessionHostRetrust(session: session, server: server) else { return false }
         await KnownHostsStore.shared.remove(host: server.host, port: server.port)
@@ -3180,6 +3241,9 @@ extension ConnectionSessionManager {
         sessionHostRetrustRequests.values.forEach { $0.task.cancel() }
         sessionHostRetrustRequests.removeAll()
         sessionHostRetrustRequestBySession.removeAll()
+        sessionCredentialLoadRequests.values.forEach { $0.task.cancel() }
+        sessionCredentialLoadRequests.removeAll()
+        sessionCredentialLoadRequestBySession.removeAll()
         surfaceAttachRequests.values.forEach { $0.task.cancel() }
         surfaceAttachRequests.removeAll()
         surfaceAttachRequestBySession.removeAll()

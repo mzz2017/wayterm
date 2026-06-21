@@ -565,13 +565,7 @@ struct TerminalPaneView: View {
             if connectionState.isConnected {
                 hasEstablishedConnection = true
             }
-            let result = await TerminalTabManager.shared.loadCredentials(for: server)
-            if let loadedCredentials = result.credentials {
-                credentials = loadedCredentials
-                credentialLoadErrorMessage = nil
-            } else if result.errorMessage != nil {
-                credentialLoadErrorMessage = String(localized: "Failed to load credentials")
-            }
+            requestCredentialLoad()
 
             if paneState?.tmuxStatus == .missing {
                 showingTmuxInstallPrompt = true
@@ -818,6 +812,23 @@ struct TerminalPaneView: View {
                 credentialLoadErrorMessage = nil
                 reconnectToken = UUID()
                 startConnectWatchdog()
+            }
+        )
+    }
+
+    private func requestCredentialLoad() {
+        let serverId = server.id
+        TerminalTabManager.shared.requestPaneCredentialLoad(
+            paneId: paneId,
+            server: server,
+            onCompleted: { result in
+                guard TerminalTabManager.shared.paneStates[paneId]?.serverId == serverId else { return }
+                if let loadedCredentials = result.credentials {
+                    credentials = loadedCredentials
+                    credentialLoadErrorMessage = nil
+                } else if result.errorMessage != nil {
+                    credentialLoadErrorMessage = String(localized: "Failed to load credentials")
+                }
             }
         )
     }
