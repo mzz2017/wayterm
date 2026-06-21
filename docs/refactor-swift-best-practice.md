@@ -4074,8 +4074,74 @@ Before review, verify request API names are consistent between session and pane 
 
 Request code review for Task 54. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
 
+## Task 55: Terminal Retry Intent Boundary
+
+**Files:**
+- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `VVTermTests/TerminalRetryIntentBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `ConnectionSessionManager.retrySessionConnection(session:server:)`
+  - `TerminalTabManager.retryPaneConnection(paneId:server:)`
+  - `TerminalReconnectRequestResult`
+  - Existing manager-owned credential providers and reconnect gates.
+- Produces:
+  - `ConnectionSessionManager.requestSessionRetry(session:server:onCompleted:) -> UUID`: tracked session retry request API that coalesces duplicate retry intent for the same session and returns one request ID to every caller.
+  - `ConnectionSessionManager.waitForSessionRetryRequest(_:)` and `pendingSessionRetryRequestIDs` for awaitable lifecycle ordering tests.
+  - `TerminalTabManager.requestPaneRetry(paneId:server:onCompleted:) -> UUID`: tracked split-pane retry request API that coalesces duplicate retry intent for the same pane and returns one request ID to every caller.
+  - `TerminalTabManager.waitForPaneRetryRequest(_:)` and `pendingPaneRetryRequestIDs` for awaitable lifecycle ordering tests.
+  - DEBUG-only retry operation injection hooks so tests can block retry work without real SSH or Keychain.
+
+- [ ] **Step 1: Add RED retry request and source-boundary tests**
+
+Extend `ConnectionLifecycleIntegrationTests` with request-ordering coverage for session and pane retry intent. Use delayed fake retry operations to prove `requestSessionRetry` and `requestPaneRetry` remain pending until the retry operation completes, duplicate same-session/pane retry intent reuses the in-flight request ID, and every duplicate caller receives the final `TerminalReconnectRequestResult`. Add `TerminalRetryIntentBoundaryTests` with a Test Context header that reads `TerminalContainerView.swift` and `TerminalView.swift`, then fails while retry buttons, timeout callbacks, or watchdog callbacks launch SwiftUI-owned `Task { await retryConnection() }` work or call `retrySessionConnection` / `retryPaneConnection` directly from UI.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalRetryIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails to compile because `requestSessionRetry`, `pendingSessionRetryRequestIDs`, `waitForSessionRetryRequest(_:)`, `requestPaneRetry`, `pendingPaneRetryRequestIDs`, `waitForPaneRetryRequest(_:)`, and DEBUG retry-operation injection hooks do not exist. If those compile unexpectedly, `TerminalRetryIntentBoundaryTests` fails because terminal retry UI still owns async retry tasks or calls the old async retry helpers directly.
+
+- [ ] **Step 2: Add manager-owned retry request tracking**
+
+In `ConnectionSessionManager`, add request dictionaries for session retry keyed by request ID plus a per-session in-flight index for duplicate coalescing. In `TerminalTabManager`, add the same structure keyed by pane ID. Each request API should return the existing in-flight request ID for duplicate same-entity intent, append completion callbacks for every duplicate caller, clear both the request dictionary and per-entity index in `defer`, and expose await hooks for tests. The request task should call the existing async retry behavior boundary or the DEBUG injected fake operation, then publish the final `TerminalReconnectRequestResult` to every callback.
+
+- [ ] **Step 3: Route terminal UI retry buttons through request APIs**
+
+Update `TerminalContainerView.retryConnection()` and split `TerminalView.retryConnection()` so they are synchronous presentation helpers. UI may clear transient credential/error state before sending intent and may update `credentials`, `credentialLoadErrorMessage`, `reconnectToken`, and watchdog state in request completion callbacks, but it must not start or await retry tasks itself. Retry buttons, timeout callbacks, and connect watchdog callbacks should call the synchronous helper directly.
+
+- [ ] **Step 4: Run focused verification**
+
+Run focused tests, source scans, and whitespace check:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalRetryIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{[^\\n]*await retryConnection|await retryConnection\\(|retrySessionConnection\\(|retryPaneConnection\\(" VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift
+rg -n "Task \\{ \\[weak self\\] in|Task\\.detached" VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; terminal UI retry scans show no UI-owned retry `Task` wrappers or direct calls to the old async retry helpers; manager task scans show retry tasks are stored request tasks or previously classified runtime tasks.
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Before review, verify request API names are consistent between session and pane managers, retry request state lives in TerminalSessions Application rather than UI, UI retry callbacks are presentation-only, duplicate request coalescing is manager-owned, cancellation is not surfaced as a credential failure, and touched tests include Test Context plus Given / When / Then comments and assertion messages.
+
+- [ ] **Step 6: Request review and commit**
+
+Request code review for Task 55. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-54 scan selected Task 55 as the next executable lifecycle slice. Current plan checkboxes were complete, so the codebase was rescanned for remaining SwiftUI-owned `Task` work and deferred ledger hits. The clearest focused TerminalSessions gap is terminal retry intent: `TerminalContainerView` and split `TerminalView` still launch retry work from SwiftUI-owned `Task` wrappers and directly await `retrySessionConnection` / `retryPaneConnection`, while the managers expose only async low-level retry helpers rather than tracked request APIs. Task 55 should add manager-owned tracked request APIs for session and pane retry intent, preserve duplicate retry coalescing and credential-load result semantics, and leave broader voice recording, iOS active-connection action orchestration, mosh fallback banner timing, and RemoteFiles navigation/mutation tasks deferred to later slices.
 - 2026-06-21: Task 54 RED/GREEN completed with review fixes. `TerminalContainerView` and split `TerminalView` no longer launch tmux/mosh install work from SwiftUI-owned `Task` blocks; install buttons synchronously send intent to `ConnectionSessionManager` or `TerminalTabManager`. Both managers now own tracked tmux and mosh install request tasks, expose pending request IDs plus await hooks for ordering tests, coalesce duplicate same-session/pane tmux and mosh request intent, keep mosh cancellation separate from ordinary failure, and record ordinary mosh install failures. Close paths for sessions and panes now cancel pending install requests and run completion callbacks so presentation state can clear on lifecycle cancellation. The tmux install helpers now await the six-attempt availability poll in the request task instead of scheduling an internal untracked follow-up task. RED failed to compile until the manager request/testing APIs existed. Review found three Important lifecycle issues: close did not cancel pending install requests, cancellation could leave mosh UI cleanup callbacks unsent, and duplicate mosh callers lost callbacks. Review-fix RED reproduced missing duplicate callbacks and a pending close-cancellation wait; GREEN passed after callbacks were stored per duplicate request and close cancellation completed pending requests. Final focused tests passed 84 Swift Testing tests; the terminal UI install source scan produced no matches; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. The broad manager task scan still reports previously classified runtime/persist/detached tasks outside this install slice.
 - 2026-06-21: Post-Task-53 scan selected Task 54 as the next executable lifecycle slice. Current plan checkboxes were complete, so the codebase was rescanned for remaining SwiftUI-owned `Task` work and deferred ledger hits. The clearest focused TerminalSessions gap is terminal install intent: `TerminalContainerView` and split `TerminalView` launch tmux and mosh install work from alert buttons, while both managers expose only awaitable low-level install helpers rather than tracked request APIs. The tmux install helpers also schedule an internal untracked poll task after sending the install script, so the UI-owned task can return before install lifecycle state settles. Task 54 should add manager-owned tracked request APIs for session and pane tmux/mosh install intent, make tmux install polling awaitable, and leave broader retry, voice recording, mosh fallback banner timing, and RemoteFiles navigation tasks deferred to later slices.
 - 2026-06-21: Task 53 RED/GREEN completed with review fixes. `VVTermApp.swift` and both AppDelegate implementations no longer directly orchestrate terminal teardown, background suspension, app-lock, app-sync refresh, or server-language side effects; they send intent to `AppLifecycleCoordinator`. `AppLifecycleCoordinator` owns tracked request tasks for background lock, background suspension, remote-notification refresh completion, and termination teardown, with await hooks for ordering tests. The old blocking termination semaphore bridge was removed after it proved unsafe on MainActor; macOS termination now uses `applicationShouldTerminate(_:)` / `.terminateLater` with a timeout-bounded tracked teardown request, and iOS termination sends a tracked best-effort request. RED failed to compile until the coordinator APIs existed, review-cycle RED exposed missing background lock tracking, and a focused timeout regression test prevented a hanging termination request. Final focused tests passed 7 Swift Testing tests; source scans showed `VVTermApp.swift` only sends coordinator intent; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment / AppIntents metadata warnings.
