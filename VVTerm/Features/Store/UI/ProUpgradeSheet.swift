@@ -269,7 +269,7 @@ struct ProUpgradeSheet: View {
         VStack(spacing: 5) {
             Button {
                 if let product = selectedProduct {
-                    Task { await storeManager.purchase(product) }
+                    storeManager.requestPurchase(of: product)
                 }
             } label: {
                 ZStack {
@@ -343,7 +343,7 @@ struct ProUpgradeSheet: View {
 
     private var restoreButton: some View {
         Button {
-            Task { await storeManager.restorePurchases() }
+            storeManager.requestRestorePurchases()
         } label: {
             HStack(spacing: 8) {
                 if storeManager.restoreState == .restoring {

@@ -20,6 +20,12 @@ final class StoreManager: ObservableObject {
     @Published private(set) var lastPurchasedProductId: String?
     private(set) var activePaywallSource: PaywallSource = .general
     private(set) var hasPresentedPaywallThisLaunch = false
+    private var purchaseRequestTasks: [UUID: Task<Void, Never>] = [:]
+    private var restoreRequestTasks: [UUID: Task<Void, Never>] = [:]
+    private(set) var lastPurchaseRequestFailure: Error?
+    private(set) var lastRestoreRequestFailure: Error?
+    var pendingPurchaseRequestIDs: Set<UUID> { Set(purchaseRequestTasks.keys) }
+    var pendingRestoreRequestIDs: Set<UUID> { Set(restoreRequestTasks.keys) }
 
     private var updateListenerTask: Task<Void, Error>?
     private var reviewModeExpiryTask: Task<Void, Never>?
@@ -43,16 +49,20 @@ final class StoreManager: ObservableObject {
 
     // MARK: - Initialization
 
-    private init() {
-        updateListenerTask = listenForTransactions()
-        Task {
-            await loadProducts()
-            await checkEntitlements()
+    private init(startBackgroundTasks: Bool = true) {
+        if startBackgroundTasks {
+            updateListenerTask = listenForTransactions()
+            Task {
+                await loadProducts()
+                await checkEntitlements()
+            }
         }
     }
 
     deinit {
         updateListenerTask?.cancel()
+        purchaseRequestTasks.values.forEach { $0.cancel() }
+        restoreRequestTasks.values.forEach { $0.cancel() }
     }
 
     // MARK: - Load Products
@@ -87,6 +97,39 @@ final class StoreManager: ObservableObject {
 
     // MARK: - Purchase
 
+    @discardableResult
+    func requestPurchase(of product: Product) -> UUID {
+        requestPurchase { [weak self] in
+            await self?.purchase(product)
+        }
+    }
+
+    func waitForPurchaseRequest(_ requestID: UUID) async {
+        await purchaseRequestTasks[requestID]?.value
+    }
+
+    @discardableResult
+    fileprivate func requestPurchase(operation: @escaping @MainActor () async throws -> Void) -> UUID {
+        let requestID = UUID()
+        lastPurchaseRequestFailure = nil
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.purchaseRequestTasks.removeValue(forKey: requestID) }
+
+            do {
+                try await operation()
+            } catch is CancellationError {
+                return
+            } catch {
+                self.lastPurchaseRequestFailure = error
+            }
+        }
+
+        purchaseRequestTasks[requestID] = task
+        return requestID
+    }
+
     func purchase(_ product: Product) async {
         purchaseState = .purchasing
         lastPurchasedProductId = nil
@@ -112,12 +155,44 @@ final class StoreManager: ObservableObject {
                 purchaseState = .idle
             }
         } catch {
-            purchaseState = .failed(error.localizedDescription)
-            logger.error("Purchase failed: \(error.localizedDescription)")
+            applyPurchaseError(error)
         }
     }
 
     // MARK: - Restore Purchases
+
+    @discardableResult
+    func requestRestorePurchases() -> UUID {
+        requestRestorePurchases { [weak self] in
+            await self?.restorePurchases()
+        }
+    }
+
+    func waitForRestoreRequest(_ requestID: UUID) async {
+        await restoreRequestTasks[requestID]?.value
+    }
+
+    @discardableResult
+    fileprivate func requestRestorePurchases(operation: @escaping @MainActor () async throws -> Void) -> UUID {
+        let requestID = UUID()
+        lastRestoreRequestFailure = nil
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.restoreRequestTasks.removeValue(forKey: requestID) }
+
+            do {
+                try await operation()
+            } catch is CancellationError {
+                return
+            } catch {
+                self.lastRestoreRequestFailure = error
+            }
+        }
+
+        restoreRequestTasks[requestID] = task
+        return requestID
+    }
 
     func restorePurchases() async {
         restoreState = .restoring
@@ -127,8 +202,7 @@ final class StoreManager: ObservableObject {
             await checkEntitlements()
             applyRestoreResult(hasAccess: isPro)
         } catch {
-            restoreState = .failed(error.localizedDescription)
-            logger.error("Failed to restore purchases: \(error.localizedDescription)")
+            applyRestoreError(error)
         }
     }
 
@@ -285,9 +359,30 @@ final class StoreManager: ObservableObject {
         logger.info("\(logMessage)")
     }
 
+    private func applyPurchaseError(_ error: Error) {
+        if error is CancellationError {
+            applyIdlePurchaseState(logMessage: "Purchase cancelled")
+            return
+        }
+
+        purchaseState = .failed(error.localizedDescription)
+        logger.error("Purchase failed: \(error.localizedDescription)")
+    }
+
     private func applyRestoreResult(hasAccess: Bool) {
         restoreState = .restored(hasAccess: hasAccess)
         logger.info("Purchases restored")
+    }
+
+    private func applyRestoreError(_ error: Error) {
+        if error is CancellationError {
+            restoreState = .idle
+            logger.info("Restore cancelled")
+            return
+        }
+
+        restoreState = .failed(error.localizedDescription)
+        logger.error("Failed to restore purchases: \(error.localizedDescription)")
     }
 
     private func applyEntitlements(
@@ -302,3 +397,33 @@ final class StoreManager: ObservableObject {
         logger.info("Entitlements checked: isPro=\(hasAccess), isLifetime=\(hasLifetime), reviewMode=\(self.isReviewModeEnabled)")
     }
 }
+
+#if DEBUG
+extension StoreManager {
+    static func makeForTesting() -> StoreManager {
+        StoreManager(startBackgroundTasks: false)
+    }
+
+    @discardableResult
+    func requestPurchaseForTesting(
+        operation: @escaping @MainActor () async throws -> Void
+    ) -> UUID {
+        requestPurchase(operation: operation)
+    }
+
+    @discardableResult
+    func requestRestorePurchasesForTesting(
+        operation: @escaping @MainActor () async throws -> Void
+    ) -> UUID {
+        requestRestorePurchases(operation: operation)
+    }
+
+    func applyPurchaseErrorForTesting(_ error: Error) {
+        applyPurchaseError(error)
+    }
+
+    func applyRestoreErrorForTesting(_ error: Error) {
+        applyRestoreError(error)
+    }
+}
+#endif

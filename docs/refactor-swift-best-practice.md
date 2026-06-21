@@ -3149,8 +3149,86 @@ Before moving to another task, verify request API names are consistent between s
 
 Request code review for Task 41. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
 
+## Task 42: Store Purchase Intent Ownership
+
+**Files:**
+- Modify: `VVTerm/Features/Store/Application/StoreManager.swift`
+- Modify: `VVTerm/Features/Store/UI/ProUpgradeSheet.swift`
+- Modify: `VVTerm/Features/Settings/UI/ProSettingsView.swift`
+- Test: `VVTermTests/Features/Store/StoreManagerLifecycleTests.swift`
+- Test: `VVTermTests/StorePurchaseIntentBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `StoreManager.purchase(_:)`
+  - `StoreManager.restorePurchases()`
+  - Existing `purchaseState` and `restoreState`.
+- Produces:
+  - Application-layer purchase and restore request APIs that UI can call synchronously from buttons.
+  - Pending request IDs and awaitable request waits for tests and later ordering-sensitive operations.
+  - UI call sites that send Store intent instead of starting untracked purchase/restore `Task` work.
+
+- [x] **Step 1: Add RED tests**
+
+Add `StorePurchaseIntentBoundaryTests` with a `Test Context` header. The tests must inspect Store and Settings UI source files and fail while UI still contains direct `Task { await storeManager.purchase(...) }` or `Task { await storeManager.restorePurchases() }`.
+
+Add `StoreManagerLifecycleTests` with fake purchase/restore operations that avoid real StoreKit network calls. The tests must prove request IDs are tracked while operations are pending, completion can be awaited, and thrown fake failures are recorded by the Store application owner.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/StorePurchaseIntentBoundaryTests -only-testing:VVTermTests/StoreManagerLifecycleTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the boundary test fails because `ProUpgradeSheet` and `ProSettingsView` still start Store purchase/restore tasks from SwiftUI, and the lifecycle test fails to compile because Store request tracking APIs do not exist.
+
+Actual RED result: `StorePurchaseIntentBoundaryTests` plus `StoreManagerLifecycleTests` failed before production changes because `StoreManager.makeForTesting()` did not exist. Review-fix RED later failed because `applyPurchaseErrorForTesting(_:)` and `applyRestoreErrorForTesting(_:)` did not exist, proving the cancellation regression tests exercised new behavior before implementation.
+
+- [x] **Step 2: Add Store request APIs**
+
+Add narrow request APIs to `StoreManager`, for example `requestPurchase(of:)` and `requestRestorePurchases()`, plus awaitable request waits. The owner must:
+- Store pending purchase and restore tasks by request ID.
+- Preserve cancellation separately from fake or operation failures.
+- Record request-level failures for tests without changing the existing StoreKit user-facing state semantics.
+- Keep real StoreKit purchase/restore behavior inside `purchase(_:)` and `restorePurchases()`.
+
+- [x] **Step 3: Route UI Store entry points through request APIs**
+
+Replace UI-owned Store tasks in:
+- `ProUpgradeSheet` purchase button.
+- `ProUpgradeSheet` restore button.
+- `ProSettingsView` restore button.
+
+UI may still present state derived from `purchaseState` and `restoreState`, but it must not own the lifecycle-critical purchase or restore operation.
+
+- [x] **Step 4: Run focused verification**
+
+Run the RED/GREEN Store lifecycle suite plus a Store UI boundary scan:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/StorePurchaseIntentBoundaryTests -only-testing:VVTermTests/StoreManagerLifecycleTests -only-testing:VVTermTests/Features/Store/StoreStateTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{ await storeManager\\.(purchase|restorePurchases)|storeManager\\.purchase\\(|storeManager\\.restorePurchases\\(" VVTerm/Features/Store/UI/ProUpgradeSheet.swift VVTerm/Features/Settings/UI/ProSettingsView.swift
+git diff --check
+```
+
+If StoreManager changes touch app startup or StoreKit listener setup, also run iOS build-for-testing before review.
+
+Focused GREEN result: `StorePurchaseIntentBoundaryTests` and `StoreManagerLifecycleTests` passed after routing UI through request APIs. `StoreManagerLifecycleTests` passed again with 4 tests after the cancellation review fix.
+
+- [x] **Step 5: API and boundary cleanup**
+
+Before moving to another task, verify request API names are consistent with prior manager request APIs, UI files no longer contain Store purchase/restore task ownership, fake test seams are test-only or narrow, and Store Domain remains pure.
+
+- [x] **Step 6: Request review and commit**
+
+Request code review for Task 42. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
+
+Review result: initial review found one Important issue: real `purchase(_:)` and `restorePurchases()` catch paths still translated `CancellationError` into failed Store UI state. The follow-up fix introduced cancellation-aware Store state helpers and regression tests; re-review found no Critical or Important issues. Minor accepted risk: cancellation coverage uses a narrow helper seam because StoreKit `Product.purchase()` and `AppStore.sync()` are not directly faked.
+
 ## Progress Ledger
 
+- 2026-06-21: Task 42 RED/GREEN completed with review fix. Store purchase and restore buttons now send synchronous intent to `StoreManager.requestPurchase(of:)` and `StoreManager.requestRestorePurchases()` instead of starting SwiftUI-owned StoreKit tasks. `StoreManager` owns pending purchase/restore request tasks by request ID, exposes awaitable waits, records request-level failures, and keeps `purchase(_:)` / `restorePurchases()` as the StoreKit behavior boundary. Review found real purchase/restore catch paths still translated `CancellationError` into failed UI state; follow-up RED coverage failed until cancellation-aware Store state helpers existed, and re-review found no Critical or Important issues. Verification: initial RED failed because Store request tracking APIs did not exist; review-fix RED failed because cancellation helper seams did not exist; GREEN focused suite passed 3 XCTest tests plus 5 Swift Testing tests; Store UI boundary scan produced no matches; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with existing Swift 6 isolation and XCTest deployment warnings. Guard warning for added `Task` was reviewed: the tasks are owned and tracked by `StoreManager`, not SwiftUI.
 - 2026-06-21: Task 41 RED/GREEN completed before commit. Terminal open intent now flows through `TerminalTabManager.requestTabOpen(...)`, `TerminalTabManager.requestServerTerminalOpen(...)`, and `ConnectionSessionManager.requestConnectionOpen(...)`, so SwiftUI buttons, menus, duplicate-tab, macOS sidebar, and iOS server-list/new-tab flows no longer create their own terminal-open tasks, branch around the application owner for existing tabs, or hide open failures behind `try?`/no-op catches. Managers track pending request IDs, preserve cancellation separately from failures, expose awaitable request waits for tests, and reuse the existing `openTab`/`openConnection` teardown and duplicate-open gates. Review fixes closed two AppLock ordering gaps: existing-tab focus now unlocks before selecting, and `ServerSidebarView` selects the server only from the manager success callback. Verification: RED `TerminalOpenIntentBoundaryTests` failed with 5 issues before the route change; review-fix RED failed until `requestServerTerminalOpen(...)` exposed a manager-owned unlock boundary; second review-fix RED failed until the server sidebar stopped preselecting before unlock; GREEN focused suite passed 14 XCTest tests plus 79 Swift Testing tests; terminal-open UI boundary scan produced no matches; `git diff --check` passed; iOS and macOS build-for-testing passed with existing warnings only. Re-review found no Critical or Important issues.
 - 2026-06-21: Post-Task-35 closure audit found the plan was not actually ready for final merge review. Current non-exempt gaps are now tracked as Tasks 36-40: terminal runner close must await the stored runner finish path, terminal reconnect orchestration still lives in SwiftUI, iOS RemoteFiles disconnect drops returned teardown tasks, Core SSH needs tighter disconnect timeout/cancellation diagnostics, and cross-feature save/delete/sync/download/window ownership still needs a scoped sweep.
 - 2026-06-21: Task 36 RED/GREEN completed. RED verification showed `closeSessionAndWait(_:)` already waited for a delayed stored runner task, while `closePaneAndWait(_:)` returned before a delayed stored runtime shell task finished. `TerminalConnectionRuntime.close(mode:)` now awaits the stored shell task in every close branch, and regression tests cover both session and pane close ordering. Verification: focused lifecycle/runtime suite passed 57 Swift Testing tests, and `git diff --check` passed.
