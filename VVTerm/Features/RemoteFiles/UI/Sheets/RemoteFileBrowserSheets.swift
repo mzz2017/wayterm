@@ -211,7 +211,7 @@ struct RemoteFileCreateFolderSheet: View {
 struct RemoteFileMoveSheet: View {
     let entry: RemoteFileEntry
     @Binding var destinationDirectory: String
-    let onLoadDirectories: (String) async throws -> [RemoteFileEntry]
+    let onRequestDirectories: (String, @escaping @MainActor (Result<[RemoteFileEntry], Error>) -> Void) -> Void
     let isSubmitting: Bool
     let onCancel: () -> Void
     let onMove: () -> Void
@@ -224,14 +224,17 @@ struct RemoteFileMoveSheet: View {
     init(
         entry: RemoteFileEntry,
         destinationDirectory: Binding<String>,
-        onLoadDirectories: @escaping (String) async throws -> [RemoteFileEntry],
+        onRequestDirectories: @escaping (
+            String,
+            @escaping @MainActor (Result<[RemoteFileEntry], Error>) -> Void
+        ) -> Void,
         isSubmitting: Bool,
         onCancel: @escaping () -> Void,
         onMove: @escaping () -> Void
     ) {
         self.entry = entry
         _destinationDirectory = destinationDirectory
-        self.onLoadDirectories = onLoadDirectories
+        self.onRequestDirectories = onRequestDirectories
         self.isSubmitting = isSubmitting
         self.onCancel = onCancel
         self.onMove = onMove
@@ -296,7 +299,7 @@ struct RemoteFileMoveSheet: View {
             #endif
         }
         .task(id: currentDirectory) {
-            await loadDirectories()
+            requestDirectories()
         }
     }
 
@@ -364,7 +367,7 @@ struct RemoteFileMoveSheet: View {
                             .foregroundStyle(.secondary)
 
                         Button(String(localized: "Retry")) {
-                            Task { await loadDirectories() }
+                            requestDirectories()
                         }
                     }
                 } else if directories.isEmpty {
@@ -443,17 +446,21 @@ struct RemoteFileMoveSheet: View {
         }
     }
 
-    @MainActor
-    private func loadDirectories() async {
+    private func requestDirectories() {
+        let requestedDirectory = currentDirectory
         isLoading = true
         errorMessage = nil
-        do {
-            directories = try await onLoadDirectories(currentDirectory)
-        } catch {
-            directories = []
-            errorMessage = error.localizedDescription
+        onRequestDirectories(requestedDirectory) { result in
+            guard currentDirectory == requestedDirectory else { return }
+            switch result {
+            case .success(let entries):
+                directories = entries
+            case .failure(let error):
+                directories = []
+                errorMessage = error.localizedDescription
+            }
+            isLoading = false
         }
-        isLoading = false
     }
 
     private func navigate(to path: String) {

@@ -146,8 +146,70 @@ struct RemoteFileMutationIntentBoundaryTests {
         )
     }
 
+    @Test
+    func moveDestinationFolderLoadingDelegatesTaskOwnershipToStore() throws {
+        // Given shared RemoteFiles browser UI plus the move destination sheet.
+        let root = try sourceRoot()
+        let browserSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
+        )
+        let sheetSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Sheets/RemoteFileBrowserSheets.swift")
+        )
+        let moveSheet = try slice(
+            startingAt: "struct RemoteFileMoveSheet: View",
+            endingBefore: "\nstruct RemoteFileDeleteConfirmationSheet",
+            in: sheetSource
+        )
+        let moveSheetFactory = try slice(
+            startingAt: "func moveSheet(entry: RemoteFileEntry) -> some View",
+            endingBefore: "\n    func deleteSheet",
+            in: browserSource
+        )
+
+        // Then the sheet may keep local presentation state, but remote folder
+        // loading task lifetime belongs to the RemoteFiles application store.
+        #expect(
+            moveSheet.contains("onRequestDirectories"),
+            "RemoteFileMoveSheet should expose synchronous directory-load intent instead of awaiting remote listing itself."
+        )
+        #expect(
+            !moveSheet.contains("onLoadDirectories"),
+            "RemoteFileMoveSheet should not keep an async remote directory-loading closure."
+        )
+        #expect(
+            !moveSheet.contains("Task { await loadDirectories() }"),
+            "RemoteFileMoveSheet Retry should not start a UI-owned load task."
+        )
+        #expect(
+            !moveSheet.contains("try await onLoadDirectories"),
+            "RemoteFileMoveSheet should not await remote directory listing directly."
+        )
+        #expect(
+            moveSheet.contains("guard currentDirectory == requestedDirectory"),
+            "RemoteFileMoveSheet should ignore stale directory-load callbacks after navigation changes."
+        )
+        #expect(
+            moveSheetFactory.contains("browser.requestMoveDestinationLoad"),
+            "RemoteFileBrowserScreen.moveSheet should delegate move destination loading to RemoteFileBrowserStore."
+        )
+        #expect(
+            !moveSheetFactory.contains("try await fileBrowser.listDirectories"),
+            "RemoteFileBrowserScreen.moveSheet should not pass direct async listDirectories work into the sheet."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func slice(startingAt marker: String, endingBefore endMarker: String, in source: String) throws -> String {
+        guard let start = source.range(of: marker),
+              let end = source.range(of: endMarker, range: start.lowerBound..<source.endIndex)
+        else {
+            throw SourceSliceError.notFound
+        }
+        return String(source[start.lowerBound..<end.lowerBound])
     }
 
     private func sourceRoot() throws -> URL {
@@ -167,6 +229,10 @@ struct RemoteFileMutationIntentBoundaryTests {
     }
 
     private enum SourceRootError: Error {
+        case notFound
+    }
+
+    private enum SourceSliceError: Error {
         case notFound
     }
 }

@@ -233,14 +233,15 @@ struct RemoteFileBrowserScreen: View {
     }
 
     func moveSheet(entry: RemoteFileEntry) -> some View {
-        let fileBrowser = browser
-        let fileServer = server
-
         return RemoteFileMoveSheet(
             entry: entry,
             destinationDirectory: $moveDestinationDirectory,
-            onLoadDirectories: { path in
-                try await fileBrowser.listDirectories(at: path, server: fileServer)
+            onRequestDirectories: { path, onCompleted in
+                browser.requestMoveDestinationLoad(
+                    path: path,
+                    server: server,
+                    onCompleted: onCompleted
+                )
             },
             isSubmitting: isMoveSubmitting,
             onCancel: resetMovePrompt,

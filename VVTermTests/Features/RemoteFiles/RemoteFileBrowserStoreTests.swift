@@ -318,6 +318,203 @@ struct RemoteFileBrowserStoreTests {
     }
 
     @Test
+    func moveDestinationLoadRequestTracksDirectoryListingUntilCompletion() async throws {
+        let server = makeServer()
+        let client = BlockingNavigationRemoteFileClient(
+            listResponses: [
+                "/srv": [
+                    makeEntry(name: "zeta.log", path: "/srv/zeta.log", type: .file),
+                    makeEntry(name: "beta", path: "/srv/beta", type: .directory),
+                    makeEntry(name: "alpha", path: "/srv/alpha", type: .directory)
+                ]
+            ],
+            blockedListPaths: ["/srv"]
+        )
+        let store = makeStore(server: server, client: client)
+        var results: [Result<[RemoteFileEntry], Error>] = []
+
+        // Given a move destination sheet sends folder-list intent while remote
+        // directory listing is still blocked.
+        let requestID = store.requestMoveDestinationLoad(path: "/srv", server: server) { result in
+            results.append(result)
+        }
+        await client.waitUntilListStarted(path: "/srv")
+
+        // Then RemoteFileBrowserStore exposes the request until the listing
+        // finishes, rather than letting the sheet own remote SFTP work.
+        #expect(store.pendingMoveDestinationLoadRequestIDs.contains(requestID))
+        #expect(results.isEmpty)
+
+        await client.releaseList(path: "/srv")
+        await store.waitForMoveDestinationLoadRequest(requestID)
+
+        #expect(!store.pendingMoveDestinationLoadRequestIDs.contains(requestID))
+        #expect(try results.singleSuccess().map(\.path) == ["/srv/alpha", "/srv/beta"])
+    }
+
+    @Test
+    func duplicateMoveDestinationLoadRequestsCoalesceUntilCompletion() async throws {
+        let server = makeServer()
+        let client = BlockingNavigationRemoteFileClient(
+            listResponses: [
+                "/srv": [
+                    makeEntry(name: "alpha", path: "/srv/alpha", type: .directory)
+                ]
+            ],
+            blockedListPaths: ["/srv"]
+        )
+        let store = makeStore(server: server, client: client)
+        var callbacks: [String] = []
+
+        // Given the same move destination folder is requested twice while the
+        // first remote listing is still in flight.
+        let firstID = store.requestMoveDestinationLoad(path: "/srv", server: server) { result in
+            if case .success = result {
+                callbacks.append("first")
+            }
+        }
+        await client.waitUntilListStarted(path: "/srv")
+        let secondID = store.requestMoveDestinationLoad(path: "/srv/", server: server) { result in
+            if case .success = result {
+                callbacks.append("second")
+            }
+        }
+
+        // Then duplicate same-server/same-path intent joins one store-owned
+        // request and does not start duplicate SFTP list work.
+        #expect(firstID == secondID)
+        #expect(store.pendingMoveDestinationLoadRequestIDs == [firstID])
+        #expect(await client.listCount(path: "/srv") == 1)
+
+        await client.releaseList(path: "/srv")
+        await store.waitForMoveDestinationLoadRequest(firstID)
+
+        #expect(callbacks == ["first", "second"])
+        #expect(!store.pendingMoveDestinationLoadRequestIDs.contains(firstID))
+    }
+
+    @Test
+    func moveDestinationLoadCancellationRemainsAwaitableUntilListingExits() async throws {
+        let server = makeServer()
+        let client = BlockingNavigationRemoteFileClient(
+            listResponses: [
+                "/srv": [
+                    makeEntry(name: "alpha", path: "/srv/alpha", type: .directory)
+                ]
+            ],
+            blockedListPaths: ["/srv"]
+        )
+        let store = makeStore(server: server, client: client)
+        let waitProbe = RemoteFileWaitProbe()
+        var results: [Result<[RemoteFileEntry], Error>] = []
+
+        // Given lifecycle cleanup cancels a pending move destination list
+        // request while the remote service operation is blocked.
+        let requestID = store.requestMoveDestinationLoad(path: "/srv", server: server) { result in
+            results.append(result)
+        }
+        await client.waitUntilListStarted(path: "/srv")
+        store.cancelMoveDestinationLoadRequestForTesting(requestID)
+
+        let waitTask = Task {
+            await store.waitForMoveDestinationLoadRequest(requestID)
+            await waitProbe.markReturned()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then visible pending state clears immediately, but the wait hook
+        // remains tracked until the blocked list operation exits.
+        #expect(!store.pendingMoveDestinationLoadRequestIDs.contains(requestID))
+        #expect(
+            await !waitProbe.didReturn,
+            "Move destination load wait hook must not return before the blocked remote listing exits."
+        )
+
+        await client.releaseList(path: "/srv")
+        await waitTask.value
+
+        #expect(await waitProbe.didReturn)
+        #expect(results.isEmpty)
+    }
+
+    @Test
+    func replacementMoveDestinationLoadAfterCancellationRemainsCurrent() async throws {
+        let server = makeServer()
+        let client = BlockingNavigationRemoteFileClient(
+            listResponses: [
+                "/srv": [
+                    makeEntry(name: "alpha", path: "/srv/alpha", type: .directory)
+                ]
+            ],
+            blockedListPaths: ["/srv"]
+        )
+        let store = makeStore(server: server, client: client)
+        var canceledResults: [Result<[RemoteFileEntry], Error>] = []
+        var replacementResults: [Result<[RemoteFileEntry], Error>] = []
+
+        // Given a move destination load is canceled while its remote list is
+        // still blocked.
+        let canceledID = store.requestMoveDestinationLoad(path: "/srv", server: server) { result in
+            canceledResults.append(result)
+        }
+        await client.waitUntilListCount(path: "/srv", count: 1)
+        store.cancelMoveDestinationLoadRequestForTesting(canceledID)
+
+        // When the user immediately requests the same destination path again.
+        let replacementID = store.requestMoveDestinationLoad(path: "/srv", server: server) { result in
+            replacementResults.append(result)
+        }
+
+        // Then the replacement is visible as current, and the older canceled
+        // request cannot remove its key or deliver a stale callback.
+        #expect(replacementID != canceledID)
+        #expect(!store.pendingMoveDestinationLoadRequestIDs.contains(canceledID))
+        #expect(store.pendingMoveDestinationLoadRequestIDs.contains(replacementID))
+
+        await client.releaseList(path: "/srv")
+        await store.waitForMoveDestinationLoadRequest(canceledID)
+        await store.waitForMoveDestinationLoadRequest(replacementID)
+
+        #expect(canceledResults.isEmpty)
+        #expect(try replacementResults.singleSuccess().map(\.path) == ["/srv/alpha"])
+        #expect(!store.pendingMoveDestinationLoadRequestIDs.contains(replacementID))
+    }
+
+    @Test
+    func disconnectCancelsVisibleMoveDestinationLoadRequestsForServer() async throws {
+        let server = makeServer()
+        let client = BlockingNavigationRemoteFileClient(
+            listResponses: [
+                "/srv": [
+                    makeEntry(name: "alpha", path: "/srv/alpha", type: .directory)
+                ]
+            ],
+            blockedListPaths: ["/srv"]
+        )
+        let store = makeStore(server: server, client: client)
+        var results: [Result<[RemoteFileEntry], Error>] = []
+
+        // Given a move destination folder load is waiting inside remote
+        // directory IO for a server that is about to disconnect.
+        let requestID = store.requestMoveDestinationLoad(path: "/srv", server: server) { result in
+            results.append(result)
+        }
+        await client.waitUntilListStarted(path: "/srv")
+
+        // When the same server disconnects.
+        _ = store.disconnect(serverId: server.id)
+
+        // Then visible move destination pending state clears immediately, and
+        // the canceled callback cannot update sheet presentation after teardown.
+        #expect(!store.pendingMoveDestinationLoadRequestIDs.contains(requestID))
+
+        await client.releaseList(path: "/srv")
+        await store.waitForMoveDestinationLoadRequest(requestID)
+
+        #expect(results.isEmpty)
+    }
+
+    @Test
     func navigationRequestTracksInitialDirectoryLoadUntilSnapshotCompletes() async throws {
         let server = makeServer()
         let tab = RemoteFileTab(serverId: server.id, seedPath: "/srv")
@@ -658,6 +855,17 @@ private actor RemoteFileOperationProbe {
 
 private struct RemoteFileMutationIntentFailure: Error {}
 
+private struct RemoteFileMoveDestinationLoadFailure: Error {}
+
+private extension Array where Element == Result<[RemoteFileEntry], Error> {
+    func singleSuccess() throws -> [RemoteFileEntry] {
+        guard count == 1, case .success(let entries) = self[0] else {
+            throw RemoteFileMoveDestinationLoadFailure()
+        }
+        return entries
+    }
+}
+
 private actor RemoteFileMutationGate {
     private var continuation: CheckedContinuation<Void, Never>?
     private var isReleased = false
@@ -673,6 +881,14 @@ private actor RemoteFileMutationGate {
         isReleased = true
         continuation?.resume()
         continuation = nil
+    }
+}
+
+private actor RemoteFileWaitProbe {
+    private(set) var didReturn = false
+
+    func markReturned() {
+        didReturn = true
     }
 }
 
@@ -780,8 +996,10 @@ private actor BlockingNavigationRemoteFileClient: SFTPRemoteFileClient {
     private var blockedStatPaths: Set<String>
     private var releasedListPaths: Set<String> = []
     private var listStartedPaths: Set<String> = []
+    private var listCounts: [String: Int] = [:]
     private var listStartedWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
-    private var listReleaseWaiters: [String: CheckedContinuation<Void, Never>] = [:]
+    private var listCountWaiters: [String: [(count: Int, continuation: CheckedContinuation<Void, Never>)]] = [:]
+    private var listReleaseWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
     private var releasedStatPaths: Set<String> = []
     private var statStartedPaths: Set<String> = []
     private var statStartedWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
@@ -800,25 +1018,39 @@ private actor BlockingNavigationRemoteFileClient: SFTPRemoteFileClient {
     }
 
     func waitUntilListStarted(path: String) async {
-        let normalizedPath = RemoteFilePath.normalize(path)
+        let normalizedPath = Self.normalizePath(path)
         if listStartedPaths.contains(normalizedPath) { return }
         await withCheckedContinuation { continuation in
             listStartedWaiters[normalizedPath, default: []].append(continuation)
         }
     }
 
+    func waitUntilListCount(path: String, count: Int) async {
+        let normalizedPath = Self.normalizePath(path)
+        if listCounts[normalizedPath, default: 0] >= count { return }
+        await withCheckedContinuation { continuation in
+            listCountWaiters[normalizedPath, default: []].append((count, continuation))
+        }
+    }
+
     func releaseList(path: String) {
-        let normalizedPath = RemoteFilePath.normalize(path)
+        let normalizedPath = Self.normalizePath(path)
         releasedListPaths.insert(normalizedPath)
-        listReleaseWaiters.removeValue(forKey: normalizedPath)?.resume()
+        for waiter in listReleaseWaiters.removeValue(forKey: normalizedPath) ?? [] {
+            waiter.resume()
+        }
     }
 
     func hasListed(path: String) -> Bool {
-        listStartedPaths.contains(RemoteFilePath.normalize(path))
+        listStartedPaths.contains(Self.normalizePath(path))
+    }
+
+    func listCount(path: String) -> Int {
+        listCounts[Self.normalizePath(path)] ?? 0
     }
 
     func waitUntilStatStarted(path: String) async {
-        let normalizedPath = RemoteFilePath.normalize(path)
+        let normalizedPath = Self.normalizePath(path)
         if statStartedPaths.contains(normalizedPath) { return }
         await withCheckedContinuation { continuation in
             statStartedWaiters[normalizedPath, default: []].append(continuation)
@@ -826,7 +1058,7 @@ private actor BlockingNavigationRemoteFileClient: SFTPRemoteFileClient {
     }
 
     func releaseStat(path: String) {
-        let normalizedPath = RemoteFilePath.normalize(path)
+        let normalizedPath = Self.normalizePath(path)
         releasedStatPaths.insert(normalizedPath)
         statReleaseWaiters.removeValue(forKey: normalizedPath)?.resume()
     }
@@ -842,15 +1074,29 @@ private actor BlockingNavigationRemoteFileClient: SFTPRemoteFileClient {
     func remoteTerminalType(forceRefresh: Bool) async -> RemoteTerminalType { .xterm256Color }
 
     func listDirectory(at path: String, maxEntries: Int?) async throws -> [RemoteFileEntry] {
-        let normalizedPath = RemoteFilePath.normalize(path)
+        let normalizedPath = Self.normalizePath(path)
         listStartedPaths.insert(normalizedPath)
+        listCounts[normalizedPath, default: 0] += 1
         for waiter in listStartedWaiters.removeValue(forKey: normalizedPath) ?? [] {
             waiter.resume()
+        }
+        let startedCount = listCounts[normalizedPath, default: 0]
+        let waiters = listCountWaiters.removeValue(forKey: normalizedPath) ?? []
+        var remainingWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+        for waiter in waiters {
+            if startedCount >= waiter.count {
+                waiter.continuation.resume()
+            } else {
+                remainingWaiters.append(waiter)
+            }
+        }
+        if !remainingWaiters.isEmpty {
+            listCountWaiters[normalizedPath] = remainingWaiters
         }
 
         if blockedListPaths.contains(normalizedPath), !releasedListPaths.contains(normalizedPath) {
             await withCheckedContinuation { continuation in
-                listReleaseWaiters[normalizedPath] = continuation
+                listReleaseWaiters[normalizedPath, default: []].append(continuation)
             }
         }
 
@@ -858,7 +1104,7 @@ private actor BlockingNavigationRemoteFileClient: SFTPRemoteFileClient {
     }
 
     func stat(at path: String) async throws -> RemoteFileEntry {
-        let normalizedPath = RemoteFilePath.normalize(path)
+        let normalizedPath = Self.normalizePath(path)
         statStartedPaths.insert(normalizedPath)
         for waiter in statStartedWaiters.removeValue(forKey: normalizedPath) ?? [] {
             waiter.resume()
@@ -919,5 +1165,29 @@ private actor BlockingNavigationRemoteFileClient: SFTPRemoteFileClient {
             permissions: nil,
             symlinkTarget: nil
         )
+    }
+
+    private nonisolated static func normalizePath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "/" }
+
+        let basePath = trimmed.hasPrefix("/") ? trimmed : "/" + trimmed
+        let components = basePath.split(separator: "/", omittingEmptySubsequences: false)
+        var normalized: [Substring] = []
+
+        for component in components {
+            switch component {
+            case "", ".":
+                continue
+            case "..":
+                if !normalized.isEmpty {
+                    normalized.removeLast()
+                }
+            default:
+                normalized.append(component)
+            }
+        }
+
+        return "/" + normalized.joined(separator: "/")
     }
 }
