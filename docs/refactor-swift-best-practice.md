@@ -5824,7 +5824,7 @@ Request code review for Task 74. Fix Critical and Important findings, update the
   - `SSHTerminalCoordinator` and both root coordinators store the same manager for `sendToSSH(_:)` and `attachSurface(_:context:resetTerminal:)`.
   - Root terminal surface callbacks use the injected manager for configure/get/peek/mark-used/register/resize/PWD/title/zoom/presentation/input/attach and update-time missing-session teardown instead of reaching for `ConnectionSessionManager.shared`.
 
-- [ ] **Step 1: Add RED root surface callback boundary tests**
+- [x] **Step 1: Add RED root surface callback boundary tests**
 
 Create `TerminalRootSurfaceCallbackBoundaryTests` with Test Context:
 - Protected behavior: root terminal representable callbacks should report surface events to the injected TerminalSessions application owner.
@@ -5864,7 +5864,7 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: the focused suite fails because `TerminalContainerView` does not inject a manager into root wrappers, and the root wrapper/coordinator callbacks still reach directly for `ConnectionSessionManager.shared`.
 
-- [ ] **Step 2: Pass the injected ConnectionSessionManager into root wrappers**
+- [x] **Step 2: Pass the injected ConnectionSessionManager into root wrappers**
 
 Update root terminal UI:
 - Add `private let sessionManager = ConnectionSessionManager.shared` to `TerminalContainerView`.
@@ -5876,7 +5876,7 @@ Update root terminal UI:
 - Add `var sessionManager: ConnectionSessionManager { get }` to `SSHTerminalCoordinator`.
 - Add `let sessionManager: ConnectionSessionManager` to both root coordinator classes and pass `sessionManager: sessionManager` from `makeCoordinator()`.
 
-- [ ] **Step 3: Route root surface callbacks through the injected manager**
+- [x] **Step 3: Route root surface callbacks through the injected manager**
 
 Within macOS `SSHTerminalWrapper` instance methods, replace `ConnectionSessionManager.shared` with `sessionManager` for:
 - runtime configuration;
@@ -5900,7 +5900,7 @@ Within `SSHTerminalCoordinator`, replace `ConnectionSessionManager.shared` with 
 
 Do not change `static func dismantleNSView` or `static func dismantleUIView` in this task; static representable teardown cannot access instance properties and needs a later representable lifetime design slice.
 
-- [ ] **Step 4: Run focused verification**
+- [x] **Step 4: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalRootSurfaceCallbackBoundaryTests ENABLE_DEBUG_DYLIB=NO
@@ -5910,16 +5910,17 @@ git diff --check
 
 Expected GREEN result: focused tests pass; source scan shows root terminal surface instance callbacks and coordinator callbacks use `sessionManager.*`, while any remaining `ConnectionSessionManager.shared` hit in `SSHTerminalWrapper.swift` is confined to static teardown and explicitly deferred.
 
-- [ ] **Step 5: API and boundary cleanup**
+- [x] **Step 5: API and boundary cleanup**
 
 Before review, verify root terminal surface callbacks no longer bypass the injected manager, `TerminalContainerView` is still UI-only and only sends intent/reads presentation state, no new lifecycle work or untracked task was introduced, static representable teardown remains the only root-wrapper singleton exemption, and touched tests include complete Test Context plus Given / When / Then comments.
 
-- [ ] **Step 6: Request review and commit**
+- [x] **Step 6: Request review and commit**
 
 Request code review for Task 75. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
 ## Progress Ledger
 
+- 2026-06-21: Task 75 RED/GREEN completed with local lifecycle review after review-subagent tool discovery returned no available tools. `TerminalContainerView` now carries the app-owned `ConnectionSessionManager` boundary into root `SSHTerminalWrapper`; macOS/iOS root wrapper instance callbacks and shared coordinator helpers route runtime configuration, terminal reuse/registration, resize, PWD/title metadata, zoom, presentation overrides, input, surface attach, and update-time missing-session teardown through the injected `sessionManager` instead of directly reaching for `ConnectionSessionManager.shared`. Initial RED failed as expected with 29 source-boundary issues because `TerminalContainerView` did not inject a manager into root wrappers, wrapper/coordinator instance callbacks still used the singleton, and the coordinator protocol had no injected manager requirement. GREEN focused verification passed 4 Swift Testing tests in `TerminalRootSurfaceCallbackBoundaryTests`; source scan showed root wrapper/coordinator instance callbacks use `sessionManager.*`, with remaining root-wrapper singleton usage confined to `static dismantleNSView` and `static dismantleUIView` as explicitly deferred. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Static representable teardown redesign, broader root teardown, pane UI intent helper injection, title/PWD/background parsing, Ghostty config reload, and other low-level Application/Core lifecycle slices remain open.
 - 2026-06-21: Post-Task-74 scan selected Task 75 as the next executable lifecycle slice. After split pane surface callbacks moved to an injected `TerminalTabManager`, the root `SSHTerminalWrapper` still has the same dependency-boundary smell on both macOS and iOS: representable instance callbacks and the shared `SSHTerminalCoordinator` extension directly call `ConnectionSessionManager.shared` for runtime configuration, terminal lookup/registration, resize, PWD/title metadata, zoom, presentation overrides, input, surface attach, and update-time missing-session teardown. Task 75 should mirror Task 74 for root-session callbacks by injecting the already app-owned `ConnectionSessionManager` through `TerminalContainerView` into `SSHTerminalWrapper`, `SSHTerminalRepresentable`, and both coordinators. Static `dismantleNSView` / `dismantleUIView` remain deferred because they cannot access instance injection; broader root lifecycle teardown, pane UI intent helper injection, terminal title/PWD/background parsing, Ghostty config reload, and other low-level Application/Core lifecycle slices remain open.
 - 2026-06-21: Task 74 RED/GREEN completed with local lifecycle review. `TerminalPaneView` now receives the injected `TerminalTabManager` from `TerminalTabView`, uses it for pane state/terminal lookup, and passes it into `SSHTerminalPaneWrapper`; the split pane wrapper and its coordinator now route runtime configuration, terminal reuse/registration, resize, PWD/title metadata, zoom, presentation overrides, input, surface attach, and coordinator close callbacks through the injected manager instead of reaching directly for `TerminalTabManager.shared`. Initial RED failed as expected because `TerminalPaneView` did not pass a manager into the wrapper and wrapper/coordinator callbacks still used the singleton. GREEN focused verification passed 3 Swift Testing tests in `TerminalSplitSurfaceCallbackBoundaryTests`; source scan showed the scoped wrapper/coordinator callbacks use `tabManager.*`, with remaining split wrapper singleton usage confined to `static func dismantleNSView` and explicitly deferred. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Tool policy did not permit spawning an independent review subagent without explicit delegation, so review was local against the Swift lifecycle checklist; no Critical or Important issues were found. Root `SSHTerminalWrapper`, static teardown redesign, pane UI intent helper injection, terminal title/PWD/background parsing, Ghostty config reload, and other low-level Application/Core lifecycle slices remain open.
 - 2026-06-21: Post-Task-73 scan selected Task 74 as the next executable lifecycle slice. After split voice text send moved to the injected tab manager, split pane surface callbacks remain inconsistent: `TerminalTabView` already owns an injected `tabManager`, but `TerminalPaneView`, `SSHTerminalPaneWrapper`, and its coordinator still use `TerminalTabManager.shared` for pane runtime configuration, terminal lookup/registration, resize, PWD/title metadata, zoom, presentation overrides, input, and surface attach callbacks. Root `SSHTerminalWrapper` has broader `ConnectionSessionManager.shared` usage and should be deferred to a later root wrapper injection/lifetime task; `static dismantleNSView` also remains a separate representable lifetime design issue because it cannot access instance injection. Task 74 should keep the slice to split pane instance/coordinator callbacks and leave terminal title/PWD/background parsing, Ghostty config reload, and root wrapper callback injection open.

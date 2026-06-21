@@ -19,12 +19,13 @@ protocol SSHTerminalCoordinator: AnyObject {
     var sessionId: UUID { get }
     var onProcessExit: () -> Void { get }
     var terminalView: GhosttyTerminalView? { get set }
+    var sessionManager: ConnectionSessionManager { get }
     var logger: Logger { get }
 }
 
 extension SSHTerminalCoordinator {
     func sendToSSH(_ data: Data) {
-        ConnectionSessionManager.shared.requestSessionInput(data, to: sessionId)
+        sessionManager.requestSessionInput(data, to: sessionId)
     }
 
     func attachSurface(
@@ -32,7 +33,7 @@ extension SSHTerminalCoordinator {
         context: TerminalSurfaceAttachContext,
         resetTerminal: @escaping @MainActor () -> Void = {}
     ) {
-        ConnectionSessionManager.shared.requestSurfaceAttach(
+        sessionManager.requestSurfaceAttach(
             sessionId: sessionId,
             terminal: terminal,
             context: context,
@@ -51,6 +52,7 @@ struct SSHTerminalWrapper: NSViewRepresentable {
     let server: Server
     let credentials: ServerCredentials
     let richPasteUIModel: TerminalRichPasteUIModel
+    let sessionManager: ConnectionSessionManager
     var isActive: Bool = true
     let onProcessExit: () -> Void
     let onReady: () -> Void
@@ -72,7 +74,8 @@ struct SSHTerminalWrapper: NSViewRepresentable {
             credentials: credentials,
             sessionId: session.id,
             onProcessExit: onProcessExit,
-            richPasteUIModel: richPasteUIModel
+            richPasteUIModel: richPasteUIModel,
+            sessionManager: sessionManager
         )
     }
 
@@ -83,7 +86,7 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         }
 
         let coordinator = context.coordinator
-        ConnectionSessionManager.shared.configureRuntime(
+        sessionManager.configureRuntime(
             for: session.id,
             server: server,
             credentials: credentials,
@@ -92,29 +95,29 @@ struct SSHTerminalWrapper: NSViewRepresentable {
 
         // Check if terminal already exists for this session (reuse to save memory)
         // Each Ghostty surface uses ~50-100MB (font atlas, Metal textures, scrollback)
-        if let existingTerminal = ConnectionSessionManager.shared.getTerminal(for: session.id) {
+        if let existingTerminal = sessionManager.getTerminal(for: session.id) {
             // Mark coordinator as reusing existing terminal so dismantle keeps the surface alive.
             coordinator.isReusingTerminal = true
             coordinator.terminalView = existingTerminal
 
             // Update callbacks because the SwiftUI coordinator can be recreated
             // while the application-owned runtime stays alive.
-            existingTerminal.onResize = { [session] cols, rows in
-                ConnectionSessionManager.shared.requestSessionResize(
+            existingTerminal.onResize = { [sessionManager, session] cols, rows in
+                sessionManager.requestSessionResize(
                     TerminalResizeRequestSize(cols: cols, rows: rows),
                     for: session.id
                 )
             }
-            existingTerminal.onPwdChange = { [sessionId = session.id] rawDirectory in
-                ConnectionSessionManager.shared.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
+            existingTerminal.onPwdChange = { [sessionManager, sessionId = session.id] rawDirectory in
+                sessionManager.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
             }
-            existingTerminal.onTitleChange = { [sessionId = session.id] title in
-                ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
+            existingTerminal.onTitleChange = { [sessionManager, sessionId = session.id] title in
+                sessionManager.updateSessionTitle(sessionId, rawTitle: title)
             }
-            existingTerminal.onZoomAction = { [sessionId = session.id] action in
-                ConnectionSessionManager.shared.handleTerminalZoom(action, for: sessionId)
+            existingTerminal.onZoomAction = { [sessionManager, sessionId = session.id] action in
+                sessionManager.handleTerminalZoom(action, for: sessionId)
             }
-            existingTerminal.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
+            existingTerminal.applyPresentationOverrides(sessionManager.presentationOverrides(for: session.id))
             existingTerminal.writeCallback = { [weak coordinator] data in
                 coordinator?.sendToSSH(data)
             }
@@ -162,21 +165,21 @@ struct SSHTerminalWrapper: NSViewRepresentable {
             }
         }
         terminalView.onProcessExit = onProcessExit
-        terminalView.onPwdChange = { [sessionId = session.id] rawDirectory in
-            ConnectionSessionManager.shared.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
+        terminalView.onPwdChange = { [sessionManager, sessionId = session.id] rawDirectory in
+            sessionManager.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
         }
-        terminalView.onTitleChange = { [sessionId = session.id] title in
-            ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
+        terminalView.onTitleChange = { [sessionManager, sessionId = session.id] title in
+            sessionManager.updateSessionTitle(sessionId, rawTitle: title)
         }
-        terminalView.onZoomAction = { [sessionId = session.id] action in
-            ConnectionSessionManager.shared.handleTerminalZoom(action, for: sessionId)
+        terminalView.onZoomAction = { [sessionManager, sessionId = session.id] action in
+            sessionManager.handleTerminalZoom(action, for: sessionId)
         }
-        terminalView.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
+        terminalView.applyPresentationOverrides(sessionManager.presentationOverrides(for: session.id))
 
         // Store terminal reference in coordinator and register with session manager
         coordinator.terminalView = terminalView
         coordinator.installRichPasteInterception(on: terminalView)
-        ConnectionSessionManager.shared.registerTerminal(terminalView, for: session.id)
+        sessionManager.registerTerminal(terminalView, for: session.id)
 
         // Setup write callback to send keyboard input to SSH
         terminalView.writeCallback = { [weak coordinator] data in
@@ -184,8 +187,8 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         }
 
         // Setup resize callback to notify SSH of terminal size changes
-        terminalView.onResize = { [sessionId = session.id] cols, rows in
-            ConnectionSessionManager.shared.requestSessionResize(
+        terminalView.onResize = { [sessionManager, sessionId = session.id] cols, rows in
+            sessionManager.requestSessionResize(
                 TerminalResizeRequestSize(cols: cols, rows: rows),
                 for: sessionId
             )
@@ -202,9 +205,9 @@ struct SSHTerminalWrapper: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         // Check if session still exists - if not, cleanup and return
-        let sessionExists = ConnectionSessionManager.shared.sessions.contains { $0.id == session.id }
+        let sessionExists = sessionManager.sessions.contains { $0.id == session.id }
         if !sessionExists {
-            ConnectionSessionManager.shared.handleClosedSessionSurfaceTeardown(
+            sessionManager.handleClosedSessionSurfaceTeardown(
                 sessionId: session.id,
                 serverId: session.serverId,
                 reason: "mac update missing session"
@@ -215,8 +218,8 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         if let scrollView = nsView as? TerminalScrollView {
             scrollView.shouldOwnFirstResponder = isActive
             let terminalView = scrollView.surfaceView
-            if terminalView.surfacePresentationOverrides != ConnectionSessionManager.shared.presentationOverrides(for: session.id) {
-                terminalView.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
+            if terminalView.surfacePresentationOverrides != sessionManager.presentationOverrides(for: session.id) {
+                terminalView.applyPresentationOverrides(sessionManager.presentationOverrides(for: session.id))
             }
         }
     }
@@ -249,6 +252,7 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         let credentials: ServerCredentials
         let sessionId: UUID
         let onProcessExit: () -> Void
+        let sessionManager: ConnectionSessionManager
         weak var terminalView: GhosttyTerminalView?
 
         private let richPasteRuntime: TerminalRichPasteRuntime
@@ -262,12 +266,14 @@ struct SSHTerminalWrapper: NSViewRepresentable {
             credentials: ServerCredentials,
             sessionId: UUID,
             onProcessExit: @escaping () -> Void,
-            richPasteUIModel: TerminalRichPasteUIModel
+            richPasteUIModel: TerminalRichPasteUIModel,
+            sessionManager: ConnectionSessionManager
         ) {
             self.server = server
             self.credentials = credentials
             self.sessionId = sessionId
             self.onProcessExit = onProcessExit
+            self.sessionManager = sessionManager
             self.richPasteRuntime = .connectionSession(
                 sessionId: sessionId,
                 uiModel: richPasteUIModel
@@ -293,6 +299,7 @@ struct SSHTerminalWrapper: View {
     let server: Server
     let credentials: ServerCredentials
     let richPasteUIModel: TerminalRichPasteUIModel
+    let sessionManager: ConnectionSessionManager
     var isActive: Bool = true
     var shouldPreserveKeyboardDuringReconnect: Bool = false
     let onProcessExit: () -> Void
@@ -306,6 +313,7 @@ struct SSHTerminalWrapper: View {
                 server: server,
                 credentials: credentials,
                 richPasteUIModel: richPasteUIModel,
+                sessionManager: sessionManager,
                 size: geo.size,
                 isActive: isActive,
                 shouldPreserveKeyboardDuringReconnect: shouldPreserveKeyboardDuringReconnect,
@@ -323,6 +331,7 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
     let server: Server
     let credentials: ServerCredentials
     let richPasteUIModel: TerminalRichPasteUIModel
+    let sessionManager: ConnectionSessionManager
     let size: CGSize
     var isActive: Bool = true
     var shouldPreserveKeyboardDuringReconnect: Bool = false
@@ -347,7 +356,8 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             credentials: credentials,
             sessionId: session.id,
             onProcessExit: onProcessExit,
-            richPasteUIModel: richPasteUIModel
+            richPasteUIModel: richPasteUIModel,
+            sessionManager: sessionManager
         )
     }
 
@@ -357,7 +367,7 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         }
 
         let coordinator = context.coordinator
-        ConnectionSessionManager.shared.configureRuntime(
+        sessionManager.configureRuntime(
             for: session.id,
             server: server,
             credentials: credentials,
@@ -365,33 +375,33 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         )
 
         // Check if terminal already exists for this session (reuse to save memory)
-        if let existingTerminal = ConnectionSessionManager.shared.peekTerminal(for: session.id) {
-            ConnectionSessionManager.shared.markTerminalUsed(for: session.id)
+        if let existingTerminal = sessionManager.peekTerminal(for: session.id) {
+            sessionManager.markTerminalUsed(for: session.id)
             coordinator.terminalView = existingTerminal
             coordinator.isTerminalReady = true
             coordinator.preserveSession = true
             existingTerminal.onVoiceButtonTapped = onVoiceTrigger
             existingTerminal.onProcessExit = onProcessExit
-            existingTerminal.onPwdChange = { [sessionId = session.id] rawDirectory in
+            existingTerminal.onPwdChange = { [sessionManager, sessionId = session.id] rawDirectory in
                 DispatchQueue.main.async {
-                    ConnectionSessionManager.shared.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
+                    sessionManager.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
                 }
             }
-            existingTerminal.onTitleChange = { [sessionId = session.id] title in
-                ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
+            existingTerminal.onTitleChange = { [sessionManager, sessionId = session.id] title in
+                sessionManager.updateSessionTitle(sessionId, rawTitle: title)
             }
-            existingTerminal.onZoomAction = { [sessionId = session.id] action in
-                ConnectionSessionManager.shared.handleTerminalZoom(action, for: sessionId)
+            existingTerminal.onZoomAction = { [sessionManager, sessionId = session.id] action in
+                sessionManager.handleTerminalZoom(action, for: sessionId)
             }
-            existingTerminal.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
+            existingTerminal.applyPresentationOverrides(sessionManager.presentationOverrides(for: session.id))
 
             // Route UI input intent through the application-owned runtime.
             existingTerminal.writeCallback = { [weak coordinator] data in
                 coordinator?.sendToSSH(data)
             }
             coordinator.installRichPasteInterception(on: existingTerminal)
-            existingTerminal.onResize = { [session] cols, rows in
-                ConnectionSessionManager.shared.requestSessionResize(
+            existingTerminal.onResize = { [sessionManager, session] cols, rows in
+                sessionManager.requestSessionResize(
                     TerminalResizeRequestSize(cols: cols, rows: rows),
                     for: session.id
                 )
@@ -437,28 +447,28 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         }
         terminalView.onProcessExit = onProcessExit
         terminalView.onVoiceButtonTapped = onVoiceTrigger
-        terminalView.onPwdChange = { [sessionId = session.id] rawDirectory in
+        terminalView.onPwdChange = { [sessionManager, sessionId = session.id] rawDirectory in
             DispatchQueue.main.async {
-                ConnectionSessionManager.shared.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
+                sessionManager.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
             }
         }
-        terminalView.onTitleChange = { [sessionId = session.id] title in
-            ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
+        terminalView.onTitleChange = { [sessionManager, sessionId = session.id] title in
+            sessionManager.updateSessionTitle(sessionId, rawTitle: title)
         }
-        terminalView.onZoomAction = { [sessionId = session.id] action in
-            ConnectionSessionManager.shared.handleTerminalZoom(action, for: sessionId)
+        terminalView.onZoomAction = { [sessionManager, sessionId = session.id] action in
+            sessionManager.handleTerminalZoom(action, for: sessionId)
         }
-        terminalView.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
+        terminalView.applyPresentationOverrides(sessionManager.presentationOverrides(for: session.id))
 
         coordinator.terminalView = terminalView
         coordinator.installRichPasteInterception(on: terminalView)
-        ConnectionSessionManager.shared.registerTerminal(terminalView, for: session.id)
+        sessionManager.registerTerminal(terminalView, for: session.id)
 
         terminalView.writeCallback = { [weak coordinator] data in
             coordinator?.sendToSSH(data)
         }
-        terminalView.onResize = { [session] cols, rows in
-            ConnectionSessionManager.shared.requestSessionResize(
+        terminalView.onResize = { [sessionManager, session] cols, rows in
+            sessionManager.requestSessionResize(
                 TerminalResizeRequestSize(cols: cols, rows: rows),
                 for: session.id
             )
@@ -482,10 +492,10 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         }
 
         // Check if session still exists - if not, cleanup and return
-        let sessionExists = ConnectionSessionManager.shared.sessions.contains { $0.id == session.id }
+        let sessionExists = sessionManager.sessions.contains { $0.id == session.id }
         if !sessionExists {
             // Session was closed externally, cleanup terminal
-            ConnectionSessionManager.shared.handleClosedSessionSurfaceTeardown(
+            sessionManager.handleClosedSessionSurfaceTeardown(
                 sessionId: session.id,
                 serverId: session.serverId,
                 reason: "ios update missing session"
@@ -500,8 +510,8 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         let shouldRenderTerminal = isActive && scenePhase == .active
 
         terminalView.onVoiceButtonTapped = onVoiceTrigger
-        if terminalView.surfacePresentationOverrides != ConnectionSessionManager.shared.presentationOverrides(for: session.id) {
-            terminalView.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
+        if terminalView.surfacePresentationOverrides != sessionManager.presentationOverrides(for: session.id) {
+            terminalView.applyPresentationOverrides(sessionManager.presentationOverrides(for: session.id))
         }
         if size.width > 0, size.height > 0, size != context.coordinator.lastReportedSize {
             context.coordinator.lastReportedSize = size
@@ -616,6 +626,7 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         let credentials: ServerCredentials
         let sessionId: UUID
         let onProcessExit: () -> Void
+        let sessionManager: ConnectionSessionManager
         weak var terminalView: GhosttyTerminalView?
 
         private let richPasteRuntime: TerminalRichPasteRuntime
@@ -634,12 +645,14 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             credentials: ServerCredentials,
             sessionId: UUID,
             onProcessExit: @escaping () -> Void,
-            richPasteUIModel: TerminalRichPasteUIModel
+            richPasteUIModel: TerminalRichPasteUIModel,
+            sessionManager: ConnectionSessionManager
         ) {
             self.server = server
             self.credentials = credentials
             self.sessionId = sessionId
             self.onProcessExit = onProcessExit
+            self.sessionManager = sessionManager
             self.richPasteRuntime = .connectionSession(
                 sessionId: sessionId,
                 uiModel: richPasteUIModel

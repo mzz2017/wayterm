@@ -18,6 +18,7 @@ struct TerminalContainerView: View {
     var isActive: Bool = true
     var onVoiceRecordingChange: ((Bool) -> Void)? = nil
     var onVoiceTranscriptionSent: (() -> Void)? = nil
+    private let sessionManager = ConnectionSessionManager.shared
     @EnvironmentObject var ghosttyApp: Ghostty.App
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
@@ -37,7 +38,7 @@ struct TerminalContainerView: View {
 
     /// Check if terminal already exists (was previously created)
     private var terminalAlreadyExists: Bool {
-        ConnectionSessionManager.shared.hasTerminal(for: session.id)
+        sessionManager.hasTerminal(for: session.id)
     }
 
     // Voice input state
@@ -424,6 +425,7 @@ struct TerminalContainerView: View {
             server: server,
             credentials: credentials,
             richPasteUIModel: richPasteUI,
+            sessionManager: sessionManager,
             isActive: isActive,
             shouldPreserveKeyboardDuringReconnect: true,
             onProcessExit: {
@@ -440,6 +442,7 @@ struct TerminalContainerView: View {
             server: server,
             credentials: credentials,
             richPasteUIModel: richPasteUI,
+            sessionManager: sessionManager,
             isActive: isActive,
             onProcessExit: {
                 ConnectionSessionManager.shared.requestSessionProcessExit(forSession: session.id)
