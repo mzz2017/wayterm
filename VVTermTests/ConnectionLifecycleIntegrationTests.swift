@@ -1510,6 +1510,202 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func activeConnectionOpenRequestTracksReconnectUntilCompletion() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .failed("Disconnected")
+            )
+            manager.sessions = [session]
+            let reconnectGate = RunnerTaskGate()
+            var reconnectCalls: [UUID] = []
+            var didOpen = false
+
+            manager.setActiveConnectionOpenReconnectOperationForTesting { requestSession in
+                reconnectCalls.append(requestSession.id)
+                await reconnectGate.waitForRelease()
+                return true
+            }
+
+            // Given the iOS Active Connections row sends open intent for a
+            // saved session whose runtime must be checked/reconnected first.
+            let requestID = manager.requestActiveConnectionOpen(
+                session: session,
+                preferredViewId: "terminal"
+            ) {
+                didOpen = true
+            }
+
+            // Then ConnectionSessionManager owns the pending reconnect/select
+            // work until the manager-owned request exits.
+            #expect(
+                manager.pendingActiveConnectionOpenRequestIDs.contains(requestID),
+                "Active Connection open should stay tracked while reconnect work is in flight."
+            )
+            #expect(!didOpen)
+
+            await reconnectGate.release()
+            await manager.waitForActiveConnectionOpenRequest(requestID)
+
+            #expect(
+                reconnectCalls == [session.id],
+                "Active Connection open should run reconnect/runtime liveness work once for the selected session."
+            )
+            #expect(manager.selectedSessionId == session.id)
+            #expect(manager.selectedViewByServer[server.id] == "terminal")
+            #expect(didOpen)
+            #expect(!manager.pendingActiveConnectionOpenRequestIDs.contains(requestID))
+        }
+    }
+
+    @Test
+    func duplicateActiveConnectionOpenRequestsCoalesceUntilCompletion() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .failed("Disconnected")
+            )
+            manager.sessions = [session]
+            let reconnectGate = RunnerTaskGate()
+            var reconnectCalls: [UUID] = []
+            var callbacks: [String] = []
+
+            manager.setActiveConnectionOpenReconnectOperationForTesting { requestSession in
+                reconnectCalls.append(requestSession.id)
+                await reconnectGate.waitForRelease()
+                return true
+            }
+
+            // Given an Active Connection open request is already waiting for
+            // reconnect/runtime liveness work to finish.
+            let firstID = manager.requestActiveConnectionOpen(
+                session: session,
+                preferredViewId: "terminal"
+            ) {
+                callbacks.append("first")
+            }
+            let secondID = manager.requestActiveConnectionOpen(
+                session: session,
+                preferredViewId: "terminal"
+            ) {
+                callbacks.append("second")
+            }
+
+            // Then duplicate same-session intent joins the existing request
+            // instead of starting duplicate reconnect/select work.
+            #expect(firstID == secondID)
+            #expect(manager.pendingActiveConnectionOpenRequestIDs == [firstID])
+
+            await reconnectGate.release()
+            await manager.waitForActiveConnectionOpenRequest(firstID)
+
+            #expect(reconnectCalls == [session.id])
+            #expect(callbacks == ["first", "second"])
+            #expect(!manager.pendingActiveConnectionOpenRequestIDs.contains(firstID))
+        }
+    }
+
+    @Test
+    func activeConnectionOpenCancellationDoesNotSelectOrCallback() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .failed("Disconnected")
+            )
+            manager.sessions = [session]
+            let reconnectGate = RunnerTaskGate()
+            var didOpen = false
+
+            manager.setActiveConnectionOpenReconnectOperationForTesting { _ in
+                await reconnectGate.waitForRelease()
+                return true
+            }
+
+            // Given lifecycle teardown cancels a pending Active Connection open
+            // before reconnect/runtime liveness work completes.
+            let requestID = manager.requestActiveConnectionOpen(
+                session: session,
+                preferredViewId: "terminal"
+            ) {
+                didOpen = true
+            }
+            manager.cancelActiveConnectionOpenRequestForTesting(requestID)
+
+            await reconnectGate.release()
+            await manager.waitForActiveConnectionOpenRequest(requestID)
+
+            // Then cancellation is lifecycle completion: no presentation
+            // callback runs and no stale selection/view state is written.
+            #expect(!didOpen)
+            #expect(manager.selectedSessionId == nil)
+            #expect(manager.selectedViewByServer[server.id] == nil)
+            #expect(!manager.pendingActiveConnectionOpenRequestIDs.contains(requestID))
+        }
+    }
+
+    @Test
+    func closeSessionCancelsPendingActiveConnectionOpenRequest() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .failed("Disconnected")
+            )
+            manager.sessions = [session]
+            let reconnectGate = RunnerTaskGate()
+            var didOpen = false
+
+            manager.setActiveConnectionOpenReconnectOperationForTesting { _ in
+                await reconnectGate.waitForRelease()
+                return true
+            }
+
+            // Given an Active Connection open request is pending when the
+            // owning session is closed.
+            let requestID = manager.requestActiveConnectionOpen(
+                session: session,
+                preferredViewId: "terminal"
+            ) {
+                didOpen = true
+            }
+            #expect(manager.pendingActiveConnectionOpenRequestIDs.contains(requestID))
+
+            await manager.closeSessionAndWait(session)
+            let waitProbe = AsyncWaitProbe()
+            let waitTask = Task {
+                await manager.waitForActiveConnectionOpenRequest(requestID)
+                await waitProbe.markReturned()
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+
+            // Then closing the session cancels the visible request immediately.
+            #expect(
+                !manager.pendingActiveConnectionOpenRequestIDs.contains(requestID),
+                "Closing a session should cancel pending Active Connection open intent for that session."
+            )
+            #expect(
+                await !waitProbe.didReturn,
+                "Active Connection open wait hook must remain tracked until the blocked reconnect operation exits."
+            )
+
+            await reconnectGate.release()
+            await waitTask.value
+            #expect(await waitProbe.didReturn)
+
+            #expect(!didOpen)
+            #expect(manager.selectedSessionId == nil)
+            #expect(manager.selectedViewByServer[server.id] == nil)
+        }
+    }
+
+    @Test
     func connectionManagerOtherActiveSessionsComeFromRegistryNotDomainState() async {
         await withCleanConnectionManager { manager in
             let server = makeServer()

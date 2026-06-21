@@ -5462,7 +5462,7 @@ Review result: independent read-only reviewer found one Important cancellation i
   - Same-session active-connection open coalescing so repeated taps do not start duplicate reconnect/select work.
   - iOS Active Connection open UI that sends unlock intent and then active-connection open intent, without owning a reconnect `Task`.
 
-- [ ] **Step 1: Add RED active-connection open lifecycle and boundary tests**
+- [x] **Step 1: Add RED active-connection open lifecycle and boundary tests**
 
 Extend `ConnectionLifecycleIntegrationTests`:
 - `activeConnectionOpenRequestTracksReconnectUntilCompletion`: create a saved session, install a DEBUG delayed active-connection reconnect operation, call `requestActiveConnectionOpen(session:preferredViewId:onOpened:)`, assert the request ID is visible in `pendingActiveConnectionOpenRequestIDs` while the operation is delayed, release it, wait for the request, then assert the session is selected, `selectedViewByServer[server.id]` is set to the preferred view ID, the callback fires, and pending tracking clears.
@@ -5484,7 +5484,7 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: the focused suite fails to compile because `requestActiveConnectionOpen`, `pendingActiveConnectionOpenRequestIDs`, `waitForActiveConnectionOpenRequest`, and DEBUG testing hooks do not exist. If it compiles unexpectedly, the boundary test must fail because `iOSContentView.openActiveConnection(_:)` still owns `Task { await sessionManager.reconnectSessionIfRuntimeInactive(...) }`.
 
-- [ ] **Step 2: Add ConnectionSessionManager-owned active-connection open tracking**
+- [x] **Step 2: Add ConnectionSessionManager-owned active-connection open tracking**
 
 Update `ConnectionSessionManager`:
 - add an `ActiveConnectionOpenRequest` record keyed by request ID and a session-to-request index keyed by session ID;
@@ -5494,14 +5494,14 @@ Update `ConnectionSessionManager`:
 - cancellation must clear visible pending state after task exit and must not run callbacks or write stale selection state;
 - add DEBUG-only operation/cancel hooks for ordering tests, following the local request-test seams already used by retry, install, input, resize, process-exit, credential-load, and rich-paste request tests.
 
-- [ ] **Step 3: Route iOS Active Connection open through request intent**
+- [x] **Step 3: Route iOS Active Connection open through request intent**
 
 Update `iOSContentView.openActiveConnection(_:)`:
 - keep synchronous `server(for:)` resolution and `AppLockManager.shared.requestServerUnlock(server)` from Task 70;
 - replace the unlocked continuation's `Task { await sessionManager.reconnectSessionIfRuntimeInactive(...) ... }` with `sessionManager.requestActiveConnectionOpen(session: connection.session, preferredViewId: targetViewId) { showingTerminal = true }`;
 - preserve existing visible behavior: protected servers still require unlock first, inactive runtimes reconnect before opening, live runtimes are reused, selected session and preferred terminal view are restored, and the terminal screen is shown from the UI callback.
 
-- [ ] **Step 4: Run focused verification**
+- [x] **Step 4: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/IOSActiveConnectionOpenIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
@@ -5511,16 +5511,17 @@ git diff --check
 
 Expected GREEN result: focused tests pass; source scan shows `iOSContentView.openActiveConnection(_:)` uses `requestServerUnlock` plus `requestActiveConnectionOpen`, with no helper-local `Task {}` and no direct `reconnectSessionIfRuntimeInactive` call. `ConnectionSessionManager` remains the only owner of the low-level reconnect/select sequence for this iOS Active Connection path.
 
-- [ ] **Step 5: API and boundary cleanup**
+- [x] **Step 5: API and boundary cleanup**
 
 Before review, verify `ConnectionSessionManager` is the single owner of active-connection reconnect/select work, duplicate same-session taps cannot create duplicate reconnect work, cancellation is lifecycle completion, UI only sends unlock/open intent plus presentation callback, and touched tests include complete Test Context plus Given / When / Then comments.
 
-- [ ] **Step 6: Request review and commit**
+- [x] **Step 6: Request review and commit**
 
 Request code review for Task 71. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
 ## Progress Ledger
 
+- 2026-06-21: Task 71 RED/GREEN completed with local lifecycle review fix. `ConnectionSessionManager` now owns tracked iOS Active Connection open requests through `requestActiveConnectionOpen(session:preferredViewId:onOpened:)`, exposes `pendingActiveConnectionOpenRequestIDs` plus `waitForActiveConnectionOpenRequest(_:)`, coalesces duplicate same-session open intent, checks/reconnects inactive runtimes, selects the session, restores the preferred terminal view, and runs presentation callbacks only after manager-owned reconnect/select work completes. `iOSContentView.openActiveConnection(_:)` now sends server-unlock intent and then active-connection open intent; it no longer owns the reconnect/select/show-terminal `Task`. Initial RED failed to build because the active-connection open request API, pending IDs, wait hook, and DEBUG ordering/cancel hooks did not exist. A follow-up RED reproduced close-path cancellation: closing a session hid the pending request but the wait hook returned before blocked reconnect work exited. GREEN keeps canceled request task handles until task defer cleanup while deriving visible pending state from the session-to-request index. Final focused verification passed 97 Swift Testing tests across `ConnectionLifecycleIntegrationTests` and `IOSActiveConnectionOpenIntentBoundaryTests`; source scan showed `openActiveConnection(_:)` uses `requestServerUnlock` plus `requestActiveConnectionOpen` with no helper-local `Task {}` or direct `reconnectSessionIfRuntimeInactive` call. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Tool policy did not permit spawning an independent review subagent without explicit user delegation, so review was local against the Swift lifecycle checklist; no remaining Critical or Important issues were found. Broader RemoteFiles move-destination loading, split-pane voice text injection, terminal title/PWD/background parsing, terminal interaction-state cleanup, and other deferred lifecycle slices remain open.
 - 2026-06-21: Post-Task-70 scan selected Task 71 as the next executable lifecycle slice. Task 70 moved biometric server unlock ownership out of `iOSContentView.openActiveConnection(_:)`, but the unlocked continuation still starts a SwiftUI-owned `Task` that awaits `ConnectionSessionManager.reconnectSessionIfRuntimeInactive(_:)`, selects the session, sets `selectedViewByServer`, and presents the terminal. This open-active-connection path is directly tied to the original Active Connections reconnect/auth symptoms and should be owned by `ConnectionSessionManager` as a tracked request. Broader RemoteFiles move-destination loading, split-pane voice text injection, terminal title/PWD/background parsing, and terminal interaction-state cleanup remain deferred.
 - 2026-06-21: Post-Task-69 scan selected Task 70 as the next executable lifecycle slice. `ServerSidebarView.selectServer(_:)` and iOS `openActiveConnection(_:)` still create SwiftUI-owned tasks that directly await `AppLockManager.shared.ensureServerUnlocked(server)`. This is biometric authentication lifecycle work, and `AppLockManager` already owns nearby app-unlock/full-lock request tracking, so Task 70 should add a server-specific request API with same-server coalescing and route these UI paths through intent callbacks. Broader Active Connection reconnect orchestration, RemoteFiles move-destination directory loading, split-pane voice text injection, and terminal interaction-state cleanup remain deferred.
 - 2026-06-21: Task 70 RED/GREEN completed with review fix. `AppLockManager` now owns tracked server-unlock request tasks through `requestServerUnlock(_:onUnlocked:onDenied:)`, exposes `pendingServerUnlockRequestIDs`, coalesces duplicate same-server unlock intent into one biometric auth flow, cancels pending server-unlock work as lifecycle completion, and keeps server-unlock cancellation from running callbacks or granting prompt-free server access. `ServerSidebarView.selectServer(_:)` and iOS `openActiveConnection(_:)` now synchronously send server-unlock intent instead of directly awaiting `ensureServerUnlocked(_:)`; the iOS active-connection reconnect/select/show-terminal work remains inside the unlocked continuation and broader reconnect ownership stays deferred. Initial RED failed to build because the server-unlock request API, pending IDs, and testing cancellation hook did not exist. Independent review found one Important issue: cancellation during nested full-app-lock authentication could still unlock the app. Review-fix RED reproduced it, and GREEN passed after `ensureAppUnlocked()` checks cancellation before mutating app unlock state. Final focused verification passed 10 XCTest tests plus 4 Swift Testing tests; source scan showed UI files only call `requestServerUnlock`; `git diff --check` passed.

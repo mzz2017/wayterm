@@ -607,14 +607,11 @@ struct iOSServerListView: View {
         guard let server = server(for: connection.id) else { return }
 
         AppLockManager.shared.requestServerUnlock(server) {
-            Task {
-                _ = await sessionManager.reconnectSessionIfRuntimeInactive(connection.session)
-
-                await MainActor.run {
-                    sessionManager.selectSession(connection.session)
-                    sessionManager.selectedViewByServer[server.id] = targetViewId
-                    showingTerminal = true
-                }
+            sessionManager.requestActiveConnectionOpen(
+                session: connection.session,
+                preferredViewId: targetViewId
+            ) {
+                showingTerminal = true
             }
         }
     }

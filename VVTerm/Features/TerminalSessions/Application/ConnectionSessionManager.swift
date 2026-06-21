@@ -80,6 +80,12 @@ final class ConnectionSessionManager: ObservableObject {
         var onCompleted: [@MainActor (TerminalReconnectRequestResult) -> Void]
     }
 
+    private struct ActiveConnectionOpenRequest {
+        let sessionId: UUID
+        var task: Task<Void, Never>?
+        var onOpened: [@MainActor () -> Void]
+    }
+
     private struct SessionHostRetrustRequest {
         let sessionId: UUID
         let task: Task<Void, Never>
@@ -303,6 +309,9 @@ final class ConnectionSessionManager: ObservableObject {
     private var sessionRetryRequests: [UUID: SessionRetryRequest] = [:]
     private var sessionRetryRequestBySession: [UUID: UUID] = [:]
     var pendingSessionRetryRequestIDs: Set<UUID> { Set(sessionRetryRequests.keys) }
+    private var activeConnectionOpenRequests: [UUID: ActiveConnectionOpenRequest] = [:]
+    private var activeConnectionOpenRequestBySession: [UUID: UUID] = [:]
+    var pendingActiveConnectionOpenRequestIDs: Set<UUID> { Set(activeConnectionOpenRequestBySession.values) }
     private var sessionHostRetrustRequests: [UUID: SessionHostRetrustRequest] = [:]
     private var sessionHostRetrustRequestBySession: [UUID: UUID] = [:]
     var pendingSessionHostRetrustRequestIDs: Set<UUID> { Set(sessionHostRetrustRequests.keys) }
@@ -346,6 +355,7 @@ final class ConnectionSessionManager: ObservableObject {
     private var tmuxInstallOperationForTesting: (@MainActor (UUID) async -> Void)?
     private var moshInstallAndReconnectOperationForTesting: (@MainActor (ConnectionSession) async throws -> Void)?
     private var sessionRetryOperationForTesting: (@MainActor (ConnectionSession, Server?) async -> TerminalReconnectRequestResult)?
+    private var activeConnectionOpenReconnectOperationForTesting: (@MainActor (ConnectionSession) async -> Bool)?
     private var sessionHostRetrustOperationForTesting: (@MainActor (ConnectionSession, Server) async -> Bool)?
     private var surfaceAttachOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
     private var inputOperationForTesting: (@MainActor (Data, TerminalEntityID) async -> Void)?
@@ -568,6 +578,10 @@ final class ConnectionSessionManager: ObservableObject {
 
     func waitForProcessExitRequest(_ requestID: UUID) async {
         await processExitRequests[requestID]?.task.value
+    }
+
+    func waitForActiveConnectionOpenRequest(_ requestID: UUID) async {
+        await activeConnectionOpenRequests[requestID]?.task?.value
     }
 
     /// Opens a connection to a server
@@ -968,6 +982,7 @@ final class ConnectionSessionManager: ObservableObject {
     ) {
         cancelInstallRequests(for: sessionId)
         cancelSessionRetryRequest(for: sessionId)
+        cancelActiveConnectionOpenRequest(for: sessionId)
         cancelSessionHostRetrustRequest(for: sessionId)
         cancelSessionCredentialLoadRequest(for: sessionId)
         cancelInputRequests(for: sessionId)
@@ -1056,6 +1071,11 @@ final class ConnectionSessionManager: ObservableObject {
             request.task.cancel()
             request.onCompleted.forEach { $0(.skipped) }
         }
+    }
+
+    private func cancelActiveConnectionOpenRequest(for sessionId: UUID) {
+        guard let requestID = activeConnectionOpenRequestBySession.removeValue(forKey: sessionId) else { return }
+        activeConnectionOpenRequests[requestID]?.task?.cancel()
     }
 
     private func cancelSessionHostRetrustRequest(for sessionId: UUID) {
@@ -2521,6 +2541,61 @@ final class ConnectionSessionManager: ObservableObject {
         }
     }
 
+    @discardableResult
+    func requestActiveConnectionOpen(
+        session: ConnectionSession,
+        preferredViewId: String,
+        onOpened: @escaping @MainActor () -> Void = {}
+    ) -> UUID {
+        if let requestID = activeConnectionOpenRequestBySession[session.id] {
+            activeConnectionOpenRequests[requestID]?.onOpened.append(onOpened)
+            return requestID
+        }
+
+        let requestID = UUID()
+        activeConnectionOpenRequests[requestID] = ActiveConnectionOpenRequest(
+            sessionId: session.id,
+            task: nil,
+            onOpened: [onOpened]
+        )
+        activeConnectionOpenRequestBySession[session.id] = requestID
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.activeConnectionOpenRequests.removeValue(forKey: requestID)
+                if self.activeConnectionOpenRequestBySession[session.id] == requestID {
+                    self.activeConnectionOpenRequestBySession.removeValue(forKey: session.id)
+                }
+            }
+
+            #if DEBUG
+            if let operation = self.activeConnectionOpenReconnectOperationForTesting {
+                _ = await operation(session)
+            } else {
+                _ = await self.reconnectSessionIfRuntimeInactive(session)
+            }
+            #else
+            _ = await self.reconnectSessionIfRuntimeInactive(session)
+            #endif
+
+            guard !Task.isCancelled else { return }
+            guard self.sessionWithID(session.id) != nil else { return }
+
+            self.selectSession(session)
+            self.selectedViewByServer[session.serverId] = preferredViewId
+
+            let callbacks = self.activeConnectionOpenRequests[requestID]?.onOpened ?? []
+            callbacks.forEach { $0() }
+        }
+
+        if activeConnectionOpenRequests[requestID]?.sessionId == session.id {
+            activeConnectionOpenRequests[requestID]?.task = task
+        }
+
+        return requestID
+    }
+
     private func canStartSessionReconnect(_ sessionId: UUID) -> Bool {
         guard let state = sessionState(for: sessionId) else { return false }
         return TerminalManualReconnectPolicy.shouldAttemptReconnect(
@@ -3403,6 +3478,9 @@ extension ConnectionSessionManager {
         sessionRetryRequests.values.forEach { $0.task.cancel() }
         sessionRetryRequests.removeAll()
         sessionRetryRequestBySession.removeAll()
+        activeConnectionOpenRequests.values.compactMap(\.task).forEach { $0.cancel() }
+        activeConnectionOpenRequests.removeAll()
+        activeConnectionOpenRequestBySession.removeAll()
         sessionHostRetrustRequests.values.forEach { $0.task.cancel() }
         sessionHostRetrustRequests.removeAll()
         sessionHostRetrustRequestBySession.removeAll()
@@ -3448,6 +3526,7 @@ extension ConnectionSessionManager {
         tmuxInstallOperationForTesting = nil
         moshInstallAndReconnectOperationForTesting = nil
         sessionRetryOperationForTesting = nil
+        activeConnectionOpenReconnectOperationForTesting = nil
         sessionHostRetrustOperationForTesting = nil
         surfaceAttachOperationForTesting = nil
         inputOperationForTesting = nil
@@ -3563,6 +3642,16 @@ extension ConnectionSessionManager {
         _ operation: (@MainActor (ConnectionSession, Server?) async -> TerminalReconnectRequestResult)?
     ) {
         sessionRetryOperationForTesting = operation
+    }
+
+    func setActiveConnectionOpenReconnectOperationForTesting(
+        _ operation: (@MainActor (ConnectionSession) async -> Bool)?
+    ) {
+        activeConnectionOpenReconnectOperationForTesting = operation
+    }
+
+    func cancelActiveConnectionOpenRequestForTesting(_ requestID: UUID) {
+        activeConnectionOpenRequests[requestID]?.task?.cancel()
     }
 
     func setSessionHostRetrustOperationForTesting(
