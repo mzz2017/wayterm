@@ -3287,8 +3287,72 @@ Request code review for Task 43. Fix Critical and Important findings, update the
 
 Review result: initial review found one Important issue: canceling a superseded review-mode refresh did not prevent that task from running entitlement work if it resumed before the new task completed. Follow-up RED coverage failed with two entitlement refreshes, then GREEN passed after `startReviewModeRefresh()` checked cancellation before invoking the entitlement refresh action. Re-review found no Critical or Important issues.
 
+## Task 44: Terminal Accessory Cloud Sync Task Tracking
+
+**Files:**
+- Modify: `VVTerm/Features/TerminalAccessories/Application/TerminalAccessoryPreferencesManager.swift`
+- Test: `VVTermTests/Features/TerminalAccessories/TerminalAccessoryPreferencesManagerTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `TerminalAccessoryPreferencesManager.syncWithCloud()`
+  - `CloudKitManager.syncTerminalAccessoryProfile(_:)`
+  - `CloudKitSyncCoordinator.enqueueTerminalAccessoryProfileUpsert(_:)`
+  - `CloudKitSyncCoordinator.drainPendingMutations()`
+  - Existing foreground, sync-toggle, and CloudKit resolution observers.
+- Produces:
+  - TerminalAccessories application-layer protocol seams for cloud profile sync and pending mutation drain.
+  - Stored, cancelable startup and observer-triggered cloud sync tasks owned by `TerminalAccessoryPreferencesManager`.
+  - DEBUG-only await hooks that prove startup cloud sync remains tracked until cloud merge and pending mutation drain complete.
+
+- [x] **Step 1: Add RED lifecycle tests**
+
+Extend `TerminalAccessoryPreferencesManagerTests` with fake cloud sync and fake pending mutation drain dependencies. Add one test that enables sync, creates the manager, blocks fake cloud sync and drain independently, and asserts the startup sync task remains pending across both phases and clears after completion. Add one source-boundary test that fails while `TerminalAccessoryPreferencesManager` still contains untracked startup/observer `Task { ... syncWithCloud ... }` wrappers instead of stored task helpers.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalAccessoryPreferencesManagerTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the test fails to compile because `TerminalAccessoryPreferencesManager` does not expose injectable cloud sync / pending drain dependencies or awaitable startup sync tracking hooks. If compile succeeds unexpectedly, the source-boundary test must fail on the old untracked startup/observer `Task` forms.
+
+Actual RED result: `TerminalAccessoryPreferencesManagerTests` failed to compile because `TerminalAccessoryCloudProfileSyncing` and `TerminalAccessoryPendingSyncCoordinating` did not exist, the initializer did not accept cloud sync / pending drain dependencies, and the startup sync await hook did not exist. Review-fix RED then failed `testStartupCloudSyncDoesNotApplyCloudResultAfterSyncIsDisabled` because a CloudKit result that resumed after sync was disabled still merged a remote custom action into local state.
+
+- [x] **Step 2: Add TerminalAccessories sync dependency boundaries**
+
+Introduce small application-layer protocols in `TerminalAccessoryPreferencesManager.swift` for cloud profile sync and pending mutation coordination. Make `CloudKitManager` and `CloudKitSyncCoordinator` conform without moving CloudKit behavior into UI. Keep existing production defaults wired to `.shared`.
+
+- [x] **Step 3: Track startup and observer sync tasks**
+
+Replace the init-time `Task { await syncWithCloud(); await syncCoordinator.drainPendingMutations() }` and observer callback `Task { ... }` sync wrappers with manager-owned stored tasks. Each task should cancel a superseded task of the same kind, clear only if its task ID still matches, and be canceled in `deinit`.
+
+- [x] **Step 4: Run focused verification**
+
+Run the focused TerminalAccessories lifecycle tests and a source scan for old untracked cloud sync task forms:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalAccessoryPreferencesManagerTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{\\s*(await syncWithCloud\\(|@MainActor \\[weak self\\].*syncWithCloud|await self\\?\\.syncWithCloudIfNeededForForeground|await self\\.syncWithCloud\\()" VVTerm/Features/TerminalAccessories/Application/TerminalAccessoryPreferencesManager.swift
+git diff --check
+```
+
+Actual GREEN result: `TerminalAccessoryPreferencesManagerTests` passed 5 XCTest tests after `TerminalAccessoryPreferencesManager` owned startup, foreground, sync-toggle, and cloud-resolution tasks, and after CloudKit await continuations re-check cancellation and `SyncSettings.isEnabled` before local merge/drain. The source scan found no old untracked startup/observer cloud sync task forms, `git diff --check` passed, iOS build-for-testing passed, and macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` after the signed macOS build failed on missing local Mac Development signing assets. The Swift lifecycle guard warning for added `Task` was reviewed as manager-owned stored task work.
+
+- [x] **Step 5: API and boundary cleanup**
+
+Before review, verify the new protocols stay in TerminalAccessories Application, DEBUG hooks are test-only, observer callbacks only enqueue manager-owned lifecycle tasks, and no CloudKit lifecycle work moved into SwiftUI.
+
+- [x] **Step 6: Request review and commit**
+
+Request code review for Task 44. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
+
+Review result: initial review found one Important issue: disabling sync canceled pending drain work but did not cancel or guard in-flight startup/foreground/toggle CloudKit sync tasks, so a stale CloudKit result could still merge remote state after sync was turned off. Follow-up RED coverage reproduced the stale merge, then GREEN passed after disable handling canceled cloud sync tasks and `syncWithCloud()` / foreground drain paths re-checked cancellation plus `SyncSettings.isEnabled` after awaited work. The reviewer Minor source-boundary concern was addressed by asserting all named tracked observer entry points. Re-review found no Critical or Important issues; it left one Minor note that the disable regression behaviorally proves the post-await guard while the observer cancel helper remains covered by source-boundary assertions.
+
 ## Progress Ledger
 
+- 2026-06-21: Task 44 RED/GREEN completed with review fix. Terminal accessory CloudKit sync now has TerminalAccessories application-layer protocol seams, manager-owned startup/foreground/sync-toggle/cloud-resolution tasks, DEBUG-only await hooks, and cancellation/sync-enabled guards that drop CloudKit results which resume after sync is disabled. Initial RED failed to compile until injectable cloud sync / pending drain dependencies and startup await hooks existed; review-fix RED failed because a stale remote custom action was merged after sync was disabled. GREEN `TerminalAccessoryPreferencesManagerTests` passed 5 XCTest tests; source scan found no old untracked startup/observer cloud sync task forms; `git diff --check` passed; iOS build-for-testing passed; signed macOS build-for-testing failed on missing local Mac Development signing assets, then macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing unrelated Swift 6 / XCTest deployment warnings. Guard warning for added `Task` was reviewed: the tasks are stored and tracked by `TerminalAccessoryPreferencesManager`.
 - 2026-06-21: Task 43 RED/GREEN completed with review fix. Store startup product/entitlement refresh and review-mode disable entitlement refresh are now owned by `StoreManager` as stored tasks, canceled in `deinit`, clear only their current task IDs, and expose DEBUG-only await hooks for lifecycle ordering tests. Review found a superseded review-mode refresh could still run entitlement work after cancellation; follow-up RED coverage failed with two refreshes until `startReviewModeRefresh()` checked cancellation before invoking the entitlement action, and re-review found no Critical or Important issues. Verification: initial RED failed because Store refresh operation injection and await hooks did not exist; review-fix RED failed because a canceled superseded refresh still ran entitlement work; GREEN `StoreManagerLifecycleTests` passed 7 Swift Testing tests; Store lifecycle source scan produced no matches for old untracked startup/review refresh task forms; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with existing Swift 6 isolation and XCTest deployment warnings. Guard warning for added `Task` was reviewed: the tasks are stored and tracked by `StoreManager`.
 - 2026-06-21: Task 42 RED/GREEN completed with review fix. Store purchase and restore buttons now send synchronous intent to `StoreManager.requestPurchase(of:)` and `StoreManager.requestRestorePurchases()` instead of starting SwiftUI-owned StoreKit tasks. `StoreManager` owns pending purchase/restore request tasks by request ID, exposes awaitable waits, records request-level failures, and keeps `purchase(_:)` / `restorePurchases()` as the StoreKit behavior boundary. Review found real purchase/restore catch paths still translated `CancellationError` into failed UI state; follow-up RED coverage failed until cancellation-aware Store state helpers existed, and re-review found no Critical or Important issues. Verification: initial RED failed because Store request tracking APIs did not exist; review-fix RED failed because cancellation helper seams did not exist; GREEN focused suite passed 3 XCTest tests plus 5 Swift Testing tests; Store UI boundary scan produced no matches; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with existing Swift 6 isolation and XCTest deployment warnings. Guard warning for added `Task` was reviewed: the tasks are owned and tracked by `StoreManager`, not SwiftUI.
 - 2026-06-21: Task 41 RED/GREEN completed before commit. Terminal open intent now flows through `TerminalTabManager.requestTabOpen(...)`, `TerminalTabManager.requestServerTerminalOpen(...)`, and `ConnectionSessionManager.requestConnectionOpen(...)`, so SwiftUI buttons, menus, duplicate-tab, macOS sidebar, and iOS server-list/new-tab flows no longer create their own terminal-open tasks, branch around the application owner for existing tabs, or hide open failures behind `try?`/no-op catches. Managers track pending request IDs, preserve cancellation separately from failures, expose awaitable request waits for tests, and reuse the existing `openTab`/`openConnection` teardown and duplicate-open gates. Review fixes closed two AppLock ordering gaps: existing-tab focus now unlocks before selecting, and `ServerSidebarView` selects the server only from the manager success callback. Verification: RED `TerminalOpenIntentBoundaryTests` failed with 5 issues before the route change; review-fix RED failed until `requestServerTerminalOpen(...)` exposed a manager-owned unlock boundary; second review-fix RED failed until the server sidebar stopped preselecting before unlock; GREEN focused suite passed 14 XCTest tests plus 79 Swift Testing tests; terminal-open UI boundary scan produced no matches; `git diff --check` passed; iOS and macOS build-for-testing passed with existing warnings only. Re-review found no Critical or Important issues.
