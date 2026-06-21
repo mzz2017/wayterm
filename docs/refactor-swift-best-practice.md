@@ -4224,8 +4224,88 @@ Before review, verify the voice request API names are consistent with Task 54/55
 
 Request code review for Task 56. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
 
+## Task 57: Terminal Host Retrust Intent Boundary
+
+**Files:**
+- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `VVTermTests/TerminalRetrustIntentBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing `ConnectionSessionManager.retrustHostAndReconnect(session:server:) async -> Bool`.
+  - Existing `TerminalTabManager.retrustHostAndReconnect(paneId:server:) async -> Bool`.
+  - `KnownHostsStore.shared.remove(host:port:)` through the existing manager-owned retrust helpers.
+  - Existing root/split terminal alert presentation and `reconnectToken` refresh behavior.
+- Produces:
+  - `ConnectionSessionManager.requestSessionHostRetrust(session:server:onCompleted:) -> UUID`: tracked root-session host-retrust request that owns trusted-host removal plus reconnect lifecycle.
+  - `ConnectionSessionManager.pendingSessionHostRetrustRequestIDs` and `waitForSessionHostRetrustRequest(_:)` for lifecycle ordering tests.
+  - `TerminalTabManager.requestPaneHostRetrust(paneId:server:onCompleted:) -> UUID`: tracked split-pane host-retrust request that owns trusted-host removal plus reconnect lifecycle.
+  - `TerminalTabManager.pendingPaneHostRetrustRequestIDs` and `waitForPaneHostRetrustRequest(_:)` for lifecycle ordering tests.
+  - DEBUG-only operation injection seams matching the existing retry request seams, so tests can block retrust work without touching real known-host storage or network.
+
+- [ ] **Step 1: Add RED host-retrust request and source-boundary tests**
+
+Add manager lifecycle tests to `ConnectionLifecycleIntegrationTests` with the existing Test Context. Cover:
+- duplicate root-session host-retrust intent for the same session coalesces to one request ID, remains pending while the manager-owned operation is blocked, and calls every completion callback with the final reconnect decision;
+- duplicate split-pane host-retrust intent for the same pane coalesces the same way;
+- cancellation reports `false` to callbacks and clears pending request state rather than surfacing a credential or reconnect failure.
+
+Add `TerminalRetrustIntentBoundaryTests` with a Test Context header. The tests must inspect `TerminalContainerView.swift` and split `TerminalView.swift`, then fail while terminal UI:
+- launches a `Task { ... }` from `retrustHostAndRetry()`;
+- directly calls or awaits `retrustHostAndReconnect(...)`;
+- omits the new request API in the retrust helper slice.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalRetrustIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails to compile because the request APIs, pending request IDs, wait hooks, and DEBUG operation seams do not exist. If those compile unexpectedly, the source-boundary tests fail because SwiftUI still owns retrust `Task` wrappers and directly awaits the old async helpers.
+
+- [ ] **Step 2: Add manager-owned host-retrust request tracking**
+
+Add small request structs and dictionaries to both terminal managers. Match the Task 55 retry request style:
+- coalesce duplicate request intent by session or pane ID;
+- keep the underlying task stored until retrust/reconnect completes;
+- call every queued callback with `false` on cancellation and with the helper result otherwise;
+- remove request dictionaries and reverse indexes in `defer`;
+- expose pending IDs and wait hooks for tests.
+
+Keep the old async `retrustHostAndReconnect` helpers as lower-level manager operations for now, but make SwiftUI stop calling them directly.
+
+- [ ] **Step 3: Route terminal UI host-retrust buttons through request APIs**
+
+Update root `TerminalContainerView.retrustHostAndRetry()` and split `TerminalView.retrustHostAndRetry()` so the alert button sends synchronous intent to the manager request API. UI may still update `reconnectToken` in the completion callback when the request reports success, but must not create a `Task` or await trusted-host removal/reconnect work.
+
+- [ ] **Step 4: Run focused verification**
+
+Run focused tests, source scans, and whitespace check:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalRetrustIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{|retrustHostAndReconnect|requestSessionHostRetrust|requestPaneHostRetrust" VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows `retrustHostAndRetry()` uses request APIs and no retrust helper owns `Task {}` or direct awaits. Remaining `Task {}` hits in these files are previously classified non-retrust terminal paths and must be named in the Progress Ledger.
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Before review, verify the new API names align with Task 55 retry request names, the host-trust mutation remains application-owned, callbacks are presentation-only, cancellation is lifecycle completion, and touched tests include the required Test Context plus Given / When / Then comments and assertion messages.
+
+- [ ] **Step 6: Request review and commit**
+
+Request code review for Task 57. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-56 scan selected Task 57 as the next executable lifecycle slice. Current plan checkboxes were complete, so the codebase was rescanned for remaining SwiftUI-owned lifecycle tasks and direct resource mutation after terminal retry/install/voice ownership moved to manager/store request APIs. The clearest focused TerminalSessions gap is host-key retrust from terminal error alerts: root `TerminalContainerView` and split `TerminalView` still launch `Task {}` from `retrustHostAndRetry()` and directly await manager helpers that remove known-host entries and reconnect. This is lifecycle-critical because trusted-host mutation plus reconnect should be tracked by TerminalSessions Application owners, not by SwiftUI alert actions. Task 57 should add manager-owned tracked retrust request APIs, preserve existing alert/reconnectToken UX, and leave broader remaining iOS active-connection, RemoteFiles navigation, and terminal surface attach guard cleanup deferred to later slices.
 - 2026-06-21: Task 56 RED/GREEN completed with local lifecycle review. `TerminalContainerView`, split `TerminalView`, and `VoiceRecordingView` no longer create or observe `AudioService` directly and no longer call `startRecording()`, `stopRecording()`, or `cancelRecording()` from SwiftUI. `TerminalVoiceInputStore` is the TerminalSessions Application owner for the shared terminal voice `AudioService`, tracks start/stop/cancel request tasks by ID, coalesces duplicate same-target intent, forwards audio presentation state to SwiftUI, preserves partial-transcription fallback, and keeps cancellation separate from permission/transcription failure. RED failed to compile until `TerminalVoiceInputStore`, `TerminalVoiceInputTarget`, the fake-audio seam, pending request IDs, and await hooks existed; an added cancellation-ordering RED then proved a late start completion could reopen recording after cancel, and GREEN passed after stale/canceled start completions cancel audio and skip stale callbacks. Final focused tests passed 8 Swift Testing tests; the direct voice lifecycle source scan produced no matches; the broader terminal UI task scan still reports existing non-voice `Task` hits in credential reload, retrust host, pane exit, paste, and title/selection paths; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Task 56 deliberately leaves split pane text send through the existing focused `GhosttyTerminalView` path until a narrower pane send-text application API is introduced.
 - 2026-06-21: Post-Task-55 scan selected Task 56 as the next executable lifecycle slice. Current plan checkboxes were complete, so the codebase was rescanned for remaining SwiftUI-owned lifecycle tasks, direct resource ownership, and deferred ledger hits. RemoteFiles transfer/drop/file-promise and TerminalThemes persistence/sync were already completed under Task 40E4c and Task 40E5, so they are not the next slice. The clearest focused TerminalSessions gap is terminal voice input: `TerminalContainerView`, split `TerminalView`, and `VoiceRecordingView` still create or consume `AudioService` directly from SwiftUI, launch voice start/stop transcription tasks from buttons and keyboard handlers, and call `cancelRecording()` directly from view lifecycle or overlay callbacks. Task 56 should add a TerminalSessions Application voice intent owner with tracked start/stop/cancel request APIs, preserve existing root and split terminal voice UX, and leave broader iOS floating voice-return presentation and split-pane text-send API cleanup deferred unless required by the focused tests.
 - 2026-06-21: Task 55 RED/GREEN completed with review fix. `TerminalContainerView` and split `TerminalView` no longer launch retry work from SwiftUI-owned `Task` blocks or directly await `retrySessionConnection` / `retryPaneConnection`; retry buttons, timeout callbacks, and watchdog callbacks synchronously send intent to `ConnectionSessionManager.requestSessionRetry` or `TerminalTabManager.requestPaneRetry`. Both managers now own tracked retry request tasks, expose pending request IDs plus await hooks for ordering tests, coalesce duplicate same-session/pane retry intent, keep cancellation as lifecycle completion rather than credential failure, and call every duplicate caller's completion callback with the final `TerminalReconnectRequestResult`. RED failed to compile until the request APIs, pending request state, await hooks, and DEBUG retry-operation injection hooks existed. Review found no Critical issues and one Important source-boundary gap: the first `TerminalRetryIntentBoundaryTests` matched only narrow exact strings and could miss multiline `Task` wrappers or direct old helper calls outside the helper slice. The boundary tests were strengthened with regex full-source scans for UI-owned retry wrappers and direct old helper calls, and the new test file was staged with the implementation. Final focused tests passed 86 Swift Testing tests; terminal UI retry source scan produced no matches; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. The broad manager task scan still reports previously classified runtime/persist/detached tasks outside this retry slice.
