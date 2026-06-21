@@ -3844,8 +3844,72 @@ Request code review for Task 51. Fix Critical and Important findings, update the
 
 Actual review result: code review found an Important cancellation gap where `CancellationError` was swallowed by `ServerConnectionTester` without notifying `ServerFormSheet`, leaving `isTestingConnection` stuck. Added a RED cancellation test, introduced `onCompleted`, and routed the form's testing-state cleanup through that completion callback. Re-run focused tests passed 6 tests in 2 suites; source scans, `git diff --check`, iOS build-for-testing, and macOS build-for-testing passed.
 
+## Task 52: App Lock Authentication Intent Boundary
+
+**Files:**
+- Modify: `VVTerm/Features/Security/Application/AppLockManager.swift`
+- Modify: `VVTerm/Features/Security/UI/AppLockGateView.swift`
+- Modify: `VVTerm/Features/Settings/UI/GeneralSettingsView.swift`
+- Test: `VVTermTests/Features/Security/AppLockManagerTests.swift`
+- Test: `VVTermTests/AppLockIntentBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `AppLockManager.requestSetFullAppLockEnabled(_:) async`
+  - `AppLockManager.ensureAppUnlocked() async -> Bool`
+  - `AppLockManager.handleScenePhaseChange(_:)`
+  - `BiometricAuthServing.authenticate(localizedReason:allowPasscodeFallback:)`
+  - `GeneralSettingsView` full-app-lock toggle binding
+  - `AppLockContainer` scene activation hooks
+  - `AppLockGateView` unlock button
+- Produces:
+  - `AppLockManager.requestFullAppLockChange(_:) -> UUID`: synchronous UI intent API for enabling/disabling full app lock.
+  - `AppLockManager.requestAppUnlock() -> UUID`: synchronous UI intent API for app-unlock authentication.
+  - `AppLockManager.waitForAppLockRequest(_:)` and `pendingAppLockRequestIDs` for awaitable lifecycle ordering tests.
+  - SwiftUI app-lock views that send authentication intent without owning `Task { await appLockManager... }`.
+
+- [ ] **Step 1: Add RED app-lock request and boundary tests**
+
+Add AppLock manager tests with delayed fake biometric auth. Cover that `requestFullAppLockChange(true)` tracks the request while authentication is in flight, eventually enables full app lock, and clears the request only after the existing async behavior completes. Cover that `requestAppUnlock()` tracks the request, unlocks an already locked app after authentication, and clears the request after completion. Add `AppLockIntentBoundaryTests` with a Test Context header that reads `AppLockGateView.swift` and `GeneralSettingsView.swift`; it should fail while those SwiftUI files contain `Task { await appLockManager.ensureAppUnlocked() }` or `Task { await appLockManager.requestSetFullAppLockEnabled(...) }`.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/AppLockManagerTests -only-testing:VVTermTests/AppLockIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: `AppLockManagerTests` fails to compile because `requestFullAppLockChange(_:)`, `requestAppUnlock()`, `waitForAppLockRequest(_:)`, or `pendingAppLockRequestIDs` do not exist. If those compile unexpectedly, `AppLockIntentBoundaryTests` fails because app-lock SwiftUI still launches authentication tasks directly.
+
+- [ ] **Step 2: Add AppLockManager request ownership**
+
+Add a tracked request-task dictionary to `AppLockManager`. `requestFullAppLockChange(_:)` should create and store a `Task` that awaits the existing `requestSetFullAppLockEnabled(_:)`, then clears itself. `requestAppUnlock()` should create and store a `Task` that awaits the existing `ensureAppUnlocked()`, then clears itself. Keep the existing async methods as the behavior boundary for product logic and existing call sites that already run inside application-layer async flows. Cancellation should clear tracking and should not create a user-facing failure.
+
+- [ ] **Step 3: Route SwiftUI app-lock authentication through request APIs**
+
+Update `GeneralSettingsView` full-app-lock toggle setter to call `appLockManager.requestFullAppLockChange(newValue)` synchronously. Update `AppLockContainer` `.onAppear` and scene activation hooks to call `appLockManager.requestAppUnlock()` after handling scene phase. Update `AppLockGateView` unlock button to call `appLockManager.requestAppUnlock()` synchronously. Preserve visible behavior: `isAuthenticating` still drives disabled/progress state, unavailable biometry still sets `lastErrorMessage`, authentication cancellation remains non-failure, and successful unlock/enable still updates the same published state.
+
+- [ ] **Step 4: Run focused verification**
+
+Run focused tests, scoped source scans, and whitespace check:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/AppLockManagerTests -only-testing:VVTermTests/AppLockIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{|requestSetFullAppLockEnabled|ensureAppUnlocked" VVTerm/Features/Security/UI/AppLockGateView.swift VVTerm/Features/Settings/UI/GeneralSettingsView.swift
+git diff --check
+```
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Before review, verify `AppLockManager` is the only owner of user-initiated app-lock authentication tasks, request API names express intent and side effects, SwiftUI only updates view-local presentation state or sends synchronous intent, tests use fake biometric auth without real device prompts, and touched test files include enough Test Context / Given / When / Then information for future failure triage.
+
+- [ ] **Step 6: Request review and commit**
+
+Request code review for Task 52. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-51 scan selected Task 52 as the next executable lifecycle slice. Current plan checkboxes were all complete, so the codebase was rescanned for SwiftUI-owned lifecycle `Task` work, direct resource/singleton calls, and stale terminal runtime state. `AppLockContainer`, `AppLockGateView`, and the full-app-lock toggle in `GeneralSettingsView` are a focused remaining Security/Settings hit: SwiftUI launches authentication tasks directly for app unlock and full-lock enablement even though `AppLockManager` is already the stable Application owner for biometric authentication state. Broader hits remain intentionally deferred for later classification, including Terminal view retry/tmux/voice tasks, RemoteFiles navigation/preview tasks, App app-delegate sync calls, and low-level Application/Core tasks that are already tracked or need separate ownership audits.
 - 2026-06-21: Task 51 RED/GREEN completed with review fix. `ServerFormSheet` no longer owns the Test Connection async `Task`, no longer launches `Task.detached`, and no longer directly reaches `SSHConnectionOperationService.shared` or `RemoteMoshManager.shared`; it sends synchronous intent to `ServerConnectionTester` in Servers Application. `ServerConnectionTester` owns tracked connection-test request tasks, exposes pending request IDs plus `waitForConnectionTestRequest`, records ordinary `ServerConnectionTestFailure`, preserves cancellation as lifecycle state rather than failure, and always calls `onCompleted` so SwiftUI can clear transient testing state after success, failure, or cancellation. RED first failed to compile until the connection tester/protocol existed; review-fix RED failed until `onCompleted` existed. Final focused tests passed 6 Swift Testing tests; scoped source scans showed the UI helper only delegates to `connectionTester.requestConnectionTest`; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings. Broader SwiftUI task hits in terminal, RemoteFiles, Settings, and other low-level paths remain deferred to later slices.
 - 2026-06-21: Post-Task-50 scan selected Task 51 as the next executable lifecycle slice. Current plan checkboxes were all complete, so the codebase was rescanned for SwiftUI-owned lifecycle `Task` work, direct resource/singleton calls, and stale terminal runtime state. `ServerFormSheet` connection testing is the clearest remaining Servers feature hit: the Test Connection button starts a SwiftUI-owned `Task`, `runConnectionTest(force:)` launches `Task.detached`, and the UI file directly reaches `SSHConnectionOperationService.shared` plus `RemoteMoshManager.shared`. Broader hits remain intentionally deferred for later classification, including Terminal view retry/voice lifecycle tasks, RemoteFiles navigation/preview tasks, Settings language-change task ownership, and low-level Application/Core tasks that are already tracked or need separate ownership audits.
 - 2026-06-21: Task 50 RED/GREEN completed with review fixes. `MoveServerSheet.moveServer()` no longer owns an async move `Task` or directly calls `moveServer(_:to:preferredEnvironment:)`; it sends synchronous intent to `ServerManager.requestServerMove`. `ServerManager` now owns tracked server move request tasks, exposes pending request IDs plus `waitForServerMoveRequest`, records `ServerMoveFailure`, preserves Pro-required move failures for the existing upgrade sheet, routes ordinary failures to the UI error callback, and calls success only after the existing application-layer move path updates server metadata plus workspace selection metadata. RED failed to compile until the move request APIs and failure state existed. Review found missing ordinary failure coverage and a literal source-boundary check; both were fixed, and a mutation RED proved suppressing `onFailed` breaks the ordinary failure test. Final focused tests passed 25 Swift Testing tests; a scoped `moveServer()` source scan showed only `requestServerMove` ownership; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings. Broader `Task {` hits in `ServerFormSheet.swift` are outside Task 50 and remain deferred to later slices.
