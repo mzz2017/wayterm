@@ -249,13 +249,14 @@ final class TerminalRichPasteRuntime: TerminalRichPasteContext {
 
     static func connectionSession(
         sessionId: UUID,
-        uiModel: TerminalRichPasteUIModel
+        uiModel: TerminalRichPasteUIModel,
+        sessionManager: ConnectionSessionManager
     ) -> TerminalRichPasteRuntime {
         TerminalRichPasteRuntime(
             sessionId: sessionId,
             uiModel: uiModel,
             requestRichPasteUpload: { image, settings, onProgress, onCompleted in
-                ConnectionSessionManager.shared.requestSessionRichPasteUpload(
+                sessionManager.requestSessionRichPasteUpload(
                     image: image,
                     settings: settings,
                     for: sessionId,
@@ -264,20 +265,21 @@ final class TerminalRichPasteRuntime: TerminalRichPasteContext {
                 )
             },
             pasteTextFromClipboard: {
-                ConnectionSessionManager.shared.peekTerminal(for: sessionId)?.pasteTextFromClipboard()
+                sessionManager.peekTerminal(for: sessionId)?.pasteTextFromClipboard()
             }
         )
     }
 
     static func terminalPane(
         paneId: UUID,
-        uiModel: TerminalRichPasteUIModel
+        uiModel: TerminalRichPasteUIModel,
+        tabManager: TerminalTabManager
     ) -> TerminalRichPasteRuntime {
         TerminalRichPasteRuntime(
             sessionId: paneId,
             uiModel: uiModel,
             requestRichPasteUpload: { image, settings, onProgress, onCompleted in
-                TerminalTabManager.shared.requestPaneRichPasteUpload(
+                tabManager.requestPaneRichPasteUpload(
                     image: image,
                     settings: settings,
                     forPane: paneId,
@@ -286,7 +288,7 @@ final class TerminalRichPasteRuntime: TerminalRichPasteContext {
                 )
             },
             pasteTextFromClipboard: {
-                TerminalTabManager.shared.getTerminal(for: paneId)?.pasteTextFromClipboard()
+                tabManager.getTerminal(for: paneId)?.pasteTextFromClipboard()
             }
         )
     }

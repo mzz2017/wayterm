@@ -6020,6 +6020,7 @@ Audit evidence:
 3. **Rich paste runtime manager injection**
    - Evidence: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift` still resolves `ConnectionSessionManager.shared` / `TerminalTabManager.shared` inside rich-paste runtime factories for upload and clipboard paste actions.
    - Required fix: inject the root/split manager into `TerminalRichPasteRuntime` construction and keep upload lifecycle in the existing manager-owned request APIs.
+   - Status: completed by Task 79.
 
 4. **iOS foreground reconnect request tracking**
    - Evidence: `VVTerm/App/iOS/iOSContentView.swift` starts an untracked `Task` in the foreground reconnect helper called from `onAppear`, scene changes, and selected-session changes.
@@ -6241,7 +6242,7 @@ Perform local lifecycle review against the Swift checklist unless the user expli
   - Split rich-paste coordinator passes the injected `tabManager` into runtime construction.
   - `TerminalRichPasteSupport.swift` no longer resolves `ConnectionSessionManager.shared` or `TerminalTabManager.shared`.
 
-- [ ] **Step 1: Add RED rich paste runtime manager boundary tests**
+- [x] **Step 1: Add RED rich paste runtime manager boundary tests**
 
 Create `TerminalRichPasteRuntimeManagerBoundaryTests` with Test Context:
 - Protected behavior: rich-paste UI/runtime may create upload and clipboard-paste closures, but manager ownership must come from the terminal coordinator's injected TerminalSessions application owner.
@@ -6279,7 +6280,7 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: the focused suite fails because rich-paste runtime factories still resolve `ConnectionSessionManager.shared` / `TerminalTabManager.shared`, and coordinator construction sites do not pass injected managers into the runtime factories.
 
-- [ ] **Step 2: Inject managers into rich paste runtime factories**
+- [x] **Step 2: Inject managers into rich paste runtime factories**
 
 Update `TerminalRichPasteSupport.swift`:
 - Change `connectionSession(sessionId:uiModel:)` to `connectionSession(sessionId:uiModel:sessionManager:)`.
@@ -6290,7 +6291,7 @@ Update `TerminalRichPasteSupport.swift`:
 - Replace `TerminalTabManager.shared.getTerminal(for:)` with `tabManager.getTerminal(for:)`.
 - Do not change `TerminalRichPasteRuntime` request handler types, upload request APIs, prompt/progress UI behavior, cancellation semantics, or paste interception behavior.
 
-- [ ] **Step 3: Pass injected managers from coordinators**
+- [x] **Step 3: Pass injected managers from coordinators**
 
 Update root `SSHTerminalWrapper.swift` coordinators:
 - In both macOS and iOS coordinator initializers, pass `sessionManager: sessionManager` into `.connectionSession(...)`.
@@ -6298,7 +6299,7 @@ Update root `SSHTerminalWrapper.swift` coordinators:
 Update split `TerminalView.swift` coordinator:
 - Pass `tabManager: tabManager` into `.terminalPane(...)`.
 
-- [ ] **Step 4: Run focused verification**
+- [x] **Step 4: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalRichPasteRuntimeManagerBoundaryTests ENABLE_DEBUG_DYLIB=NO
@@ -6308,16 +6309,17 @@ git diff --check
 
 Expected GREEN result: focused tests pass; source scan shows `TerminalRichPasteSupport.swift` has no manager singleton reach-through and runtime construction passes the already injected root/split manager.
 
-- [ ] **Step 5: API and boundary cleanup**
+- [x] **Step 5: API and boundary cleanup**
 
 Before review, verify factory naming is grammatical, no new public API beyond the manager parameters was introduced, no upload lifecycle ownership moved into UI/coordinator/runtime, no temporary helper/WIP state remains, no new untracked task was introduced, and the existing `TerminalRichPasteIntentBoundaryTests` still protect manager-owned upload lifecycle.
 
-- [ ] **Step 6: Review and commit**
+- [x] **Step 6: Review and commit**
 
 Perform local lifecycle review against the Swift checklist unless the user explicitly authorizes new subagents. Fix Critical and Important findings, update the Progress Ledger and Must-Fix status with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
 ## Progress Ledger
 
+- 2026-06-21: Task 79 RED/GREEN completed with local lifecycle review and no new subagents. `TerminalRichPasteRuntime` factories now receive `sessionManager` / `tabManager` from root and split terminal coordinators and use those injected managers for rich-paste upload requests and clipboard text paste fallback. `TerminalRichPasteSupport.swift` no longer resolves `ConnectionSessionManager.shared` or `TerminalTabManager.shared`; upload lifecycle ownership remains in the existing `ConnectionSessionManager.requestSessionRichPasteUpload(...)` and `TerminalTabManager.requestPaneRichPasteUpload(...)` request APIs. Initial RED failed as expected with 12 source-boundary issues because factories resolved manager singletons and wrapper construction sites did not pass injected managers. GREEN focused verification passed 3 Swift Testing tests in `TerminalRichPasteRuntimeManagerBoundaryTests`; broader rich-paste verification passed 13 tests across `TerminalRichPasteIntentBoundaryTests`, `TerminalRichPasteUploadRequestTests`, and `TerminalRichPasteRuntimeManagerBoundaryTests`. Source scan showed no manager singleton reach-through in `TerminalRichPasteSupport.swift` and the expected root/split manager injection call sites. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. API/boundary cleanup found grammatical factory names, no new public API beyond manager parameters, no moved upload lifecycle ownership, no temporary helper/WIP state, no new untracked task, and no new SwiftUI-owned multi-step lifecycle orchestration.
 - 2026-06-21: Task 78 RED/GREEN completed with local lifecycle review and no new subagents. `TerminalTabView` and `TerminalPaneView` now use the injected `tabManager` for focused terminal lookup, tmux install/disable, host retrust, auto-reconnect decisions, retry, credential load, stale pane callback guards, connect watchdog scheduling, and mosh install/reconnect intents. `TerminalView.swift` no longer resolves `TerminalTabManager.shared`; remaining split terminal manager reach-through evidence moves to rich-paste runtime construction in Must-Fix item 3. Initial RED failed as expected with 12 source-boundary issues because split UI helpers still used `TerminalTabManager.shared`. GREEN focused verification passed 3 Swift Testing tests in `TerminalSplitUIInjectedManagerBoundaryTests`; source scan showed no `TerminalTabManager.shared` hit in `TerminalView.swift` and the expected `tabManager.*` calls are present. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. API/boundary cleanup found no new public API, no temporary helper/WIP state, no new lifecycle-critical task, no changed request API or callback timing, and no new SwiftUI-owned multi-step lifecycle orchestration.
 - 2026-06-21: Task 77 RED/GREEN completed with local lifecycle review and no new subagents. `SSHTerminalPaneWrapper.static dismantleNSView` now uses the Task 74 coordinator's injected `tabManager` for pane liveness checks, `detachSurfaceForPaneViewDisappeared(_:)`, and `detachSurfaceForClosedPane(_:)`. Static teardown still only pauses/reuses the UI surface locally and delegates pane lifecycle cleanup intent to the TerminalSessions Application owner; no new lifecycle task or behavior change was introduced. Initial RED failed as expected with 4 source-boundary issues because split static teardown still used `TerminalTabManager.shared` and lacked the `coordinator.tabManager.*` calls. GREEN focused verification passed 1 Swift Testing test in `TerminalSplitStaticTeardownBoundaryTests`; source scan showed split static teardown uses `coordinator.tabManager.*`. The remaining `TerminalTabManager.shared` hits in `TerminalView.swift` are outside static teardown and remain covered by Must-Fix item 2. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. API/boundary cleanup found no new public API, no temporary helper/WIP state, no new untracked task, and no stale state or SwiftUI lifecycle decision introduced by this task.
 - 2026-06-21: Task 76 RED/GREEN completed with independent static lifecycle review from review agent Plato; no Critical, Important, or Minor findings were reported. `SSHTerminalWrapper` root static teardown now uses the Task 75 coordinator's injected `sessionManager` for session liveness checks, `detachSurfaceForViewDisappeared(from:)`, and `handleClosedSessionSurfaceTeardown(...)` on both macOS and iOS. Static teardown still only pauses/resigns UI surface state locally and delegates lifecycle cleanup intent to the TerminalSessions Application owner; no new lifecycle task or behavior change was introduced. Initial RED failed as expected with 8 source-boundary issues because both static teardown functions still used `ConnectionSessionManager.shared` and lacked `coordinator.sessionManager.*` calls. GREEN focused verification passed 2 Swift Testing tests in `TerminalRootStaticTeardownBoundaryTests`; source scan showed root static teardown uses `coordinator.sessionManager.*` and no `ConnectionSessionManager.shared` remains in `SSHTerminalWrapper.swift`. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Per the updated project objective, after Task 76 the next step is not another ordinary lifecycle slice; run a global closure audit, freeze remaining lifecycle/architecture/test-context issues into must-fix / accepted-exception / later, write that finite scope into this plan, then execute only must-fix items to ready-for-merge.

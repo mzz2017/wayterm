@@ -276,7 +276,8 @@ struct SSHTerminalWrapper: NSViewRepresentable {
             self.sessionManager = sessionManager
             self.richPasteRuntime = .connectionSession(
                 sessionId: sessionId,
-                uiModel: richPasteUIModel
+                uiModel: richPasteUIModel,
+                sessionManager: sessionManager
             )
         }
 
@@ -655,7 +656,8 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             self.sessionManager = sessionManager
             self.richPasteRuntime = .connectionSession(
                 sessionId: sessionId,
-                uiModel: richPasteUIModel
+                uiModel: richPasteUIModel,
+                sessionManager: sessionManager
             )
         }
 

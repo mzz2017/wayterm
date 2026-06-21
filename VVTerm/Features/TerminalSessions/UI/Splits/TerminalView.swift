@@ -1105,7 +1105,8 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
             self.tabManager = tabManager
             self.richPasteRuntime = .terminalPane(
                 paneId: paneId,
-                uiModel: richPasteUIModel
+                uiModel: richPasteUIModel,
+                tabManager: tabManager
             )
         }
 
