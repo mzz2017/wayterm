@@ -94,6 +94,7 @@ preserved in the archive.
     field changes reset UI state only.
   - Required fix: add cancellation/supersede semantics and stale-callback guards
     so changed form input cannot receive an old connection-test result.
+  - Status: completed by Task 81.
 - [ ] 6. RemoteFiles transfer/mutation cancellation on disconnect.
   - Evidence: `RemoteFileBrowserStore` stores remote operation requests, but
     `disconnect(serverId:)` cancels navigation/preview/move state only before
@@ -125,17 +126,109 @@ preserved in the archive.
 
 ## Current Focus
 
-Next executable slice: Must-Fix 5, Server connection-test cancellation and stale
-callbacks.
+Next executable slice: Must-Fix 6, RemoteFiles transfer/mutation cancellation on
+disconnect.
 
 Before code:
 
-1. Inspect `VVTerm/Features/Servers/Application/ServerConnectionTester.swift`
-   and `VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift`.
-2. Add a compact Task 81 section here with files, interfaces, RED tests,
+1. Inspect `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
+   and transfer/mutation UI call sites.
+2. Add a compact Task 82 section here with files, interfaces, RED tests,
    expected verification, API/boundary cleanup, and commit scope.
 3. Follow TDD: RED test first, then implementation, then focused verification.
-4. After Task 81, do API/boundary cleanup before moving to Must-Fix 6.
+4. After Task 82, do API/boundary cleanup before moving to Must-Fix 7.
+
+## Task 81: Server Connection-Test Cancellation
+
+**Files:**
+- Modify: `VVTerm/Features/Servers/Application/ServerConnectionTester.swift`
+- Modify: `VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift`
+- Test: `VVTermTests/ServerConnectionTesterTests.swift`
+- Test: `VVTermTests/ServerFormConnectionTestBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing `ServerConnectionTester.requestConnectionTest(...)`.
+  - Existing `ServerConnectionTester.pendingConnectionTestRequestIDs`.
+  - Existing `ServerConnectionTester.waitForConnectionTestRequest(_:)`.
+  - Existing `ServerFormSheet.ConnectionTestSnapshot`.
+- Produces:
+  - `ServerConnectionTester.requestConnectionTest(id:server:credentials:onSucceeded:onFailed:onCompleted:) -> UUID`.
+  - `ServerConnectionTester.cancelConnectionTestRequest(_:)`.
+  - `ServerFormSheet.activeConnectionTestRequestID`.
+  - Server form field changes cancel the active test and stale callbacks cannot update success/error/testing state.
+
+- [x] **Step 1: Add RED cancellation and stale-callback tests**
+
+Extend `ServerConnectionTesterTests`:
+- `connectionTestRequestCancellationClearsPendingAndSkipsLateSuccess`
+  - Start a delayed request.
+  - Call `cancelConnectionTestRequest(_:)`.
+  - Assert `pendingConnectionTestRequestIDs` no longer contains the request ID.
+  - Finish the fake successfully.
+  - Await `waitForConnectionTestRequest(_:)`.
+  - Assert success/failure callbacks did not run and `connectionTestFailure` stayed nil.
+- `connectionTestRequestCancellationSkipsLateFailure`
+  - Start a delayed request.
+  - Cancel it.
+  - Finish the fake with `FakeConnectionTestError.rejected`.
+  - Await the request.
+  - Assert failure callback did not run and `connectionTestFailure` stayed nil.
+
+Extend `ServerFormConnectionTestBoundaryTests`:
+- `serverFormConnectionTestHelperCancelsActiveRequestAndGuardsCallbacks`
+  - Slice `resetConnectionTestState()` through `applyConnectionTestFailure(...)`.
+  - Assert the source contains `activeConnectionTestRequestID`.
+  - Assert reset/cancel logic calls `connectionTester.cancelConnectionTestRequest`.
+  - Assert `requestConnectionTest(force:)` creates a stable request ID and passes it via `requestConnectionTest(id:`.
+  - Assert success, failure, and completion callbacks guard `activeConnectionTestRequestID == requestID`.
+  - Assert success/failure callbacks also guard `connectionSnapshot == snapshot`.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerConnectionTesterTests -only-testing:VVTermTests/ServerFormConnectionTestBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: tests fail because `cancelConnectionTestRequest(_:)`, caller-provided request IDs, `activeConnectionTestRequestID`, and stale callback guards do not exist.
+
+- [x] **Step 2: Add cancelable application-layer request ownership**
+
+Update `ServerConnectionTester.swift`:
+- Replace `[UUID: Task<Void, Never>]` with a private request record that stores `task` and cancellation state.
+- Add `cancelConnectionTestRequest(_:)` that marks a request canceled, removes it from visible pending IDs, and cancels its task while keeping `waitForConnectionTestRequest(_:)` awaitable until the task exits.
+- Add optional caller-provided request identity through `requestConnectionTest(id: UUID = UUID(), ...)`.
+- Before success/failure callbacks or `connectionTestFailure` writes, guard that the request was not canceled and `Task.isCancelled` is false.
+- Keep cancellation as lifecycle completion, not a connection failure.
+
+- [x] **Step 3: Route form reset/supersede through cancellation**
+
+Update `ServerFormSheet.swift`:
+- Add `@State private var activeConnectionTestRequestID: UUID?`.
+- Add `cancelActiveConnectionTest()` that clears the active ID, sets `isTestingConnection = false`, and calls `connectionTester.cancelConnectionTestRequest(_:)`.
+- Call `cancelActiveConnectionTest()` from `resetConnectionTestState()` and before starting a new forced test.
+- In `requestConnectionTest(force:)`, create `let requestID = UUID()`, assign `activeConnectionTestRequestID = requestID`, and pass `id: requestID`.
+- In success/failure/completion callbacks, guard `activeConnectionTestRequestID == requestID`; in success/failure, also guard `connectionSnapshot == snapshot`.
+- Do not change credential building, test server construction, validation rules, or user-facing copy.
+
+- [x] **Step 4: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerConnectionTesterTests -only-testing:VVTermTests/ServerFormConnectionTestBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "activeConnectionTestRequestID|cancelConnectionTestRequest|requestConnectionTest\\(id:|connectionSnapshot == snapshot|pendingConnectionTestRequestIDs|waitForConnectionTestRequest" VVTerm/Features/Servers/Application/ServerConnectionTester.swift VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift VVTermTests/ServerConnectionTesterTests.swift VVTermTests/ServerFormConnectionTestBoundaryTests.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows the form cancels active requests and guards stale callbacks, while temporary SSH/mosh test work remains owned by `ServerConnectionTester`.
+
+- [x] **Step 5: API and boundary cleanup**
+
+Before review, verify `cancelConnectionTestRequest(_:)` naming matches other manager-owned cancellation APIs, `pendingConnectionTestRequestIDs` reports visible pending work only, wait hooks remain awaitable for canceled-but-running work, UI owns only presentation state/request identity, and no temporary helper or stale callback path remains.
+
+- [x] **Step 6: Review and commit**
+
+Perform local lifecycle review against the Swift checklist unless the user explicitly authorizes new subagents. Fix Critical and Important findings, update Must-Fix 5 status plus Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
 ## Verification Template
 
@@ -166,6 +259,25 @@ xcodebuild build-for-testing \
 
 ## Progress Ledger
 
+- 2026-06-21: Task 81 RED/GREEN completed with local lifecycle review and no
+  new subagents. `ServerConnectionTester` now owns cancelable connection-test
+  requests through caller-stable request IDs, visible pending state, awaitable
+  request tasks, and `cancelConnectionTestRequest(_:)`; canceled requests skip
+  late success/failure callbacks and do not write `connectionTestFailure`.
+  `ServerFormSheet` now stores only `activeConnectionTestRequestID` plus
+  presentation state, cancels the active application-layer request when fields
+  reset or a new forced test starts, and guards success/failure/completion
+  callbacks by active request ID plus the original `ConnectionTestSnapshot`.
+  Initial RED failed as expected because `cancelConnectionTestRequest(_:)` did
+  not exist. GREEN focused verification passed `ServerConnectionTesterTests`
+  and `ServerFormConnectionTestBoundaryTests`; source scan showed active request
+  identity, cancellation, snapshot guards, pending IDs, and wait hooks in the
+  expected Application/UI files. `git diff --check` passed; iOS
+  `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. API/boundary cleanup
+  found request/cancel/wait names consistent with existing manager-owned
+  patterns, visible pending state separated from canceled-but-running work, no
+  UI-owned temporary SSH/mosh task, and no stale callback path remaining in the
+  server form connection-test helper.
 - 2026-06-21: Slimmed the active worktree plan into this index and archived the
   full current historical plan, including Tasks 1-80 and the closure audit, at
   `docs/refactor-swift-best-practice-1.md`. Future turns should read this index

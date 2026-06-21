@@ -113,6 +113,73 @@ struct ServerConnectionTesterTests {
     }
 
     @Test
+    func connectionTestRequestCancellationClearsPendingAndSkipsLateSuccess() async {
+        // Given a temporary connection check is in flight for a form draft that
+        // may be edited before the request completes.
+        let fake = DelayedServerConnectionTesting()
+        let tester = ServerConnectionTester(connectionTesting: fake)
+        let server = makeServer(host: "superseded-success.example.com")
+        let credentials = ServerCredentials(serverId: server.id)
+        var didSucceed = false
+        var failure: Error?
+
+        let requestID = tester.requestConnectionTest(
+            server: server,
+            credentials: credentials,
+            onSucceeded: { didSucceed = true },
+            onFailed: { failure = $0 }
+        )
+        await fake.waitUntilStarted()
+
+        // When the form changes fields and cancels the active connection test.
+        tester.cancelConnectionTestRequest(requestID)
+
+        // Then the request is no longer visible as pending, and a later
+        // successful temporary connection cannot write stale success state.
+        #expect(!tester.pendingConnectionTestRequestIDs.contains(requestID))
+
+        fake.finish()
+        await tester.waitForConnectionTestRequest(requestID)
+
+        #expect(!didSucceed)
+        #expect(failure == nil)
+        #expect(tester.connectionTestFailure == nil)
+    }
+
+    @Test
+    func connectionTestRequestCancellationSkipsLateFailure() async {
+        // Given a temporary connection check is in flight for a stale form
+        // snapshot.
+        let fake = DelayedServerConnectionTesting()
+        let tester = ServerConnectionTester(connectionTesting: fake)
+        let server = makeServer(host: "superseded-failure.example.com")
+        let credentials = ServerCredentials(serverId: server.id)
+        var didSucceed = false
+        var failure: Error?
+
+        let requestID = tester.requestConnectionTest(
+            server: server,
+            credentials: credentials,
+            onSucceeded: { didSucceed = true },
+            onFailed: { failure = $0 }
+        )
+        await fake.waitUntilStarted()
+
+        // When the stale request is canceled before the fake operation reports
+        // an ordinary failure.
+        tester.cancelConnectionTestRequest(requestID)
+        fake.finish(error: FakeConnectionTestError.rejected)
+        await tester.waitForConnectionTestRequest(requestID)
+
+        // Then cancellation wins over the late failure: no stale error is
+        // surfaced to the form and no failure state is recorded.
+        #expect(!tester.pendingConnectionTestRequestIDs.contains(requestID))
+        #expect(!didSucceed)
+        #expect(failure == nil)
+        #expect(tester.connectionTestFailure == nil)
+    }
+
+    @Test
     func connectionTestRequestPassesMoshServerToInjectedTester() async {
         // Given a mosh-mode server draft and fake tester.
         let fake = DelayedServerConnectionTesting()

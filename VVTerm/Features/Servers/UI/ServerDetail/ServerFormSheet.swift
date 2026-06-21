@@ -171,6 +171,7 @@ struct ServerFormSheet: View {
     @State private var connectionTestError: String?
     @State private var connectionTestSucceeded = false
     @State private var lastTestSnapshot: ConnectionTestSnapshot?
+    @State private var activeConnectionTestRequestID: UUID?
     @State private var showingLocalDiscoverySheet = false
 
     private var isEditing: Bool { server != nil }
@@ -1030,9 +1031,17 @@ struct ServerFormSheet: View {
     // MARK: - Connection Test
 
     private func resetConnectionTestState() {
+        cancelActiveConnectionTest()
         connectionTestError = nil
         connectionTestSucceeded = false
         lastTestSnapshot = nil
+    }
+
+    private func cancelActiveConnectionTest() {
+        guard let requestID = activeConnectionTestRequestID else { return }
+        activeConnectionTestRequestID = nil
+        isTestingConnection = false
+        connectionTester.cancelConnectionTestRequest(requestID)
     }
 
     private func buildServer(id: UUID, createdAt: Date) -> Server {
@@ -1145,6 +1154,7 @@ struct ServerFormSheet: View {
             return
         }
 
+        cancelActiveConnectionTest()
         isTestingConnection = true
         connectionTestError = nil
         connectionTestSucceeded = false
@@ -1152,18 +1162,27 @@ struct ServerFormSheet: View {
         let serverId = server?.id ?? UUID()
         let testServer = buildServer(id: serverId, createdAt: server?.createdAt ?? Date())
         let credentials = buildCredentials(for: serverId)
+        let requestID = UUID()
+        activeConnectionTestRequestID = requestID
 
         connectionTester.requestConnectionTest(
+            id: requestID,
             server: testServer,
             credentials: credentials,
             onSucceeded: {
+                guard activeConnectionTestRequestID == requestID,
+                      connectionSnapshot == snapshot else { return }
                 lastTestSnapshot = snapshot
                 connectionTestSucceeded = true
             },
             onFailed: { error in
+                guard activeConnectionTestRequestID == requestID,
+                      connectionSnapshot == snapshot else { return }
                 applyConnectionTestFailure(error, testServer: testServer, snapshot: snapshot)
             },
             onCompleted: {
+                guard activeConnectionTestRequestID == requestID else { return }
+                activeConnectionTestRequestID = nil
                 isTestingConnection = false
             }
         )

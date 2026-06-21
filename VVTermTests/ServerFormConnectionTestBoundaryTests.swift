@@ -72,6 +72,43 @@ struct ServerFormConnectionTestBoundaryTests {
         )
     }
 
+    @Test
+    func serverFormConnectionTestHelperCancelsActiveRequestAndGuardsCallbacks() throws {
+        // Given the server form SwiftUI source.
+        let root = try sourceRoot()
+        let source = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift")
+        )
+
+        // When the test isolates the connection-test lifecycle helpers.
+        let requestSource = try slice(
+            startingAt: "private func resetConnectionTestState()",
+            endingBefore: "\n    private func saveServer",
+            in: source
+        )
+
+        // Then the form keeps only request identity/presentation state while
+        // cancellation stays delegated to the application-layer tester.
+        #expect(requestSource.contains("activeConnectionTestRequestID"))
+        #expect(requestSource.contains("connectionTester.cancelConnectionTestRequest"))
+        #expect(
+            requestSource.contains("connectionTester.requestConnectionTest(")
+                && requestSource.contains("id: requestID"),
+            "ServerFormSheet should create a stable request ID before registering callbacks."
+        )
+
+        // And stale success/failure/completion callbacks from an old field
+        // snapshot must not update the current form state.
+        #expect(
+            requestSource.contains("activeConnectionTestRequestID == requestID"),
+            "Connection-test callbacks should guard that the callback belongs to the active request."
+        )
+        #expect(
+            requestSource.contains("connectionSnapshot == snapshot"),
+            "Connection-test success and failure callbacks should guard against stale field snapshots."
+        )
+    }
+
     private func slice(startingAt marker: String, endingBefore endMarker: String, in source: String) throws -> String {
         guard let start = source.range(of: marker),
               let end = source.range(of: endMarker, range: start.lowerBound..<source.endIndex)
