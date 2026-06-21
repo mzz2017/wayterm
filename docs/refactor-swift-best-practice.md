@@ -4662,8 +4662,78 @@ Before review, verify request API names match the previous `requestSurfaceAttach
 
 Request code review for Task 61. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
 
+## Task 62: Terminal Pane Process Exit Intent Boundary
+
+**Files:**
+- Create: `VVTermTests/TerminalProcessExitIntentTests.swift`
+- Create: `VVTermTests/TerminalProcessExitBoundaryTests.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing low-level pane process-exit behavior: `TerminalTabManager.handlePaneExit(for:)`.
+  - Existing split terminal surface callback `GhosttyTerminalView.onProcessExit`.
+  - Existing pane close/reset cleanup paths.
+- Produces:
+  - `TerminalTabManager.requestPaneProcessExit(forPane paneId: UUID) -> UUID?`: rejects missing panes, stores/tracks accepted pane process-exit request work, coalesces duplicate same-pane exits, and runs `handlePaneExit(for:)` from manager-owned request work.
+  - `pendingProcessExitRequestIDs` and `waitForProcessExitRequest(_:)` on `TerminalTabManager` for lifecycle tests.
+  - DEBUG-only process-exit operation seams that let tests prove request ordering and close cancellation without constructing `GhosttyTerminalView` or opening SSH.
+
+- [ ] **Step 1: Add RED process-exit request and boundary tests**
+
+Add `TerminalProcessExitIntentTests` with the required Test Context. Cover:
+- a pane process-exit request rejects missing panes without creating a task;
+- a pane process-exit request stays tracked until the process-exit operation finishes;
+- duplicate pane process-exit requests for the same pane coalesce to one request ID and call the operation once;
+- pane close clears/cancels pending process-exit requests through the real `closePaneAndWait(...)` path.
+
+Add `TerminalProcessExitBoundaryTests` with a Test Context header. Source-scan:
+- `TerminalView.swift` split-pane exit handling must call `TerminalTabManager.shared.requestPaneProcessExit(forPane:)` and must not create `Task { await tabManager.handlePaneExit(...) }`;
+- split `SSHTerminalPaneWrapper` may continue to assign `terminalView.onProcessExit = onProcessExit`, but must not own process-exit request tasks or call low-level pane exit handlers directly.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalProcessExitIntentTests -only-testing:VVTermTests/TerminalProcessExitBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails to compile because `requestPaneProcessExit(...)`, pending process-exit request IDs, wait hooks, and DEBUG process-exit seams do not exist. If it compiles unexpectedly, boundary tests fail because split process exit still uses a SwiftUI-owned `Task` wrapper.
+
+- [ ] **Step 2: Add split-pane process-exit requests**
+
+Add equivalent request tracking to `TerminalTabManager` for pane process exit. It should reject missing pane state, coalesce duplicate pane exits, expose pending IDs and a wait hook, cancel/clear pending process-exit when a pane closes, and keep existing `handlePaneExit(for:)` as the low-level async boundary.
+
+- [ ] **Step 3: Route split UI process-exit callbacks through request APIs**
+
+Update split `TerminalView`:
+- `handlePaneExit(paneId:)` should synchronously call `TerminalTabManager.shared.requestPaneProcessExit(forPane: paneId)` or be replaced by direct request closures;
+- remove the SwiftUI-owned `Task { await tabManager.handlePaneExit(for:) }` wrapper.
+
+Do not widen this task into root session process-exit, rich paste upload ownership, title/PWD/background callbacks, credential reload, RemoteFiles navigation/preview/drop/file-representation, or Stats retry. Root process exit still uses a direct `ConnectionSessionManager.handleShellExit(for:)` bridge and should be handled separately if a later task introduces a safe main-actor event bridge for terminal callbacks.
+
+- [ ] **Step 4: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalProcessExitIntentTests -only-testing:VVTermTests/TerminalProcessExitBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "handlePaneExit\\(|requestPaneProcessExit|Task \\{[^\\n]*handlePaneExit" VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows split pane process-exit callbacks use request APIs and split UI no longer owns a process-exit `Task` wrapper. Remaining `Task` hits for root process exit, rich paste, credential reload, title/PWD/background parsing, RemoteFiles navigation, Stats retry, and theme/background color parsing must be named in the Progress Ledger as deferred slices.
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Before review, verify request API names match the previous `requestPaneInput` and `requestPaneResize` style; UI supplies only pane process-exit intent; the manager owns request tracking, coalescing, cancellation, and low-level exit invocation; DEBUG seams are reset in test cleanup; tests include the required Test Context and Given / When / Then comments.
+
+- [ ] **Step 6: Request review and commit**
+
+Request code review for Task 62. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-61 scan selected Task 62 as the next executable lifecycle slice, then narrowed it after read-only explorer review. The working tree was clean after Task 61, so terminal UI, RemoteFiles, Stats, Settings, and App hotspots were rescanned. The narrowest remaining TerminalSessions bridge is split-pane process-exit handling: `TerminalView.handlePaneExit(paneId:)` still launches a SwiftUI-owned `Task` to await `TerminalTabManager.handlePaneExit(for:)`, while the manager exposes only a low-level async handler and no tracked request API. Root process exit still has a direct `DispatchQueue.main.async` bridge to `ConnectionSessionManager.handleShellExit(for:)`, but it is not bundled into Task 62 because the safer root fix likely needs a separate main-actor callback bridge decision. Task 62 should not revisit raw SSH ownership; it should add a tracked pane process-exit request API and route split UI callbacks through it. Rich paste upload ownership is a larger follow-up because it includes prompt state, leases, upload coordination, and active upload cancellation; credential reload, title/PWD/background callbacks, RemoteFiles navigation/preview/drop/file-representation, Stats retry, root process-exit, and theme/background parsing also remain deferred.
 - 2026-06-21: Task 61 RED/GREEN completed with local review. `SSHTerminalWrapper` root terminal resize callbacks, `SSHTerminalPaneWrapper` split-pane resize callbacks, and iOS active redraw resize now send synchronous resize intent to `ConnectionSessionManager.requestSessionResize(...)` or `TerminalTabManager.requestPaneResize(...)`; UI files no longer create `Task { await ...resize... }` wrappers for resize. The managers now own tracked resize request tasks, reject invalid dimensions and missing sessions/panes, coalesce duplicate same-entity requests to one request ID, re-read and apply the latest size until no newer size is pending, recheck entity liveness before each low-level resize, and cancel/clear pending resize bookkeeping during real session/pane close paths plus DEBUG reset cleanup. Initial RED failed to compile because `TerminalResizeRequestSize`, resize request APIs, pending IDs, wait hooks, and DEBUG seams did not exist. A follow-up RED reproduced a subtler ordering gap where a new size arriving while an earlier resize operation was awaiting would be lost; the GREEN fix changed the manager-owned task to loop until the observed stored size stops changing. Focused GREEN verification passed 13 Swift Testing tests in 2 suites with `ENABLE_DEBUG_DYLIB=NO`. Source scan showed only `requestSessionResize` / `requestPaneResize` calls in the scoped UI files and no direct UI `resizeSession` / `resizePane` wrappers. `git diff --check` passed. iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Current tool constraints did not permit spawning an independent reviewer without an explicit subagent request, so review was local against the Task 61 plan and Swift lifecycle checklist; no Critical or Important issues remained. Remaining lifecycle `Task` slices for rich paste, title/PWD/background parsing, process-exit/pane lifecycle, RemoteFiles navigation/preview/drop/file-representation, Stats retry, and credential reload remain deferred to later tasks.
 - 2026-06-21: Post-Task-60 scan selected Task 61 as the next executable lifecycle slice. The working tree was clean after Task 60, so terminal UI, RemoteFiles, Stats, and Settings hotspots were rescanned. A read-only explorer and local scan found the narrowest remaining TerminalSessions bridge in terminal resize callbacks: root `SSHTerminalWrapper` macOS/iOS paths, split `SSHTerminalPaneWrapper` paths, and the iOS active-connection redraw path still launch UI-owned `Task` wrappers around manager resize APIs. Task 20 already moved raw SSH resize ownership into managers, so Task 61 should not revisit raw client ownership; it should move resize request task ownership, pending tracking, coalescing, and close cleanup into `ConnectionSessionManager` and `TerminalTabManager`. Broader RemoteFiles navigation/preview tasks, rich paste lifecycle, title/PWD/background callbacks, process-exit/pane lifecycle, and Stats retry remain deferred to later slices.
 - 2026-06-21: Task 60 RED/GREEN completed with review fixes. `SSHTerminalCoordinator.sendToSSH(_:)`, reused split-pane terminal write callbacks, and split-pane coordinator input now send synchronous intent to `ConnectionSessionManager.requestSessionInput(...)` or `TerminalTabManager.requestPaneInput(...)` instead of creating UI-owned `Task { await ...sendInput(...) }` wrappers. The managers own tracked input request tasks, reject empty payloads and missing sessions/panes, serialize rapid writes per session/pane by awaiting the previous request task, recheck liveness before low-level send, expose pending request IDs plus wait hooks, and reset DEBUG input seams during test cleanup. Review found one Important issue: close paths canceled install/retry/host-retrust work but did not cancel/clear the newly introduced input request bookkeeping. Follow-up RED tests reproduced this through the real `closeSessionAndWait(...)` and `closePaneAndWait(...)` paths, failing because `pendingInputRequestIDs` remained non-empty after close. The fix added close-path `cancelInputRequests(for:)` helpers that scan all matching request records, cancel/remove them, and clear the latest-request plus last-task indexes before session/pane state is removed. The initial RED failed to compile because request APIs, pending IDs, wait hooks, and DEBUG input seams did not exist; the close-path RED failed with the expected non-empty pending request assertions. GREEN focused verification passed 10 Swift Testing tests in 2 suites with `ENABLE_DEBUG_DYLIB=NO`. The boundary scan showed only `requestSessionInput` / `requestPaneInput` in the terminal wrapper and split wrapper input paths, with no direct UI `sendInput` calls. `git diff --check` passed. A concurrent test/build attempt hit Xcode `build.db` lock, then the focused test was rerun sequentially and passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Remaining `Task {}` hits in terminal wrapper/split files are existing resize, rich-paste, title/background parsing, process-exit/pane lifecycle, file navigation, and credential reload paths and remain deferred to later slices.
