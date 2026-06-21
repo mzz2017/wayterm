@@ -5989,6 +5989,95 @@ Before review, verify no new lifecycle work or untracked task was introduced, st
 
 Request code review for Task 76. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
+## Post-Task-76 Closure Audit Freeze
+
+After Task 76, this refactor is no longer an open-ended search for every possible Swift cleanup. The remaining scope is frozen into the classifications below. Only **Must-Fix Before Ready-for-Merge** items block merge readiness for this refactor branch. **Accepted Exceptions** are allowed in the ready-for-merge state with their invariants documented here. **Later** items are valid follow-up work but are not blockers for this branch.
+
+Audit evidence:
+- Local scans:
+  - `rg -n "ConnectionSessionManager\\.shared|TerminalTabManager\\.shared|ServerManager\\.shared|StoreManager\\.shared|AppLockManager\\.shared|KnownHostsManager\\.shared" VVTerm/App VVTerm/Core VVTerm/Features -g '*.swift'`
+  - `rg -n "Task \\{|Task\\.detached" VVTerm/App VVTerm/Core VVTerm/Features -g '*.swift'`
+  - `rg -n "dismantleNSView|dismantleUIView|onDisappear|\\.task\\(|DispatchQueue\\.main\\.async" VVTerm/App VVTerm/Core VVTerm/Features -g '*.swift'`
+  - `rg -n "libssh2_|withUnsafe|UnsafePointer|UnsafeMutablePointer|nonisolated\\(unsafe\\)|NSLock" VVTerm/Core/SSH VVTerm/Features -g '*.swift'`
+  - `for f in $(rg --files VVTermTests -g '*.swift' | sort); do if ! rg -q "Test Context:" "$f"; then echo "$f"; fi; done`
+- Read-only audit agents:
+  - TerminalSessions audit: split static teardown, split injected-manager use, rich-paste manager injection, TerminalSessions exceptions/later list.
+  - Cross-feature audit: iOS foreground reconnect, ServerConnectionTester cancellation, RemoteFiles transfer disconnect cancellation, ServerManager startup load, cross-feature exceptions/later list.
+  - Core/SSH audit: untracked SSH cleanup tasks, mosh stream teardown tracking, raw libssh2 error preservation, Core exceptions/later list.
+
+### Must-Fix Before Ready-for-Merge
+
+1. **Split static teardown manager boundary**
+   - Evidence: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift` static `dismantleNSView` still uses `TerminalTabManager.shared.paneStates`, `detachSurfaceForPaneViewDisappeared`, and `detachSurfaceForClosedPane` while `Coordinator` already stores `tabManager`.
+   - Required fix: mirror Task 76 for split panes by routing static teardown through `coordinator.tabManager` and add source-boundary coverage.
+
+2. **Split terminal UI injected-manager boundary**
+   - Evidence: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift` still uses `TerminalTabManager.shared` for focused terminal lookup, tmux install/disable, host retrust, auto-reconnect, retry, credential load, watchdog, and mosh install even though the view has an injected `tabManager`.
+   - Required fix: route these split UI intent helpers through the injected manager and update source-boundary tests that still expect `.shared`.
+
+3. **Rich paste runtime manager injection**
+   - Evidence: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift` still resolves `ConnectionSessionManager.shared` / `TerminalTabManager.shared` inside rich-paste runtime factories for upload and clipboard paste actions.
+   - Required fix: inject the root/split manager into `TerminalRichPasteRuntime` construction and keep upload lifecycle in the existing manager-owned request APIs.
+
+4. **iOS foreground reconnect request tracking**
+   - Evidence: `VVTerm/App/iOS/iOSContentView.swift` starts an untracked `Task` in the foreground reconnect helper called from `onAppear`, scene changes, and selected-session changes.
+   - Required fix: move this behind an app/session lifecycle request API with tracked request ID/task, or make the existing application owner expose equivalent awaitable request tracking.
+
+5. **Server connection-test cancellation and stale callbacks**
+   - Evidence: `VVTerm/Features/Servers/Application/ServerConnectionTester.swift` stores request tasks and exposes wait, but `VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift` starts tests without retaining/canceling the request; field changes reset UI state only.
+   - Required fix: add cancellation/supersede semantics and stale-callback guards so changed form input cannot receive an old connection-test result.
+
+6. **RemoteFiles transfer/mutation cancellation on disconnect**
+   - Evidence: `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift` stores remote operation requests, but `disconnect(serverId:)` cancels navigation/preview/move state only before closing the adapter; UI transfer calls ignore request IDs.
+   - Required fix: expose cancel APIs for active transfer/mutation requests, cancel same-server operations on disconnect/close, and add ordering tests.
+
+7. **ServerManager startup load tracking**
+   - Evidence: `VVTerm/Features/Servers/Application/ServerManager.swift` starts `Task { await loadData() }` from init without storing or returning the task.
+   - Required fix: store/return the startup load task or move startup load into an application lifecycle coordinator so startup load ordering is observable and awaitable.
+
+8. **SSHClient untracked channel cleanup tasks**
+   - Evidence: `VVTerm/Core/SSH/SSHClient.swift` uses untracked `Task {}` from stream termination / exec cancellation paths that eventually close/free libssh2 channels.
+   - Required fix: track these cleanup tasks in the owning `SSHClient` / runtime or make later disconnect/close paths await them.
+
+9. **SSHClient mosh stream teardown tracking**
+   - Evidence: `VVTerm/Core/SSH/SSHClient.swift` mosh stream termination cancels the stream task and starts untracked shell teardown, which can stop a live `MoshClientSession`.
+   - Required fix: track/await this teardown from the owning `SSHClient` / runtime before merge.
+
+10. **SSH exec/upload raw libssh2 error preservation**
+    - Evidence: `VVTerm/Core/SSH/SSHClient.swift` still collapses non-EAGAIN exec channel open/startup/write and upload close/wait errors to generic errors after reading or encountering raw libssh2 state.
+    - Required fix: preserve/log `LibSSH2RawError` before translation on these exec/upload paths.
+
+### Accepted Exceptions For This Branch
+
+- Manager-created shell runner detached tasks in `ConnectionSessionManager` / `TerminalTabManager` are application-owned and tracked by `TerminalConnectionRuntime`; close paths cancel and await them.
+- UI-only timed presentation tasks are accepted when they do not own SSH/session/file/auth/persistence lifecycle, including terminal mosh fallback banner sleep and rich-paste banner dismissal.
+- App lifecycle coordinators are accepted as the application boundary for app termination/background/sync/disconnect work when they store tasks and expose wait/cancel behavior.
+- Stats UI may call start/stop intent from appearance/visibility because `ServerStatsCollector` owns the lease task and serializes stop/start.
+- RemoteFiles preview/navigation `.task` usage is accepted when it only sends intent into tracked store/coordinator requests.
+- Display-only `connectionState` reads are accepted when they do not decide open/close/reconnect lifecycle.
+- `SSHAuthenticationGate` and `RemoteConnectionLease` actor-hop `Task {}` cancellation handlers are accepted if their cancellation suites stay green.
+- `NetworkMonitor`, `NoticeHost`, and stored `CloudKitManager` tasks are accepted as stable Core/UI/coalesced-operation owners, not teardown-critical fire-and-forget.
+- Low-level SSH shell runner, libssh2 driver, and process-global locks remain accepted low-level infrastructure boundaries when pointer lifetimes are local and cleanup paths are explicit.
+- Test context coverage is accepted: the audit found no Swift test file missing `Test Context:`.
+
+### Later, Not Merge-Blocking
+
+- Normalize remaining root `TerminalContainerView` direct `ConnectionSessionManager.shared` calls to its `sessionManager` field. This is a consistency cleanup because Task 75 tests currently accept the screen-boundary singleton holder.
+- Move terminal title/PWD metadata callback installation fully into manager-owned surface/runtime APIs. Current callbacks synchronously report metadata intent and do not own transport lifecycle.
+- Inject dependencies into shared/leaf UI that still observes app singletons directly, including `Core/UI/SidebarComponents`, Settings leaf views, and VoiceInput settings leaf views.
+- Replace cross-feature Pro entitlement singleton reads with an injected entitlement/pro-limit provider in Servers, RemoteFiles, and TerminalAccessories application code.
+- Document or serialize `KeychainStore` / SecItem thread-safety invariants for Cloudflare/device identity users.
+- Normalize older test context prose to explicit `Protected behavior` / `Target invariant` / `Fake assumptions` labels opportunistically.
+- Ghostty config reload, theme/background parsing, analytics fire-and-forget, and presentation timing dispatches are later UI/app polish unless a concrete lifecycle failure appears.
+
+### Ready-For-Merge Gate
+
+Before this branch is considered ready for merge:
+- Every Must-Fix item above must have a focused RED/GREEN test or documented reason why source-boundary coverage is the feasible regression test.
+- Every Must-Fix implementation task must pass its focused suite, `git diff --check`, and iOS `build-for-testing` with `ENABLE_DEBUG_DYLIB=NO`.
+- A final source scan must confirm no unresolved Must-Fix evidence remains.
+- A final code review must report no Critical or Important findings against the remaining diff.
+
 ## Progress Ledger
 
 - 2026-06-21: Task 76 RED/GREEN completed with independent static lifecycle review from review agent Plato; no Critical, Important, or Minor findings were reported. `SSHTerminalWrapper` root static teardown now uses the Task 75 coordinator's injected `sessionManager` for session liveness checks, `detachSurfaceForViewDisappeared(from:)`, and `handleClosedSessionSurfaceTeardown(...)` on both macOS and iOS. Static teardown still only pauses/resigns UI surface state locally and delegates lifecycle cleanup intent to the TerminalSessions Application owner; no new lifecycle task or behavior change was introduced. Initial RED failed as expected with 8 source-boundary issues because both static teardown functions still used `ConnectionSessionManager.shared` and lacked `coordinator.sessionManager.*` calls. GREEN focused verification passed 2 Swift Testing tests in `TerminalRootStaticTeardownBoundaryTests`; source scan showed root static teardown uses `coordinator.sessionManager.*` and no `ConnectionSessionManager.shared` remains in `SSHTerminalWrapper.swift`. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Per the updated project objective, after Task 76 the next step is not another ordinary lifecycle slice; run a global closure audit, freeze remaining lifecycle/architecture/test-context issues into must-fix / accepted-exception / later, write that finite scope into this plan, then execute only must-fix items to ready-for-merge.
