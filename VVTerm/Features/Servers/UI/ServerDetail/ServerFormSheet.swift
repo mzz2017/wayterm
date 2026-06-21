@@ -125,6 +125,7 @@ struct ServerFormCredentialBuilder {
 struct ServerFormSheet: View {
     @ObservedObject var serverManager: ServerManager
     @ObservedObject private var storeManager = StoreManager.shared
+    @ObservedObject private var sshKeyStore = SSHKeySettingsStore.shared
     @EnvironmentObject private var appLockManager: AppLockManager
     let workspace: Workspace?
     let server: Server?
@@ -369,99 +370,23 @@ struct ServerFormSheet: View {
         #endif
         .interactiveDismissDisabled(isSaving)
         .task {
-            storedKeys = KeychainManager.shared.getStoredSSHKeys()
-
-            // Load credentials from keychain when editing
-            guard let server = server else { return }
-            isLoadingCredentials = true
-            defer { isLoadingCredentials = false }
-
-            do {
-                let credentials = try KeychainManager.shared.getCredentials(for: server)
-
-                if server.connectionMode != .tailscale {
-                    switch server.authMethod {
-                    case .password:
-                        if let pwd = credentials.password {
-                            password = pwd
-                        }
-                    case .sshKey:
-                        if let keyData = credentials.privateKey,
-                           let keyString = String(data: keyData, encoding: .utf8) {
-                            sshKey = keyString
-                        }
-                    case .sshKeyWithPassphrase:
-                        if let keyData = credentials.privateKey,
-                           let keyString = String(data: keyData, encoding: .utf8) {
-                            sshKey = keyString
-                        }
-                        if let phrase = credentials.passphrase {
-                            sshPassphrase = phrase
-                        }
-                    }
-                }
-                if let publicKeyData = credentials.publicKey,
-                   let publicKeyString = String(data: publicKeyData, encoding: .utf8) {
-                    sshPublicKey = publicKeyString
-                } else {
-                    sshPublicKey = ""
-                }
-
-                cloudflareClientID = credentials.cloudflareClientID ?? ""
-                cloudflareClientSecret = credentials.cloudflareClientSecret ?? ""
-                selectMatchingStoredKeyIfAvailable()
-            } catch {
-                self.error = String(format: String(localized: "Failed to load credentials: %@"), error.localizedDescription)
-            }
-
+            await loadInitialFormData()
         }
         #if os(iOS)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .disabled(isSaving)
-                        .tint(.secondary)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        saveServer()
-                    } label: {
-                        if isSaving {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Text(isEditing ? String(localized: "Save") : String(localized: "Add"))
-                        }
-                    }
-                    .disabled(saveButtonDisabled)
-                }
-            }
+            .toolbar { serverFormToolbar }
         #endif
             .sheet(isPresented: $showingAddKeySheet) {
-                AddSSHKeySheet(onSave: { entry in
-                    storedKeys = KeychainManager.shared.getStoredSSHKeys()
-                    selectedStoredKey = entry
-                    loadStoredKey(entry)
-                })
+                addSSHKeySheet
             }
             .sheet(isPresented: $showingCreateWorkspace) {
-                WorkspaceFormSheet(
-                    serverManager: serverManager,
-                    onSave: { workspace in
-                        selectedWorkspaceId = workspace.id
-                    }
-                )
+                createWorkspaceSheet
             }
             .sheet(isPresented: $showingLocalDiscoverySheet) {
-                LocalDeviceDiscoverySheet(manager: LocalSSHDiscoveryManager()) { discoveredHost in
-                    applyPrefill(ServerFormPrefill(discoveredHost: discoveredHost))
-                }
+                localDiscoverySheet
             }
             .limitReachedAlert(.servers, isPresented: $showingServerLimitAlert)
             .onAppear {
-                storedKeys = KeychainManager.shared.getStoredSSHKeys()
-                selectMatchingStoredKeyIfAvailable()
-                reconcileAssignmentWorkspace()
+                handleFormAppear()
             }
             .onChange(of: host) { _ in resetConnectionTestState() }
             .onChange(of: port) { _ in resetConnectionTestState() }
@@ -469,19 +394,11 @@ struct ServerFormSheet: View {
             .onChange(of: transportSelection) { _ in resetConnectionTestState() }
             .onChange(of: selectedAuthMethod) { _ in resetConnectionTestState() }
             .onChange(of: selectedWorkspaceId) { _ in
-                reconcileAssignmentWorkspace()
-                resetConnectionTestState()
+                handleWorkspaceSelectionChanged()
             }
             .onChange(of: password) { _ in resetConnectionTestState() }
             .onChange(of: sshKey) { _ in
-                if let programmaticSSHKeyValue,
-                   sshKey == programmaticSSHKeyValue {
-                    self.programmaticSSHKeyValue = nil
-                } else if !isLoadingCredentials {
-                    selectedStoredKey = nil
-                    sshPublicKey = ""
-                }
-                resetConnectionTestState()
+                handleSSHKeyChanged()
             }
             .onChange(of: sshPassphrase) { _ in resetConnectionTestState() }
             .onChange(of: sshPublicKey) { _ in resetConnectionTestState() }
@@ -490,6 +407,128 @@ struct ServerFormSheet: View {
             .onChange(of: cloudflareClientSecret) { _ in resetConnectionTestState() }
             .onChange(of: cloudflareTeamDomainOverride) { _ in resetConnectionTestState() }
     }
+
+    private var addSSHKeySheet: some View {
+        AddSSHKeySheet(keyStore: sshKeyStore, onSave: handleStoredKeyAdded)
+    }
+
+    private var createWorkspaceSheet: some View {
+        WorkspaceFormSheet(
+            serverManager: serverManager,
+            onSave: { workspace in
+                selectedWorkspaceId = workspace.id
+            }
+        )
+    }
+
+    private var localDiscoverySheet: some View {
+        LocalDeviceDiscoverySheet(manager: LocalSSHDiscoveryManager()) { discoveredHost in
+            applyPrefill(ServerFormPrefill(discoveredHost: discoveredHost))
+        }
+    }
+
+    private func loadInitialFormData() async {
+        storedKeys = KeychainManager.shared.getStoredSSHKeys()
+
+        // Load credentials from keychain when editing.
+        guard let server = server else { return }
+        isLoadingCredentials = true
+        defer { isLoadingCredentials = false }
+
+        do {
+            let credentials = try KeychainManager.shared.getCredentials(for: server)
+            applyLoadedCredentials(credentials, for: server)
+            selectMatchingStoredKeyIfAvailable()
+        } catch {
+            self.error = String(format: String(localized: "Failed to load credentials: %@"), error.localizedDescription)
+        }
+    }
+
+    private func applyLoadedCredentials(_ credentials: ServerCredentials, for server: Server) {
+        if server.connectionMode != .tailscale {
+            switch server.authMethod {
+            case .password:
+                if let pwd = credentials.password {
+                    password = pwd
+                }
+            case .sshKey:
+                if let keyData = credentials.privateKey,
+                   let keyString = String(data: keyData, encoding: .utf8) {
+                    sshKey = keyString
+                }
+            case .sshKeyWithPassphrase:
+                if let keyData = credentials.privateKey,
+                   let keyString = String(data: keyData, encoding: .utf8) {
+                    sshKey = keyString
+                }
+                if let phrase = credentials.passphrase {
+                    sshPassphrase = phrase
+                }
+            }
+        }
+
+        if let publicKeyData = credentials.publicKey,
+           let publicKeyString = String(data: publicKeyData, encoding: .utf8) {
+            sshPublicKey = publicKeyString
+        } else {
+            sshPublicKey = ""
+        }
+
+        cloudflareClientID = credentials.cloudflareClientID ?? ""
+        cloudflareClientSecret = credentials.cloudflareClientSecret ?? ""
+    }
+
+    private func handleStoredKeyAdded(_ entry: SSHKeyEntry) {
+        storedKeys = KeychainManager.shared.getStoredSSHKeys()
+        selectedStoredKey = entry
+        loadStoredKey(entry)
+    }
+
+    private func handleFormAppear() {
+        storedKeys = KeychainManager.shared.getStoredSSHKeys()
+        selectMatchingStoredKeyIfAvailable()
+        reconcileAssignmentWorkspace()
+    }
+
+    private func handleWorkspaceSelectionChanged() {
+        reconcileAssignmentWorkspace()
+        resetConnectionTestState()
+    }
+
+    private func handleSSHKeyChanged() {
+        if let programmaticSSHKeyValue,
+           sshKey == programmaticSSHKeyValue {
+            self.programmaticSSHKeyValue = nil
+        } else if !isLoadingCredentials {
+            selectedStoredKey = nil
+            sshPublicKey = ""
+        }
+        resetConnectionTestState()
+    }
+
+    #if os(iOS)
+    @ToolbarContentBuilder
+    private var serverFormToolbar: some ToolbarContent {
+        ToolbarItem(placement: .cancellationAction) {
+            Button("Cancel") { dismiss() }
+                .disabled(isSaving)
+                .tint(.secondary)
+        }
+        ToolbarItem(placement: .confirmationAction) {
+            Button {
+                saveServer()
+            } label: {
+                if isSaving {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Text(isEditing ? String(localized: "Save") : String(localized: "Add"))
+                }
+            }
+            .disabled(saveButtonDisabled)
+        }
+    }
+    #endif
 
     #if os(macOS)
     private var macActionRow: some View {

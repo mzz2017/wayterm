@@ -9,22 +9,21 @@ import AppKit
 // MARK: - Keychain Settings View
 
 struct KeychainSettingsView: View {
-    @State private var storedKeys: [SSHKeyEntry] = []
+    @ObservedObject private var keyStore = SSHKeySettingsStore.shared
     @State private var showingAddKey = false
     @State private var showingGenerateKey = false
     @State private var showingDeleteConfirmation = false
     @State private var keyToDelete: SSHKeyEntry?
     @State private var keyToShowDetails: SSHKeyEntry?
-    @State private var error: String?
 
     var body: some View {
         Group {
-            if storedKeys.isEmpty {
+            if keyStore.storedKeys.isEmpty {
                 emptyKeysView
             } else {
                 Form {
                     Section {
-                        ForEach(storedKeys) { key in
+                        ForEach(keyStore.storedKeys) { key in
                             HStack(spacing: 8) {
                                 Button {
                                     keyToShowDetails = key
@@ -52,7 +51,7 @@ struct KeychainSettingsView: View {
                         Text("Keys are stored securely in your device's Keychain. Passphrases are stored separately.")
                     }
 
-                    if let error = error {
+                    if let error = keyStore.errorMessage {
                         Section {
                             HStack {
                                 Image(systemName: "exclamationmark.triangle.fill")
@@ -85,16 +84,16 @@ struct KeychainSettingsView: View {
             }
         }
         .onAppear {
-            loadKeys()
+            keyStore.loadKeys()
         }
         .sheet(isPresented: $showingAddKey) {
-            AddSSHKeySheet(onSave: { _ in
-                loadKeys()
+            AddSSHKeySheet(keyStore: keyStore, onSave: { _ in
+                keyStore.loadKeys()
             })
         }
         .sheet(isPresented: $showingGenerateKey) {
-            GenerateSSHKeySheet(onSave: { entry in
-                loadKeys()
+            GenerateSSHKeySheet(keyStore: keyStore, onSave: { entry in
+                keyStore.loadKeys()
                 keyToShowDetails = entry
             })
         }
@@ -151,18 +150,8 @@ struct KeychainSettingsView: View {
         }
     }
 
-    private func loadKeys() {
-        storedKeys = KeychainManager.shared.getStoredSSHKeys()
-    }
-
     private func deleteKey(_ key: SSHKeyEntry) {
-        do {
-            try KeychainManager.shared.deleteStoredSSHKey(key.id)
-            loadKeys()
-            error = nil
-        } catch {
-            self.error = String(format: String(localized: "Failed to delete key: %@"), error.localizedDescription)
-        }
+        keyStore.deleteKey(key)
     }
 
     private func copyToClipboard(_ text: String) {
@@ -275,6 +264,7 @@ private struct SSHKeyRow: View {
 // MARK: - Add SSH Key Sheet
 
 struct AddSSHKeySheet: View {
+    @ObservedObject var keyStore: SSHKeySettingsStore
     let onSave: (SSHKeyEntry) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -415,27 +405,16 @@ struct AddSSHKeySheet: View {
         isSaving = true
         error = nil
 
-        guard let keyData = keyContent.data(using: .utf8) else {
-            error = String(localized: "Failed to encode key data")
-            isSaving = false
-            return
-        }
-
         do {
-            let derivedPublicKey = SSHPublicKeyDeriver.publicKey(
-                fromPrivateKeyPEM: keyContent,
-                passphrase: passphrase.isEmpty ? nil : passphrase
-            )
-            let entry = try KeychainManager.shared.storeSSHKeyEntry(
+            let entry = try keyStore.importKey(
                 name: name,
-                privateKey: keyData,
-                passphrase: passphrase.isEmpty ? nil : passphrase,
-                publicKey: derivedPublicKey
+                privateKeyPEM: keyContent,
+                passphrase: passphrase
             )
             onSave(entry)
             dismiss()
         } catch {
-            self.error = String(format: String(localized: "Failed to save key: %@"), error.localizedDescription)
+            self.error = keyStore.errorMessage ?? String(format: String(localized: "Failed to save key: %@"), error.localizedDescription)
             isSaving = false
         }
     }
@@ -444,6 +423,7 @@ struct AddSSHKeySheet: View {
 // MARK: - Generate SSH Key Sheet
 
 struct GenerateSSHKeySheet: View {
+    @ObservedObject var keyStore: SSHKeySettingsStore
     let onSave: (SSHKeyEntry) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -524,29 +504,20 @@ struct GenerateSSHKeySheet: View {
         isGenerating = true
         error = nil
 
-        Task {
-            do {
-                let comment = name.replacingOccurrences(of: " ", with: "_")
-                let key = try SSHKeyGenerator.generate(type: keyType, comment: comment)
-                let entry = try KeychainManager.shared.storeSSHKeyEntry(
-                    name: name,
-                    privateKey: key.privateKey,
-                    passphrase: passphrase.isEmpty ? nil : passphrase,
-                    keyType: key.keyType,
-                    publicKey: key.publicKey
-                )
-                await MainActor.run {
-                    self.isGenerating = false
-                    onSave(entry)
-                    dismiss()
-                }
-            } catch {
-                await MainActor.run {
-                    self.error = String(format: String(localized: "Failed to generate key: %@"), error.localizedDescription)
-                    self.isGenerating = false
-                }
+        keyStore.generateKey(
+            name: name,
+            type: keyType,
+            passphrase: passphrase,
+            onSaved: { entry in
+                isGenerating = false
+                onSave(entry)
+                dismiss()
+            },
+            onFailed: { message in
+                error = message
+                isGenerating = false
             }
-        }
+        )
     }
 }
 

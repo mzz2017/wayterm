@@ -6,7 +6,8 @@ import Testing
 // persistence and cleanup actions. Settings views may send user intent, but they
 // must not own destructive cleanup tasks or call lower-level stores directly.
 // The tests inspect source placement only; update them only when the trusted
-// host settings owner intentionally moves to a different application-layer type.
+// host or reusable SSH key settings owner intentionally moves to another
+// application-layer type.
 @Suite
 struct SettingsLifecycleBoundaryTests {
     @Test
@@ -26,6 +27,30 @@ struct SettingsLifecycleBoundaryTests {
         #expect(
             !source.contains("knownHostsTask"),
             "TerminalSettingsView should not own trusted-host refresh/reset Task state."
+        )
+    }
+
+    @Test
+    func keychainSettingsDelegatesSSHKeyLibraryLifecycleToApplicationStore() throws {
+        // Given the SSH key settings SwiftUI source.
+        let root = try sourceRoot()
+        let source = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/UI/KeychainSettingsView.swift")
+        )
+
+        // Then the view must send intent to a Settings application store rather
+        // than directly touching Keychain, generating keys, or owning key tasks.
+        #expect(
+            !source.contains("KeychainManager.shared"),
+            "KeychainSettingsView should call SSHKeySettingsStore instead of KeychainManager.shared."
+        )
+        #expect(
+            !source.contains("SSHKeyGenerator.generate"),
+            "KeychainSettingsView should delegate SSH key generation to the application store."
+        )
+        #expect(
+            !source.contains("Task {"),
+            "KeychainSettingsView should not own SSH key generation Task state."
         )
     }
 
