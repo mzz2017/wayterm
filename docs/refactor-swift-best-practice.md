@@ -4981,8 +4981,99 @@ Before review, verify request API names match existing `requestSessionRetry`, `r
 
 Request code review for Task 65. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
+## Task 66: RemoteFiles Navigation Intent Boundary
+
+**Files:**
+- Modify: `VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
+- Create: `VVTermTests/RemoteFileNavigationIntentBoundaryTests.swift`
+- Modify: `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
+- Modify: `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift`
+- Modify: `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserIOSScreen.swift`
+- Modify: `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing low-level RemoteFiles helpers: `loadInitialPath(for:server:tab:initialPath:)`, `refresh(server:tab:)`, `goUp(in:server:)`, `openBreadcrumb(_:in:server:)`, `openDirectory(_:in:server:)`, and `activate(_:in:server:)`.
+  - Existing directory stale-result guard: `directoryRequestIDs`.
+  - Existing runtime cleanup paths: `clearViewer(for:)`, `loadDirectory(path:in:server:)`, `removeRuntimeState(for:)`, and `disconnect(serverId:)`.
+- Produces:
+  - A RemoteFiles Application request boundary for directory navigation and entry activation, using names that match the existing `requestMutation`, `requestTransfer`, `requestPreviewLoad`, and `requestTextPreviewSave` style.
+  - A request action/result model that keeps UI callbacks presentation-only. The action model should cover initial directory load, refresh, go up, breadcrumb open, directory open, and entry activation. The result model should let iOS preview presentation distinguish file selection from directory navigation without reaching back into async work.
+  - Pending navigation request IDs and `waitFor...` hooks for lifecycle ordering tests.
+
+- [ ] **Step 1: Add RED navigation request and boundary tests**
+
+Extend `RemoteFileBrowserStoreTests`:
+- an initial directory load request stays pending while the fake directory snapshot is blocked, then applies the loaded directory and clears after release;
+- a new navigation request for the same tab cancels/unpublishes the previous visible request, remains awaitable until the blocked fake exits, and prevents the stale result from overwriting the latest directory state;
+- `removeRuntimeState(for:)` cancels/unpublishes pending navigation for the tab while keeping the request wait hook awaitable until the fake exits;
+- `disconnect(serverId:)` cancels/unpublishes pending navigation for affected tabs before scheduling remote-service disconnect;
+- entry activation through the request API preserves existing symlink/file behavior and reports a presentation result that the UI can use without owning the async task.
+
+Create `RemoteFileNavigationIntentBoundaryTests`:
+- `RemoteFileBrowserScreen.swift`, `RemoteFileBrowserIOSScreen.swift`, and `RemoteFileBrowserMacScreen.swift` must call RemoteFileBrowserStore request APIs for initial load, refresh, go up, breadcrumb open, directory open, and entry activation;
+- `ConnectionTabsView.swift` must call the same request APIs for RemoteFiles toolbar and Zen controls;
+- source-boundary assertions must reject `Task { await browser.goUp(...) }`, `Task { await browser.refresh(...) }`, `Task { await browser.openDirectory(...) }`, `Task { await browser.openBreadcrumb(...) }`, `Task { await browser.activate(...) }`, direct `await browser.loadInitialPath(...)` from SwiftUI, and equivalent `fileBrowser` toolbar forms;
+- source-boundary assertions must include a `Test Context` header and Given / When / Then comments.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests -only-testing:VVTermTests/RemoteFileNavigationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails to compile because the navigation request API, pending request IDs, request result model, and wait hook do not exist. If it compiles unexpectedly, the source-boundary tests fail because RemoteFiles UI still owns async navigation tasks.
+
+- [ ] **Step 2: Add tracked store-owned navigation requests**
+
+Add request bookkeeping to `RemoteFileBrowserStore`, matching the Task 64 preview-load pattern:
+- store navigation task records by request ID and index the active visible request by tab ID;
+- when a new navigation request targets the same tab, cancel/unpublish the previous visible request but keep its task record until the task exits so wait hooks remain awaitable;
+- run low-level directory navigation, initial load, and activation helpers inside the store-owned request task;
+- treat cancellation as lifecycle completion, not a user-facing directory-load failure;
+- guard all completion callbacks and state writes against canceled/stale requests and removed runtime state.
+
+- [ ] **Step 3: Wire cleanup and stale-result ordering**
+
+Update cleanup paths:
+- `removeRuntimeState(for:)` cancels and clears visible pending navigation for the tab before dropping runtime state;
+- `disconnect(serverId:)` cancels and clears visible pending navigation for every affected tab before scheduling remote-service disconnect;
+- `loadDirectory(path:in:server:)` keeps its stale-result guard aligned with request IDs so canceled or superseded tasks cannot apply payload or error state after a newer request wins;
+- `resetForTesting()` cancels and clears navigation request registries and test hooks.
+
+Do not widen this task into preview loading, transfers, downloads/share, drag/drop, file promises, preview text save, inline folder creation, rich paste upload/lease lifecycle, terminal retry, host retrust, title/PWD/background callbacks, Stats retry, Ghostty config reload, Store product reload, or AppLock server unlock.
+
+- [ ] **Step 4: Route RemoteFiles and tab chrome UI through request APIs**
+
+Update RemoteFiles UI:
+- `RemoteFileBrowserScreen` sends initial directory load, directory open, and entry activation intent through request APIs and uses only completion results for presentation state such as iOS preview presentation;
+- `RemoteFileBrowserIOSScreen` sends refresh, go up, and entry activation intent through request APIs;
+- `RemoteFileBrowserMacScreen` sends breadcrumb and directory-open intent through request APIs;
+- `ConnectionTabsView` toolbar and Zen RemoteFiles controls send go-up and refresh intent through request APIs.
+
+- [ ] **Step 5: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests -only-testing:VVTermTests/RemoteFileNavigationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "request.*Navigation|request.*Activation|request.*Directory|Task \\{ await (browser|fileBrowser)\\.(goUp|refresh|openDirectory|openBreadcrumb|activate)|await (browser|fileBrowser)\\.(loadInitialPath|goUp|refresh|openDirectory|openBreadcrumb|activate)" VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserIOSScreen.swift VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows UI calls RemoteFileBrowserStore request APIs and no UI-owned RemoteFiles navigation task or direct SwiftUI await remains; any remaining low-level navigation helper calls are inside `RemoteFileBrowserStore` or tests.
+
+- [ ] **Step 6: API and boundary cleanup**
+
+Before review, verify request API names match existing RemoteFiles request style; UI supplies only navigation intent plus presentation callbacks; the store owns request tracking, cancellation, duplicate/stale ordering, low-level directory loading, and activation ordering; cleanup paths drain new request state; touched tests include the required Test Context and Given / When / Then comments.
+
+- [ ] **Step 7: Request review and commit**
+
+Request code review for Task 66. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-65 scan selected Task 66 as the next executable lifecycle slice after local source scans and two read-only explorer reviews. The non-Terminal explorer recommended RemoteFiles directory navigation/activation because `RemoteFileBrowserScreen`, `RemoteFileBrowserIOSScreen`, `RemoteFileBrowserMacScreen`, and `ConnectionTabsView` still wrap initial load, refresh, go up, breadcrumb open, directory open, and entry activation in SwiftUI-owned async work while `RemoteFileBrowserStore` already owns the lower-level stale-result guard. The Terminal explorer recommended rich paste upload/lease lifecycle as the highest-risk remaining TerminalSessions slice, but that is deferred so Task 66 can complete a cohesive RemoteFiles request boundary after Task 64's preview-load boundary and Task 65's Terminal credential-load boundary. Stats retry, AppLock server unlock, iOS active-connection open orchestration, Ghostty config reload, Store product reload, terminal retry, host retrust, rich paste upload/lease lifecycle, and title/PWD/background callbacks remain deferred.
 - 2026-06-21: Task 65 RED/GREEN completed with review fix. `TerminalContainerView` and split `TerminalView` no longer directly await manager `loadCredentials(for:)` from SwiftUI credential-load paths; they synchronously send intent to `ConnectionSessionManager.requestSessionCredentialLoad(...)` and `TerminalTabManager.requestPaneCredentialLoad(...)`, then update only presentation `@State` from callbacks guarded by current server/pane identity. The managers now own tracked credential-load request tasks, duplicate same-session/pane coalescing, pending request IDs, wait hooks, close/reset cancellation, stale completion guards, and keep cancellation from surfacing as a user-facing credential failure. Initial RED failed to compile because request APIs, pending IDs, and wait hooks did not exist. Independent review found one Important issue: close cancellation removed task handles before blocked credential providers exited, so wait hooks were not truly awaitable. Follow-up RED failed two close-cancellation tests until cancellation was changed to unpublish visible pending IDs while retaining task records until task `defer` cleanup; after the fix, `ConnectionLifecycleIntegrationTests` passed 92 Swift Testing tests. Final focused verification passed `ConnectionLifecycleIntegrationTests` plus `TerminalCredentialLoadIntentBoundaryTests` with 94 Swift Testing tests; source scan showed only UI request API calls and application-layer low-level helper calls. `git diff --check` passed. Remaining lifecycle slices for terminal retry, host retrust, rich paste upload/lease lifecycle, title/PWD/background callbacks, iOS active-connection open orchestration, RemoteFiles navigation, Stats retry, Ghostty config reload, Store product reload, and AppLock server unlock remain deferred.
 - 2026-06-21: Post-Task-64 scan selected Task 65 as the next executable lifecycle slice after two read-only explorer reviews plus local scans. The TerminalSessions explorer recommended terminal credential-load ownership as the smallest high-risk remaining terminal slice: `TerminalContainerView` starts credential loading from `.task` and `Task { await loadCredentialsIfNeeded(force:) }`, directly awaits `ConnectionSessionManager.loadCredentials(for:)`, and split `TerminalView` directly awaits `TerminalTabManager.loadCredentials(for:)` inside SwiftUI `.task` work. Credential loading reads Keychain-backed server credentials and gates terminal surface creation/reconnect, so it is more lifecycle-critical than display metadata callbacks. The non-Terminal explorer recommended RemoteFiles directory navigation/activation as a clean follow-up because UI still wraps `goUp`, `refresh`, `openDirectory`, `openBreadcrumb`, and `activate` in `Task {}`; that remains deferred to a later task. Rich paste upload/lease lifecycle, title/PWD/background callbacks, iOS active-connection open orchestration, RemoteFiles navigation, Stats retry, Ghostty config reload, Store product reload, and AppLock server unlock are explicitly out of Task 65.
 - 2026-06-21: Task 64 RED/GREEN completed with review fixes. Initial RED failed to compile because `RemoteFileBrowserStore.requestPreviewLoad(...)`, `pendingPreviewLoadRequestIDs`, and `waitForPreviewLoadRequest(_:)` did not exist; a review-cycle RED then reproduced missing `focus(_:in:)` cleanup. GREEN routes macOS/iOS preview callbacks through synchronous `requestPreviewLoad(...)` intent, while `RemoteFileBrowserStore` owns tracked preview-load tasks, duplicate same-tab/same-entry/same-flag coalescing, cancellation, and cleanup. Review found Critical awaitability/stale-completion gaps: cancellation removed the task handle before work exited, and canceled reads that ignored cancellation could still pass stale `viewerRequestIDs` checks. Fixes keep canceled task handles until task `defer` cleanup, unpublish only the active tab request on cancel, invalidate `viewerRequestIDs`, check `Task.isCancelled` after remote awaits and before success/error writes, remove unused request state, and reset `isLoadingViewer` during directory loads. Important review coverage gaps were closed with tests for `clearViewer(for:)`, `focus(_:in:)`, `loadDirectory(path:in:server:)`, `removeRuntimeState(for:)`, and `disconnect(serverId:)` proving visible pending state clears immediately, canceled work remains awaitable until the blocked fake read exits, and stale payload/error writes do not return. Focused GREEN verification passed 14 Swift Testing tests in 2 suites with `ENABLE_DEBUG_DYLIB=NO`; source scan and full build verification are recorded before commit.
