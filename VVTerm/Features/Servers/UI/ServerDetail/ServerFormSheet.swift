@@ -128,6 +128,7 @@ struct ServerFormSheet: View {
     @ObservedObject private var sshKeyStore = SSHKeySettingsStore.shared
     @EnvironmentObject private var appLockManager: AppLockManager
     private let credentialProvider: ServerFormCredentialProvider
+    private let connectionTester: ServerConnectionTester
     let workspace: Workspace?
     let server: Server?
     let prefill: ServerFormPrefill?
@@ -180,6 +181,7 @@ struct ServerFormSheet: View {
         server: Server? = nil,
         prefill: ServerFormPrefill? = nil,
         credentialProvider: ServerFormCredentialProvider = .shared,
+        connectionTester: ServerConnectionTester = .shared,
         onSave: @escaping (Server) -> Void
     ) {
         self.serverManager = serverManager
@@ -187,6 +189,7 @@ struct ServerFormSheet: View {
         self.server = server
         self.prefill = prefill
         self.credentialProvider = credentialProvider
+        self.connectionTester = connectionTester
         self.onSave = onSave
 
         let initialWorkspaceId = server?.workspaceId ?? workspace?.id
@@ -794,9 +797,7 @@ struct ServerFormSheet: View {
     private var connectionSection: some View {
         Section {
             Button {
-                Task {
-                    await runConnectionTest(force: true)
-                }
+                requestConnectionTest(force: true)
             } label: {
                 Text(String(localized: "Test Connection"))
                     .opacity(isTestingConnection ? 0 : 1)
@@ -1137,74 +1138,58 @@ struct ServerFormSheet: View {
         )
     }
 
-    private func runConnectionTest(force: Bool) async -> Bool {
-        let snapshot = await MainActor.run { connectionSnapshot }
-        let shouldSkip = await MainActor.run { !force && hasValidConnectionTest }
+    private func requestConnectionTest(force: Bool) {
+        let snapshot = connectionSnapshot
+        let shouldSkip = !force && hasValidConnectionTest
         if shouldSkip {
-            return true
+            return
         }
 
-        let (testServer, credentials) = await MainActor.run { () -> (Server, ServerCredentials) in
-            isTestingConnection = true
-            connectionTestError = nil
-            connectionTestSucceeded = false
+        isTestingConnection = true
+        connectionTestError = nil
+        connectionTestSucceeded = false
 
-            let serverId = server?.id ?? UUID()
-            let server = buildServer(id: serverId, createdAt: server?.createdAt ?? Date())
-            let credentials = buildCredentials(for: serverId)
-            return (server, credentials)
-        }
+        let serverId = server?.id ?? UUID()
+        let testServer = buildServer(id: serverId, createdAt: server?.createdAt ?? Date())
+        let credentials = buildCredentials(for: serverId)
 
-        let result = await Task.detached(priority: .userInitiated) { () -> Result<Void, Error> in
-            do {
-                try await SSHConnectionOperationService.shared.withTemporaryConnection(
-                    server: testServer,
-                    credentials: credentials
-                ) { client in
-                    if testServer.connectionMode == .mosh {
-                        _ = try await RemoteMoshManager.shared.bootstrapConnectInfo(
-                            using: client,
-                            startCommand: "exec true",
-                            portRange: 60001...61000
-                        )
-                    }
-                }
-                return .success(())
-            } catch {
-                return .failure(error)
-            }
-        }.value
-
-        var success = false
-        await MainActor.run {
-            isTestingConnection = false
-            lastTestSnapshot = snapshot
-
-            switch result {
-            case .success:
+        connectionTester.requestConnectionTest(
+            server: testServer,
+            credentials: credentials,
+            onSucceeded: {
+                lastTestSnapshot = snapshot
                 connectionTestSucceeded = true
-                success = true
-            case .failure(let error):
-                let baseMessage = error.localizedDescription
-                if testServer.connectionMode == .tailscale {
-                    let reminder = String(localized: "This app currently supports direct tailnet connections only (no userspace proxy fallback).")
-                    if baseMessage.contains(reminder) {
-                        connectionTestError = baseMessage
-                    } else {
-                        connectionTestError = "\(baseMessage)\n\(reminder)"
-                    }
-                } else {
-                    connectionTestError = baseMessage
-                }
-                if let sshError = error as? SSHError, case .cloudflareConfigurationRequired = sshError {
-                    showCloudflareOverrides = true
-                }
-                connectionTestSucceeded = false
-                success = false
+            },
+            onFailed: { error in
+                applyConnectionTestFailure(error, testServer: testServer, snapshot: snapshot)
+            },
+            onCompleted: {
+                isTestingConnection = false
             }
-        }
+        )
+    }
 
-        return success
+    private func applyConnectionTestFailure(
+        _ error: Error,
+        testServer: Server,
+        snapshot: ConnectionTestSnapshot
+    ) {
+        lastTestSnapshot = snapshot
+        let baseMessage = error.localizedDescription
+        if testServer.connectionMode == .tailscale {
+            let reminder = String(localized: "This app currently supports direct tailnet connections only (no userspace proxy fallback).")
+            if baseMessage.contains(reminder) {
+                connectionTestError = baseMessage
+            } else {
+                connectionTestError = "\(baseMessage)\n\(reminder)"
+            }
+        } else {
+            connectionTestError = baseMessage
+        }
+        if let sshError = error as? SSHError, case .cloudflareConfigurationRequired = sshError {
+            showCloudflareOverrides = true
+        }
+        connectionTestSucceeded = false
     }
 
     private func saveServer() {

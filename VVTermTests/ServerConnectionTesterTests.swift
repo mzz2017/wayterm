@@ -1,0 +1,205 @@
+import Foundation
+import Testing
+@testable import VVTerm
+
+// Test Context:
+// These tests protect the Servers application-layer owner for user-initiated
+// connection tests from ServerFormSheet. Connection tests create temporary SSH
+// transports and may run mosh bootstrap probes, so SwiftUI may build the draft
+// server and credentials but must not own the async task or touch Core SSH
+// services directly. Fakes keep all network work in memory; update this context
+// only when server-form connection-test ownership intentionally moves to
+// another application-layer owner.
+@Suite(.serialized)
+@MainActor
+struct ServerConnectionTesterTests {
+    @Test
+    func connectionTestRequestTracksSuccessAndClearsPendingTask() async {
+        // Given an application-layer connection tester backed by a delayed fake.
+        let fake = DelayedServerConnectionTesting()
+        let tester = ServerConnectionTester(connectionTesting: fake)
+        let server = makeServer(host: "success.example.com")
+        let credentials = ServerCredentials(serverId: server.id)
+        var didSucceed = false
+        var failure: Error?
+
+        // When UI sends connection-test intent.
+        let requestID = tester.requestConnectionTest(
+            server: server,
+            credentials: credentials,
+            onSucceeded: { didSucceed = true },
+            onFailed: { failure = $0 }
+        )
+
+        // Then the request remains tracked until the application-layer tester
+        // finishes the temporary connection check.
+        #expect(
+            tester.pendingConnectionTestRequestIDs.contains(requestID),
+            "Connection tests should be tracked while temporary SSH work is in flight."
+        )
+        await fake.waitUntilStarted()
+        #expect(fake.requests.map(\.server.id) == [server.id])
+
+        fake.finish()
+        await tester.waitForConnectionTestRequest(requestID)
+
+        #expect(!tester.pendingConnectionTestRequestIDs.contains(requestID))
+        #expect(didSucceed)
+        #expect(failure == nil)
+        #expect(tester.connectionTestFailure == nil)
+    }
+
+    @Test
+    func connectionTestRequestRecordsOrdinaryFailureAndSkipsSuccess() async {
+        // Given a temporary connection check that fails before authentication
+        // completes.
+        let fake = DelayedServerConnectionTesting()
+        let tester = ServerConnectionTester(connectionTesting: fake)
+        let server = makeServer(host: "failure.example.com")
+        let credentials = ServerCredentials(serverId: server.id)
+        var didSucceed = false
+        var failure: Error?
+
+        // When UI sends connection-test intent.
+        let requestID = tester.requestConnectionTest(
+            server: server,
+            credentials: credentials,
+            onSucceeded: { didSucceed = true },
+            onFailed: { failure = $0 }
+        )
+        await fake.waitUntilStarted()
+        fake.finish(error: FakeConnectionTestError.rejected)
+        await tester.waitForConnectionTestRequest(requestID)
+
+        // Then failure remains distinguishable to the form and success is not
+        // called as if the temporary connection had succeeded.
+        #expect(!tester.pendingConnectionTestRequestIDs.contains(requestID))
+        #expect(!didSucceed)
+        #expect(failure is FakeConnectionTestError)
+        #expect(tester.connectionTestFailure?.operation == .testConnection(server.id))
+        #expect(tester.connectionTestFailure?.message.contains("rejected") == true)
+    }
+
+    @Test
+    func connectionTestRequestTreatsCancellationAsCompletionWithoutFailure() async {
+        // Given a temporary connection check cancelled by lifecycle teardown.
+        let fake = DelayedServerConnectionTesting()
+        let tester = ServerConnectionTester(connectionTesting: fake)
+        let server = makeServer(host: "cancelled.example.com")
+        let credentials = ServerCredentials(serverId: server.id)
+        var didSucceed = false
+        var failure: Error?
+        var didComplete = false
+
+        // When the connection-test owner observes cancellation.
+        let requestID = tester.requestConnectionTest(
+            server: server,
+            credentials: credentials,
+            onSucceeded: { didSucceed = true },
+            onFailed: { failure = $0 },
+            onCompleted: { didComplete = true }
+        )
+        await fake.waitUntilStarted()
+        fake.finish(error: CancellationError())
+        await tester.waitForConnectionTestRequest(requestID)
+
+        // Then cancellation remains non-failure lifecycle state, while UI still
+        // gets a completion signal to clear transient testing state.
+        #expect(!tester.pendingConnectionTestRequestIDs.contains(requestID))
+        #expect(!didSucceed)
+        #expect(failure == nil)
+        #expect(didComplete)
+        #expect(tester.connectionTestFailure == nil)
+    }
+
+    @Test
+    func connectionTestRequestPassesMoshServerToInjectedTester() async {
+        // Given a mosh-mode server draft and fake tester.
+        let fake = DelayedServerConnectionTesting()
+        let tester = ServerConnectionTester(connectionTesting: fake)
+        let server = makeServer(host: "mosh.example.com", connectionMode: .mosh)
+        let credentials = ServerCredentials(serverId: server.id)
+
+        // When the form requests a connection test.
+        let requestID = tester.requestConnectionTest(
+            server: server,
+            credentials: credentials
+        )
+        await fake.waitUntilStarted()
+        fake.finish()
+        await tester.waitForConnectionTestRequest(requestID)
+
+        // Then the application owner preserves the server mode for the injected
+        // connection-testing boundary where real mosh bootstrap probing lives.
+        #expect(fake.requests.map(\.server.connectionMode) == [.mosh])
+        #expect(fake.requests.map(\.credentials.serverId) == [server.id])
+    }
+
+    private func makeServer(
+        host: String,
+        connectionMode: SSHConnectionMode = .standard
+    ) -> Server {
+        Server(
+            id: UUID(),
+            workspaceId: UUID(),
+            name: "Tencent",
+            host: host,
+            username: "root",
+            connectionMode: connectionMode
+        )
+    }
+}
+
+@MainActor
+private final class DelayedServerConnectionTesting: ServerConnectionTesting {
+    struct Request {
+        let server: Server
+        let credentials: ServerCredentials
+    }
+
+    private(set) var requests: [Request] = []
+    private var startedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var finishContinuation: CheckedContinuation<Void, Never>?
+    private var finishError: Error?
+    private var hasStarted = false
+
+    func testConnection(server: Server, credentials: ServerCredentials) async throws {
+        requests.append(Request(server: server, credentials: credentials))
+        hasStarted = true
+        let waiters = startedWaiters
+        startedWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+
+        await withCheckedContinuation { continuation in
+            finishContinuation = continuation
+        }
+
+        if let finishError {
+            throw finishError
+        }
+    }
+
+    func waitUntilStarted() async {
+        if hasStarted {
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            startedWaiters.append(continuation)
+        }
+    }
+
+    func finish(error: Error? = nil) {
+        finishError = error
+        finishContinuation?.resume()
+        finishContinuation = nil
+    }
+}
+
+private enum FakeConnectionTestError: LocalizedError {
+    case rejected
+
+    var errorDescription: String? {
+        "connection rejected"
+    }
+}

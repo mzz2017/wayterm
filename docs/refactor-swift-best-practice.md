@@ -3793,11 +3793,11 @@ Actual review result: code review found an Important coverage gap for ordinary n
 - Produces:
   - `ServerConnectionTesting`: application-layer protocol for server form connection checks without real network in tests.
   - `ServerConnectionTestFailure`: typed diagnostic for failed user-initiated connection tests.
-  - `ServerConnectionTester.requestConnectionTest(server:credentials:onSucceeded:onFailed:)`: application-owned, tracked connection-test request API.
+  - `ServerConnectionTester.requestConnectionTest(server:credentials:onSucceeded:onFailed:onCompleted:)`: application-owned, tracked connection-test request API.
   - `ServerConnectionTester.waitForConnectionTestRequest(_:)` and `pendingConnectionTestRequestIDs` for awaitable lifecycle ordering tests.
   - `ServerFormSheet` connection-test button that synchronously sends intent to `ServerConnectionTester` instead of owning async connection-test tasks.
 
-- [ ] **Step 1: Add RED connection tester and boundary tests**
+- [x] **Step 1: Add RED connection tester and boundary tests**
 
 Add `ServerConnectionTesterTests` with a Test Context header and fake `ServerConnectionTesting` implementation. Cover success, ordinary failure, request tracking, and mosh-mode bootstrap delegation through the injected tester. Add `ServerFormConnectionTestBoundaryTests` that reads `ServerFormSheet.swift`, isolates `connectionSection` and the connection-test helper, and fails while SwiftUI owns `Task { await runConnectionTest(...) }`, uses `Task.detached`, or directly references `SSHConnectionOperationService.shared` / `RemoteMoshManager.shared`.
 
@@ -3809,15 +3809,17 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: `ServerConnectionTesterTests` fails to compile because `ServerConnectionTester`, `ServerConnectionTesting`, request IDs, await hooks, or failure state do not exist. If those compile unexpectedly, `ServerFormConnectionTestBoundaryTests` fails because `ServerFormSheet` still owns async connection-test `Task` work and directly reaches Core SSH/mosh services.
 
-- [ ] **Step 2: Add Servers Application connection-test owner**
+Actual RED result: the focused suite failed before implementation because `ServerConnectionTesting` and `ServerConnectionTester` did not exist. After review identified the cancellation completion gap, an additional RED failed with `Extra argument 'onCompleted' in call`, proving the test required a completion signal for cancellation before production code supported it.
+
+- [x] **Step 2: Add Servers Application connection-test owner**
 
 Create `ServerConnectionTester` in Servers Application. It should own a dictionary of tracked request tasks, expose pending request IDs and `waitForConnectionTestRequest(_:)`, record `ServerConnectionTestFailure`, and delegate the real connection check through `ServerConnectionTesting`. The default concrete tester should use `SSHConnectionOperationService.shared.withTemporaryConnection`; for `.mosh` servers it should also call `RemoteMoshManager.shared.bootstrapConnectInfo` with the existing `exec true` command and `60001...61000` port range. Keep cancellation distinct from ordinary failure if a request is canceled later.
 
-- [ ] **Step 3: Route ServerFormSheet connection tests through request APIs**
+- [x] **Step 3: Route ServerFormSheet connection tests through request APIs**
 
 Inject `ServerConnectionTester` into `ServerFormSheet` with `.shared` as the default. Replace the button-owned `Task` and async `runConnectionTest(force:)` body with a synchronous request helper. Preserve visible behavior: the button disables while testing, success shows the existing green footer and stores the snapshot, ordinary failures show the localized error, Tailscale failures append the existing no-userspace-proxy reminder, and Cloudflare configuration failures show override fields.
 
-- [ ] **Step 4: Run focused verification**
+- [x] **Step 4: Run focused verification**
 
 Run focused tests, scoped source scans, and `git diff --check`:
 
@@ -3828,16 +3830,23 @@ awk '/private func requestConnectionTest/,/private func saveServer/' VVTerm/Feat
 git diff --check
 ```
 
-- [ ] **Step 5: API and boundary cleanup**
+Actual GREEN result: the focused suite passed 6 Swift Testing tests in 2 suites after adding cancellation-completion coverage. Scoped scans showed the connection button now sends `requestConnectionTest(force: true)`, the form helper calls `connectionTester.requestConnectionTest(...)`, and direct `Task.detached`, `SSHConnectionOperationService.shared`, and `RemoteMoshManager.shared` hits moved out of SwiftUI into `ServerConnectionTester`. `git diff --check` passed. iOS build-for-testing passed. macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings.
+
+- [x] **Step 5: API and boundary cleanup**
 
 Before review, verify the connection-test owner lives in Servers Application, UI callbacks only update UI state after application-layer completion, request tasks clear deterministically, real network is not used by tests, the temporary SSH/mosh concrete implementation is behind a protocol, and tests include enough context to distinguish behavior regressions from intentional ownership moves.
 
-- [ ] **Step 6: Request review and commit**
+Actual cleanup result: `ServerConnectionTester` owns the tracked request task dictionary and await hooks in Servers Application; SwiftUI only builds the draft server/credentials and sends intent. Success/failure callbacks update result UI, while `onCompleted` always clears transient testing state, including cancellation. Real SSH/mosh work is behind `ServerConnectionTesting`; tests use delayed in-memory fakes with full Test Context headers. `ObservableObject` / `@Published` was intentionally not used because the form does not observe this owner.
+
+- [x] **Step 6: Request review and commit**
 
 Request code review for Task 51. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
 
+Actual review result: code review found an Important cancellation gap where `CancellationError` was swallowed by `ServerConnectionTester` without notifying `ServerFormSheet`, leaving `isTestingConnection` stuck. Added a RED cancellation test, introduced `onCompleted`, and routed the form's testing-state cleanup through that completion callback. Re-run focused tests passed 6 tests in 2 suites; source scans, `git diff --check`, iOS build-for-testing, and macOS build-for-testing passed.
+
 ## Progress Ledger
 
+- 2026-06-21: Task 51 RED/GREEN completed with review fix. `ServerFormSheet` no longer owns the Test Connection async `Task`, no longer launches `Task.detached`, and no longer directly reaches `SSHConnectionOperationService.shared` or `RemoteMoshManager.shared`; it sends synchronous intent to `ServerConnectionTester` in Servers Application. `ServerConnectionTester` owns tracked connection-test request tasks, exposes pending request IDs plus `waitForConnectionTestRequest`, records ordinary `ServerConnectionTestFailure`, preserves cancellation as lifecycle state rather than failure, and always calls `onCompleted` so SwiftUI can clear transient testing state after success, failure, or cancellation. RED first failed to compile until the connection tester/protocol existed; review-fix RED failed until `onCompleted` existed. Final focused tests passed 6 Swift Testing tests; scoped source scans showed the UI helper only delegates to `connectionTester.requestConnectionTest`; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings. Broader SwiftUI task hits in terminal, RemoteFiles, Settings, and other low-level paths remain deferred to later slices.
 - 2026-06-21: Post-Task-50 scan selected Task 51 as the next executable lifecycle slice. Current plan checkboxes were all complete, so the codebase was rescanned for SwiftUI-owned lifecycle `Task` work, direct resource/singleton calls, and stale terminal runtime state. `ServerFormSheet` connection testing is the clearest remaining Servers feature hit: the Test Connection button starts a SwiftUI-owned `Task`, `runConnectionTest(force:)` launches `Task.detached`, and the UI file directly reaches `SSHConnectionOperationService.shared` plus `RemoteMoshManager.shared`. Broader hits remain intentionally deferred for later classification, including Terminal view retry/voice lifecycle tasks, RemoteFiles navigation/preview tasks, Settings language-change task ownership, and low-level Application/Core tasks that are already tracked or need separate ownership audits.
 - 2026-06-21: Task 50 RED/GREEN completed with review fixes. `MoveServerSheet.moveServer()` no longer owns an async move `Task` or directly calls `moveServer(_:to:preferredEnvironment:)`; it sends synchronous intent to `ServerManager.requestServerMove`. `ServerManager` now owns tracked server move request tasks, exposes pending request IDs plus `waitForServerMoveRequest`, records `ServerMoveFailure`, preserves Pro-required move failures for the existing upgrade sheet, routes ordinary failures to the UI error callback, and calls success only after the existing application-layer move path updates server metadata plus workspace selection metadata. RED failed to compile until the move request APIs and failure state existed. Review found missing ordinary failure coverage and a literal source-boundary check; both were fixed, and a mutation RED proved suppressing `onFailed` breaks the ordinary failure test. Final focused tests passed 25 Swift Testing tests; a scoped `moveServer()` source scan showed only `requestServerMove` ownership; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings. Broader `Task {` hits in `ServerFormSheet.swift` are outside Task 50 and remain deferred to later slices.
 - 2026-06-21: Post-Task-49 scan selected Task 50 as the next executable lifecycle slice. Current plan checkboxes were all complete, so the codebase was rescanned for SwiftUI-owned lifecycle `Task` work, direct resource/singleton calls, and stale terminal runtime state. `MoveServerSheet.moveServer()` is the clearest remaining Servers feature hit: it starts a SwiftUI-owned `Task` and directly calls `moveServer(_:to:preferredEnvironment:)` for user-initiated server relocation. Broader hits remain intentionally deferred for later classification, including RemoteFiles preview/navigation UI tasks, terminal voice recording intent ownership, residual terminal display-state reads from `ConnectionState`, and low-level Application/Core tasks that are already tracked or need separate ownership audits.
