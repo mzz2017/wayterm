@@ -5268,8 +5268,87 @@ Request code review for Task 68. Fix Critical and Important findings, update the
 
 Review result: subagent review was not spawned because the available multi-agent tool requires explicit user authorization for subagents. Local read-only review against the Swift lifecycle checklist found no Critical or Important issues: `ServerStatsCollector` is the single owner of collection request tasks, SwiftUI only sends intent, canceled queued starts remain awaitable until exit, `startCollecting` rechecks cancellation after pending-stop waits, and tests include the required context/comments.
 
+## Task 69: Store Product Load Request Intent Boundary
+
+**Files:**
+- Modify: `VVTerm/Features/Store/Application/StoreManager.swift`
+- Modify: `VVTerm/Features/Store/UI/ProUpgradeSheet.swift`
+- Test: `VVTermTests/Features/Store/StoreManagerLifecycleTests.swift`
+- Create: `VVTermTests/StoreProductLoadIntentBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing `StoreManager.loadProducts() async`
+  - Existing `StoreManager.notePaywallPresented(source:)`
+  - Existing `ProUpgradeSheet.defaultPlan` and `selectedPlan` presentation state.
+- Produces:
+  - `StoreManager.requestProductLoad(onCompleted:) -> UUID`
+  - `StoreManager.pendingProductLoadRequestIDs`
+  - `StoreManager.waitForProductLoadRequest(_:) async`
+  - StoreManager-owned product-load request task coalescing so repeated paywall appearances do not create duplicate App Store product fetches.
+  - `ProUpgradeSheet` lifecycle hooks that synchronously send product-load intent and update `selectedPlan` from the request completion callback instead of awaiting `loadProducts()` in SwiftUI.
+
+- [ ] **Step 1: Add RED product-load lifecycle and boundary tests**
+
+Extend `StoreManagerLifecycleTests`:
+- `productLoadRequestTracksOperationUntilCompletion`: use `StoreRequestGate` and fake `loadProductsAction` to prove the request ID remains visible while product loading is blocked, then clears only after completion.
+- `duplicateProductLoadRequestsCoalesceUntilCompletion`: issue two load requests while the first fake load is blocked, expect both calls to return the same request ID, expect the fake load to run once, and expect both completion callbacks to run after the load exits.
+- `productLoadCancellationDoesNotRecordPurchaseOrRestoreFailure`: cancel a request through the testing hook, wait for it, and assert pending IDs clear without mutating purchase/restore request failures.
+
+Create `StoreProductLoadIntentBoundaryTests`:
+- scan `ProUpgradeSheet.swift`;
+- assert it does not contain `await storeManager.loadProducts()` or a SwiftUI `.task` body that directly owns product loading;
+- assert it calls `storeManager.requestProductLoad`.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/StoreManagerLifecycleTests -only-testing:VVTermTests/StoreProductLoadIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails to compile because `requestProductLoad(onCompleted:)`, `pendingProductLoadRequestIDs`, `waitForProductLoadRequest(_:)`, and the testing cancellation hook do not exist. If it compiles unexpectedly, the boundary test must fail because `ProUpgradeSheet` still directly awaits `loadProducts()`.
+
+- [ ] **Step 2: Add StoreManager-owned product-load request tracking**
+
+Update `StoreManager`:
+- add a private product-load request record containing the request ID, `Task<Void, Never>`, and completion callbacks;
+- expose `pendingProductLoadRequestIDs`;
+- implement `requestProductLoad(onCompleted:)` so the first caller creates a tracked MainActor task and duplicate callers append completion callbacks and receive the existing request ID;
+- run `loadProductsAction(self)` from the tracked task so tests keep using the existing fake seam;
+- treat cancellation as lifecycle completion, not as purchase/restore failure;
+- clear the request record only from the request task's `defer` when its request ID is still current;
+- cancel the product-load request from `deinit`.
+
+- [ ] **Step 3: Route ProUpgradeSheet through request intent**
+
+Update both iOS and macOS sheet lifecycle hooks:
+- keep `storeManager.notePaywallPresented(source:)` synchronous in UI because it records presentation state and analytics, not StoreKit product fetch ownership;
+- replace `await storeManager.loadProducts()` with `storeManager.requestProductLoad { selectedPlan = defaultPlan }`;
+- preserve the existing behavior that default plan selection is refreshed after products are loaded;
+- keep purchase, restore, alerts, and subscription-management UI unchanged.
+
+- [ ] **Step 4: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/StoreManagerLifecycleTests -only-testing:VVTermTests/StoreProductLoadIntentBoundaryTests -only-testing:VVTermTests/StorePurchaseIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "await storeManager\\.loadProducts|requestProductLoad|pendingProductLoadRequestIDs|waitForProductLoadRequest" VVTerm/Features/Store/UI/ProUpgradeSheet.swift VVTerm/Features/Store/Application/StoreManager.swift VVTermTests/Features/Store/StoreManagerLifecycleTests.swift VVTermTests/StoreProductLoadIntentBoundaryTests.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows `ProUpgradeSheet` uses `requestProductLoad` and no direct `await storeManager.loadProducts`; StoreManager owns pending IDs and await hooks.
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Before review, verify `StoreManager` is the single owner of StoreKit product-load request tasks, duplicate paywall appearances coalesce to one fetch, callbacks execute only after request completion, cancellation remains lifecycle completion, SwiftUI only sends product-load intent, and touched tests include complete Test Context plus Given / When / Then comments.
+
+- [ ] **Step 6: Request review and commit**
+
+Request code review for Task 69. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-68 scan selected Task 69 as the next executable lifecycle slice. `ProUpgradeSheet` still awaits `storeManager.loadProducts()` directly from SwiftUI `.task` on both iOS and macOS while `StoreManager` already owns nearby StoreKit purchase, restore, startup refresh, review refresh, and transaction listener lifecycles. This Store product-load path affects the paywall and purchase decisions, so the next slice should add `StoreManager` product-load request tracking, duplicate paywall-load coalescing, and an await hook, then leave broader server unlock, RemoteFiles move-destination loading, split-pane voice text injection, and terminal interaction-state cleanup for later tasks.
 - 2026-06-21: Task 68 RED/GREEN completed with local lifecycle review. `ServerStatsCollector` now owns tracked Stats collection request tasks through `requestStartCollecting(for:using:)` and `requestStopCollecting()`, exposes `pendingStatsCollectionRequestIDs` and `waitForStatsCollectionRequest(_:)`, cancels stale visibility/retry requests, waits canceled queued start work from stop requests, and makes `startCollecting(for:using:)` cancellation-aware after pending stop/collection waits so a canceled queued start cannot create a replacement lease after a newer stop intent wins. `ServerStatsView` no longer starts collection from Retry with `Task { await ... }` and no longer uses `.task(id: makeTaskKey())` to directly await start/stop; it sends visible/hidden/retry/disappear intent synchronously to the collector. Initial RED failed to build because the request APIs and wait hook did not exist. GREEN focused verification passed 10 Swift Testing tests across `ServerStatsCollectorLifecycleTests` and `ServerStatsIntentBoundaryTests`; expanded Stats verification passed 10 XCTest parsing/domain tests plus the 10 Swift Testing lifecycle/boundary tests; source scan showed Stats UI has only request API calls and no direct await start/stop; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Local review found no Critical or Important issues.
 - 2026-06-21: Post-Task-67 scan selected Task 68 as the next executable lifecycle slice. `ServerStatsView` still starts Stats collection work directly from SwiftUI: Retry wraps `await statsCollector.startCollecting(...)` in a `Task`, visibility uses `.task(id: makeTaskKey())` to await start/stop, and disappearance calls the low-level stop helper directly. Historical Task 18 allowed this as an intermediate state, but the current Swift lifecycle rule is stricter: UI should send intent while `ServerStatsCollector` owns tracked, awaitable lifecycle-critical tasks. Task 68 should add collector-owned start/stop request APIs, preserve borrowed lease behavior, and keep queued-start cancellation from creating a replacement Stats lease after a newer stop intent wins.
 - 2026-06-21: Task 67 RED/GREEN completed with review fixes. RED added `TerminalRichPasteUploadRequestTests` and `TerminalRichPasteIntentBoundaryTests`; after fixing test syntax, the focused suite failed to compile because `TerminalRichPasteUploadRequestResult`, session/pane rich paste request APIs, pending request IDs, wait hooks, and injectable upload/lease seams did not exist. GREEN adds `TerminalRichPasteUploadRequest` under TerminalSessions Application to own `lease.withExclusiveClient`, awaited `lease.close()`, progress/result mapping, and shell-escaped remote path input. `ConnectionSessionManager` and `TerminalTabManager` now own tracked rich paste upload request dictionaries, same-entity supersession, pending IDs, wait hooks, close/reset cancellation, default `TerminalRichPasteCoordinator` upload adaptation, and DEBUG lease/upload seams. `TerminalRichPasteSupport` now only intercepts paste, presents prompt/progress/banner state, and sends upload intent through `requestSessionRichPasteUpload(...)` / `requestPaneRichPasteUpload(...)`; it no longer stores `activePasteTask`, resolves leases, instantiates the coordinator, closes leases, or directly sends uploaded paths to terminal surfaces. `RemoteClipboardTransferService` no longer starts a delayed stale-file sweep task; cleanup is best-effort and awaited inside upload before the rich paste request closes its lease. Independent read-only review found two Important issues: close/reset cancellation dropped rich-paste request handles before tasks actually exited, and superseded requests could still clear newer visible progress. Follow-up RED reproduced early `closeSessionAndWait`/`closePaneAndWait` completion and stale progress cleanup; GREEN keeps canceled request handles until task defer cleanup, makes close/disconnect/reset await canceled rich-paste tasks before SSH unregister, and gates progress callbacks on the current request ID. Re-review then found root-session shell teardown still started before canceled rich-paste tasks exited because `closeSessionUI` created the shell teardown task immediately; strengthened RED proved the shell cancel handler started before the upload gate opened. Final GREEN carries an inert `ShellTeardownRequest` out of `closeSessionUI`, then runs shell/runtime teardown and unregister only after canceled rich-paste tasks exit. Focused GREEN verification passed `ConnectionLifecycleIntegrationTests`, `TerminalRichPasteIntentBoundaryTests`, and `TerminalRichPasteUploadRequestTests` with 102 Swift Testing tests using `ENABLE_DEBUG_DYLIB=NO`; source scan showed UI files contain only manager request APIs while application request code owns `withExclusiveClient` and `await lease.close()`, and `RemoteClipboardTransferService` has no `Task(priority: .utility)` stale sweep; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. The independent reviewer and re-review reported no Critical findings; all Important findings were fixed before commit.
