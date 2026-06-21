@@ -3067,8 +3067,91 @@ Task 40E5 cleanup: `TerminalThemeManager` now owns custom-theme persistence thro
 
 Commit each split sub-task atomically.
 
+## Task 41: Terminal Open Intent Ownership
+
+**Files:**
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `VVTerm/App/ContentView.swift`
+- Modify: `VVTerm/Core/UI/SidebarComponents.swift`
+- Modify: `VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabComponents.swift`
+- Modify: `VVTerm/App/iOS/iOSContentView.swift`
+- Test: `VVTermTests/TerminalOpenIntentBoundaryTests.swift`
+- Test: focused manager lifecycle tests if source-boundary tests expose missing request tracking.
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `TerminalTabManager.openTab(for:)`
+  - `ConnectionSessionManager.openConnection(to:forceNew:)`
+  - Existing open serialization and teardown wait gates.
+- Produces:
+  - Application-layer open request APIs that UI can call synchronously from buttons and menus.
+  - Awaitable request IDs or equivalent failure state for tests and later operations.
+  - UI call sites that send open intent instead of starting their own open `Task` and swallowing failures.
+
+- [x] **Step 1: Add RED boundary tests**
+
+Add `TerminalOpenIntentBoundaryTests` with a `Test Context` header. The tests must inspect the SwiftUI source files that currently open terminal tabs or iOS sessions and fail while UI still contains direct `try? await tabManager.openTab(...)`, `try? await sessionManager.openConnection(...)`, or a no-op catch for open failures.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalOpenIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the new boundary test fails because `ContentView`, `SidebarComponents`, `ServerSidebarView`, `ConnectionTabComponents`, and any remaining terminal-tab UI entry points still own open tasks or swallow open errors.
+
+Actual RED result: `TerminalOpenIntentBoundaryTests` failed with 5 issues because UI sources still contained direct `tabManager.openTab`, direct `sessionManager.openConnection`, and the no-op open failure catch.
+
+- [x] **Step 2: Add manager-owned open request APIs**
+
+Add a narrow request API to `TerminalTabManager` and `ConnectionSessionManager` that starts and tracks user-initiated open work. The API should name the side effect clearly, for example `requestTabOpen(for:selectTerminalViewOnSuccess:onOpened:onFailed:)` and `requestConnectionOpen(to:forceNew:onOpened:onFailed:)`, or a smaller equivalent that matches existing manager style.
+
+The owner must:
+- Store pending open request tasks by request ID or server ID.
+- Reuse the existing teardown wait and duplicate-open gate inside `openTab` / `openConnection`.
+- Preserve cancellation separately from user-facing open failures where possible.
+- Expose awaitable test hooks for request completion if production code starts the task internally.
+
+- [x] **Step 3: Route UI open entry points through the request APIs**
+
+Replace UI-owned open tasks in:
+- `ContentView.connectToServer(_:)`
+- `SidebarComponents`
+- `ServerSidebarView.connectToServer(_:)`
+- `ConnectionTabsView.openNewTab(selectTerminalViewOnSuccess:)`
+- `ConnectionTabComponents.duplicateTab(_:)`
+- iOS server-list and new-tab open flows where the view currently owns open orchestration.
+
+UI may still update purely visual state such as selected view, pending spinner, alert flags, or navigation state in success/failure closures, but it must not own the lifecycle-critical open operation or discard the thrown result with `try?`.
+
+- [x] **Step 4: Run focused verification**
+
+Run the RED/GREEN boundary test plus the focused open lifecycle suites:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalOpenIntentBoundaryTests -only-testing:VVTermTests/ConnectionSessionManagerOpenTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+git diff --check
+```
+
+If runtime changes touch shared open ordering, also run iOS and macOS build-for-testing before review.
+
+Actual GREEN result: `TerminalOpenIntentBoundaryTests`, `ConnectionSessionManagerOpenTests`, and `ConnectionLifecycleIntegrationTests` passed with 14 XCTest tests plus 79 Swift Testing tests after review fixes. `git diff --check` passed, iOS/macOS build-for-testing passed, and the terminal-open UI boundary scan produced no matches for swallowed direct opens or UI-side existing-tab bypasses.
+
+- [x] **Step 5: API and boundary cleanup**
+
+Before moving to another task, verify request API names are consistent between session and tab managers, UI files no longer contain swallowed terminal-open `try?`, duplicate open state is still one authoritative manager-owned source, and no temporary helper or stale "Next task" ledger note remains.
+
+- [x] **Step 6: Request review and commit**
+
+Request code review for Task 41. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Task 41 RED/GREEN completed before commit. Terminal open intent now flows through `TerminalTabManager.requestTabOpen(...)`, `TerminalTabManager.requestServerTerminalOpen(...)`, and `ConnectionSessionManager.requestConnectionOpen(...)`, so SwiftUI buttons, menus, duplicate-tab, macOS sidebar, and iOS server-list/new-tab flows no longer create their own terminal-open tasks, branch around the application owner for existing tabs, or hide open failures behind `try?`/no-op catches. Managers track pending request IDs, preserve cancellation separately from failures, expose awaitable request waits for tests, and reuse the existing `openTab`/`openConnection` teardown and duplicate-open gates. Review fixes closed two AppLock ordering gaps: existing-tab focus now unlocks before selecting, and `ServerSidebarView` selects the server only from the manager success callback. Verification: RED `TerminalOpenIntentBoundaryTests` failed with 5 issues before the route change; review-fix RED failed until `requestServerTerminalOpen(...)` exposed a manager-owned unlock boundary; second review-fix RED failed until the server sidebar stopped preselecting before unlock; GREEN focused suite passed 14 XCTest tests plus 79 Swift Testing tests; terminal-open UI boundary scan produced no matches; `git diff --check` passed; iOS and macOS build-for-testing passed with existing warnings only. Re-review found no Critical or Important issues.
 - 2026-06-21: Post-Task-35 closure audit found the plan was not actually ready for final merge review. Current non-exempt gaps are now tracked as Tasks 36-40: terminal runner close must await the stored runner finish path, terminal reconnect orchestration still lives in SwiftUI, iOS RemoteFiles disconnect drops returned teardown tasks, Core SSH needs tighter disconnect timeout/cancellation diagnostics, and cross-feature save/delete/sync/download/window ownership still needs a scoped sweep.
 - 2026-06-21: Task 36 RED/GREEN completed. RED verification showed `closeSessionAndWait(_:)` already waited for a delayed stored runner task, while `closePaneAndWait(_:)` returned before a delayed stored runtime shell task finished. `TerminalConnectionRuntime.close(mode:)` now awaits the stored shell task in every close branch, and regression tests cover both session and pane close ordering. Verification: focused lifecycle/runtime suite passed 57 Swift Testing tests, and `git diff --check` passed.
 - 2026-06-21: Task 37 slice 1 RED/GREEN completed. Application-layer APIs now own root auto/manual reconnect decisions, split-pane manual reconnect decisions, watchdog scheduling predicates, iOS selected-session foreground reconnect action, and retrust/mosh install-then-reconnect sequencing. SwiftUI terminal views still own `reconnectInFlight`, rebuild tokens, and the 20-second watchdog sleep bridge, so Task 37 remains open for the full coordinator/timing move. Verification: focused Task 37 suite passed 64 Swift Testing tests, and `git diff --check` passed.
@@ -3158,8 +3241,6 @@ Commit each split sub-task atomically.
 - 2026-06-21: Task 28 RED completed. Added deletion ordering tests for server and workspace deletion. The first focused run failed to compile because `ServerManager.makeForTesting` and an injected awaitable deletion teardown boundary did not exist.
 - 2026-06-21: Task 28 GREEN and API cleanup completed before review. `ServerManager` now has a narrow `ServerDeletionTeardown` boundary and credential deletion closure; production deletion awaits `ConnectionSessionManager.disconnectServerAndWait(_:)` and `TerminalTabManager.disconnectServerAndWait(_:)` before keychain deletion and metadata removal. Test managers skip local persistence and pending sync mutation recording. Verification: `ServerManagerBootstrapTests` plus `ConnectionLifecycleIntegrationTests` passed 56 Swift Testing tests; `git diff --check` passed.
 - 2026-06-21: Task 28 review completed. Subagent review was not spawned because the current tool contract permits spawning only when the user explicitly requests subagents; local read-only review found and fixed stale test-context wording, then found no Critical or Important issues.
-- Next task: Task 29.
-
 ## Self-Review
 
 - Spec coverage: This plan covers stable owners, UI intent boundaries, explicit lifecycle state, awaitable teardown, C/FFI boundaries, typed errors, cancellation, tests, logging, and commit granularity.

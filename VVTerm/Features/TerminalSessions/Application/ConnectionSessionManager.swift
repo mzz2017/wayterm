@@ -205,6 +205,9 @@ final class ConnectionSessionManager: ObservableObject {
     private var shellSuspendHandlers: [UUID: @MainActor () async -> Void] = [:]
     /// Server IDs with an in-flight open request, used to collapse repeated clicks.
     private var sessionOpensInFlight: Set<UUID> = []
+    private var connectionOpenRequests: [UUID: Task<Void, Never>] = [:]
+    private(set) var lastConnectionOpenFailure: Error?
+    var pendingConnectionOpenRequestIDs: Set<UUID> { Set(connectionOpenRequests.keys) }
     private var sessionReconnectsInFlight: Set<UUID> = []
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
     private var serverDisconnectTasks: [UUID: Task<Void, Never>] = [:]
@@ -386,6 +389,39 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     // MARK: - Open Connection
+
+    @discardableResult
+    func requestConnectionOpen(
+        to server: Server,
+        forceNew: Bool = false,
+        onOpened: @escaping @MainActor (ConnectionSession) -> Void = { _ in },
+        onFailed: @escaping @MainActor (Error) -> Void = { _ in }
+    ) -> UUID {
+        let requestID = UUID()
+        lastConnectionOpenFailure = nil
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.connectionOpenRequests.removeValue(forKey: requestID) }
+
+            do {
+                let session = try await self.openConnection(to: server, forceNew: forceNew)
+                onOpened(session)
+            } catch is CancellationError {
+                return
+            } catch {
+                self.lastConnectionOpenFailure = error
+                onFailed(error)
+            }
+        }
+
+        connectionOpenRequests[requestID] = task
+        return requestID
+    }
+
+    func waitForConnectionOpenRequest(_ requestID: UUID) async {
+        await connectionOpenRequests[requestID]?.value
+    }
 
     /// Opens a connection to a server
     /// - Parameters:
@@ -2522,6 +2558,9 @@ extension ConnectionSessionManager {
         shellCancelHandlers.removeAll()
         shellSuspendHandlers.removeAll()
         sessionOpensInFlight.removeAll()
+        connectionOpenRequests.values.forEach { $0.cancel() }
+        connectionOpenRequests.removeAll()
+        lastConnectionOpenFailure = nil
         sessionReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()

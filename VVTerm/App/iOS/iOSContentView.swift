@@ -53,32 +53,27 @@ struct iOSContentView: View {
                 selectedEnvironment: $selectedEnvironment,
                 showingTerminal: $showingTerminal,
                 onServerSelected: { server in
-                    Task {
-                        await MainActor.run {
-                            selectedServer = server
-                            connectingServer = server
-                            isConnecting = true
-                            showingTerminal = true
+                    selectedServer = server
+                    connectingServer = server
+                    isConnecting = true
+                    showingTerminal = true
+                    sessionManager.selectedViewByServer[server.id] = preferredConnectViewId
+
+                    sessionManager.requestConnectionOpen(
+                        to: server,
+                        forceNew: IOSServerListPolicy.shouldForceNewConnectionFromServerList,
+                        onOpened: { session in
                             sessionManager.selectedViewByServer[server.id] = preferredConnectViewId
-                        }
+                            sessionManager.selectedSessionId = session.id
+                            isConnecting = false
+                            connectingServer = nil
+                        },
+                        onFailed: { error in
+                            isConnecting = false
+                            connectingServer = nil
+                            showingTerminal = false
 
-                        do {
-                            let session = try await sessionManager.openConnection(
-                                to: server,
-                                forceNew: IOSServerListPolicy.shouldForceNewConnectionFromServerList
-                            )
-                            await MainActor.run {
-                                sessionManager.selectedViewByServer[server.id] = preferredConnectViewId
-                                sessionManager.selectedSessionId = session.id
-                                isConnecting = false
-                                connectingServer = nil
-                            }
-                        } catch let error as VVTermError {
-                            await MainActor.run {
-                                isConnecting = false
-                                connectingServer = nil
-                                showingTerminal = false
-
+                            if let error = error as? VVTermError {
                                 switch error {
                                 case .proRequired:
                                     showingTabLimitAlert = true
@@ -88,14 +83,8 @@ struct iOSContentView: View {
                                     break
                                 }
                             }
-                        } catch {
-                            await MainActor.run {
-                                isConnecting = false
-                                connectingServer = nil
-                                showingTerminal = false
-                            }
                         }
-                    }
+                    )
                 }
             )
             .navigationDestination(isPresented: $showingTerminal) {
@@ -1722,23 +1711,25 @@ struct iOSTerminalView: View {
             showingTabLimitAlert = true
             return
         }
-        Task {
-            do {
-                let session = try await sessionManager.openConnection(to: server, forceNew: true)
-                await MainActor.run {
-                    sessionManager.selectedViewByServer[server.id] = IOSConnectionViewSelectionPolicy.preferredConnectViewId(
-                        isTerminalVisible: viewTabConfig.isTabVisible(ConnectionViewTab.terminal.id),
-                        effectiveDefaultViewId: viewTabConfig.effectiveDefaultTab()
-                    )
-                    currentServerId = server.id
-                    shouldShowTerminalBySession[session.id] = true
-                    reconnectTokenBySession[session.id] = session.id
-                    sessionManager.selectedSessionId = session.id
+        sessionManager.requestConnectionOpen(
+            to: server,
+            forceNew: true,
+            onOpened: { session in
+                sessionManager.selectedViewByServer[server.id] = IOSConnectionViewSelectionPolicy.preferredConnectViewId(
+                    isTerminalVisible: viewTabConfig.isTabVisible(ConnectionViewTab.terminal.id),
+                    effectiveDefaultViewId: viewTabConfig.effectiveDefaultTab()
+                )
+                currentServerId = server.id
+                shouldShowTerminalBySession[session.id] = true
+                reconnectTokenBySession[session.id] = session.id
+                sessionManager.selectedSessionId = session.id
+            },
+            onFailed: { error in
+                if case VVTermError.proRequired = error {
+                    showingTabLimitAlert = true
                 }
-            } catch {
-                // No-op: user cancelled biometric auth or open failed.
             }
-        }
+        )
     }
 
     private func openNewFileTab() {

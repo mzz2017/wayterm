@@ -110,13 +110,7 @@ struct ContentView: View {
     }
 
     private func connectToServer(_ server: Server) {
-        Task { @MainActor in
-            guard await AppLockManager.shared.ensureServerUnlocked(server) else { return }
-            tabManager.selectedViewByServer[server.id] = ViewTabConfigurationManager.shared.effectiveDefaultTab()
-            if tabManager.tabs(for: server.id).isEmpty {
-                _ = try? await tabManager.openTab(for: server)
-            }
-        }
+        tabManager.requestServerTerminalOpen(for: server, selectTerminalViewOnSuccess: true)
     }
 
     private func applyZenPresentation(_ enabled: Bool) {

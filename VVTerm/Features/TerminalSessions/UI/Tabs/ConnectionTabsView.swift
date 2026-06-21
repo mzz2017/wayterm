@@ -324,21 +324,17 @@ struct ConnectionTerminalContainer: View {
             return
         }
 
-        Task {
-            do {
-                let tab = try await tabManager.openTab(for: server)
-                await MainActor.run {
-                    if selectTerminalViewOnSuccess {
-                        tabManager.selectedViewByServer[server.id] = viewTabConfig.isTabVisible(ConnectionViewTab.terminal.id)
-                            ? ConnectionViewTab.terminal.id
-                            : viewTabConfig.effectiveDefaultTab()
-                    }
-                    selectedTabIdBinding.wrappedValue = tab.id
+        tabManager.requestTabOpen(
+            for: server,
+            onOpened: { tab in
+                if selectTerminalViewOnSuccess {
+                    tabManager.selectedViewByServer[server.id] = viewTabConfig.isTabVisible(ConnectionViewTab.terminal.id)
+                        ? ConnectionViewTab.terminal.id
+                        : viewTabConfig.effectiveDefaultTab()
                 }
-            } catch {
-                // No-op: user cancelled biometric auth or open failed.
+                selectedTabIdBinding.wrappedValue = tab.id
             }
-        }
+        )
     }
 
     private func openNewFileTab(selectFilesViewOnSuccess: Bool = false) {

@@ -116,7 +116,7 @@ struct ConnectionTabsScrollView: View {
             .first(where: { $0.id == session.id })
             .flatMap({ s in ServerManager.shared.servers.first { $0.id == s.serverId } })
         else { return }
-        Task { try? await sessionManager.openConnection(to: server, forceNew: true) }
+        sessionManager.requestConnectionOpen(to: server, forceNew: true)
     }
 }
 

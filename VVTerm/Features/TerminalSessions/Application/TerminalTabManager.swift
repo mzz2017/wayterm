@@ -131,6 +131,12 @@ final class TerminalTabManager: ObservableObject {
     private var shellRegistry = SSHShellRegistry(staleThreshold: 120)
     /// Server IDs with an in-flight tab-open request to avoid queued duplicates.
     private var tabOpensInFlight: Set<UUID> = []
+    private var tabOpenRequests: [UUID: Task<Void, Never>] = [:]
+    private(set) var lastTabOpenFailure: Error?
+    var pendingTabOpenRequestIDs: Set<UUID> { Set(tabOpenRequests.keys) }
+    private var serverUnlocker: @MainActor (Server) async -> Bool = { server in
+        await AppLockManager.shared.ensureServerUnlocked(server)
+    }
     private var paneReconnectsInFlight: Set<UUID> = []
     /// In-flight SSH teardown tasks by server, used to serialize close/open ordering.
     private var serverTeardownTasks: [UUID: [UUID: Task<Void, Never>]] = [:]
@@ -252,9 +258,94 @@ final class TerminalTabManager: ObservableObject {
         return totalTabs < FreeTierLimits.maxTabs
     }
 
+    @discardableResult
+    func requestTabOpen(
+        for server: Server,
+        selectTerminalViewOnSuccess: Bool = false,
+        onOpened: @escaping @MainActor (TerminalTab) -> Void = { _ in },
+        onFailed: @escaping @MainActor (Error) -> Void = { _ in }
+    ) -> UUID {
+        let requestID = UUID()
+        lastTabOpenFailure = nil
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.tabOpenRequests.removeValue(forKey: requestID) }
+
+            do {
+                let tab = try await self.openTab(for: server)
+                if selectTerminalViewOnSuccess {
+                    self.selectedViewByServer[server.id] = ViewTabConfigurationManager.shared.effectiveDefaultTab()
+                }
+                onOpened(tab)
+            } catch is CancellationError {
+                return
+            } catch {
+                self.lastTabOpenFailure = error
+                onFailed(error)
+            }
+        }
+
+        tabOpenRequests[requestID] = task
+        return requestID
+    }
+
+    @discardableResult
+    func requestServerTerminalOpen(
+        for server: Server,
+        selectTerminalViewOnSuccess: Bool = false,
+        onOpened: @escaping @MainActor (TerminalTab) -> Void = { _ in },
+        onFailed: @escaping @MainActor (Error) -> Void = { _ in }
+    ) -> UUID {
+        let requestID = UUID()
+        lastTabOpenFailure = nil
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.tabOpenRequests.removeValue(forKey: requestID) }
+
+            do {
+                guard await self.serverUnlocker(server) else {
+                    throw VVTermError.authenticationFailed
+                }
+
+                if let tab = self.selectedTab(for: server.id) ?? self.tabs(for: server.id).first {
+                    if selectTerminalViewOnSuccess {
+                        self.selectedViewByServer[server.id] = ViewTabConfigurationManager.shared.effectiveDefaultTab()
+                    }
+                    onOpened(tab)
+                    return
+                }
+
+                let tab = try await self.openTab(for: server, shouldEnsureUnlocked: false)
+                if selectTerminalViewOnSuccess {
+                    self.selectedViewByServer[server.id] = ViewTabConfigurationManager.shared.effectiveDefaultTab()
+                }
+                onOpened(tab)
+            } catch is CancellationError {
+                return
+            } catch {
+                self.lastTabOpenFailure = error
+                onFailed(error)
+            }
+        }
+
+        tabOpenRequests[requestID] = task
+        return requestID
+    }
+
+    func waitForTabOpenRequest(_ requestID: UUID) async {
+        await tabOpenRequests[requestID]?.value
+    }
+
     /// Open a new tab for a server
     @discardableResult
     func openTab(for server: Server) async throws -> TerminalTab {
+        try await openTab(for: server, shouldEnsureUnlocked: true)
+    }
+
+    @discardableResult
+    private func openTab(for server: Server, shouldEnsureUnlocked: Bool) async throws -> TerminalTab {
         await waitForServerTeardownTasks(server.id)
 
         if tabOpensInFlight.contains(server.id) {
@@ -265,8 +356,10 @@ final class TerminalTabManager: ObservableObject {
         tabOpensInFlight.insert(server.id)
         defer { tabOpensInFlight.remove(server.id) }
 
-        guard await AppLockManager.shared.ensureServerUnlocked(server) else {
-            throw VVTermError.authenticationFailed
+        if shouldEnsureUnlocked {
+            guard await serverUnlocker(server) else {
+                throw VVTermError.authenticationFailed
+            }
         }
 
         let tab = TerminalTab(serverId: server.id, title: server.name)
@@ -2137,12 +2230,18 @@ extension TerminalTabManager {
         terminalRegistryVersion = 0
         shellRegistry.removeAll()
         tabOpensInFlight.removeAll()
+        tabOpenRequests.values.forEach { $0.cancel() }
+        tabOpenRequests.removeAll()
+        lastTabOpenFailure = nil
         paneReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
         connectWatchdogGenerations.removeAll()
         credentialsProvider = { server in
             try KeychainManager.shared.getCredentials(for: server)
+        }
+        serverUnlocker = { server in
+            await AppLockManager.shared.ensureServerUnlocked(server)
         }
         serverTeardownTasks.removeAll()
         paneRuntimes.removeAll()
@@ -2184,6 +2283,12 @@ extension TerminalTabManager {
         _ provider: @escaping @MainActor (Server) async throws -> ServerCredentials
     ) {
         credentialsProvider = provider
+    }
+
+    func setServerUnlockerForTesting(
+        _ unlocker: @escaping @MainActor (Server) async -> Bool
+    ) {
+        serverUnlocker = unlocker
     }
 
     func beginShellStartForTesting(

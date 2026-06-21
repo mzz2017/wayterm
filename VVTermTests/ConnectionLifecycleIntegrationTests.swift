@@ -925,6 +925,128 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func tabOpenRequestTracksCompletionAndRunsSuccessCallback() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            var openedTabId: UUID?
+
+            // Given SwiftUI sends terminal tab open intent synchronously.
+            let requestID = manager.requestTabOpen(for: server) { tab in
+                openedTabId = tab.id
+            }
+
+            // Then the application manager owns the open task and exposes an
+            // awaitable request boundary for ordering-sensitive callers.
+            #expect(
+                manager.pendingTabOpenRequestIDs.contains(requestID),
+                "A user-initiated tab open must be tracked by TerminalTabManager until completion."
+            )
+
+            await manager.waitForTabOpenRequest(requestID)
+
+            #expect(
+                openedTabId != nil,
+                "The tab open request should report the created tab through the success callback."
+            )
+            #expect(
+                !manager.pendingTabOpenRequestIDs.contains(requestID),
+                "TerminalTabManager should remove the open request after the task finishes."
+            )
+            #expect(
+                manager.lastTabOpenFailure == nil,
+                "Successful tab open requests should not leave stale failure state."
+            )
+        }
+    }
+
+    @Test
+    func serverTerminalOpenRequestAuthenticatesBeforeSelectingExistingTab() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let existingTab = TerminalTab(serverId: server.id, title: server.name)
+            manager.tabsByServer[server.id] = [existingTab]
+            var unlockCalls: [UUID] = []
+            var openedTabId: UUID?
+
+            manager.setServerUnlockerForTesting { unlockedServer in
+                unlockCalls.append(unlockedServer.id)
+                return unlockedServer.id == server.id
+            }
+
+            // Given SwiftUI sends terminal open intent for a server that
+            // already has a tab.
+            let requestID = manager.requestServerTerminalOpen(
+                for: server,
+                selectTerminalViewOnSuccess: true
+            ) { tab in
+                openedTabId = tab.id
+            }
+
+            await manager.waitForTabOpenRequest(requestID)
+
+            // Then TerminalTabManager still runs the unlock gate before it
+            // focuses the existing tab, matching the pre-refactor security
+            // behavior while keeping the lifecycle task manager-owned.
+            #expect(
+                unlockCalls == [server.id],
+                "Existing terminal tabs must not bypass the server unlock gate."
+            )
+            #expect(
+                openedTabId == existingTab.id,
+                "The open intent should report the existing tab after unlock succeeds."
+            )
+            #expect(
+                manager.selectedViewByServer[server.id] == ViewTabConfigurationManager.shared.effectiveDefaultTab(),
+                "Selecting an existing terminal tab should happen only after the manager-owned unlock path succeeds."
+            )
+        }
+    }
+
+    @Test
+    func connectionOpenRequestWaitsForPendingDisconnectAndRunsSuccessCallback() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let disconnectGate = RunnerTaskGate()
+            let disconnectTask = Task {
+                await disconnectGate.waitForRelease()
+            }
+            manager.setServerDisconnectTaskForTesting(server.id, task: disconnectTask)
+            var openedSessionId: UUID?
+
+            await withServerList([server]) {
+                // Given an iOS server-list tap sends open intent while a same
+                // server disconnect cleanup is still running.
+                let requestID = manager.requestConnectionOpen(to: server) { session in
+                    openedSessionId = session.id
+                }
+
+                // Then ConnectionSessionManager owns the pending open and keeps
+                // it awaitable while the existing cleanup finishes.
+                #expect(
+                    manager.pendingConnectionOpenRequestIDs.contains(requestID),
+                    "A user-initiated connection open must stay tracked while waiting for disconnect cleanup."
+                )
+
+                await disconnectGate.release()
+                await manager.waitForConnectionOpenRequest(requestID)
+
+                #expect(
+                    openedSessionId != nil,
+                    "The connection open request should report the created session through the success callback."
+                )
+                #expect(
+                    !manager.pendingConnectionOpenRequestIDs.contains(requestID),
+                    "ConnectionSessionManager should remove the open request after the task finishes."
+                )
+                #expect(
+                    manager.lastConnectionOpenFailure == nil,
+                    "Successful connection open requests should not leave stale failure state."
+                )
+            }
+        }
+    }
+
+    @Test
     func connectionManagerOtherActiveSessionsComeFromRegistryNotDomainState() async {
         await withCleanConnectionManager { manager in
             let server = makeServer()
@@ -2592,16 +2714,19 @@ private struct TestTerminalTabsSnapshot: Codable {
 
 private actor RunnerTaskGate {
     private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var isReleased = false
     private(set) var runnerFinished = false
     private(set) var closeReturned = false
 
     func waitForRelease() async {
+        guard !isReleased else { return }
         await withCheckedContinuation { continuation in
             releaseContinuation = continuation
         }
     }
 
     func release() {
+        isReleased = true
         releaseContinuation?.resume()
         releaseContinuation = nil
     }

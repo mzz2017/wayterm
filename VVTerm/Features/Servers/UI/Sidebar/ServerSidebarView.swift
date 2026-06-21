@@ -628,14 +628,13 @@ struct ServerSidebarView: View {
     }
 
     private func connectToServer(_ server: Server) {
-        Task { @MainActor in
-            guard await AppLockManager.shared.ensureServerUnlocked(server) else { return }
-            selectedServer = server
-            tabManager.selectedViewByServer[server.id] = ViewTabConfigurationManager.shared.effectiveDefaultTab()
-            if tabManager.tabs(for: server.id).isEmpty {
-                _ = try? await tabManager.openTab(for: server)
+        tabManager.requestServerTerminalOpen(
+            for: server,
+            selectTerminalViewOnSuccess: true,
+            onOpened: { _ in
+                selectedServer = server
             }
-        }
+        )
     }
 
     private func handleSavedServer(_ server: Server, originalServer: Server) {
