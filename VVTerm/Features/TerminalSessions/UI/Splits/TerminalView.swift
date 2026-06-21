@@ -918,6 +918,14 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
 
     @EnvironmentObject var ghosttyApp: Ghostty.App
 
+    private var surfaceAttachContext: TerminalSurfaceAttachContext {
+        TerminalSurfaceAttachContext(
+            isAppActive: true,
+            isViewActive: isActive,
+            autoReconnectEnabled: true
+        )
+    }
+
     func makeNSView(context: Context) -> NSView {
         // Ensure Ghostty app is ready
         guard let app = ghosttyApp.app else {
@@ -968,9 +976,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
 
             DispatchQueue.main.async {
                 onReady()
-                if TerminalTabManager.shared.shellId(for: paneId) == nil {
-                    coordinator.attachSurface(existingTerminal)
-                }
+                coordinator.attachSurface(existingTerminal, context: surfaceAttachContext)
             }
 
             return scrollView
@@ -989,7 +995,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         terminalView.onReady = { [weak coordinator, weak terminalView] in
             onReady()
             if let terminalView = terminalView {
-                coordinator?.attachSurface(terminalView)
+                coordinator?.attachSurface(terminalView, context: surfaceAttachContext)
             }
         }
         terminalView.onProcessExit = onProcessExit
@@ -1098,10 +1104,12 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         }
 
         @MainActor
-        func attachSurface(_ terminal: GhosttyTerminalView) {
-            Task { [paneId] in
-                await TerminalTabManager.shared.attachSurface(terminal, toPane: paneId)
-            }
+        func attachSurface(_ terminal: GhosttyTerminalView, context: TerminalSurfaceAttachContext) {
+            TerminalTabManager.shared.requestSurfaceAttach(
+                paneId: paneId,
+                terminal: terminal,
+                context: context
+            )
         }
 
         @MainActor

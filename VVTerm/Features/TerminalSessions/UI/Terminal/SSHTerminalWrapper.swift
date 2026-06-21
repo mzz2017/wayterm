@@ -29,10 +29,17 @@ extension SSHTerminalCoordinator {
         }
     }
 
-    func attachSurface(_ terminal: GhosttyTerminalView) {
-        Task { [sessionId] in
-            await ConnectionSessionManager.shared.attachSurface(terminal, to: sessionId)
-        }
+    func attachSurface(
+        _ terminal: GhosttyTerminalView,
+        context: TerminalSurfaceAttachContext,
+        resetTerminal: @escaping @MainActor () -> Void = {}
+    ) {
+        ConnectionSessionManager.shared.requestSurfaceAttach(
+            sessionId: sessionId,
+            terminal: terminal,
+            context: context,
+            resetTerminal: resetTerminal
+        )
     }
 }
 
@@ -52,6 +59,14 @@ struct SSHTerminalWrapper: NSViewRepresentable {
     var onVoiceTrigger: (() -> Void)? = nil
 
     @EnvironmentObject var ghosttyApp: Ghostty.App
+
+    private var surfaceAttachContext: TerminalSurfaceAttachContext {
+        TerminalSurfaceAttachContext(
+            isAppActive: true,
+            isViewActive: isActive,
+            autoReconnectEnabled: (UserDefaults.standard.object(forKey: "sshAutoReconnect") as? Bool) ?? true
+        )
+    }
 
     func makeCoordinator() -> Coordinator {
         return Coordinator(
@@ -117,14 +132,13 @@ struct SSHTerminalWrapper: NSViewRepresentable {
             // Use async to avoid calling during view construction
             DispatchQueue.main.async {
                 onReady()
-                let shellMissing = ConnectionSessionManager.shared.shellId(for: session) == nil
-                let shellStartInFlight = ConnectionSessionManager.shared.isShellStartInFlight(for: session.id)
-                if shellMissing && !shellStartInFlight {
-                    if ConnectionSessionManager.shared.consumeTerminalReconnectReset(for: session.id) {
+                coordinator.attachSurface(
+                    existingTerminal,
+                    context: surfaceAttachContext,
+                    resetTerminal: {
                         existingTerminal.resetTerminalForReconnect()
                     }
-                    coordinator.attachSurface(existingTerminal)
-                }
+                )
             }
 
             return scrollView
@@ -146,7 +160,7 @@ struct SSHTerminalWrapper: NSViewRepresentable {
             onReady()
             // Start SSH connection after terminal is ready
             if let terminalView = terminalView {
-                coordinator?.attachSurface(terminalView)
+                coordinator?.attachSurface(terminalView, context: surfaceAttachContext)
             }
         }
         terminalView.onProcessExit = onProcessExit
@@ -321,6 +335,14 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
     @EnvironmentObject var ghosttyApp: Ghostty.App
     @Environment(\.scenePhase) private var scenePhase
 
+    private var surfaceAttachContext: TerminalSurfaceAttachContext {
+        TerminalSurfaceAttachContext(
+            isAppActive: scenePhase == .active,
+            isViewActive: isActive,
+            autoReconnectEnabled: (UserDefaults.standard.object(forKey: "sshAutoReconnect") as? Bool) ?? true
+        )
+    }
+
     func makeCoordinator() -> Coordinator {
         return Coordinator(
             server: server,
@@ -385,17 +407,13 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
 
             DispatchQueue.main.async {
                 onReady()
-                let shellMissing = ConnectionSessionManager.shared.shellId(for: session) == nil
-                let shellStartInFlight = ConnectionSessionManager.shared.isShellStartInFlight(for: session.id)
-                if shellMissing,
-                   !shellStartInFlight,
-                   UIApplication.shared.applicationState == .active,
-                   !ConnectionSessionManager.shared.isSuspendingForBackground {
-                    if ConnectionSessionManager.shared.consumeTerminalReconnectReset(for: session.id) {
+                coordinator.attachSurface(
+                    existingTerminal,
+                    context: surfaceAttachContext,
+                    resetTerminal: {
                         existingTerminal.resetTerminalForReconnect()
                     }
-                    coordinator.attachSurface(existingTerminal)
-                }
+                )
             }
             return terminalHostView(for: existingTerminal)
         }
@@ -414,10 +432,8 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             coordinator?.isTerminalReady = true
             DispatchQueue.main.async {
                 onReady()
-                if let terminalView = terminalView,
-                   UIApplication.shared.applicationState == .active,
-                   !ConnectionSessionManager.shared.isSuspendingForBackground {
-                    coordinator?.attachSurface(terminalView)
+                if let terminalView = terminalView {
+                    coordinator?.attachSurface(terminalView, context: surfaceAttachContext)
                 }
             }
         }
@@ -506,42 +522,20 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         }
         context.coordinator.wasActive = shouldRenderTerminal
 
-        let autoReconnectEnabled = (UserDefaults.standard.object(forKey: "sshAutoReconnect") as? Bool) ?? true
-        let shellMissing = ConnectionSessionManager.shared.shellId(for: session) == nil
-        let shellStartInFlight = ConnectionSessionManager.shared.isShellStartInFlight(for: session.id)
         let shouldRestoreKeyboardFocus =
             shouldPreserveKeyboardDuringReconnect
             && session.connectionState.isConnecting
             && terminalView.shouldRestoreKeyboardFocusOnReconnect
         let shouldKeepExistingKeyboardFocus = terminalView.isFirstResponder && shouldRestoreKeyboardFocus
         terminalView.acceptsTerminalInput = session.connectionState.isConnected
-        let shouldStartSSHConnection: Bool = {
-            switch session.connectionState {
-            case .connecting, .reconnecting, .connected:
-                return true
-            case .disconnected:
-                return isActive && autoReconnectEnabled
-            case .failed, .idle:
-                return false
-            }
-        }()
-        if context.coordinator.isTerminalReady
-            && shellMissing
-            && !shellStartInFlight
-            && shouldStartSSHConnection
-            && scenePhase == .active
-            && !ConnectionSessionManager.shared.isSuspendingForBackground {
-            let coordinator = context.coordinator
-            DispatchQueue.main.async { [weak terminalView] in
-                guard let terminalView else { return }
-                guard ConnectionSessionManager.shared.sessions.contains(where: { $0.id == session.id }) else { return }
-                guard ConnectionSessionManager.shared.shellId(for: session) == nil else { return }
-                guard !ConnectionSessionManager.shared.isShellStartInFlight(for: session.id) else { return }
-                if ConnectionSessionManager.shared.consumeTerminalReconnectReset(for: session.id) {
+        if context.coordinator.isTerminalReady {
+            context.coordinator.attachSurface(
+                terminalView,
+                context: surfaceAttachContext,
+                resetTerminal: {
                     terminalView.resetTerminalForReconnect()
                 }
-                coordinator.attachSurface(terminalView)
-            }
+            )
         }
 
         // Keep the terminal from reclaiming focus while an overlay (for example

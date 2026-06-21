@@ -18,6 +18,18 @@ enum TerminalSurfaceDetachReason: Equatable, Sendable {
     case sessionClosed
 }
 
+struct TerminalSurfaceAttachContext: Equatable, Sendable {
+    var isAppActive: Bool
+    var isViewActive: Bool
+    var autoReconnectEnabled: Bool
+
+    static let active = TerminalSurfaceAttachContext(
+        isAppActive: true,
+        isViewActive: true,
+        autoReconnectEnabled: true
+    )
+}
+
 @MainActor
 final class ConnectionSessionManager: ObservableObject {
     static let shared = ConnectionSessionManager()
@@ -57,6 +69,12 @@ final class ConnectionSessionManager: ObservableObject {
         let sessionId: UUID
         let task: Task<Void, Never>
         var onCompleted: [@MainActor (Bool) -> Void]
+    }
+
+    private struct SurfaceAttachRequest {
+        let sessionId: UUID
+        var context: TerminalSurfaceAttachContext
+        let task: Task<Void, Never>
     }
 
     private final class SessionRuntimeState {
@@ -246,6 +264,9 @@ final class ConnectionSessionManager: ObservableObject {
     private var sessionHostRetrustRequests: [UUID: SessionHostRetrustRequest] = [:]
     private var sessionHostRetrustRequestBySession: [UUID: UUID] = [:]
     var pendingSessionHostRetrustRequestIDs: Set<UUID> { Set(sessionHostRetrustRequests.keys) }
+    private var surfaceAttachRequests: [UUID: SurfaceAttachRequest] = [:]
+    private var surfaceAttachRequestBySession: [UUID: UUID] = [:]
+    var pendingSurfaceAttachRequestIDs: Set<UUID> { Set(surfaceAttachRequests.keys) }
     private var sessionReconnectsInFlight: Set<UUID> = []
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
     private var serverDisconnectTasks: [UUID: Task<Void, Never>] = [:]
@@ -268,6 +289,7 @@ final class ConnectionSessionManager: ObservableObject {
     private var moshInstallAndReconnectOperationForTesting: (@MainActor (ConnectionSession) async throws -> Void)?
     private var sessionRetryOperationForTesting: (@MainActor (ConnectionSession, Server?) async -> TerminalReconnectRequestResult)?
     private var sessionHostRetrustOperationForTesting: (@MainActor (ConnectionSession, Server) async -> Bool)?
+    private var surfaceAttachOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
     #endif
     @Published private(set) var isSuspendingForBackground = false
 
@@ -463,6 +485,10 @@ final class ConnectionSessionManager: ObservableObject {
 
     func waitForConnectionOpenRequest(_ requestID: UUID) async {
         await connectionOpenRequests[requestID]?.value
+    }
+
+    func waitForSurfaceAttachRequest(_ requestID: UUID) async {
+        await surfaceAttachRequests[requestID]?.task.value
     }
 
     /// Opens a connection to a server
@@ -1659,6 +1685,84 @@ final class ConnectionSessionManager: ObservableObject {
         }, for: sessionId)
 
         await startRuntimeIfNeeded(for: sessionId, terminal: terminal)
+    }
+
+    @discardableResult
+    func requestSurfaceAttach(
+        sessionId: UUID,
+        terminal: GhosttyTerminalView,
+        context: TerminalSurfaceAttachContext,
+        resetTerminal: @escaping @MainActor () -> Void
+    ) -> UUID? {
+        requestSurfaceAttach(
+            sessionId: sessionId,
+            context: context,
+            resetTerminal: resetTerminal,
+            attachOperation: { [weak self, weak terminal] in
+                guard let self, let terminal else { return }
+                await self.attachSurface(terminal, to: sessionId)
+            }
+        )
+    }
+
+    @discardableResult
+    private func requestSurfaceAttach(
+        sessionId: UUID,
+        context: TerminalSurfaceAttachContext,
+        resetTerminal: @escaping @MainActor () -> Void = {},
+        attachOperation: @escaping @MainActor () async -> Void
+    ) -> UUID? {
+        if let requestID = surfaceAttachRequestBySession[sessionId] {
+            guard shouldAcceptSurfaceAttach(sessionId: sessionId, context: context) else {
+                surfaceAttachRequests[requestID]?.context = context
+                return nil
+            }
+            surfaceAttachRequests[requestID]?.context = context
+            return requestID
+        }
+
+        guard shouldAcceptSurfaceAttach(sessionId: sessionId, context: context) else { return nil }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.surfaceAttachRequests.removeValue(forKey: requestID)
+                if self.surfaceAttachRequestBySession[sessionId] == requestID {
+                    self.surfaceAttachRequestBySession.removeValue(forKey: sessionId)
+                }
+            }
+
+            let latestContext = self.surfaceAttachRequests[requestID]?.context ?? context
+            guard self.shouldAcceptSurfaceAttach(sessionId: sessionId, context: latestContext) else { return }
+            if self.consumeTerminalReconnectReset(for: sessionId) {
+                resetTerminal()
+            }
+            await attachOperation()
+        }
+
+        surfaceAttachRequests[requestID] = SurfaceAttachRequest(sessionId: sessionId, context: context, task: task)
+        surfaceAttachRequestBySession[sessionId] = requestID
+        return requestID
+    }
+
+    private func shouldAcceptSurfaceAttach(
+        sessionId: UUID,
+        context: TerminalSurfaceAttachContext
+    ) -> Bool {
+        guard let session = sessionWithID(sessionId) else { return false }
+        guard context.isAppActive, context.isViewActive, !isSuspendingForBackground else { return false }
+        guard shellId(for: session) == nil else { return false }
+        guard !isShellStartInFlight(for: sessionId) else { return false }
+
+        switch session.connectionState {
+        case .connecting, .reconnecting, .connected:
+            return true
+        case .disconnected:
+            return context.autoReconnectEnabled
+        case .failed, .idle:
+            return false
+        }
     }
 
     func detachSurface(from sessionId: UUID, reason: TerminalSurfaceDetachReason) async {
@@ -2861,6 +2965,9 @@ extension ConnectionSessionManager {
         sessionHostRetrustRequests.values.forEach { $0.task.cancel() }
         sessionHostRetrustRequests.removeAll()
         sessionHostRetrustRequestBySession.removeAll()
+        surfaceAttachRequests.values.forEach { $0.task.cancel() }
+        surfaceAttachRequests.removeAll()
+        surfaceAttachRequestBySession.removeAll()
         sessionReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
@@ -2881,6 +2988,7 @@ extension ConnectionSessionManager {
         moshInstallAndReconnectOperationForTesting = nil
         sessionRetryOperationForTesting = nil
         sessionHostRetrustOperationForTesting = nil
+        surfaceAttachOperationForTesting = nil
         isRestoring = false
 
         UserDefaults.standard.removeObject(forKey: persistenceKey)
@@ -2894,6 +3002,31 @@ extension ConnectionSessionManager {
 
     func setBackgroundSuspendInProgressForTesting(_ isSuspending: Bool) {
         isSuspendingForBackground = isSuspending
+    }
+
+    func setSurfaceAttachOperationForTesting(
+        _ operation: (@MainActor (TerminalEntityID) async -> Void)?
+    ) {
+        surfaceAttachOperationForTesting = operation
+    }
+
+    @discardableResult
+    func requestSurfaceAttachForTesting(
+        sessionId: UUID,
+        context: TerminalSurfaceAttachContext,
+        resetTerminal: @escaping @MainActor () -> Void = {}
+    ) -> UUID? {
+        requestSurfaceAttach(
+            sessionId: sessionId,
+            context: context,
+            resetTerminal: resetTerminal,
+            attachOperation: { [weak self] in
+                guard let self else { return }
+                if let surfaceAttachOperationForTesting = self.surfaceAttachOperationForTesting {
+                    await surfaceAttachOperationForTesting(.session(sessionId))
+                }
+            }
+        )
     }
 
     func setServerDisconnectTaskForTesting(_ serverId: UUID, task: Task<Void, Never>?) {

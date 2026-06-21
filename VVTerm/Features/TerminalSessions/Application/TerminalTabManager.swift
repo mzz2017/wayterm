@@ -56,6 +56,12 @@ final class TerminalTabManager: ObservableObject {
         var onCompleted: [@MainActor (Bool) -> Void]
     }
 
+    private struct SurfaceAttachRequest {
+        let paneId: UUID
+        var context: TerminalSurfaceAttachContext
+        let task: Task<Void, Never>
+    }
+
     private final class PaneRuntimeState {
         let paneId: UUID
         var server: Server
@@ -172,6 +178,9 @@ final class TerminalTabManager: ObservableObject {
     private var paneHostRetrustRequests: [UUID: PaneHostRetrustRequest] = [:]
     private var paneHostRetrustRequestByPane: [UUID: UUID] = [:]
     var pendingPaneHostRetrustRequestIDs: Set<UUID> { Set(paneHostRetrustRequests.keys) }
+    private var surfaceAttachRequests: [UUID: SurfaceAttachRequest] = [:]
+    private var surfaceAttachRequestByPane: [UUID: UUID] = [:]
+    var pendingSurfaceAttachRequestIDs: Set<UUID> { Set(surfaceAttachRequests.keys) }
     private var serverUnlocker: @MainActor (Server) async -> Bool = { server in
         await AppLockManager.shared.ensureServerUnlocked(server)
     }
@@ -198,6 +207,7 @@ final class TerminalTabManager: ObservableObject {
     private var moshInstallAndReconnectOperationForTesting: (@MainActor (UUID) async throws -> Void)?
     private var paneRetryOperationForTesting: (@MainActor (UUID, Server) async -> TerminalReconnectRequestResult)?
     private var paneHostRetrustOperationForTesting: (@MainActor (UUID, Server) async -> Bool)?
+    private var surfaceAttachOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
     #endif
 
     /// Pane state keyed by pane ID
@@ -378,6 +388,10 @@ final class TerminalTabManager: ObservableObject {
 
     func waitForTabOpenRequest(_ requestID: UUID) async {
         await tabOpenRequests[requestID]?.value
+    }
+
+    func waitForSurfaceAttachRequest(_ requestID: UUID) async {
+        await surfaceAttachRequests[requestID]?.task.value
     }
 
     /// Open a new tab for a server
@@ -748,6 +762,70 @@ final class TerminalTabManager: ObservableObject {
         }
 
         await startRuntimeIfNeeded(forPane: paneId, terminal: terminal)
+    }
+
+    @discardableResult
+    func requestSurfaceAttach(
+        paneId: UUID,
+        terminal: GhosttyTerminalView,
+        context: TerminalSurfaceAttachContext
+    ) -> UUID? {
+        requestSurfaceAttach(
+            paneId: paneId,
+            context: context,
+            attachOperation: { [weak self, weak terminal] in
+                guard let self, let terminal else { return }
+                await self.attachSurface(terminal, toPane: paneId)
+            }
+        )
+    }
+
+    @discardableResult
+    private func requestSurfaceAttach(
+        paneId: UUID,
+        context: TerminalSurfaceAttachContext,
+        attachOperation: @escaping @MainActor () async -> Void
+    ) -> UUID? {
+        if let requestID = surfaceAttachRequestByPane[paneId] {
+            guard shouldAcceptSurfaceAttach(paneId: paneId, context: context) else {
+                surfaceAttachRequests[requestID]?.context = context
+                return nil
+            }
+            surfaceAttachRequests[requestID]?.context = context
+            return requestID
+        }
+
+        guard shouldAcceptSurfaceAttach(paneId: paneId, context: context) else { return nil }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.surfaceAttachRequests.removeValue(forKey: requestID)
+                if self.surfaceAttachRequestByPane[paneId] == requestID {
+                    self.surfaceAttachRequestByPane.removeValue(forKey: paneId)
+                }
+            }
+
+            let latestContext = self.surfaceAttachRequests[requestID]?.context ?? context
+            guard self.shouldAcceptSurfaceAttach(paneId: paneId, context: latestContext) else { return }
+            await attachOperation()
+        }
+
+        surfaceAttachRequests[requestID] = SurfaceAttachRequest(paneId: paneId, context: context, task: task)
+        surfaceAttachRequestByPane[paneId] = requestID
+        return requestID
+    }
+
+    private func shouldAcceptSurfaceAttach(
+        paneId: UUID,
+        context: TerminalSurfaceAttachContext
+    ) -> Bool {
+        guard paneStates[paneId] != nil else { return false }
+        guard context.isAppActive, context.isViewActive else { return false }
+        guard shellId(for: paneId) == nil else { return false }
+        guard !isShellStartInFlight(for: paneId) else { return false }
+        return true
     }
 
     func detachSurface(fromPane paneId: UUID, reason: TerminalSurfaceDetachReason) async {
@@ -2533,6 +2611,9 @@ extension TerminalTabManager {
         paneHostRetrustRequests.values.forEach { $0.task.cancel() }
         paneHostRetrustRequests.removeAll()
         paneHostRetrustRequestByPane.removeAll()
+        surfaceAttachRequests.values.forEach { $0.task.cancel() }
+        surfaceAttachRequests.removeAll()
+        surfaceAttachRequestByPane.removeAll()
         paneReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
@@ -2553,6 +2634,7 @@ extension TerminalTabManager {
         moshInstallAndReconnectOperationForTesting = nil
         paneRetryOperationForTesting = nil
         paneHostRetrustOperationForTesting = nil
+        surfaceAttachOperationForTesting = nil
         tmuxCleanupServers.removeAll()
         isRestoring = false
 
@@ -2569,6 +2651,29 @@ extension TerminalTabManager {
         _ factory: @escaping @MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient
     ) {
         testingTerminalConnectionClientFactory = factory
+    }
+
+    func setSurfaceAttachOperationForTesting(
+        _ operation: (@MainActor (TerminalEntityID) async -> Void)?
+    ) {
+        surfaceAttachOperationForTesting = operation
+    }
+
+    @discardableResult
+    func requestSurfaceAttachForTesting(
+        paneId: UUID,
+        context: TerminalSurfaceAttachContext
+    ) -> UUID? {
+        requestSurfaceAttach(
+            paneId: paneId,
+            context: context,
+            attachOperation: { [weak self] in
+                guard let self else { return }
+                if let surfaceAttachOperationForTesting = self.surfaceAttachOperationForTesting {
+                    await surfaceAttachOperationForTesting(.pane(paneId))
+                }
+            }
+        )
     }
 
     func setRejectedShellCleanupOperationForTesting(
