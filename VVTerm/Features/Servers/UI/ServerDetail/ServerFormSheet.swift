@@ -127,6 +127,7 @@ struct ServerFormSheet: View {
     @ObservedObject private var storeManager = StoreManager.shared
     @ObservedObject private var sshKeyStore = SSHKeySettingsStore.shared
     @EnvironmentObject private var appLockManager: AppLockManager
+    private let credentialProvider: ServerFormCredentialProvider
     let workspace: Workspace?
     let server: Server?
     let prefill: ServerFormPrefill?
@@ -178,12 +179,14 @@ struct ServerFormSheet: View {
         workspace: Workspace?,
         server: Server? = nil,
         prefill: ServerFormPrefill? = nil,
+        credentialProvider: ServerFormCredentialProvider = .shared,
         onSave: @escaping (Server) -> Void
     ) {
         self.serverManager = serverManager
         self.workspace = workspace
         self.server = server
         self.prefill = prefill
+        self.credentialProvider = credentialProvider
         self.onSave = onSave
 
         let initialWorkspaceId = server?.workspaceId ?? workspace?.id
@@ -428,7 +431,7 @@ struct ServerFormSheet: View {
     }
 
     private func loadInitialFormData() async {
-        storedKeys = KeychainManager.shared.getStoredSSHKeys()
+        storedKeys = credentialProvider.storedSSHKeys()
 
         // Load credentials from keychain when editing.
         guard let server = server else { return }
@@ -436,7 +439,7 @@ struct ServerFormSheet: View {
         defer { isLoadingCredentials = false }
 
         do {
-            let credentials = try KeychainManager.shared.getCredentials(for: server)
+            let credentials = try credentialProvider.credentials(for: server)
             applyLoadedCredentials(credentials, for: server)
             selectMatchingStoredKeyIfAvailable()
         } catch {
@@ -479,13 +482,13 @@ struct ServerFormSheet: View {
     }
 
     private func handleStoredKeyAdded(_ entry: SSHKeyEntry) {
-        storedKeys = KeychainManager.shared.getStoredSSHKeys()
+        storedKeys = credentialProvider.storedSSHKeys()
         selectedStoredKey = entry
         loadStoredKey(entry)
     }
 
     private func handleFormAppear() {
-        storedKeys = KeychainManager.shared.getStoredSSHKeys()
+        storedKeys = credentialProvider.storedSSHKeys()
         selectMatchingStoredKeyIfAvailable()
         reconcileAssignmentWorkspace()
     }
@@ -953,18 +956,19 @@ struct ServerFormSheet: View {
 
     private func loadStoredKey(_ entry: SSHKeyEntry) {
         do {
-            if let keyData = try KeychainManager.shared.getStoredSSHKeyData(for: entry.id) {
-                if let keyString = String(data: keyData.key, encoding: .utf8) {
-                    if sshKey != keyString {
-                        programmaticSSHKeyValue = keyString
-                    }
-                    sshKey = keyString
-                }
-                if let passphrase = keyData.passphrase {
-                    sshPassphrase = passphrase
-                }
+            guard let material = try credentialProvider.storedSSHKeyMaterial(for: entry) else {
+                sshPublicKey = entry.publicKey ?? ""
+                return
             }
-            sshPublicKey = entry.publicKey ?? ""
+
+            if sshKey != material.privateKey {
+                programmaticSSHKeyValue = material.privateKey
+            }
+            sshKey = material.privateKey
+            if let passphrase = material.passphrase {
+                sshPassphrase = passphrase
+            }
+            sshPublicKey = material.publicKey ?? ""
         } catch {
             self.error = String(format: String(localized: "Failed to load key: %@"), error.localizedDescription)
         }
@@ -978,22 +982,12 @@ struct ServerFormSheet: View {
             return
         }
 
-        for key in storedKeys {
-            guard let keyData = try? KeychainManager.shared.getStoredSSHKeyData(for: key.id),
-                  let keyString = String(data: keyData.key, encoding: .utf8),
-                  keyString == sshKey else {
-                continue
-            }
-
-            if let storedPassphrase = keyData.passphrase,
-               !storedPassphrase.isEmpty,
-               storedPassphrase != sshPassphrase {
-                continue
-            }
-
-            selectedStoredKey = key
-            return
-        }
+        selectedStoredKey = credentialProvider.matchingStoredSSHKey(
+            in: storedKeys,
+            privateKey: sshKey,
+            passphrase: sshPassphrase,
+            authMethod: selectedAuthMethod
+        )
     }
 
     // MARK: - Validation

@@ -3350,8 +3350,76 @@ Request code review for Task 44. Fix Critical and Important findings, update the
 
 Review result: initial review found one Important issue: disabling sync canceled pending drain work but did not cancel or guard in-flight startup/foreground/toggle CloudKit sync tasks, so a stale CloudKit result could still merge remote state after sync was turned off. Follow-up RED coverage reproduced the stale merge, then GREEN passed after disable handling canceled cloud sync tasks and `syncWithCloud()` / foreground drain paths re-checked cancellation plus `SyncSettings.isEnabled` after awaited work. The reviewer Minor source-boundary concern was addressed by asserting all named tracked observer entry points. Re-review found no Critical or Important issues; it left one Minor note that the disable regression behaviorally proves the post-await guard while the observer cancel helper remains covered by source-boundary assertions.
 
+## Task 45: Server Form Keychain Read Boundary
+
+**Files:**
+- Create: `VVTerm/Features/Servers/Application/ServerFormCredentialProvider.swift`
+- Modify: `VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift`
+- Test: `VVTermTests/ServerFormCredentialProviderTests.swift`
+- Test: `VVTermTests/ServerFormCredentialBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `KeychainManager.getStoredSSHKeys()`
+  - `KeychainManager.getStoredSSHKeyData(for:)`
+  - `KeychainManager.getCredentials(for:)`
+  - `ServerFormSheet.loadInitialFormData()`
+  - `ServerFormSheet.loadStoredKey(_:)`
+  - `ServerFormSheet.selectMatchingStoredKeyIfAvailable()`
+- Produces:
+  - `ServerFormCredentialLibrary`: Servers Application protocol for server-form credential/key reads.
+  - `ServerFormCredentialProvider`: Servers Application owner for reusable stored-key lists, stored-key material loading, server credential loading, and stored-key matching.
+  - `ServerFormStoredSSHKeyMaterial`: value type containing decoded private key text, optional passphrase, and optional public key text for UI form population.
+  - `ServerFormSheet` dependency on `ServerFormCredentialProvider.shared` instead of direct `KeychainManager.shared` calls.
+
+- [x] **Step 1: Add RED provider and boundary tests**
+
+Add `ServerFormCredentialProviderTests` with an in-memory fake library. Cover stored-key material decoding, matching a stored key by private key and passphrase, rejecting passphrase mismatches, and preserving thrown keychain errors for UI presentation. Add `ServerFormCredentialBoundaryTests` that reads `ServerFormSheet.swift` and fails while the UI source still contains `KeychainManager.shared`.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerFormCredentialProviderTests -only-testing:VVTermTests/ServerFormCredentialBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the provider tests fail to compile because `ServerFormCredentialProvider`, `ServerFormCredentialLibrary`, and `ServerFormStoredSSHKeyMaterial` do not exist. If those compile unexpectedly, the boundary test must fail because `ServerFormSheet.swift` still directly references `KeychainManager.shared`.
+
+Actual RED result: focused `ServerFormCredentialProviderTests` / `ServerFormCredentialBoundaryTests` failed to compile because `ServerFormCredentialLibrary` and `ServerFormCredentialProvider` did not exist. The initial fixture also exposed a missing `serverId` argument in the test `ServerCredentials` setup, which was corrected before GREEN.
+
+- [x] **Step 2: Add Servers Application credential provider**
+
+Create `ServerFormCredentialProvider.swift` in Servers Application. Keep `KeychainManager` conformance at the application boundary and expose only server-form read operations needed by the UI. Convert stored key `Data` to `String` inside the provider so `ServerFormSheet` receives form-ready values without touching keychain storage details.
+
+- [x] **Step 3: Route ServerFormSheet through provider**
+
+Inject `ServerFormCredentialProvider.shared` into `ServerFormSheet` via a private dependency. Replace stored-key list refreshes, edit credential loading, stored-key material loading, and stored-key matching with provider calls. Keep UI behavior unchanged: selected stored keys still populate private key, passphrase, and public key fields; matching still respects passphrase mismatch.
+
+- [x] **Step 4: Run focused verification**
+
+Run the focused provider/boundary tests, a source scan for direct `KeychainManager.shared` in `ServerFormSheet.swift`, and `git diff --check`:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerFormCredentialProviderTests -only-testing:VVTermTests/ServerFormCredentialBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "KeychainManager\\.shared" VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift
+git diff --check
+```
+
+Actual GREEN result: focused `ServerFormCredentialProviderTests` / `ServerFormCredentialBoundaryTests` passed 7 Swift Testing tests after review-fix coverage. The source scan found no direct `KeychainManager.shared` references in `ServerFormSheet.swift`, `git diff --check` passed, iOS build-for-testing passed after rerunning sequentially to avoid Xcode's `build.db` lock, signed macOS build-for-testing failed on missing local Mac Development signing assets, and macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO`.
+
+- [x] **Step 5: API and boundary cleanup**
+
+Before review, verify the new provider lives in Servers Application, the UI only sends form/read intent through that provider, no Keychain storage details leak back into UI, provider names read clearly at call sites, and no temporary source-boundary-only helper remains public.
+
+- [x] **Step 6: Request review and commit**
+
+Request code review for Task 45. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
+
+Review result: initial review found one Important behavior-preservation issue: automatic stored-key matching would surface the first unreadable stored-key candidate as a form error, while the old UI loop skipped broken candidates and could still match a later valid key. Follow-up RED coverage failed to compile until `matchingStoredSSHKey(in:...)` existed; GREEN passed after matching was scoped to the already loaded picker candidates and per-candidate read/decode failures were skipped. Direct explicit stored-key loading still preserves underlying read failures for user-visible error presentation. Re-review found no Critical or Important issues; the remaining Minor API clarity note was addressed by making matching non-throwing and removing the dead UI catch.
+
 ## Progress Ledger
 
+- 2026-06-21: Task 45 RED/GREEN completed with review fix. `ServerFormSheet` no longer directly calls `KeychainManager.shared` for stored SSH key lists, stored key material, or edit-server credentials; it sends credential read intent through `ServerFormCredentialProvider` in Servers Application. The provider owns the server-form credential read boundary through `ServerFormCredentialLibrary`, decodes stored key data to form-ready values, preserves underlying keychain read errors for explicit stored-key loading, and matches reusable keys by private key plus passphrase outside SwiftUI. UI behavior is preserved for selected stored keys, including refreshing the public key field when stored private key data is absent. Initial RED failed to compile until the provider/protocol/value type existed. Review found automatic matching regressed by surfacing a broken candidate instead of skipping it; review-fix RED failed until candidate-scoped matching existed, and GREEN passed after matching used the loaded picker candidates and skipped per-candidate read/decode failures. Re-review found no Critical or Important issues, and the remaining Minor non-throwing API clarity note was addressed. Final focused provider/boundary tests passed 7 Swift Testing tests; source scan found no direct `KeychainManager.shared` in `ServerFormSheet.swift`; `git diff --check` passed; iOS build-for-testing passed after a sequential rerun because the first parallel build hit Xcode's `build.db` lock; signed macOS build-for-testing failed on missing local Mac Development signing assets, then macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO`. A task-introduced `ServerFormCredentialProvider.shared` main-actor warning was removed by keeping the provider non-main-actor; final macOS warning scan showed only existing unrelated Swift 6 / XCTest deployment warnings.
 - 2026-06-21: Task 44 RED/GREEN completed with review fix. Terminal accessory CloudKit sync now has TerminalAccessories application-layer protocol seams, manager-owned startup/foreground/sync-toggle/cloud-resolution tasks, DEBUG-only await hooks, and cancellation/sync-enabled guards that drop CloudKit results which resume after sync is disabled. Initial RED failed to compile until injectable cloud sync / pending drain dependencies and startup await hooks existed; review-fix RED failed because a stale remote custom action was merged after sync was disabled. GREEN `TerminalAccessoryPreferencesManagerTests` passed 5 XCTest tests; source scan found no old untracked startup/observer cloud sync task forms; `git diff --check` passed; iOS build-for-testing passed; signed macOS build-for-testing failed on missing local Mac Development signing assets, then macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing unrelated Swift 6 / XCTest deployment warnings. Guard warning for added `Task` was reviewed: the tasks are stored and tracked by `TerminalAccessoryPreferencesManager`.
 - 2026-06-21: Task 43 RED/GREEN completed with review fix. Store startup product/entitlement refresh and review-mode disable entitlement refresh are now owned by `StoreManager` as stored tasks, canceled in `deinit`, clear only their current task IDs, and expose DEBUG-only await hooks for lifecycle ordering tests. Review found a superseded review-mode refresh could still run entitlement work after cancellation; follow-up RED coverage failed with two refreshes until `startReviewModeRefresh()` checked cancellation before invoking the entitlement action, and re-review found no Critical or Important issues. Verification: initial RED failed because Store refresh operation injection and await hooks did not exist; review-fix RED failed because a canceled superseded refresh still ran entitlement work; GREEN `StoreManagerLifecycleTests` passed 7 Swift Testing tests; Store lifecycle source scan produced no matches for old untracked startup/review refresh task forms; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with existing Swift 6 isolation and XCTest deployment warnings. Guard warning for added `Task` was reviewed: the tasks are stored and tracked by `StoreManager`.
 - 2026-06-21: Task 42 RED/GREEN completed with review fix. Store purchase and restore buttons now send synchronous intent to `StoreManager.requestPurchase(of:)` and `StoreManager.requestRestorePurchases()` instead of starting SwiftUI-owned StoreKit tasks. `StoreManager` owns pending purchase/restore request tasks by request ID, exposes awaitable waits, records request-level failures, and keeps `purchase(_:)` / `restorePurchases()` as the StoreKit behavior boundary. Review found real purchase/restore catch paths still translated `CancellationError` into failed UI state; follow-up RED coverage failed until cancellation-aware Store state helpers existed, and re-review found no Critical or Important issues. Verification: initial RED failed because Store request tracking APIs did not exist; review-fix RED failed because cancellation helper seams did not exist; GREEN focused suite passed 3 XCTest tests plus 5 Swift Testing tests; Store UI boundary scan produced no matches; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with existing Swift 6 isolation and XCTest deployment warnings. Guard warning for added `Task` was reviewed: the tasks are owned and tracked by `StoreManager`, not SwiftUI.
