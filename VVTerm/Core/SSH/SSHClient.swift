@@ -917,6 +917,53 @@ nonisolated(unsafe) private let kbdintCallback: @convention(c) (
     }
 }
 
+// AsyncStream termination and cancellation handlers are synchronous,
+// nonisolated callbacks, so this tiny registry uses a lock to let SSHSession
+// own and later await channel cleanup tasks without escaping actor state.
+private final class SSHChannelCleanupTaskRegistry: @unchecked Sendable {
+    private final class Record {
+        var task: Task<Void, Never>?
+    }
+
+    private let lock = NSLock()
+    private var records: [UUID: Record] = [:]
+
+    @discardableResult
+    func track(_ operation: @escaping @Sendable () async -> Void) -> UUID {
+        let requestID = UUID()
+        let record = Record()
+
+        lock.lock()
+        records[requestID] = record
+        lock.unlock()
+
+        let task = Task { [weak self] in
+            await operation()
+            self?.remove(requestID)
+        }
+
+        lock.lock()
+        if records[requestID] === record {
+            record.task = task
+        }
+        lock.unlock()
+
+        return requestID
+    }
+
+    func tasks() -> [Task<Void, Never>] {
+        lock.lock()
+        defer { lock.unlock() }
+        return records.values.compactMap(\.task)
+    }
+
+    private func remove(_ requestID: UUID) {
+        lock.lock()
+        records.removeValue(forKey: requestID)
+        lock.unlock()
+    }
+}
+
 // MARK: - SSH Session using libssh2
 
 actor SSHSession {
@@ -959,6 +1006,7 @@ actor SSHSession {
     private var socket: Int32 = -1
     private var isActive = false
     private var ioTask: Task<Void, Never>?
+    nonisolated private let channelCleanupTasks = SSHChannelCleanupTaskRegistry()
     private var execRequests: [UUID: ExecRequest] = [:]
     private var connectedPeerAddress: String?
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "SSHSession")
@@ -1206,6 +1254,7 @@ actor SSHSession {
 
         // Fail any pending exec requests
         failAllExecRequests(error: SSHError.notConnected)
+        await waitForChannelCleanupTasks()
 
         // Close socket first to abort any blocking I/O in libssh2
         atomicSocket.closeImmediately()
@@ -1734,7 +1783,7 @@ actor SSHSession {
             self.shellChannels[shellId] = state
 
             continuation.onTermination = { [weak self] _ in
-                Task { [weak self] in
+                self?.trackChannelCleanupTask { [weak self] in
                     await self?.closeShell(shellId)
                 }
             }
@@ -1893,6 +1942,20 @@ actor SSHSession {
 
     func closeShell(_ shellId: UUID) async {
         closeShellInternal(shellId)
+    }
+
+    nonisolated private func trackChannelCleanupTask(_ operation: @escaping @Sendable () async -> Void) {
+        channelCleanupTasks.track(operation)
+    }
+
+    private func waitForChannelCleanupTasks() async {
+        while true {
+            let tasks = channelCleanupTasks.tasks()
+            guard !tasks.isEmpty else { return }
+            for task in tasks {
+                await task.value
+            }
+        }
     }
 
     private func closeShellInternal(_ shellId: UUID) {
@@ -2369,7 +2432,7 @@ actor SSHSession {
                 startIOLoop()
             }
         }, onCancel: { [weak self] in
-            Task {
+            self?.trackChannelCleanupTask { [weak self] in
                 await self?.cancelExecRequest(requestId, error: CancellationError())
             }
         })

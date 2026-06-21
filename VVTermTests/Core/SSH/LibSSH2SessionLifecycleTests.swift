@@ -347,6 +347,60 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         )
     }
 
+    func testShellAndExecCleanupTasksAreTrackedBySessionOwner() throws {
+        // Given the SSHSession implementation that owns libssh2 shell and exec
+        // channels.
+        let source = try sshClientSource()
+        let sessionSource = try slice(
+            startingAt: "actor SSHSession {",
+            endingBefore: "enum SSHError: LocalizedError",
+            in: source
+        )
+        let startShellSource = try slice(
+            startingAt: "    func startShell(",
+            endingBefore: "    private func startIOLoop()",
+            in: sessionSource
+        )
+        let executeSource = try slice(
+            startingAt: "    func execute(_ command: String) async throws -> String",
+            endingBefore: "    // MARK: - Keep Alive",
+            in: sessionSource
+        )
+        let disconnectSource = try slice(
+            startingAt: "    func disconnect() async {",
+            endingBefore: "    private func cleanupLibssh2()",
+            in: sessionSource
+        )
+
+        // Then lifecycle-critical shell stream termination and exec
+        // cancellation cleanup must be routed through a session-owned tracker
+        // rather than untracked fire-and-forget tasks.
+        XCTAssertTrue(
+            source.contains("SSHChannelCleanupTaskRegistry"),
+            "SSHSession should own a channel cleanup task registry."
+        )
+        XCTAssertTrue(
+            startShellSource.contains("trackChannelCleanupTask"),
+            "Shell stream termination should register its close/free cleanup task with SSHSession."
+        )
+        XCTAssertFalse(
+            startShellSource.contains("\n                Task { [weak self] in\n                    await self?.closeShell(shellId)"),
+            "Shell stream termination must not launch an untracked closeShell task."
+        )
+        XCTAssertTrue(
+            executeSource.contains("trackChannelCleanupTask"),
+            "Exec cancellation should register its channel cleanup task with SSHSession."
+        )
+        XCTAssertFalse(
+            executeSource.contains("Task {\n                await self?.cancelExecRequest"),
+            "Exec cancellation must not launch an untracked cancelExecRequest task."
+        )
+        XCTAssertTrue(
+            disconnectSource.contains("await waitForChannelCleanupTasks()"),
+            "SSHSession.disconnect should await tracked channel cleanup before final libssh2 cleanup completes."
+        )
+    }
+
     func testExecUploadNonZeroExitDoesNotCloseFreedChannelTwice() async throws {
         // Given exec-preferred upload reaches remote process completion, frees
         // its channel, and then reports a non-zero exit status.
@@ -513,6 +567,42 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
             "SFTP directory read failure must close the opened handle exactly once"
         )
     }
+
+    private func sshClientSource() throws -> String {
+        try String(
+            contentsOf: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift"),
+            encoding: .utf8
+        )
+    }
+
+    private func sourceRoot() throws -> URL {
+        var url = URL(fileURLWithPath: #filePath)
+        while url.lastPathComponent != "VVTermTests" {
+            let next = url.deletingLastPathComponent()
+            if next.path == url.path {
+                throw SourceRootError.notFound
+            }
+            url = next
+        }
+        return url.deletingLastPathComponent()
+    }
+
+    private func slice(startingAt marker: String, endingBefore endMarker: String, in source: String) throws -> String {
+        guard let start = source.range(of: marker),
+              let end = source.range(of: endMarker, range: start.lowerBound..<source.endIndex)
+        else {
+            throw SourceSliceError.notFound
+        }
+        return String(source[start.lowerBound..<end.lowerBound])
+    }
+}
+
+private enum SourceRootError: Error {
+    case notFound
+}
+
+private enum SourceSliceError: Error {
+    case notFound
 }
 
 private extension SSHSessionConfig {

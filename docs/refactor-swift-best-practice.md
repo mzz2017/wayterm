@@ -109,11 +109,12 @@ preserved in the archive.
     an application lifecycle coordinator so startup load ordering is observable
     and awaitable.
   - Status: completed by Task 83.
-- [ ] 8. SSHClient untracked channel cleanup tasks.
+- [x] 8. SSHClient untracked channel cleanup tasks.
   - Evidence: `SSHClient` uses untracked `Task {}` from stream termination /
     exec cancellation paths that eventually close/free libssh2 channels.
   - Required fix: track these cleanup tasks in the owning `SSHClient` / runtime
     or make later disconnect/close paths await them.
+  - Status: completed by Task 84.
 - [ ] 9. SSHClient mosh stream teardown tracking.
   - Evidence: `SSHClient` mosh stream termination cancels the stream task and
     starts untracked shell teardown, which can stop a live `MoshClientSession`.
@@ -128,16 +129,16 @@ preserved in the archive.
 
 ## Current Focus
 
-Next executable slice: Must-Fix 8, SSHClient untracked channel cleanup tasks.
+Next executable slice: Must-Fix 9, SSHClient mosh stream teardown tracking.
 
 Before code:
 
-1. Inspect `VVTerm/Core/SSH/SSHClient.swift` stream termination and exec
-   cancellation paths that close or free libssh2 channels.
-2. Add a compact Task 84 section here with files, interfaces, RED tests,
+1. Inspect `VVTerm/Core/SSH/SSHClient.swift` mosh stream termination and
+   `MoshClientSession` teardown paths.
+2. Add a compact Task 85 section here with files, interfaces, RED tests,
    expected verification, API/boundary cleanup, and commit scope.
 3. Follow TDD: RED test first, then implementation, then focused verification.
-4. After Task 84, do API/boundary cleanup before moving to Must-Fix 9.
+4. After Task 85, do API/boundary cleanup before moving to Must-Fix 10.
 
 ## Task 81: Server Connection-Test Cancellation
 
@@ -432,6 +433,106 @@ explicitly authorizes new subagents. Fix Critical and Important findings,
 update Must-Fix 7 status plus Progress Ledger with RED/GREEN evidence,
 verification, review outcome, and cleanup notes, then commit atomically.
 
+## Task 84: SSHClient Channel Cleanup Task Tracking
+
+**Files:**
+- Modify: `VVTerm/Core/SSH/SSHClient.swift`
+- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing `SSHSession.startShell(...)` stream termination path.
+  - Existing `SSHSession.execute(_:)` cancellation handler.
+  - Existing `SSHSession.disconnect()` cleanup path.
+  - Existing fake-driver `LibSSH2SessionLifecycleTests`.
+- Produces:
+  - A session-owned channel cleanup task tracker for shell stream termination
+    and exec cancellation cleanup work.
+  - `disconnect()` awaits tracked channel cleanup tasks before final libssh2
+    cleanup completes.
+  - Source-boundary tests that prevent reintroducing raw lifecycle-critical
+    `Task {}` cleanup in shell termination and exec cancellation paths.
+
+- [x] **Step 1: Add RED channel cleanup ownership tests**
+
+Extend `LibSSH2SessionLifecycleTests`:
+- `testShellAndExecCleanupTasksAreTrackedBySessionOwner`
+  - Inspect `SSHClient.swift`.
+  - Assert `startShell` stream termination routes cleanup through a named
+    tracking helper instead of directly starting `Task { await closeShell }`.
+  - Assert `execute(_:)` cancellation routes cleanup through the same tracking
+    helper instead of directly starting `Task { await cancelExecRequest }`.
+  - Assert `disconnect()` awaits tracked cleanup tasks before completing
+    libssh2 teardown.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the source-boundary test fails because shell termination
+and exec cancellation still create raw cleanup `Task {}` calls and disconnect
+does not await a tracked cleanup task collection.
+
+- [x] **Step 2: Add session-owned cleanup task registry**
+
+Update `SSHClient.swift`:
+- Add a small `SSHChannelCleanupTaskRegistry` owned by `SSHSession`.
+- The registry stores cleanup `Task<Void, Never>` values under stable IDs and
+  removes them when each task exits.
+- Add a `trackChannelCleanupTask(_:)` helper that registers lifecycle-critical
+  channel close/free cleanup for shell termination and exec cancellation.
+- Add a helper for awaiting all currently tracked channel cleanup tasks.
+- Keep this scoped to SSH shell/exec channel cleanup; do not fold in mosh stream
+  teardown, which remains Must-Fix 9.
+
+- [x] **Step 3: Route shell termination and exec cancellation through tracker**
+
+Update `SSHSession.startShell(...)`:
+- Replace direct `Task { await self?.closeShell(shellId) }` in
+  `continuation.onTermination` with the tracked cleanup helper.
+
+Update `SSHSession.execute(_:)`:
+- Replace direct cancellation-handler `Task { await self?.cancelExecRequest }`
+  with the tracked cleanup helper.
+- Preserve existing cancellation semantics and user-facing `CancellationError`.
+
+- [x] **Step 4: Await tracked cleanup from disconnect**
+
+Update `SSHSession.disconnect()`:
+- Await tracked channel cleanup tasks after pending shell/exec cleanup has been
+  asked to stop and before final libssh2 resource cleanup is considered done.
+- Keep close/free idempotent through existing `closeShellInternal`,
+  `failAllExecRequests`, and `closeAllExecChannels` guards.
+
+- [x] **Step 5: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests ENABLE_DEBUG_DYLIB=NO
+rg -n "SSHChannelCleanupTaskRegistry|trackChannelCleanupTask|waitForChannelCleanupTasks|onTermination|withTaskCancellationHandler|Task \\{" VVTerm/Core/SSH/SSHClient.swift VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows shell/exec channel
+cleanup tasks are tracked by the session owner and disconnect awaits tracked
+cleanup tasks.
+
+- [x] **Step 6: API and boundary cleanup**
+
+Before review, verify the tracker is internal to `SSHSession`, naming matches
+existing lifecycle request terminology, no mosh teardown behavior changed,
+close/free remains idempotent, and no temporary test-only production helper was
+added.
+
+- [x] **Step 7: Review and commit**
+
+Perform local lifecycle review against the Swift checklist unless the user
+explicitly authorizes new subagents. Fix Critical and Important findings,
+update Must-Fix 8 status plus Progress Ledger with RED/GREEN evidence,
+verification, review outcome, and cleanup notes, then commit atomically.
+
 ## Verification Template
 
 Focused iOS tests:
@@ -461,6 +562,22 @@ xcodebuild build-for-testing \
 
 ## Progress Ledger
 
+- 2026-06-22: Task 84 RED/GREEN completed with local lifecycle review and no
+  new subagents. `SSHSession` now owns shell/exec channel cleanup tasks through
+  `SSHChannelCleanupTaskRegistry`, `trackChannelCleanupTask(_:)`, and
+  `waitForChannelCleanupTasks()`; shell stream termination and exec cancellation
+  register cleanup work instead of launching raw channel close/free tasks, and
+  `disconnect()` awaits tracked cleanup before final libssh2 cleanup completes.
+  Initial RED failed as expected because the source-boundary test found raw
+  `Task {}` cleanup in shell termination / exec cancellation and no disconnect
+  await boundary. GREEN verification passed the new single source-boundary test
+  and the full `LibSSH2SessionLifecycleTests` suite; source scan showed the
+  tracker, tracked shell/exec cleanup call sites, and the remaining mosh task
+  evidence reserved for Must-Fix 9. `git diff --check` passed; iOS
+  `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. API/boundary cleanup
+  found the tracker scoped inside SSH infrastructure, no UI or mosh behavior
+  changed, close/free remained idempotent through existing guards, and no
+  test-only production helper was added.
 - 2026-06-22: Task 83 RED/GREEN completed with local lifecycle review and no
   new subagents. `ServerManager` now owns startup data loading through a named
   `startStartupLoad()` path with `startupLoadTask`, visible
