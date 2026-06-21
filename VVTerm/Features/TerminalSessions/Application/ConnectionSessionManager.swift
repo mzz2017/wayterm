@@ -97,6 +97,11 @@ final class ConnectionSessionManager: ObservableObject {
         let task: Task<Void, Never>
     }
 
+    private struct RichPasteUploadRequest {
+        let sessionId: UUID
+        let task: Task<Void, Never>
+    }
+
     private struct ResizeRequest {
         let sessionId: UUID
         var size: TerminalResizeRequestSize
@@ -305,6 +310,9 @@ final class ConnectionSessionManager: ObservableObject {
     private var inputRequestBySession: [UUID: UUID] = [:]
     private var lastInputTaskBySession: [UUID: Task<Void, Never>] = [:]
     var pendingInputRequestIDs: Set<UUID> { Set(inputRequests.keys) }
+    private var richPasteUploadRequests: [UUID: RichPasteUploadRequest] = [:]
+    private var richPasteUploadRequestBySession: [UUID: UUID] = [:]
+    var pendingSessionRichPasteUploadRequestIDs: Set<UUID> { Set(richPasteUploadRequests.keys) }
     private var resizeRequests: [UUID: ResizeRequest] = [:]
     private var resizeRequestBySession: [UUID: UUID] = [:]
     var pendingResizeRequestIDs: Set<UUID> { Set(resizeRequests.keys) }
@@ -335,6 +343,8 @@ final class ConnectionSessionManager: ObservableObject {
     private var sessionHostRetrustOperationForTesting: (@MainActor (ConnectionSession, Server) async -> Bool)?
     private var surfaceAttachOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
     private var inputOperationForTesting: (@MainActor (Data, TerminalEntityID) async -> Void)?
+    private var richPasteLeaseProviderForTesting: (@MainActor (UUID) -> RemoteConnectionLease?)?
+    private var richPasteUploadOperationForTesting: TerminalRichPasteUploadOperation?
     private var resizeOperationForTesting: (@MainActor (TerminalResizeRequestSize, TerminalEntityID) async -> Void)?
     private var processExitOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
     #endif
@@ -540,6 +550,10 @@ final class ConnectionSessionManager: ObservableObject {
 
     func waitForInputRequest(_ requestID: UUID) async {
         await inputRequests[requestID]?.task.value
+    }
+
+    func waitForSessionRichPasteUploadRequest(_ requestID: UUID) async {
+        await richPasteUploadRequests[requestID]?.task.value
     }
 
     func waitForResizeRequest(_ requestID: UUID) async {
@@ -942,6 +956,7 @@ final class ConnectionSessionManager: ObservableObject {
         cancelSessionHostRetrustRequest(for: sessionId)
         cancelSessionCredentialLoadRequest(for: sessionId)
         cancelInputRequests(for: sessionId)
+        cancelSessionRichPasteUploadRequests(for: sessionId)
         cancelResizeRequests(for: sessionId)
         cancelProcessExitRequests(for: sessionId)
         let shellTeardownTask = cancelAndClearShellHandlers(for: sessionId)
@@ -977,6 +992,18 @@ final class ConnectionSessionManager: ObservableObject {
 
         inputRequestBySession.removeValue(forKey: sessionId)
         lastInputTaskBySession.removeValue(forKey: sessionId)
+    }
+
+    private func cancelSessionRichPasteUploadRequests(for sessionId: UUID) {
+        let requestIDs = richPasteUploadRequests.compactMap { requestID, request in
+            request.sessionId == sessionId ? requestID : nil
+        }
+
+        for requestID in requestIDs {
+            richPasteUploadRequests.removeValue(forKey: requestID)?.task.cancel()
+        }
+
+        richPasteUploadRequestBySession.removeValue(forKey: sessionId)
     }
 
     private func cancelResizeRequests(for sessionId: UUID) {
@@ -2010,6 +2037,104 @@ final class ConnectionSessionManager: ObservableObject {
         inputRequestBySession[sessionId] = requestID
         lastInputTaskBySession[sessionId] = task
         return requestID
+    }
+
+    @discardableResult
+    func requestSessionRichPasteUpload(
+        image: ClipboardImagePayload,
+        settings: RichClipboardSettings,
+        for sessionId: UUID,
+        onProgress: @escaping @MainActor (String?) -> Void = { _ in },
+        onCompleted: @escaping @MainActor (TerminalRichPasteUploadRequestResult) -> Void = { _ in }
+    ) -> UUID? {
+        guard sessionWithID(sessionId) != nil else { return nil }
+
+        if let previousRequestID = richPasteUploadRequestBySession[sessionId],
+           let previousRequest = richPasteUploadRequests[previousRequestID] {
+            previousRequest.task.cancel()
+        }
+
+        let requestID = UUID()
+        let upload = richPasteUploadOperation(for: sessionId)
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.richPasteUploadRequests.removeValue(forKey: requestID)
+                if self.richPasteUploadRequestBySession[sessionId] == requestID {
+                    self.richPasteUploadRequestBySession.removeValue(forKey: sessionId)
+                }
+            }
+
+            guard !Task.isCancelled else {
+                onCompleted(.cancelled)
+                return
+            }
+            guard self.sessionWithID(sessionId) != nil else {
+                onCompleted(.cancelled)
+                return
+            }
+
+            let result = await TerminalRichPasteUploadRequest.perform(
+                image: image,
+                settings: settings,
+                lease: self.richPasteLease(for: sessionId),
+                upload: upload,
+                onProgress: { message in
+                    onProgress(message)
+                },
+                pasteUploadedPath: { [weak self] text in
+                    guard let self else { return }
+                    guard self.sessionWithID(sessionId) != nil else { return }
+                    guard let inputRequestID = self.requestSessionInput(
+                        Data(text.utf8),
+                        to: sessionId
+                    ) else {
+                        return
+                    }
+                    await self.waitForInputRequest(inputRequestID)
+                }
+            )
+
+            if Task.isCancelled {
+                onCompleted(.cancelled)
+                return
+            }
+            onCompleted(result)
+        }
+
+        richPasteUploadRequests[requestID] = RichPasteUploadRequest(
+            sessionId: sessionId,
+            task: task
+        )
+        richPasteUploadRequestBySession[sessionId] = requestID
+        return requestID
+    }
+
+    private func richPasteLease(for sessionId: UUID) -> RemoteConnectionLease? {
+        #if DEBUG
+        if let richPasteLeaseProviderForTesting {
+            return richPasteLeaseProviderForTesting(sessionId)
+        }
+        #endif
+
+        return remoteConnectionLease(forSessionId: sessionId)
+    }
+
+    private func richPasteUploadOperation(for sessionId: UUID) -> TerminalRichPasteUploadOperation {
+        #if DEBUG
+        if let richPasteUploadOperationForTesting {
+            return richPasteUploadOperationForTesting
+        }
+        #endif
+
+        let coordinator = TerminalRichPasteCoordinator(sessionId: sessionId)
+        return { image, settings, client, _ in
+            try await coordinator.performRichPaste(
+                image: image,
+                settings: settings,
+                client: client
+            )
+        }
     }
 
     func resizeSession(_ sessionId: UUID, cols: Int, rows: Int) async {
@@ -3251,6 +3376,9 @@ extension ConnectionSessionManager {
         inputRequests.removeAll()
         inputRequestBySession.removeAll()
         lastInputTaskBySession.removeAll()
+        richPasteUploadRequests.values.forEach { $0.task.cancel() }
+        richPasteUploadRequests.removeAll()
+        richPasteUploadRequestBySession.removeAll()
         resizeRequests.values.forEach { $0.task.cancel() }
         resizeRequests.removeAll()
         resizeRequestBySession.removeAll()
@@ -3279,6 +3407,8 @@ extension ConnectionSessionManager {
         sessionHostRetrustOperationForTesting = nil
         surfaceAttachOperationForTesting = nil
         inputOperationForTesting = nil
+        richPasteLeaseProviderForTesting = nil
+        richPasteUploadOperationForTesting = nil
         resizeOperationForTesting = nil
         processExitOperationForTesting = nil
         isRestoring = false
@@ -3306,6 +3436,18 @@ extension ConnectionSessionManager {
         _ operation: (@MainActor (Data, TerminalEntityID) async -> Void)?
     ) {
         inputOperationForTesting = operation
+    }
+
+    func setRichPasteLeaseProviderForTesting(
+        _ provider: (@MainActor (UUID) -> RemoteConnectionLease?)?
+    ) {
+        richPasteLeaseProviderForTesting = provider
+    }
+
+    func setRichPasteUploadOperationForTesting(
+        _ operation: TerminalRichPasteUploadOperation?
+    ) {
+        richPasteUploadOperationForTesting = operation
     }
 
     func setResizeOperationForTesting(

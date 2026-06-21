@@ -73,6 +73,11 @@ final class TerminalTabManager: ObservableObject {
         let task: Task<Void, Never>
     }
 
+    private struct RichPasteUploadRequest {
+        let paneId: UUID
+        let task: Task<Void, Never>
+    }
+
     private struct ResizeRequest {
         let paneId: UUID
         var size: TerminalResizeRequestSize
@@ -210,6 +215,9 @@ final class TerminalTabManager: ObservableObject {
     private var inputRequestByPane: [UUID: UUID] = [:]
     private var lastInputTaskByPane: [UUID: Task<Void, Never>] = [:]
     var pendingInputRequestIDs: Set<UUID> { Set(inputRequests.keys) }
+    private var richPasteUploadRequests: [UUID: RichPasteUploadRequest] = [:]
+    private var richPasteUploadRequestByPane: [UUID: UUID] = [:]
+    var pendingPaneRichPasteUploadRequestIDs: Set<UUID> { Set(richPasteUploadRequests.keys) }
     private var resizeRequests: [UUID: ResizeRequest] = [:]
     private var resizeRequestByPane: [UUID: UUID] = [:]
     var pendingResizeRequestIDs: Set<UUID> { Set(resizeRequests.keys) }
@@ -244,6 +252,8 @@ final class TerminalTabManager: ObservableObject {
     private var paneHostRetrustOperationForTesting: (@MainActor (UUID, Server) async -> Bool)?
     private var surfaceAttachOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
     private var inputOperationForTesting: (@MainActor (Data, TerminalEntityID) async -> Void)?
+    private var richPasteLeaseProviderForTesting: (@MainActor (UUID) -> RemoteConnectionLease?)?
+    private var richPasteUploadOperationForTesting: TerminalRichPasteUploadOperation?
     private var resizeOperationForTesting: (@MainActor (TerminalResizeRequestSize, TerminalEntityID) async -> Void)?
     private var processExitOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
     #endif
@@ -434,6 +444,10 @@ final class TerminalTabManager: ObservableObject {
 
     func waitForInputRequest(_ requestID: UUID) async {
         await inputRequests[requestID]?.task.value
+    }
+
+    func waitForPaneRichPasteUploadRequest(_ requestID: UUID) async {
+        await richPasteUploadRequests[requestID]?.task.value
     }
 
     func waitForResizeRequest(_ requestID: UUID) async {
@@ -972,6 +986,104 @@ final class TerminalTabManager: ObservableObject {
         inputRequestByPane[paneId] = requestID
         lastInputTaskByPane[paneId] = task
         return requestID
+    }
+
+    @discardableResult
+    func requestPaneRichPasteUpload(
+        image: ClipboardImagePayload,
+        settings: RichClipboardSettings,
+        forPane paneId: UUID,
+        onProgress: @escaping @MainActor (String?) -> Void = { _ in },
+        onCompleted: @escaping @MainActor (TerminalRichPasteUploadRequestResult) -> Void = { _ in }
+    ) -> UUID? {
+        guard paneStates[paneId] != nil else { return nil }
+
+        if let previousRequestID = richPasteUploadRequestByPane[paneId],
+           let previousRequest = richPasteUploadRequests[previousRequestID] {
+            previousRequest.task.cancel()
+        }
+
+        let requestID = UUID()
+        let upload = richPasteUploadOperation(for: paneId)
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.richPasteUploadRequests.removeValue(forKey: requestID)
+                if self.richPasteUploadRequestByPane[paneId] == requestID {
+                    self.richPasteUploadRequestByPane.removeValue(forKey: paneId)
+                }
+            }
+
+            guard !Task.isCancelled else {
+                onCompleted(.cancelled)
+                return
+            }
+            guard self.paneStates[paneId] != nil else {
+                onCompleted(.cancelled)
+                return
+            }
+
+            let result = await TerminalRichPasteUploadRequest.perform(
+                image: image,
+                settings: settings,
+                lease: self.richPasteLease(for: paneId),
+                upload: upload,
+                onProgress: { message in
+                    onProgress(message)
+                },
+                pasteUploadedPath: { [weak self] text in
+                    guard let self else { return }
+                    guard self.paneStates[paneId] != nil else { return }
+                    guard let inputRequestID = self.requestPaneInput(
+                        Data(text.utf8),
+                        toPane: paneId
+                    ) else {
+                        return
+                    }
+                    await self.waitForInputRequest(inputRequestID)
+                }
+            )
+
+            if Task.isCancelled {
+                onCompleted(.cancelled)
+                return
+            }
+            onCompleted(result)
+        }
+
+        richPasteUploadRequests[requestID] = RichPasteUploadRequest(
+            paneId: paneId,
+            task: task
+        )
+        richPasteUploadRequestByPane[paneId] = requestID
+        return requestID
+    }
+
+    private func richPasteLease(for paneId: UUID) -> RemoteConnectionLease? {
+        #if DEBUG
+        if let richPasteLeaseProviderForTesting {
+            return richPasteLeaseProviderForTesting(paneId)
+        }
+        #endif
+
+        return remoteConnectionLease(for: paneId)
+    }
+
+    private func richPasteUploadOperation(for paneId: UUID) -> TerminalRichPasteUploadOperation {
+        #if DEBUG
+        if let richPasteUploadOperationForTesting {
+            return richPasteUploadOperationForTesting
+        }
+        #endif
+
+        let coordinator = TerminalRichPasteCoordinator(sessionId: paneId)
+        return { image, settings, client, _ in
+            try await coordinator.performRichPaste(
+                image: image,
+                settings: settings,
+                client: client
+            )
+        }
     }
 
     func resizePane(_ paneId: UUID, cols: Int, rows: Int) async {
@@ -2038,6 +2150,7 @@ final class TerminalTabManager: ObservableObject {
         cancelPaneHostRetrustRequest(for: paneId)
         cancelPaneCredentialLoadRequest(for: paneId)
         cancelInputRequests(for: paneId)
+        cancelPaneRichPasteUploadRequests(for: paneId)
         cancelResizeRequests(for: paneId)
         cancelProcessExitRequests(for: paneId)
         clearTmuxRuntimeState(for: paneId)
@@ -2076,6 +2189,18 @@ final class TerminalTabManager: ObservableObject {
 
         inputRequestByPane.removeValue(forKey: paneId)
         lastInputTaskByPane.removeValue(forKey: paneId)
+    }
+
+    private func cancelPaneRichPasteUploadRequests(for paneId: UUID) {
+        let requestIDs = richPasteUploadRequests.compactMap { requestID, request in
+            request.paneId == paneId ? requestID : nil
+        }
+
+        for requestID in requestIDs {
+            richPasteUploadRequests.removeValue(forKey: requestID)?.task.cancel()
+        }
+
+        richPasteUploadRequestByPane.removeValue(forKey: paneId)
     }
 
     private func cancelResizeRequests(for paneId: UUID) {
@@ -2888,6 +3013,9 @@ extension TerminalTabManager {
         inputRequests.removeAll()
         inputRequestByPane.removeAll()
         lastInputTaskByPane.removeAll()
+        richPasteUploadRequests.values.forEach { $0.task.cancel() }
+        richPasteUploadRequests.removeAll()
+        richPasteUploadRequestByPane.removeAll()
         resizeRequests.values.forEach { $0.task.cancel() }
         resizeRequests.removeAll()
         resizeRequestByPane.removeAll()
@@ -2916,6 +3044,8 @@ extension TerminalTabManager {
         paneHostRetrustOperationForTesting = nil
         surfaceAttachOperationForTesting = nil
         inputOperationForTesting = nil
+        richPasteLeaseProviderForTesting = nil
+        richPasteUploadOperationForTesting = nil
         resizeOperationForTesting = nil
         processExitOperationForTesting = nil
         tmuxCleanupServers.removeAll()
@@ -2946,6 +3076,18 @@ extension TerminalTabManager {
         _ operation: (@MainActor (Data, TerminalEntityID) async -> Void)?
     ) {
         inputOperationForTesting = operation
+    }
+
+    func setRichPasteLeaseProviderForTesting(
+        _ provider: (@MainActor (UUID) -> RemoteConnectionLease?)?
+    ) {
+        richPasteLeaseProviderForTesting = provider
+    }
+
+    func setRichPasteUploadOperationForTesting(
+        _ operation: TerminalRichPasteUploadOperation?
+    ) {
+        richPasteUploadOperationForTesting = operation
     }
 
     func setResizeOperationForTesting(

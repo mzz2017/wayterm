@@ -62,7 +62,7 @@ actor RemoteClipboardTransferService {
             logger.info(
                 "Remote upload completed [session: \(self.sessionId.uuidString, privacy: .public)] [path: \(remotePath, privacy: .public)]"
             )
-            scheduleStaleFileSweepIfNeeded(using: client)
+            await sweepStaleFilesIfNeeded(using: client)
             return RemoteClipboardUpload(
                 remotePath: remotePath,
                 mimeType: image.mimeType,
@@ -117,7 +117,7 @@ actor RemoteClipboardTransferService {
         return sanitized.isEmpty ? "bin" : sanitized.lowercased()
     }
 
-    private func scheduleStaleFileSweepIfNeeded(using client: any RemoteConnectionLeaseClient) {
+    private func sweepStaleFilesIfNeeded(using client: any RemoteConnectionLeaseClient) async {
         guard !didSweepStaleFiles else { return }
         didSweepStaleFiles = true
 
@@ -131,22 +131,14 @@ actor RemoteClipboardTransferService {
             """
         )
 
-        let sessionId = self.sessionId
-        logger.debug("Scheduling stale clipboard temp file sweep [session: \(self.sessionId.uuidString, privacy: .public)]")
-
-        Task(priority: .utility) {
-            let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "RemoteClipboardTransfer")
-            try? await Task.sleep(for: .seconds(10))
-            guard !Task.isCancelled else { return }
-            logger.debug("Sweeping stale clipboard temp files [session: \(sessionId.uuidString, privacy: .public)]")
-            do {
-                _ = try await client.execute(command, timeout: .seconds(2))
-                logger.debug("Finished stale clipboard temp file sweep [session: \(sessionId.uuidString, privacy: .public)]")
-            } catch {
-                logger.debug(
-                    "Skipping stale clipboard temp file sweep result [session: \(sessionId.uuidString, privacy: .public)] [error: \(error.localizedDescription, privacy: .public)]"
-                )
-            }
+        logger.debug("Sweeping stale clipboard temp files [session: \(self.sessionId.uuidString, privacy: .public)]")
+        do {
+            _ = try await client.execute(command, timeout: .seconds(2))
+            logger.debug("Finished stale clipboard temp file sweep [session: \(self.sessionId.uuidString, privacy: .public)]")
+        } catch {
+            logger.debug(
+                "Skipping stale clipboard temp file sweep result [session: \(self.sessionId.uuidString, privacy: .public)] [error: \(error.localizedDescription, privacy: .public)]"
+            )
         }
     }
 

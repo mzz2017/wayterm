@@ -5099,7 +5099,7 @@ Request code review for Task 66. Fix Critical and Important findings, update the
   - Manager-owned rich paste upload tasks that resolve leases, run uploads through `RemoteConnectionLease.withExclusiveClient`, await `lease.close()` before clearing request state, and paste the uploaded path through the manager input request boundary.
   - UI support that only captures clipboard data, presents prompt/notice state, and sends upload/paste-text intent; it must not own the upload task, lease lifetime, coordinator, or close ordering.
 
-- [ ] **Step 1: Add RED rich paste request and boundary tests**
+- [x] **Step 1: Add RED rich paste request and boundary tests**
 
 Add `TerminalRichPasteUploadRequestTests` with Test Context and fake lease/upload dependencies:
 - a session rich paste request stays pending while the fake upload is blocked, reports progress, and clears only after the upload finishes and `lease.close()` has completed;
@@ -5122,7 +5122,7 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: the focused suite fails to compile because the session/pane rich paste request APIs, pending request IDs, wait hooks, and injectable upload/lease seams do not exist. If it compiles unexpectedly, source-boundary tests fail because `TerminalRichPasteController` still owns `activePasteTask`, direct coordinator upload, and lease close.
 
-- [ ] **Step 2: Add application-layer rich paste upload request owner**
+- [x] **Step 2: Add application-layer rich paste upload request owner**
 
 Create `TerminalRichPasteUploadRequest.swift` under `Features/TerminalSessions/Application`:
 - define request/result types and a small `TerminalRichPasteUploading` protocol that adapts `TerminalRichPasteCoordinator`;
@@ -5132,7 +5132,7 @@ Create `TerminalRichPasteUploadRequest.swift` under `Features/TerminalSessions/A
 - close the lease in a `defer` or equivalent path that is awaited before request cleanup, including failure and cancellation;
 - map missing lease to a skipped/no-connection result and cancellation to lifecycle completion, not a user-facing failure.
 
-- [ ] **Step 3: Add manager request APIs and close cleanup**
+- [x] **Step 3: Add manager request APIs and close cleanup**
 
 Update `ConnectionSessionManager` and `TerminalTabManager`:
 - add request dictionaries indexed by request ID and active entity ID;
@@ -5142,7 +5142,7 @@ Update `ConnectionSessionManager` and `TerminalTabManager`:
 - paste the uploaded path using `requestSessionInput` / `requestPaneInput` with UTF-8 data generated from `RemoteTerminalBootstrap.posixPastedPath(...)`;
 - cancel pending rich paste upload requests from session/pane close paths and DEBUG reset cleanup.
 
-- [ ] **Step 4: Route UI prompt and interception through request APIs**
+- [x] **Step 4: Route UI prompt and interception through request APIs**
 
 Update `TerminalRichPasteSupport.swift`, `SSHTerminalWrapper.swift`, and split `TerminalView.swift`:
 - keep `TerminalRichPasteUIModel`, prompt sheet, and notice presentation in UI;
@@ -5152,14 +5152,14 @@ Update `TerminalRichPasteSupport.swift`, `SSHTerminalWrapper.swift`, and split `
 - completion callbacks only update `TerminalRichPasteUIModel` presentation state such as progress and banners;
 - paste-text fallback may remain a synchronous terminal UI operation for this task, but image upload and remote path paste must be manager-owned.
 
-- [ ] **Step 5: Remove or track rich paste stale-file sweep**
+- [x] **Step 5: Remove or track rich paste stale-file sweep**
 
 Update `RemoteClipboardTransferService` so stale remote clipboard file cleanup is not an untracked task that can outlive the lease:
 - either perform the best-effort stale sweep inside the same upload request before `lease.close()`, or return a cleanup action to the application-layer request owner and await it there;
 - keep cleanup best-effort and non-user-facing, but preserve enough logging to diagnose remote cleanup failure;
 - do not let a delayed task capture and use `RemoteConnectionLeaseClient` after the request has closed its lease.
 
-- [ ] **Step 6: Run focused verification**
+- [x] **Step 6: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalRichPasteUploadRequestTests -only-testing:VVTermTests/TerminalRichPasteIntentBoundaryTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
@@ -5169,16 +5169,17 @@ git diff --check
 
 Expected GREEN result: focused tests pass; source scan shows UI files contain no upload task/lease/coordinator ownership, managers expose request APIs, application request code owns `withExclusiveClient`, and `RemoteClipboardTransferService` has no delayed untracked stale-sweep task.
 
-- [ ] **Step 7: API and boundary cleanup**
+- [x] **Step 7: API and boundary cleanup**
 
 Before review, verify request API names match the established TerminalSessions request style; UI only owns prompt/notice state; managers own upload lifecycle and close cleanup; lease use is serialized and closed before request cleanup; cancellation is not user-facing failure; tests include required Test Context and Given / When / Then comments; no temporary test seams are public beyond DEBUG/internal needs.
 
-- [ ] **Step 8: Request review and commit**
+- [x] **Step 8: Request review and commit**
 
 Request code review for Task 67. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
 ## Progress Ledger
 
+- 2026-06-21: Task 67 RED/GREEN completed with local lifecycle review. RED added `TerminalRichPasteUploadRequestTests` and `TerminalRichPasteIntentBoundaryTests`; after fixing test syntax, the focused suite failed to compile because `TerminalRichPasteUploadRequestResult`, session/pane rich paste request APIs, pending request IDs, wait hooks, and injectable upload/lease seams did not exist. GREEN adds `TerminalRichPasteUploadRequest` under TerminalSessions Application to own `lease.withExclusiveClient`, awaited `lease.close()`, progress/result mapping, and shell-escaped remote path input. `ConnectionSessionManager` and `TerminalTabManager` now own tracked rich paste upload request dictionaries, same-entity supersession, pending IDs, wait hooks, close/reset cancellation, default `TerminalRichPasteCoordinator` upload adaptation, and DEBUG lease/upload seams. `TerminalRichPasteSupport` now only intercepts paste, presents prompt/progress/banner state, and sends upload intent through `requestSessionRichPasteUpload(...)` / `requestPaneRichPasteUpload(...)`; it no longer stores `activePasteTask`, resolves leases, instantiates the coordinator, closes leases, or directly sends uploaded paths to terminal surfaces. `RemoteClipboardTransferService` no longer starts a delayed stale-file sweep task; cleanup is best-effort and awaited inside upload before the rich paste request closes its lease. Focused GREEN verification passed `ConnectionLifecycleIntegrationTests`, `TerminalRichPasteIntentBoundaryTests`, and `TerminalRichPasteUploadRequestTests` with 100 Swift Testing tests using `ENABLE_DEBUG_DYLIB=NO`; source scan showed UI files contain only manager request APIs while application request code owns `withExclusiveClient` and `await lease.close()`, and `RemoteClipboardTransferService` has no `Task(priority: .utility)` stale sweep; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Current tool constraints did not permit spawning an independent reviewer without an explicit subagent request, so review was local against the Task 67 plan and Swift lifecycle checklist; no Critical or Important issues remained.
 - 2026-06-21: Task 66 re-review completed clean after follow-up fixes. The reviewer confirmed the prior Critical queued-disconnect gap, wrong-server cancellation gap, and macOS inline-create ordering regression are resolved; no Critical, Important, or Minor findings remain. Task 67 is selected as the next executable lifecycle slice: Terminal rich paste image upload still has UI-owned `activePasteTask`, direct lease resolution/close, direct `TerminalRichPasteCoordinator.performRichPaste(...)`, and a delayed stale-file cleanup task in `RemoteClipboardTransferService` that can outlive the lease. The next task should move image upload request ownership into TerminalSessions Application/manager APIs while leaving prompt and notice presentation in UI.
 - 2026-06-21: Task 66 external read-only review completed and follow-up fixes passed. Reviewer found one Critical and two Important issues: pending navigation created before `BrowserState` existed was not canceled by `disconnect(serverId:)`, wrong-server navigation intent canceled the current tab request before validating, and macOS inline folder creation fired navigation intent then immediately computed a destination folder name and created the directory against stale entries. Follow-up RED added `disconnectCancelsQueuedNavigationBeforeRuntimeStateExists`, `wrongServerNavigationIntentDoesNotCancelCurrentTabRequest`, and a source-boundary assertion for navigation-dependent inline creation; the focused suite failed on all three behaviors before the fix. GREEN adds `serverId` to `NavigationRequest`, makes disconnect cancel pending navigation by server even without runtime state, validates tab/server identity before canceling/publishing a request, and continues macOS inline folder creation only from `.loadedDirectory(destinationPath)` completion while routing creation through `requestMutation`. Focused verification passed `RemoteFileBrowserStoreTests` plus `RemoteFileNavigationIntentBoundaryTests` with 20 Swift Testing tests; source scan showed scoped UI navigation uses `requestNavigation` and no inline-create fire-and-continue task remains; `git diff --check` passed. Reviewer Minor about `resetForTesting()` was classified as plan wording drift: `RemoteFileBrowserStore` has no reset hook and its tests use fresh store/defaults instances, so no cleanup hook is required for this task.
 - 2026-06-21: Task 66 RED/GREEN completed with local lifecycle review fix. `RemoteFileBrowserStore` now owns tracked navigation request tasks through `requestNavigation(_:in:server:onCompleted:)`, with `RemoteFileNavigationAction`, `RemoteFileNavigationResult`, visible pending request IDs, an await hook, same-tab cancellation, cleanup integration, and stale completion guards. `RemoteFileBrowserScreen`, `RemoteFileBrowserIOSScreen`, `RemoteFileBrowserMacScreen`, and `ConnectionTabsView` now send RemoteFiles initial load, refresh, go up, breadcrumb open, directory open, and entry activation intent through the store request API instead of owning async navigation tasks. Initial RED failed to compile because `requestNavigation`, pending IDs, wait hooks, and navigation result types did not exist. The first GREEN attempt passed source-boundary tests but exposed an over-strong test assumption about same-server SFTP operation serialization; the test was narrowed to avoid coupling to adapter queueing while preserving stale-result coverage. Local review then found an Important stale state-write gap in symlink activation: a canceled blocked `stat` could still select a stale file after a newer activation. Review-fix RED reproduced `/latest.log` overwriting `/current.log`; GREEN passes request IDs into activation and checks current request identity after remote `stat` before writing state. Final focused verification passed `RemoteFileBrowserStoreTests` plus `RemoteFileNavigationIntentBoundaryTests` with 18 Swift Testing tests; source scan showed only request API calls in scoped UI; `git diff --check` passed.
