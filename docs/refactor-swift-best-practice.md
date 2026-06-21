@@ -4383,8 +4383,100 @@ Before review, verify `ServerConnectionLifecycleCoordinator` belongs in App/Appl
 
 Request code review for Task 58. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
 
+## Task 59: Terminal Surface Attach Intent Boundary
+
+**Files:**
+- Create: `VVTermTests/TerminalSurfaceAttachIntentTests.swift`
+- Create: `VVTermTests/TerminalSurfaceAttachBoundaryTests.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing `ConnectionSessionManager.attachSurface(_:to:)` and `TerminalTabManager.attachSurface(_:toPane:)` async runtime-start boundaries.
+  - Existing shell state helpers: `shellId(for:)`, `isShellStartInFlight(for:)`, `consumeTerminalReconnectReset(for:)`, `isSuspendingForBackground`, and pane equivalents.
+  - Existing representable callbacks that know whether the SwiftUI scene/pane is active and hold the concrete `GhosttyTerminalView`.
+- Produces:
+  - `TerminalSurfaceAttachContext` with value-only inputs the UI can supply, such as `isAppActive`, `isViewActive`, and `autoReconnectEnabled`.
+  - `ConnectionSessionManager.requestSurfaceAttach(sessionId:terminal:context:resetTerminal:) -> UUID?`: starts a tracked application-owned request that decides whether a root session surface should attach/start runtime, consumes reconnect reset only when attaching, and calls `attachSurface(_:to:)` from the manager-owned task.
+  - `TerminalTabManager.requestSurfaceAttach(paneId:terminal:context:) -> UUID?`: same request boundary for split panes.
+  - `pendingSurfaceAttachRequestIDs` and `waitForSurfaceAttachRequest(_:)` on both managers for lifecycle tests.
+  - DEBUG-only attach operation seams that let tests prove attach/no-attach decisions without constructing a real `GhosttyTerminalView`.
+
+- [ ] **Step 1: Add RED surface attach policy/request tests**
+
+Add `TerminalSurfaceAttachIntentTests` with the required Test Context. Cover:
+- a root session attach request does not run attach when app/scene is inactive or background suspend is in progress;
+- a root session attach request does not consume reconnect reset when attach is rejected, and does consume it only when attach proceeds;
+- a root session attach request refuses duplicate runtime start when a shell already exists or shell start is already in flight;
+- a disconnected root session attaches only when the UI reports active view state and auto-reconnect is enabled;
+- a split-pane attach request uses the same shell-missing / shell-start-in-flight guard and tracks the request until the attach operation finishes.
+
+Add `TerminalSurfaceAttachBoundaryTests` with a Test Context header. Source-scan:
+- `SSHTerminalWrapper.swift` must call `requestSurfaceAttach(...)` and must not call `shellId(for:)`, `isShellStartInFlight(for:)`, `consumeTerminalReconnectReset(for:)`, or directly create an attach `Task { await ConnectionSessionManager.shared.attachSurface(...) }`;
+- `TerminalView.swift` split wrapper must call `TerminalTabManager.shared.requestSurfaceAttach(...)` and must not directly create an attach `Task { await TerminalTabManager.shared.attachSurface(...) }`.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSurfaceAttachIntentTests -only-testing:VVTermTests/TerminalSurfaceAttachBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails to compile because `TerminalSurfaceAttachContext`, `requestSurfaceAttach(...)`, pending request IDs, wait hooks, and DEBUG attach seams do not exist. If it compiles unexpectedly, boundary tests fail because representables still own shell-state checks and attach `Task` wrappers.
+
+- [ ] **Step 2: Add manager-owned root session surface attach requests**
+
+Implement `TerminalSurfaceAttachContext` and root-session request tracking in `ConnectionSessionManager`. The request should:
+1. reject missing sessions without creating a task;
+2. reject inactive app/scene or `isSuspendingForBackground`;
+3. evaluate the current session state and context to decide whether a disconnected session should auto-reconnect;
+4. reject when a shell already exists or shell start is in flight;
+5. consume reconnect reset and call the supplied `resetTerminal` only after the attach decision is accepted;
+6. run `attachSurface(_:to:)` from a stored task and clear tracking in `defer`.
+
+Expose `pendingSurfaceAttachRequestIDs` and `waitForSurfaceAttachRequest(_:)` for tests. Use a DEBUG attach-operation seam so tests can count attach attempts without creating `GhosttyTerminalView`. Keep existing `attachSurface(_:to:)` as the low-level async boundary used by the request task.
+
+- [ ] **Step 3: Add split-pane surface attach requests**
+
+Add equivalent request tracking to `TerminalTabManager` for pane surfaces. It should reject missing pane state, shell already exists, shell start in flight, inactive app/scene, and background-like inactive context before starting the task. Expose the same pending IDs and wait hook. Keep pane-specific behavior narrower than root sessions: no auto-reconnect preference or reconnect-reset consumption unless an existing pane-specific reset flag already exists.
+
+- [ ] **Step 4: Route representable attach callbacks through request APIs**
+
+Update `SSHTerminalWrapper` macOS and iOS attach paths:
+- coordinator `attachSurface(_:)` should synchronously call `ConnectionSessionManager.shared.requestSurfaceAttach(...)`;
+- reused-terminal and `onReady` paths should pass value context such as active scene/app state, active view state, and auto-reconnect preference, then let the manager decide shell state and reset consumption;
+- remove direct wrapper reads of `shellId(for:)`, `isShellStartInFlight(for:)`, `consumeTerminalReconnectReset(for:)`, and `isSuspendingForBackground` from attach/start decisions.
+
+Update `SSHTerminalPaneWrapper` in `TerminalView.swift`:
+- coordinator `attachSurface(_:)` should synchronously call `TerminalTabManager.shared.requestSurfaceAttach(...)`;
+- reused and `onReady` paths should no longer directly read shell state before attaching.
+
+This task deliberately leaves resize/input/rich-paste callback `Task` bridges for later slices unless the focused tests force a small helper rename.
+
+- [ ] **Step 5: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSurfaceAttachIntentTests -only-testing:VVTermTests/TerminalSurfaceAttachBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "attachSurface\\(|requestSurfaceAttach|shellId\\(for:|isShellStartInFlight|consumeTerminalReconnectReset|Task \\{[^\\n]*attachSurface|resizeSession|resizePane" VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows attach paths use request APIs and representables no longer own shell-state/reconnect-reset attach policy. Remaining `Task` hits for send input, resize, rich paste, title/background parsing, and file navigation must be named in the Progress Ledger as deferred slices.
+
+- [ ] **Step 6: API and boundary cleanup**
+
+Before review, verify request API names match the previous `requestSessionRetry`, `requestPaneRetry`, and `requestServerDisconnect` style; UI supplies only value context and presentation callbacks; managers own shell/runtimes/reconnect-reset decisions; DEBUG seams are reset in test cleanup; tests include the required Test Context and Given / When / Then comments.
+
+- [ ] **Step 7: Request review and commit**
+
+Request code review for Task 59. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-58 scan selected Task 59 as the next executable lifecycle slice. The working tree was clean after Task 58, so remaining SwiftUI lifecycle hotspots were rescanned. A read-only explorer and local scan found the clearest next TerminalSessions gap in terminal surface attach/start policy: `SSHTerminalWrapper` and split `SSHTerminalPaneWrapper` still create untracked attach `Task` wrappers and let representables decide shell-missing, shell-start-in-flight, reconnect-reset, app-active, and background-suspend policy before calling application managers. This can start runtime work from SwiftUI/representable callbacks and still relies on stale display `connectionState` in the iOS update path. Task 59 should move attach/start policy into `ConnectionSessionManager` and `TerminalTabManager` request APIs, keep UI limited to surface/presentation context, and defer resize/input/rich-paste callback task bridges to later slices.
 - 2026-06-21: Task 58 RED/GREEN completed with review fix. `iOSContentView.disconnectActiveConnection(_:)`, `iOSContentView.disconnectCurrentServerSessions()`, and `ConnectionTabsView.disconnectFromServer()` now synchronously send server-disconnect intent to `ServerConnectionLifecycleCoordinator.shared.requestServerDisconnect(...)` instead of launching SwiftUI-owned `Task` blocks that manually await terminal manager teardown. `ServerConnectionLifecycleCoordinator` lives in App/Application as the cross-feature owner for server-scoped disconnect request ordering; it tracks request tasks by request ID, coalesces duplicate same-server intent, awaits RemoteFiles teardown before file-tab cleanup and terminal disconnect, then drains queued presentation callbacks after teardown completes. Initial RED focused tests failed to compile because `ServerConnectionLifecycleCoordinator` did not exist. An intermediate GREEN attempt exposed boundary-test failures where UI closure literals still contained direct `await sessionManager.disconnectServerAndWait` / `await tabManager.disconnectServerAndWait`; passing the async manager methods as side-effectful actions fixed the boundary. Review found no Critical issues and one Important callback-coalescing edge: completion callbacks appended by synchronous same-server reentry during completion delivery were appended after the old snapshot and then dropped. Review-fix RED reproduced the missing `complete-2` callback; GREEN drains completion callbacks by index until no newly appended callbacks remain, preserving one teardown chain for reentrant duplicate intent. Narrow re-review found no remaining Critical, Important, or Minor issues. Final focused tests passed 6 Swift Testing tests in 2 suites. The scoped source scan shows the three disconnect helpers call `requestServerDisconnect(...)` and contain no helper-local `Task {}` wrappers or direct old await calls; remaining `Task {}` hits in the scanned files are existing non-disconnect file navigation, Active Connection open, terminal-state recovery, and deferred UI paths. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`.
 - 2026-06-21: Post-Task-57 scan selected Task 58 as the next executable lifecycle slice. Current plan checkboxes were complete and the working tree was clean after Task 57, so the codebase was rescanned for remaining SwiftUI-owned lifecycle work. Task 38 already made `RemoteFileBrowserStore.disconnect(serverId:)` trackable/awaitable, but iOS active-connection disconnect, iOS current-server disconnect, and shared tab-container server disconnect still create SwiftUI-owned `Task` blocks that manually sequence RemoteFiles teardown, file-tab cleanup, terminal manager disconnect, and navigation completion. This is lifecycle-critical cross-feature orchestration and should live in an App/Application owner. Task 58 should add a tracked `ServerConnectionLifecycleCoordinator`, preserve existing UI callbacks, and leave broader RemoteFiles navigation operations, terminal surface attach, rich paste, and resize/title task cleanup deferred to later slices.
 - 2026-06-21: Task 57 RED/GREEN completed with review fixes. `TerminalContainerView.retrustHostAndRetry()` and split `TerminalView.retrustHostAndRetry()` no longer create SwiftUI-owned retrust `Task` blocks or directly await `retrustHostAndReconnect`; they synchronously send host-retrust intent to `ConnectionSessionManager.requestSessionHostRetrust` or `TerminalTabManager.requestPaneHostRetrust` and only update `reconnectToken` from presentation callbacks when reconnect succeeds. Both managers now own tracked host-retrust request tasks, expose pending request IDs and await hooks for lifecycle tests, coalesce duplicate same-session/pane intent, keep trusted-host mutation plus reconnect inside the application layer, clear request state after completion, and cancel pending retrust requests with `false` callbacks when the owning session or pane closes. RED failed to compile until the request APIs, pending IDs, wait hooks, and DEBUG operation seams existed. A later focused run after adding close-cancellation tests hit an Xcode runner startup/finish hang without XCTest assertion output; after wiring close cancellation, the focused suite passed 90 Swift Testing tests in 2 suites. Review found no Critical issues and two Important cancellation gaps: canceled retrust tasks could still reach known-host mutation, and close-cancellation tests did not prove there was no later success callback. GREEN review fixes added preflight and post-mutation ownership/cancellation guards before retrust/reconnect work, and strengthened close-cancellation tests to keep callback history at `[false]` after blocked work returns. Final focused tests passed 90 Swift Testing tests in 2 suites; source scan shows the retrust helpers now call request APIs and contain no retrust-owned `Task {}` or direct old helper awaits; remaining `Task {}` hits in those files are existing non-retrust paths for credential reload, pane lifecycle, paste, and title/selection work. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`.
