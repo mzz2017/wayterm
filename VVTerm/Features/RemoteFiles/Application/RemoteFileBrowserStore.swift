@@ -104,6 +104,12 @@ final class RemoteFileBrowserStore: ObservableObject {
         let task: Task<Void, Never>
     }
 
+    struct PreviewLoadRequest {
+        let entryPath: String
+        let allowLargeDownloads: Bool
+        let task: Task<Void, Never>
+    }
+
     @Published private(set) var states: [UUID: BrowserState] = [:]
     @Published var pendingToolbarCommand: ToolbarCommand?
 
@@ -121,6 +127,8 @@ final class RemoteFileBrowserStore: ObservableObject {
     var persistedStates: [String: RemoteFileBrowserPersistedState] = [:]
     var directoryRequestIDs: [UUID: UUID] = [:]
     var viewerRequestIDs: [UUID: UUID] = [:]
+    var previewLoadRequests: [UUID: PreviewLoadRequest] = [:]
+    var previewLoadRequestByTab: [UUID: UUID] = [:]
     private var mutationRequests: [UUID: Task<Void, Never>] = [:]
     private var transferRequests: [UUID: Task<Void, Never>] = [:]
     private var pendingDisconnects: [UUID: PendingDisconnect] = [:]
@@ -140,6 +148,10 @@ final class RemoteFileBrowserStore: ObservableObject {
 
     var pendingTransferRequestIDs: Set<UUID> {
         Set(transferRequests.keys)
+    }
+
+    var pendingPreviewLoadRequestIDs: Set<UUID> {
+        Set(previewLoadRequestByTab.values)
     }
 
     init(
@@ -266,6 +278,10 @@ final class RemoteFileBrowserStore: ObservableObject {
 
     func waitForTransferRequest(_ requestID: UUID) async {
         await transferRequests[requestID]?.value
+    }
+
+    func waitForPreviewLoadRequest(_ requestID: UUID) async {
+        await previewLoadRequests[requestID]?.task.value
     }
 
     func currentPathValue(for tab: RemoteFileTab) -> String? {
@@ -415,6 +431,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     func focus(_ entry: RemoteFileEntry, in tab: RemoteFileTab) {
+        cancelPreviewLoadRequest(for: tab.id)
         viewerRequestIDs[tab.id] = UUID()
         cleanupPreviewArtifact(for: state(for: tab).viewerPayload)
         updateState(for: tab) { state in
@@ -452,6 +469,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     func removeRuntimeState(for tabId: UUID) {
+        cancelPreviewLoadRequest(for: tabId)
         directoryRequestIDs.removeValue(forKey: tabId)
         viewerRequestIDs.removeValue(forKey: tabId)
         temporaryStorage.removePreviewArtifact(for: states[tabId]?.viewerPayload)
@@ -489,6 +507,12 @@ final class RemoteFileBrowserStore: ObservableObject {
         return task
     }
 
+    func cancelPreviewLoadRequest(for tabId: UUID) {
+        guard let requestID = previewLoadRequestByTab.removeValue(forKey: tabId) else { return }
+        viewerRequestIDs.removeValue(forKey: tabId)
+        previewLoadRequests[requestID]?.task.cancel()
+    }
+
     func goUp(in tab: RemoteFileTab, server: Server) async {
         guard tab.serverId == server.id else { return }
         let currentPath = currentPath(for: tab)
@@ -501,6 +525,7 @@ final class RemoteFileBrowserStore: ObservableObject {
         guard tab.serverId == server.id else { return }
 
         let normalizedPath = RemoteFilePath.normalize(path)
+        cancelPreviewLoadRequest(for: tab.id)
         let requestID = UUID()
         directoryRequestIDs[tab.id] = requestID
         cleanupPreviewArtifact(for: state(for: tab).viewerPayload)
@@ -511,6 +536,7 @@ final class RemoteFileBrowserStore: ObservableObject {
             state.viewerError = nil
             state.viewerPayload = nil
             state.selectedEntryPath = nil
+            state.isLoadingViewer = false
         }
         viewerRequestIDs.removeValue(forKey: tab.id)
 

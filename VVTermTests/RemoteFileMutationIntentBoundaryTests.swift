@@ -4,12 +4,12 @@ import Testing
 // Test Context:
 // These tests protect RemoteFiles UI/Application ownership for user-triggered
 // browser mutations and transfers such as create folder, rename, move, delete,
-// permission changes, uploads, downloads, drops, and file promises. The UI may
-// adapt inputs and present errors, but the application store must own the
-// lifecycle of mutation/transfer tasks so later tests can await them and
-// failures remain ordered. The test inspects source placement only; update it
-// only when request ownership intentionally moves to another application-layer
-// owner.
+// permission changes, uploads, downloads, drops, file promises, and preview
+// loads. The UI may adapt inputs and present errors, but the application store
+// must own the lifecycle of mutation/transfer/preview-load tasks so later tests
+// can await them and failures remain ordered. The test inspects source
+// placement only; update it only when request ownership intentionally moves to
+// another application-layer owner.
 @Suite
 struct RemoteFileMutationIntentBoundaryTests {
     @Test
@@ -73,6 +73,44 @@ struct RemoteFileMutationIntentBoundaryTests {
     }
 
     @Test
+    func previewLoadDelegatesTaskOwnershipToStore() throws {
+        // Given shared, macOS, and iOS RemoteFiles preview UI sources.
+        let root = try sourceRoot()
+        let previewSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Preview/RemoteFilePreviewViews.swift")
+        )
+        let platformSources = try [
+            "VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift",
+            "VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserIOSScreen.swift"
+        ].map { path in
+            try source(at: root.appendingPathComponent(path))
+        }.joined(separator: "\n")
+
+        // Then the preview view may send synchronous selection-driven intent,
+        // but platform containers must delegate remote preview-load work to the
+        // application store instead of creating UI-owned loadPreview tasks.
+        #expect(
+            previewSource.contains(".task(id: previewRequestID)"),
+            "RemoteFileInspectorView may keep a SwiftUI task only to send synchronous onLoadPreview intent."
+        )
+        #expect(
+            platformSources.contains("browser.requestPreviewLoad("),
+            "Platform preview UI should delegate preview-load task ownership to RemoteFileBrowserStore.requestPreviewLoad."
+        )
+        #expect(
+            !containsRegex(
+                #"Task\s*(?:\([^)]*\))?\s*\{\s*await browser\.loadPreview"#,
+                in: platformSources
+            ),
+            "Platform preview UI should not own Task wrappers around browser.loadPreview."
+        )
+        #expect(
+            !platformSources.contains("await browser.loadPreview"),
+            "Platform preview UI should not call the async preview-load implementation directly."
+        )
+    }
+
+    @Test
     func transferAndDropDelegatesTaskOwnershipToStore() throws {
         // Given shared RemoteFiles browser UI plus the macOS file-promise
         // support source.
@@ -122,6 +160,10 @@ struct RemoteFileMutationIntentBoundaryTests {
             url = next
         }
         return url.deletingLastPathComponent()
+    }
+
+    private func containsRegex(_ pattern: String, in source: String) -> Bool {
+        source.range(of: pattern, options: .regularExpression) != nil
     }
 
     private enum SourceRootError: Error {

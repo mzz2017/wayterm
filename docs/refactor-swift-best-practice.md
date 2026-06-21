@@ -4818,19 +4818,19 @@ Request code review for Task 63. Fix Critical and Important findings, update the
 - Consumes:
   - Existing low-level async preview implementation: `RemoteFileBrowserStore.loadPreview(for:in:server:allowLargeDownloads:)`.
   - Existing platform preview callbacks in `RemoteFileBrowserIOSScreen` and `RemoteFileBrowserMacScreen`.
-  - Existing viewer cleanup paths: `clearViewer(for:)`, `removeRuntimeState(for:)`, and `disconnect(serverId:)`.
+  - Existing viewer cleanup paths: `clearViewer(for:)`, `focus(_:in:)`, `loadDirectory(path:in:server:)`, `removeRuntimeState(for:)`, and `disconnect(serverId:)`.
 - Produces:
   - `RemoteFileBrowserStore.requestPreviewLoad(for entry: RemoteFileEntry, in tab: RemoteFileTab, server: Server, allowLargeDownloads: Bool = false) -> UUID?`: rejects mismatched tab/server and unsupported preview entries, coalesces duplicate same-tab/same-entry/same-large-download requests, cancels stale same-tab preview-load work before starting a different preview, and runs the existing async preview implementation from store-owned request work.
   - `pendingPreviewLoadRequestIDs` and `waitForPreviewLoadRequest(_:)` on `RemoteFileBrowserStore` for lifecycle tests.
-  - Close/cleanup integration so `clearViewer(for:)`, `removeRuntimeState(for:)`, and `disconnect(serverId:)` cancel and clear pending preview-load request bookkeeping.
+  - Close/cleanup integration so `clearViewer(for:)`, `focus(_:in:)`, `loadDirectory(path:in:server:)`, `removeRuntimeState(for:)`, and `disconnect(serverId:)` cancel visible pending preview-load request bookkeeping while keeping the underlying task awaitable until it exits.
 
-- [ ] **Step 1: Add RED preview-load request and boundary tests**
+- [x] **Step 1: Add RED preview-load request and boundary tests**
 
 Extend `RemoteFilePreviewCoordinatorTests`:
 - a preview-load request rejects a tab/server mismatch without creating work;
 - a preview-load request stays tracked while `readFile` is blocked, then clears after the preview payload is applied;
 - duplicate preview-load requests for the same tab, entry, and `allowLargeDownloads` flag coalesce to one request ID and one remote read;
-- `clearViewer(for:)` clears/cancels a pending preview-load request through the real viewer cleanup path and prevents stale payload/error updates after blocked work is released.
+- `clearViewer(for:)`, `focus(_:in:)`, `loadDirectory(path:in:server:)`, `removeRuntimeState(for:)`, and `disconnect(serverId:)` clear/cancel pending visible preview-load request state through real cleanup paths while the underlying task remains awaitable until blocked work exits, and stale payload/error updates are prevented after release.
 
 Extend `RemoteFileMutationIntentBoundaryTests`:
 - `RemoteFileBrowserIOSScreen.swift` and `RemoteFileBrowserMacScreen.swift` must call `browser.requestPreviewLoad(...)` from `onLoadPreview` and `onDownloadPreview`;
@@ -4845,32 +4845,34 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: the focused suite fails to compile because `requestPreviewLoad(...)`, `pendingPreviewLoadRequestIDs`, and `waitForPreviewLoadRequest(_:)` do not exist on `RemoteFileBrowserStore`. If it compiles unexpectedly, boundary tests fail because macOS/iOS preview callbacks still create UI-owned `Task { await browser.loadPreview(...) }` wrappers.
 
-- [ ] **Step 2: Add tracked preview-load requests**
+- [x] **Step 2: Add tracked preview-load requests**
 
 Add preview-load request bookkeeping to `RemoteFileBrowserStore`, mirroring the existing `requestMutation` / `requestTransfer` request style but scoped per tab:
 - store accepted request tasks by request ID;
 - keep a tab-to-request index carrying tab ID, entry path, and `allowLargeDownloads`;
 - return the existing request ID for duplicate same-tab/same-entry/same-flag intent;
-- cancel and remove an existing same-tab preview-load request before starting a different preview-load request;
+- cancel and unpublish an existing same-tab preview-load request before starting a different preview-load request, but keep the canceled task handle until the task exits;
 - keep `loadPreview(...)` as the low-level async implementation and do not move SFTP/file preview details into UI.
 
-- [ ] **Step 3: Wire cleanup paths**
+- [x] **Step 3: Wire cleanup paths**
 
 Update preview cleanup paths:
-- `clearViewer(for:)` cancels/removes pending preview-load requests for the tab before clearing viewer state and `viewerRequestIDs`;
-- `removeRuntimeState(for:)` cancels/removes pending preview-load requests for the tab before dropping runtime state;
-- `disconnect(serverId:)` cancels/removes pending preview-load requests for every affected tab before scheduling remote-service disconnect.
+- `clearViewer(for:)` cancels/unpublishes pending preview-load requests for the tab before clearing viewer state and `viewerRequestIDs`;
+- `focus(_:in:)` cancels/unpublishes pending preview-load requests for the previous selection before selecting a new entry;
+- `loadDirectory(path:in:server:)` cancels/unpublishes pending preview-load requests and resets viewer loading state before loading directory contents;
+- `removeRuntimeState(for:)` cancels/unpublishes pending preview-load requests for the tab before dropping runtime state;
+- `disconnect(serverId:)` cancels/unpublishes pending preview-load requests for every affected tab before scheduling remote-service disconnect.
 
 Do not widen this task into directory navigation (`goUp`, breadcrumbs, directory open), file activation, downloads/share, drag/drop, file promises, preview text save, rich paste, terminal credential reload, Stats retry, or terminal title/PWD/background parsing.
 
-- [ ] **Step 4: Route platform preview callbacks through request APIs**
+- [x] **Step 4: Route platform preview callbacks through request APIs**
 
 Update `RemoteFileBrowserIOSScreen` and `RemoteFileBrowserMacScreen`:
 - `onLoadPreview` should synchronously call `browser.requestPreviewLoad(for:entry,in:fileTab,server:server)`;
 - `onDownloadPreview` should synchronously call `browser.requestPreviewLoad(for:entry,in:fileTab,server:server,allowLargeDownloads:true)`;
 - remove platform-owned `Task { await browser.loadPreview(...) }` wrappers from these preview callbacks.
 
-- [ ] **Step 5: Run focused verification**
+- [x] **Step 5: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFilePreviewCoordinatorTests -only-testing:VVTermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
@@ -4880,16 +4882,17 @@ git diff --check
 
 Expected GREEN result: focused tests pass; source scan shows platform preview UI calls `requestPreviewLoad`, no platform preview callback owns `Task { await browser.loadPreview(...) }`, and any remaining `loadPreview(...)` hits are the application-layer low-level implementation plus tests.
 
-- [ ] **Step 6: API and boundary cleanup**
+- [x] **Step 6: API and boundary cleanup**
 
 Before review, verify request API names match the existing `requestMutation`, `requestTransfer`, and `requestTextPreviewSave` style; UI supplies only preview-load intent; RemoteFiles Application owns request tracking, duplicate coalescing, cancellation, and low-level preview invocation; cleanup paths remove stale request state; touched tests include the required Test Context plus Given / When / Then comments and assertion messages.
 
-- [ ] **Step 7: Request review and commit**
+- [x] **Step 7: Request review and commit**
 
 Request code review for Task 64. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
 
 ## Progress Ledger
 
+- 2026-06-21: Task 64 RED/GREEN completed with review fixes. Initial RED failed to compile because `RemoteFileBrowserStore.requestPreviewLoad(...)`, `pendingPreviewLoadRequestIDs`, and `waitForPreviewLoadRequest(_:)` did not exist; a review-cycle RED then reproduced missing `focus(_:in:)` cleanup. GREEN routes macOS/iOS preview callbacks through synchronous `requestPreviewLoad(...)` intent, while `RemoteFileBrowserStore` owns tracked preview-load tasks, duplicate same-tab/same-entry/same-flag coalescing, cancellation, and cleanup. Review found Critical awaitability/stale-completion gaps: cancellation removed the task handle before work exited, and canceled reads that ignored cancellation could still pass stale `viewerRequestIDs` checks. Fixes keep canceled task handles until task `defer` cleanup, unpublish only the active tab request on cancel, invalidate `viewerRequestIDs`, check `Task.isCancelled` after remote awaits and before success/error writes, remove unused request state, and reset `isLoadingViewer` during directory loads. Important review coverage gaps were closed with tests for `clearViewer(for:)`, `focus(_:in:)`, `loadDirectory(path:in:server:)`, `removeRuntimeState(for:)`, and `disconnect(serverId:)` proving visible pending state clears immediately, canceled work remains awaitable until the blocked fake read exits, and stale payload/error writes do not return. Focused GREEN verification passed 14 Swift Testing tests in 2 suites with `ENABLE_DEBUG_DYLIB=NO`; source scan and full build verification are recorded before commit.
 - 2026-06-21: Post-Task-63 scan selected Task 64 as the next executable lifecycle slice. Terminal root/split process-exit, input, resize, surface attach, retry, host retrust, and voice ownership have request APIs in TerminalSessions, so the next repeatedly deferred non-TerminalSessions hotspot is RemoteFiles preview loading. `RemoteFileInspectorView` only sends synchronous `onLoadPreview` intent from `.task(id:)`, but the macOS and iOS platform containers still wrap that intent in `Task { await browser.loadPreview(...) }`, causing SwiftUI to own remote preview read/download work and making cleanup depend on request IDs rather than an awaitable/tracked task. Task 64 should add a store-owned `requestPreviewLoad(...)` boundary and route platform preview callbacks through it. Do not widen Task 64 into directory navigation/goUp/breadcrumbs, file activation, transfers, drops/file promises, preview text save, rich paste, credential reload, Stats retry, or terminal title/PWD/background parsing.
 - 2026-06-21: Task 63 RED/GREEN completed with independent review. `ConnectionSessionManager` now owns tracked root process-exit requests via `requestSessionProcessExit(forSession:)`, with pending request IDs, an await hook, duplicate same-session coalescing, missing-session rejection, DEBUG operation seam, and close/reset cleanup. Root `TerminalContainerView` process-exit callbacks now synchronously send intent through the manager request API and no longer wrap process exit in `DispatchQueue.main.async { ConnectionSessionManager.shared.handleShellExit(for:) }`. RED focused verification failed to compile because `setProcessExitOperationForTesting(...)` and the request bookkeeping APIs did not exist on `ConnectionSessionManager`. GREEN focused verification passed 12 Swift Testing tests in 2 suites with `ENABLE_DEBUG_DYLIB=NO`. Source scan showed only the two root `requestSessionProcessExit` callbacks in `TerminalContainerView`; remaining `DispatchQueue.main.async` hits in `SSHTerminalWrapper` are non-process-exit callback bridges and stay deferred with rich paste, credential reload, title/PWD/background parsing, RemoteFiles navigation/preview, Stats retry, and theme/background color parsing. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. API cleanup matched the existing `requestSessionInput`, `requestSessionResize`, and `requestPaneProcessExit` request style; UI supplies only intent while manager-owned work handles tracking, coalescing, cancellation, and low-level exit invocation. Independent code review found no Critical or Important issues.
 - 2026-06-21: Post-Task-62 scan selected Task 63 as the next executable lifecycle slice after two read-only explorer reviews. The TerminalSessions explorer recommended root terminal process-exit because Task 62 deliberately fixed only split panes; `TerminalContainerView` still wraps root `onProcessExit` in `DispatchQueue.main.async` and directly calls `ConnectionSessionManager.handleShellExit(for:)`, while `ConnectionSessionManager` exposes only a low-level synchronous handler and no tracked request API. The cross-feature explorer recommended RemoteFiles preview loading as the next non-TerminalSessions slice, but that remains deferred until the root/split process-exit boundary is symmetrical. Task 63 should mirror the Task 62 request API on `ConnectionSessionManager` and route root UI callbacks through it. Do not widen Task 63 into rich paste, credential reload, title/PWD/background callbacks, RemoteFiles navigation/preview/drop/file-representation, Stats retry, or theme/background parsing.

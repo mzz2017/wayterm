@@ -72,12 +72,10 @@ extension RemoteFileBrowserScreen {
                 previewBackgroundColor: Color(UIColor.secondarySystemGroupedBackground),
                 sectionBackgroundColor: Color(UIColor.secondarySystemGroupedBackground),
                 onLoadPreview: { entry in
-                    Task { await browser.loadPreview(for: entry, in: fileTab, server: server) }
+                    browser.requestPreviewLoad(for: entry, in: fileTab, server: server)
                 },
                 onDownloadPreview: { entry in
-                    Task {
-                        await browser.loadPreview(for: entry, in: fileTab, server: server, allowLargeDownloads: true)
-                    }
+                    browser.requestPreviewLoad(for: entry, in: fileTab, server: server, allowLargeDownloads: true)
                 },
                 onDownload: { entry in
                     beginDownload(entry)

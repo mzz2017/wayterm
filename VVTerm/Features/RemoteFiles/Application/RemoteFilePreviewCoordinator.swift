@@ -3,6 +3,54 @@ import Foundation
 import os.log
 
 extension RemoteFileBrowserStore {
+    @discardableResult
+    func requestPreviewLoad(
+        for entry: RemoteFileEntry,
+        in tab: RemoteFileTab,
+        server: Server,
+        allowLargeDownloads: Bool = false
+    ) -> UUID? {
+        guard tab.serverId == server.id else { return nil }
+        guard entry.supportsPreview else { return nil }
+
+        if let existingRequestID = previewLoadRequestByTab[tab.id],
+           let existingRequest = previewLoadRequests[existingRequestID] {
+            if existingRequest.entryPath == entry.path,
+               existingRequest.allowLargeDownloads == allowLargeDownloads {
+                return existingRequestID
+            }
+
+            cancelPreviewLoadRequest(for: tab.id)
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.previewLoadRequests.removeValue(forKey: requestID)
+                if self.previewLoadRequestByTab[tab.id] == requestID {
+                    self.previewLoadRequestByTab.removeValue(forKey: tab.id)
+                }
+            }
+
+            guard !Task.isCancelled else { return }
+            await self.loadPreview(
+                for: entry,
+                in: tab,
+                server: server,
+                allowLargeDownloads: allowLargeDownloads
+            )
+        }
+
+        previewLoadRequests[requestID] = PreviewLoadRequest(
+            entryPath: entry.path,
+            allowLargeDownloads: allowLargeDownloads,
+            task: task
+        )
+        previewLoadRequestByTab[tab.id] = requestID
+        return requestID
+    }
+
     func loadPreview(
         for entry: RemoteFileEntry,
         in tab: RemoteFileTab,
@@ -65,7 +113,7 @@ extension RemoteFileBrowserStore {
                 try await service.readFile(at: entry.path, maxBytes: effectiveReadLimit)
             }
 
-            guard viewerRequestIDs[tab.id] == requestID else { return }
+            guard !Task.isCancelled, viewerRequestIDs[tab.id] == requestID else { return }
 
             let previewData = data.prefix(Self.defaultPreviewBytes)
             let isTruncated = (entry.size.map { $0 > UInt64(Self.defaultPreviewBytes) } ?? false)
@@ -100,6 +148,10 @@ extension RemoteFileBrowserStore {
                     do {
                         try await withRemoteFileService(for: server) { service in
                             try await service.downloadFile(at: entry.path, to: tempURL)
+                        }
+                        guard !Task.isCancelled, viewerRequestIDs[tab.id] == requestID else {
+                            temporaryStorage.removeItem(at: tempURL)
+                            return
                         }
                         if await validateDownloadedPreview(at: tempURL, kind: previewKind) {
                             previewFileURL = tempURL
@@ -139,13 +191,14 @@ extension RemoteFileBrowserStore {
                 )
             }
 
+            guard !Task.isCancelled, viewerRequestIDs[tab.id] == requestID else { return }
             updateState(for: tab) { state in
                 state.isLoadingViewer = false
                 state.viewerError = nil
                 state.viewerPayload = payload
             }
         } catch {
-            guard viewerRequestIDs[tab.id] == requestID else { return }
+            guard !Task.isCancelled, viewerRequestIDs[tab.id] == requestID else { return }
             logger.error("Remote file preview failed for \(entry.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
             updateState(for: tab) { state in
                 state.isLoadingViewer = false
@@ -156,6 +209,7 @@ extension RemoteFileBrowserStore {
     }
 
     func clearViewer(for tab: RemoteFileTab) {
+        cancelPreviewLoadRequest(for: tab.id)
         cleanupPreviewArtifact(for: state(for: tab).viewerPayload)
         updateState(for: tab) { state in
             state.selectedEntryPath = nil
