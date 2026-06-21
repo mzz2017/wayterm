@@ -4,11 +4,12 @@ import Testing
 
 // Test Context:
 // These tests protect RemoteFiles browser state rules: entry filtering,
-// per-tab persistence, initial path selection, and directory/viewer request
-// ordering. Fakes use in-memory UserDefaults suites and injected providers, so
-// failures usually indicate a browser-state behavior regression unless the
-// persisted snapshot model or path-precedence product rule intentionally
-// changes.
+// per-tab persistence, initial path selection, directory/viewer request
+// ordering, and user mutation task ownership. Fakes use in-memory UserDefaults
+// suites, injected providers, and small ordering probes, so failures usually
+// indicate a browser-state or lifecycle ownership regression unless the
+// persisted snapshot model, path-precedence product rule, or application-layer
+// mutation request owner intentionally changes.
 @MainActor
 struct RemoteFileBrowserStoreTests {
     @Test
@@ -206,6 +207,68 @@ struct RemoteFileBrowserStoreTests {
         #expect(await operationProbe.started)
     }
 
+    @Test
+    func mutationRequestTracksTaskAndRunsSuccessAfterOperation() async throws {
+        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let gate = RemoteFileMutationGate()
+        var events: [String] = []
+
+        // Given a RemoteFiles mutation launched from synchronous UI intent.
+        let requestID = store.requestMutation(
+            operation: {
+                events.append("operation-started")
+                await gate.wait()
+                events.append("operation-finished")
+                return "created"
+            },
+            onSuccess: { result in
+                events.append("success-\(result)")
+            },
+            onFailure: { _ in
+                events.append("failure")
+            }
+        )
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then the application store owns and exposes the pending mutation task
+        // until the async operation finishes.
+        #expect(store.pendingMutationRequestIDs.contains(requestID))
+        #expect(events == ["operation-started"])
+
+        await gate.release()
+        await store.waitForMutationRequest(requestID)
+
+        #expect(!store.pendingMutationRequestIDs.contains(requestID))
+        #expect(events == ["operation-started", "operation-finished", "success-created"])
+    }
+
+    @Test
+    func mutationRequestTracksFailureAndSkipsSuccessContinuation() async throws {
+        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        var events: [String] = []
+
+        // Given a RemoteFiles mutation whose async operation fails before it
+        // can safely update UI state.
+        let requestID = store.requestMutation(
+            operation: {
+                events.append("operation-started")
+                throw RemoteFileMutationIntentFailure()
+            },
+            onSuccess: {
+                events.append("success")
+            },
+            onFailure: { error in
+                events.append("failure-\(type(of: error))")
+            }
+        )
+        await store.waitForMutationRequest(requestID)
+
+        // Then the application store keeps the failure path ordered and removes
+        // the tracked request only after the failure handler runs.
+        #expect(!store.pendingMutationRequestIDs.contains(requestID))
+        #expect(events == ["operation-started", "failure-RemoteFileMutationIntentFailure"])
+    }
+
     private func makeEntry(name: String, path: String, type: RemoteFileType) -> RemoteFileEntry {
         RemoteFileEntry(
             name: name,
@@ -256,6 +319,26 @@ private actor RemoteFileOperationProbe {
 
     func markStarted() {
         started = true
+    }
+}
+
+private struct RemoteFileMutationIntentFailure: Error {}
+
+private actor RemoteFileMutationGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isReleased = false
+
+    func wait() async {
+        guard !isReleased else { return }
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func release() {
+        isReleased = true
+        continuation?.resume()
+        continuation = nil
     }
 }
 

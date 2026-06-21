@@ -121,6 +121,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     var persistedStates: [String: RemoteFileBrowserPersistedState] = [:]
     var directoryRequestIDs: [UUID: UUID] = [:]
     var viewerRequestIDs: [UUID: UUID] = [:]
+    private var mutationRequests: [UUID: Task<Void, Never>] = [:]
     private var pendingDisconnects: [UUID: PendingDisconnect] = [:]
     #if DEBUG
     private var pendingDisconnectWaitDidFinishForTesting: (@MainActor (UUID) async -> Void)?
@@ -131,6 +132,10 @@ final class RemoteFileBrowserStore: ObservableObject {
     static let hardPreviewBytes = 2 * 1_024 * 1_024
     static let previewConfirmationBytes = 1 * 1_024 * 1_024
     static let maxMediaPreviewBytes = 64 * 1_024 * 1_024
+
+    var pendingMutationRequestIDs: Set<UUID> {
+        Set(mutationRequests.keys)
+    }
 
     init(
         defaults: UserDefaults = .standard,
@@ -183,6 +188,50 @@ final class RemoteFileBrowserStore: ObservableObject {
 
     func state(for tab: RemoteFileTab) -> BrowserState {
         states[tab.id] ?? BrowserState(serverId: tab.serverId, persisted: persistedState(for: tab.id))
+    }
+
+    @discardableResult
+    func requestMutation(
+        operation: @escaping @MainActor () async throws -> Void,
+        onSuccess: @escaping @MainActor () -> Void = {},
+        onFailure: @escaping @MainActor (Error) -> Void = { _ in }
+    ) -> UUID {
+        requestMutation(
+            operation: {
+                try await operation()
+                return ()
+            },
+            onSuccess: { _ in
+                onSuccess()
+            },
+            onFailure: onFailure
+        )
+    }
+
+    @discardableResult
+    func requestMutation<Result>(
+        operation: @escaping @MainActor () async throws -> Result,
+        onSuccess: @escaping @MainActor (Result) -> Void,
+        onFailure: @escaping @MainActor (Error) -> Void = { _ in }
+    ) -> UUID {
+        let requestID = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await operation()
+                onSuccess(result)
+            } catch {
+                onFailure(error)
+            }
+            self.mutationRequests.removeValue(forKey: requestID)
+        }
+
+        mutationRequests[requestID] = task
+        return requestID
+    }
+
+    func waitForMutationRequest(_ requestID: UUID) async {
+        await mutationRequests[requestID]?.value
     }
 
     func currentPathValue(for tab: RemoteFileTab) -> String? {

@@ -742,44 +742,36 @@ struct RemoteFileBrowserScreen: View {
 
     func performOperation(
         onFailure: (@MainActor (Error) -> Void)? = nil,
-        operation: @escaping () async throws -> Void
+        operation: @escaping @MainActor () async throws -> Void
     ) {
-        Task {
-            do {
-                try await operation()
-            } catch {
-                await MainActor.run {
-                    if let onFailure {
-                        onFailure(error)
-                    } else {
-                        presentOperationError(error)
-                    }
+        browser.requestMutation(
+            operation: operation,
+            onFailure: { error in
+                if let onFailure {
+                    onFailure(error)
+                } else {
+                    presentOperationError(error)
                 }
             }
-        }
+        )
     }
 
     func performOperation<Result>(
-        operation: @escaping () async throws -> Result,
+        operation: @escaping @MainActor () async throws -> Result,
         onSuccess: @escaping @MainActor (Result) -> Void,
         onFailure: (@MainActor (Error) -> Void)? = nil
     ) {
-        Task {
-            do {
-                let result = try await operation()
-                await MainActor.run {
-                    onSuccess(result)
-                }
-            } catch {
-                await MainActor.run {
-                    if let onFailure {
-                        onFailure(error)
-                    } else {
-                        presentOperationError(error)
-                    }
+        browser.requestMutation(
+            operation: operation,
+            onSuccess: onSuccess,
+            onFailure: { error in
+                if let onFailure {
+                    onFailure(error)
+                } else {
+                    presentOperationError(error)
                 }
             }
-        }
+        )
     }
 
     var trimmedNewFolderName: String {
