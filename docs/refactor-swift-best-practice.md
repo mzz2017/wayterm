@@ -5918,8 +5918,80 @@ Before review, verify root terminal surface callbacks no longer bypass the injec
 
 Request code review for Task 75. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
+## Task 76: Root Static Teardown Manager Boundary
+
+**Files:**
+- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
+- Test: `VVTermTests/TerminalRootStaticTeardownBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Task 75's injected `sessionManager` requirement on `SSHTerminalCoordinator`.
+  - Existing root coordinator state: `sessionId`, `server.id`, `terminalView`, macOS `isReusingTerminal`, and iOS `preserveSession`.
+  - Existing `ConnectionSessionManager` APIs: `sessions`, `detachSurfaceForViewDisappeared(from:)`, and `handleClosedSessionSurfaceTeardown(sessionId:serverId:reason:)`.
+- Produces:
+  - macOS `static func dismantleNSView` reads session liveness and sends detach/teardown intent through `coordinator.sessionManager`.
+  - iOS `static func dismantleUIView` reads session liveness and sends detach/teardown intent through `coordinator.sessionManager`.
+  - `SSHTerminalWrapper.swift` no longer contains `ConnectionSessionManager.shared` in root representable static teardown.
+
+- [ ] **Step 1: Add RED static teardown boundary tests**
+
+Create `TerminalRootStaticTeardownBoundaryTests` with Test Context:
+- Protected behavior: root representable static teardown must still delegate session liveness, surface detach, and closed-session surface cleanup to the injected TerminalSessions application owner available through the coordinator.
+- Invariant: static teardown may pause/resign UI surfaces locally, but it must not resolve `ConnectionSessionManager.shared`; it must use `coordinator.sessionManager`.
+- Fake assumptions: these are source-boundary tests because constructing `NSViewRepresentable` / `UIViewRepresentable` teardown inputs would require platform UI surfaces and Ghostty.
+- Update guidance: update the tests only if static teardown is redesigned to call a different injected application owner or is moved out of representable static lifecycle methods entirely.
+
+Add `macStaticTeardownUsesCoordinatorManager`:
+- Read `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`.
+- Slice from `static func dismantleNSView` ending before `// MARK: - Coordinator`.
+- Assert the slice contains `coordinator.sessionManager.sessions`, `coordinator.sessionManager.detachSurfaceForViewDisappeared`, and `coordinator.sessionManager.handleClosedSessionSurfaceTeardown`.
+- Assert the slice does not contain `ConnectionSessionManager.shared`.
+
+Add `iosStaticTeardownUsesCoordinatorManager`:
+- Slice from `static func dismantleUIView` ending before `private func terminalHostView`.
+- Assert the slice contains `coordinator.sessionManager.sessions`, `coordinator.sessionManager.detachSurfaceForViewDisappeared`, and `coordinator.sessionManager.handleClosedSessionSurfaceTeardown`.
+- Assert the slice does not contain `ConnectionSessionManager.shared`.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalRootStaticTeardownBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails because both root static teardown functions still resolve `ConnectionSessionManager.shared`.
+
+- [ ] **Step 2: Route static teardown through the coordinator manager**
+
+Update `SSHTerminalWrapper.swift`:
+- In macOS `static func dismantleNSView`, replace `ConnectionSessionManager.shared.sessions` with `coordinator.sessionManager.sessions`.
+- In macOS `static func dismantleNSView`, replace `ConnectionSessionManager.shared.detachSurfaceForViewDisappeared(from:)` with `coordinator.sessionManager.detachSurfaceForViewDisappeared(from:)`.
+- In macOS `static func dismantleNSView`, replace `ConnectionSessionManager.shared.handleClosedSessionSurfaceTeardown(...)` with `coordinator.sessionManager.handleClosedSessionSurfaceTeardown(...)`.
+- In iOS `static func dismantleUIView`, make the same three replacements.
+- Do not change session close semantics, rendering pause behavior, keyboard resignation, or terminal cleanup callbacks in this task.
+
+- [ ] **Step 3: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalRootStaticTeardownBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "static func dismantleNSView|static func dismantleUIView|ConnectionSessionManager\\.shared|coordinator\\.sessionManager\\.(sessions|detachSurfaceForViewDisappeared|handleClosedSessionSurfaceTeardown)" VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift VVTermTests/TerminalRootStaticTeardownBoundaryTests.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows root static teardown uses `coordinator.sessionManager.*`, and any remaining `ConnectionSessionManager.shared` hits in `SSHTerminalWrapper.swift` are outside root representable teardown or absent.
+
+- [ ] **Step 4: API and boundary cleanup**
+
+Before review, verify no new lifecycle work or untracked task was introduced, static teardown still only releases UI surface state or calls application-layer lifecycle APIs, and the new test file includes complete Test Context plus Given / When / Then comments.
+
+- [ ] **Step 5: Request review and commit**
+
+Request code review for Task 76. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-75 scan selected Task 76 as the next executable lifecycle slice. Task 75 intentionally left root `static dismantleNSView` / `static dismantleUIView` as the only root-wrapper `ConnectionSessionManager.shared` exemption, but both static functions receive the Task 75 coordinator, and that coordinator now carries the injected `sessionManager`. Task 76 should close this exemption by routing static liveness checks, surface detach intent, and closed-session surface teardown through `coordinator.sessionManager` while preserving current pause/rendering and keyboard cleanup behavior. Broader root teardown redesign, split-pane static teardown, pane UI intent helper injection, title/PWD/background parsing, Ghostty config reload, and other low-level Application/Core lifecycle slices remain open.
 - 2026-06-21: Task 75 RED/GREEN completed with local lifecycle review after review-subagent tool discovery returned no available tools. `TerminalContainerView` now carries the app-owned `ConnectionSessionManager` boundary into root `SSHTerminalWrapper`; macOS/iOS root wrapper instance callbacks and shared coordinator helpers route runtime configuration, terminal reuse/registration, resize, PWD/title metadata, zoom, presentation overrides, input, surface attach, and update-time missing-session teardown through the injected `sessionManager` instead of directly reaching for `ConnectionSessionManager.shared`. Initial RED failed as expected with 29 source-boundary issues because `TerminalContainerView` did not inject a manager into root wrappers, wrapper/coordinator instance callbacks still used the singleton, and the coordinator protocol had no injected manager requirement. GREEN focused verification passed 4 Swift Testing tests in `TerminalRootSurfaceCallbackBoundaryTests`; source scan showed root wrapper/coordinator instance callbacks use `sessionManager.*`, with remaining root-wrapper singleton usage confined to `static dismantleNSView` and `static dismantleUIView` as explicitly deferred. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Static representable teardown redesign, broader root teardown, pane UI intent helper injection, title/PWD/background parsing, Ghostty config reload, and other low-level Application/Core lifecycle slices remain open.
 - 2026-06-21: Post-Task-74 scan selected Task 75 as the next executable lifecycle slice. After split pane surface callbacks moved to an injected `TerminalTabManager`, the root `SSHTerminalWrapper` still has the same dependency-boundary smell on both macOS and iOS: representable instance callbacks and the shared `SSHTerminalCoordinator` extension directly call `ConnectionSessionManager.shared` for runtime configuration, terminal lookup/registration, resize, PWD/title metadata, zoom, presentation overrides, input, surface attach, and update-time missing-session teardown. Task 75 should mirror Task 74 for root-session callbacks by injecting the already app-owned `ConnectionSessionManager` through `TerminalContainerView` into `SSHTerminalWrapper`, `SSHTerminalRepresentable`, and both coordinators. Static `dismantleNSView` / `dismantleUIView` remain deferred because they cannot access instance injection; broader root lifecycle teardown, pane UI intent helper injection, terminal title/PWD/background parsing, Ghostty config reload, and other low-level Application/Core lifecycle slices remain open.
 - 2026-06-21: Task 74 RED/GREEN completed with local lifecycle review. `TerminalPaneView` now receives the injected `TerminalTabManager` from `TerminalTabView`, uses it for pane state/terminal lookup, and passes it into `SSHTerminalPaneWrapper`; the split pane wrapper and its coordinator now route runtime configuration, terminal reuse/registration, resize, PWD/title metadata, zoom, presentation overrides, input, surface attach, and coordinator close callbacks through the injected manager instead of reaching directly for `TerminalTabManager.shared`. Initial RED failed as expected because `TerminalPaneView` did not pass a manager into the wrapper and wrapper/coordinator callbacks still used the singleton. GREEN focused verification passed 3 Swift Testing tests in `TerminalSplitSurfaceCallbackBoundaryTests`; source scan showed the scoped wrapper/coordinator callbacks use `tabManager.*`, with remaining split wrapper singleton usage confined to `static func dismantleNSView` and explicitly deferred. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Tool policy did not permit spawning an independent review subagent without explicit delegation, so review was local against the Swift lifecycle checklist; no Critical or Important issues were found. Root `SSHTerminalWrapper`, static teardown redesign, pane UI intent helper injection, terminal title/PWD/background parsing, Ghostty config reload, and other low-level Application/Core lifecycle slices remain open.
