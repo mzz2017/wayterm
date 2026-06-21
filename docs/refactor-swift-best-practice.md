@@ -5289,7 +5289,7 @@ Review result: subagent review was not spawned because the available multi-agent
   - StoreManager-owned product-load request task coalescing so repeated paywall appearances do not create duplicate App Store product fetches.
   - `ProUpgradeSheet` lifecycle hooks that synchronously send product-load intent and update `selectedPlan` from the request completion callback instead of awaiting `loadProducts()` in SwiftUI.
 
-- [ ] **Step 1: Add RED product-load lifecycle and boundary tests**
+- [x] **Step 1: Add RED product-load lifecycle and boundary tests**
 
 Extend `StoreManagerLifecycleTests`:
 - `productLoadRequestTracksOperationUntilCompletion`: use `StoreRequestGate` and fake `loadProductsAction` to prove the request ID remains visible while product loading is blocked, then clears only after completion.
@@ -5309,7 +5309,9 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: the focused suite fails to compile because `requestProductLoad(onCompleted:)`, `pendingProductLoadRequestIDs`, `waitForProductLoadRequest(_:)`, and the testing cancellation hook do not exist. If it compiles unexpectedly, the boundary test must fail because `ProUpgradeSheet` still directly awaits `loadProducts()`.
 
-- [ ] **Step 2: Add StoreManager-owned product-load request tracking**
+Actual RED result: focused `StoreManagerLifecycleTests` / `StoreProductLoadIntentBoundaryTests` failed to build because `StoreManager` had no `requestProductLoad`, `pendingProductLoadRequestIDs`, `waitForProductLoadRequest`, or `cancelProductLoadRequestForTesting`.
+
+- [x] **Step 2: Add StoreManager-owned product-load request tracking**
 
 Update `StoreManager`:
 - add a private product-load request record containing the request ID, `Task<Void, Never>`, and completion callbacks;
@@ -5320,7 +5322,7 @@ Update `StoreManager`:
 - clear the request record only from the request task's `defer` when its request ID is still current;
 - cancel the product-load request from `deinit`.
 
-- [ ] **Step 3: Route ProUpgradeSheet through request intent**
+- [x] **Step 3: Route ProUpgradeSheet through request intent**
 
 Update both iOS and macOS sheet lifecycle hooks:
 - keep `storeManager.notePaywallPresented(source:)` synchronous in UI because it records presentation state and analytics, not StoreKit product fetch ownership;
@@ -5328,7 +5330,7 @@ Update both iOS and macOS sheet lifecycle hooks:
 - preserve the existing behavior that default plan selection is refreshed after products are loaded;
 - keep purchase, restore, alerts, and subscription-management UI unchanged.
 
-- [ ] **Step 4: Run focused verification**
+- [x] **Step 4: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/StoreManagerLifecycleTests -only-testing:VVTermTests/StoreProductLoadIntentBoundaryTests -only-testing:VVTermTests/StorePurchaseIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
@@ -5338,16 +5340,21 @@ git diff --check
 
 Expected GREEN result: focused tests pass; source scan shows `ProUpgradeSheet` uses `requestProductLoad` and no direct `await storeManager.loadProducts`; StoreManager owns pending IDs and await hooks.
 
-- [ ] **Step 5: API and boundary cleanup**
+Actual GREEN result: focused verification passed 12 Swift Testing tests across `StoreManagerLifecycleTests`, `StoreProductLoadIntentBoundaryTests`, and `StorePurchaseIntentBoundaryTests`. Source scan showed `ProUpgradeSheet` only calls `requestProductLoad`, and direct `loadProducts(` calls remain only in `StoreManager` plus the source-boundary assertion text. `git diff --check` passed. iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`.
+
+- [x] **Step 5: API and boundary cleanup**
 
 Before review, verify `StoreManager` is the single owner of StoreKit product-load request tasks, duplicate paywall appearances coalesce to one fetch, callbacks execute only after request completion, cancellation remains lifecycle completion, SwiftUI only sends product-load intent, and touched tests include complete Test Context plus Given / When / Then comments.
 
-- [ ] **Step 6: Request review and commit**
+- [x] **Step 6: Request review and commit**
 
 Request code review for Task 69. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
+Review result: independent read-only reviewer found no Critical, Important, or Minor findings. Residual risk recorded for later consideration: product-load completion callbacks remain held by `StoreManager` until loading exits, so a dismissed paywall's callback can still update presentation state; this matches the existing post-load selection behavior and can be tightened later with per-caller cancellation tokens if needed.
+
 ## Progress Ledger
 
+- 2026-06-21: Task 69 RED/GREEN completed with independent review. `StoreManager` now owns tracked paywall product-load request tasks through `requestProductLoad(onCompleted:)`, exposes `pendingProductLoadRequestIDs` plus `waitForProductLoadRequest(_:)`, coalesces duplicate in-flight paywall load intent into one App Store product fetch, stores all completion callbacks, treats cancellation as lifecycle completion, and cancels pending product-load requests in `deinit`. `ProUpgradeSheet` no longer awaits `storeManager.loadProducts()` from SwiftUI `.task`; both iOS and macOS paywall branches synchronously send product-load intent and update `selectedPlan` from the manager request completion callback, preserving post-load default-plan selection. Initial RED failed to build because the product-load request API, pending IDs, wait hook, and testing cancellation hook did not exist. GREEN focused verification passed 12 Swift Testing tests across `StoreManagerLifecycleTests`, `StoreProductLoadIntentBoundaryTests`, and `StorePurchaseIntentBoundaryTests`; source scan showed `ProUpgradeSheet` only uses `requestProductLoad`; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Independent review found no Critical, Important, or Minor issues; residual callback-after-dismiss risk is noted for a possible later per-caller cancellation-token slice.
 - 2026-06-21: Post-Task-68 scan selected Task 69 as the next executable lifecycle slice. `ProUpgradeSheet` still awaits `storeManager.loadProducts()` directly from SwiftUI `.task` on both iOS and macOS while `StoreManager` already owns nearby StoreKit purchase, restore, startup refresh, review refresh, and transaction listener lifecycles. This Store product-load path affects the paywall and purchase decisions, so the next slice should add `StoreManager` product-load request tracking, duplicate paywall-load coalescing, and an await hook, then leave broader server unlock, RemoteFiles move-destination loading, split-pane voice text injection, and terminal interaction-state cleanup for later tasks.
 - 2026-06-21: Task 68 RED/GREEN completed with local lifecycle review. `ServerStatsCollector` now owns tracked Stats collection request tasks through `requestStartCollecting(for:using:)` and `requestStopCollecting()`, exposes `pendingStatsCollectionRequestIDs` and `waitForStatsCollectionRequest(_:)`, cancels stale visibility/retry requests, waits canceled queued start work from stop requests, and makes `startCollecting(for:using:)` cancellation-aware after pending stop/collection waits so a canceled queued start cannot create a replacement lease after a newer stop intent wins. `ServerStatsView` no longer starts collection from Retry with `Task { await ... }` and no longer uses `.task(id: makeTaskKey())` to directly await start/stop; it sends visible/hidden/retry/disappear intent synchronously to the collector. Initial RED failed to build because the request APIs and wait hook did not exist. GREEN focused verification passed 10 Swift Testing tests across `ServerStatsCollectorLifecycleTests` and `ServerStatsIntentBoundaryTests`; expanded Stats verification passed 10 XCTest parsing/domain tests plus the 10 Swift Testing lifecycle/boundary tests; source scan showed Stats UI has only request API calls and no direct await start/stop; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Local review found no Critical or Important issues.
 - 2026-06-21: Post-Task-67 scan selected Task 68 as the next executable lifecycle slice. `ServerStatsView` still starts Stats collection work directly from SwiftUI: Retry wraps `await statsCollector.startCollecting(...)` in a `Task`, visibility uses `.task(id: makeTaskKey())` to await start/stop, and disappearance calls the low-level stop helper directly. Historical Task 18 allowed this as an intermediate state, but the current Swift lifecycle rule is stricter: UI should send intent while `ServerStatsCollector` owns tracked, awaitable lifecycle-critical tasks. Task 68 should add collector-owned start/stop request APIs, preserve borrowed lease behavior, and keep queued-start cancellation from creating a replacement Stats lease after a newer stop intent wins.

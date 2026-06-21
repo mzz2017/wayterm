@@ -28,11 +28,18 @@ final class StoreManager: ObservableObject {
     private(set) var lastRestoreRequestFailure: Error?
     var pendingPurchaseRequestIDs: Set<UUID> { Set(purchaseRequestTasks.keys) }
     var pendingRestoreRequestIDs: Set<UUID> { Set(restoreRequestTasks.keys) }
+    var pendingProductLoadRequestIDs: Set<UUID> {
+        guard let productLoadRequestID else { return [] }
+        return [productLoadRequestID]
+    }
 
     private var startupRefreshTask: Task<Void, Never>?
     private var startupRefreshTaskID: UUID?
     private var reviewModeRefreshTask: Task<Void, Never>?
     private var reviewModeRefreshTaskID: UUID?
+    private var productLoadRequestTask: Task<Void, Never>?
+    private var productLoadRequestID: UUID?
+    private var productLoadCompletionCallbacks: [@MainActor () -> Void] = []
     private var updateListenerTask: Task<Void, Error>?
     private var reviewModeExpiryTask: Task<Void, Never>?
     private var reviewModeExpiresAt: Date?
@@ -79,6 +86,7 @@ final class StoreManager: ObservableObject {
         updateListenerTask?.cancel()
         startupRefreshTask?.cancel()
         reviewModeRefreshTask?.cancel()
+        productLoadRequestTask?.cancel()
         purchaseRequestTasks.values.forEach { $0.cancel() }
         restoreRequestTasks.values.forEach { $0.cancel() }
     }
@@ -127,6 +135,48 @@ final class StoreManager: ObservableObject {
     }
 
     // MARK: - Load Products
+
+    @discardableResult
+    func requestProductLoad(
+        onCompleted: @escaping @MainActor () -> Void = {}
+    ) -> UUID {
+        if let productLoadRequestID {
+            productLoadCompletionCallbacks.append(onCompleted)
+            return productLoadRequestID
+        }
+
+        let requestID = UUID()
+        productLoadRequestID = requestID
+        productLoadCompletionCallbacks = [onCompleted]
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.productLoadRequestID == requestID {
+                    self.productLoadRequestID = nil
+                    self.productLoadRequestTask = nil
+                    self.productLoadCompletionCallbacks = []
+                }
+            }
+
+            await self.loadProductsAction(self)
+            guard !Task.isCancelled else { return }
+            guard self.productLoadRequestID == requestID else { return }
+
+            let callbacks = self.productLoadCompletionCallbacks
+            callbacks.forEach { $0() }
+        }
+
+        if productLoadRequestID == requestID {
+            productLoadRequestTask = task
+        }
+        return requestID
+    }
+
+    func waitForProductLoadRequest(_ requestID: UUID) async {
+        guard productLoadRequestID == requestID else { return }
+        await productLoadRequestTask?.value
+    }
 
     func loadProducts() async {
         let maxRetries = 3
@@ -509,6 +559,11 @@ extension StoreManager {
 
     func waitForReviewModeRefreshForTesting() async {
         await reviewModeRefreshTask?.value
+    }
+
+    func cancelProductLoadRequestForTesting(_ requestID: UUID) {
+        guard productLoadRequestID == requestID else { return }
+        productLoadRequestTask?.cancel()
     }
 }
 #endif

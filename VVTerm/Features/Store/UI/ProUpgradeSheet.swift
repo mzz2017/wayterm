@@ -86,8 +86,9 @@ struct ProUpgradeSheet: View {
         .background(sheetBackground.ignoresSafeArea())
         .task {
             storeManager.notePaywallPresented(source: source)
-            await storeManager.loadProducts()
-            selectedPlan = defaultPlan
+            storeManager.requestProductLoad {
+                selectedPlan = defaultPlan
+            }
         }
         .onChangeCompat(of: storeManager.purchaseState) { newState in
             handlePurchaseStateChange(newState)
@@ -166,8 +167,9 @@ struct ProUpgradeSheet: View {
         .background(ProUpgradeWindowConfigurator(source: source))
         .task {
             storeManager.notePaywallPresented(source: source)
-            await storeManager.loadProducts()
-            selectedPlan = defaultPlan
+            storeManager.requestProductLoad {
+                selectedPlan = defaultPlan
+            }
         }
         .onChangeCompat(of: storeManager.purchaseState) { newState in
             handlePurchaseStateChange(newState)

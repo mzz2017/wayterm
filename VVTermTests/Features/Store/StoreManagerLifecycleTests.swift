@@ -3,14 +3,133 @@ import Testing
 
 // Test Context:
 // These tests protect StoreManager as the application-layer owner for StoreKit
-// purchase, restore, startup refresh, and review-mode refresh lifecycle. Fakes
-// avoid real StoreKit products, AppStore.sync, transaction streams, and network
-// I/O. Update these tests only when Store lifecycle ownership intentionally
-// moves to another application owner with equivalent pending-task tracking,
-// awaitable completion, and request-failure diagnostics.
+// purchase, restore, startup refresh, review-mode refresh, and paywall product
+// load lifecycle. Fakes avoid real StoreKit products, AppStore.sync,
+// transaction streams, and network I/O. Update these tests only when Store
+// lifecycle ownership intentionally moves to another application owner with
+// equivalent pending-task tracking, awaitable completion, request coalescing,
+// and request-failure diagnostics.
 @MainActor
 @Suite
 struct StoreManagerLifecycleTests {
+    @Test
+    func productLoadRequestTracksOperationUntilCompletion() async {
+        let gate = StoreRequestGate()
+        var didLoadProducts = false
+        let manager = StoreManager.makeForTesting(
+            loadProductsAction: { _ in
+                didLoadProducts = true
+                await gate.waitForRelease()
+            }
+        )
+
+        // Given SwiftUI sends paywall product-load intent through StoreManager.
+        let requestID = manager.requestProductLoad()
+
+        await gate.waitForOperationStart()
+
+        // Then StoreManager tracks the pending product load until the fake
+        // StoreKit work exits, making completion awaitable.
+        #expect(
+            manager.pendingProductLoadRequestIDs.contains(requestID),
+            "A paywall product-load request must stay tracked while StoreKit product loading is pending."
+        )
+
+        await gate.release()
+        await manager.waitForProductLoadRequest(requestID)
+
+        #expect(didLoadProducts, "The tracked product-load request should execute the configured load action.")
+        #expect(
+            !manager.pendingProductLoadRequestIDs.contains(requestID),
+            "StoreManager should clear product-load request tracking after completion."
+        )
+    }
+
+    @Test
+    func duplicateProductLoadRequestsCoalesceUntilCompletion() async {
+        let gate = StoreRequestGate()
+        var loadCount = 0
+        var completions: [String] = []
+        let manager = StoreManager.makeForTesting(
+            loadProductsAction: { _ in
+                loadCount += 1
+                await gate.waitForRelease()
+            }
+        )
+
+        // Given the paywall appears twice while the first product load is
+        // still pending.
+        let firstID = manager.requestProductLoad {
+            completions.append("first")
+        }
+        let secondID = manager.requestProductLoad {
+            completions.append("second")
+        }
+
+        await gate.waitForOperationStart()
+
+        // Then both callers observe the same StoreManager-owned request
+        // instead of starting duplicate App Store product fetches.
+        #expect(
+            firstID == secondID,
+            "Duplicate paywall product-load intent should coalesce to the existing request ID."
+        )
+        #expect(loadCount == 1, "Duplicate product-load intent should run the fake StoreKit load once.")
+        #expect(
+            manager.pendingProductLoadRequestIDs == [firstID],
+            "Only the coalesced product-load request should be visible as pending."
+        )
+
+        await gate.release()
+        await manager.waitForProductLoadRequest(firstID)
+
+        #expect(
+            completions == ["first", "second"],
+            "Every coalesced product-load caller should receive its completion callback after loading exits."
+        )
+        #expect(
+            !manager.pendingProductLoadRequestIDs.contains(firstID),
+            "StoreManager should clear the coalesced product-load request after completion."
+        )
+    }
+
+    @Test
+    func productLoadCancellationDoesNotRunCompletionOrRecordPurchaseRestoreFailure() async {
+        let gate = StoreRequestGate()
+        var didRunCompletion = false
+        let manager = StoreManager.makeForTesting(
+            loadProductsAction: { _ in
+                await gate.waitForRelease()
+            }
+        )
+
+        // Given lifecycle teardown cancels a pending product-load request.
+        let requestID = manager.requestProductLoad {
+            didRunCompletion = true
+        }
+        await gate.waitForOperationStart()
+        manager.cancelProductLoadRequestForTesting(requestID)
+
+        await gate.release()
+        await manager.waitForProductLoadRequest(requestID)
+
+        // Then cancellation is lifecycle completion, not a purchase/restore
+        // failure, and stale presentation callbacks are not fired.
+        #expect(!didRunCompletion, "Canceled product-load requests should not run presentation callbacks.")
+        #expect(
+            !manager.pendingProductLoadRequestIDs.contains(requestID),
+            "StoreManager should clear canceled product-load request tracking after the task exits."
+        )
+        #expect(
+            manager.lastPurchaseRequestFailure == nil,
+            "Product-load cancellation should not be recorded as a purchase request failure."
+        )
+        #expect(
+            manager.lastRestoreRequestFailure == nil,
+            "Product-load cancellation should not be recorded as a restore request failure."
+        )
+    }
+
     @Test
     func purchaseRequestTracksPendingOperationUntilCompletion() async {
         let manager = StoreManager.makeForTesting()
