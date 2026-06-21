@@ -325,9 +325,7 @@ struct TerminalContainerView: View {
         #endif
         .alert("Install tmux?", isPresented: $showingTmuxInstallPrompt) {
             Button("Install") {
-                Task {
-                    await ConnectionSessionManager.shared.startTmuxInstall(for: session.id)
-                }
+                ConnectionSessionManager.shared.requestTmuxInstall(for: session.id)
             }
             Button("Continue without persistence", role: .cancel) {
                 disableTmuxForServer()
@@ -337,9 +335,7 @@ struct TerminalContainerView: View {
         }
         .alert("Install mosh-server?", isPresented: $showingMoshInstallPrompt) {
             Button("Install") {
-                Task {
-                    await installMoshServerAndReconnect()
-                }
+                requestMoshInstallAndReconnect()
             }
             Button("Continue with SSH", role: .cancel) {}
         } message: {
@@ -710,27 +706,31 @@ struct TerminalContainerView: View {
         reconnectToken = UUID()
     }
 
-    @MainActor
-    private func installMoshServerAndReconnect() async {
+    private func requestMoshInstallAndReconnect() {
         guard !isInstallingMosh else { return }
         isInstallingMosh = true
-        defer { isInstallingMosh = false }
+        operationNotice = nil
 
-        do {
-            try await ConnectionSessionManager.shared.installMoshServerAndReconnect(session: session)
-            operationNotice = nil
-            reconnectToken = UUID()
-        } catch {
-            operationNotice = NoticeItem(
-                id: "terminal-mosh-install-error-\(session.id.uuidString)",
-                lane: .bottomOperation,
-                level: .error,
-                leading: .icon("xmark.octagon.fill"),
-                title: String(localized: "mosh-server install failed"),
-                message: error.localizedDescription,
-                dismissAction: { operationNotice = nil }
-            )
-        }
+        ConnectionSessionManager.shared.requestMoshInstallAndReconnect(
+            session: session,
+            onCompleted: {
+                isInstallingMosh = false
+                operationNotice = nil
+                reconnectToken = UUID()
+            },
+            onFailed: { error in
+                isInstallingMosh = false
+                operationNotice = NoticeItem(
+                    id: "terminal-mosh-install-error-\(session.id.uuidString)",
+                    lane: .bottomOperation,
+                    level: .error,
+                    leading: .icon("xmark.octagon.fill"),
+                    title: String(localized: "mosh-server install failed"),
+                    message: error.localizedDescription,
+                    dismissAction: { operationNotice = nil }
+                )
+            }
+        )
     }
 
     @MainActor

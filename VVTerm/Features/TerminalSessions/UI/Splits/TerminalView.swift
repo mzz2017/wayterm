@@ -643,9 +643,7 @@ struct TerminalPaneView: View {
         }
         .alert("Install tmux?", isPresented: $showingTmuxInstallPrompt) {
             Button("Install") {
-                Task {
-                    await TerminalTabManager.shared.startTmuxInstall(for: paneId)
-                }
+                TerminalTabManager.shared.requestTmuxInstall(for: paneId)
             }
             Button("Continue without persistence", role: .cancel) {
                 disableTmuxForServer()
@@ -655,9 +653,7 @@ struct TerminalPaneView: View {
         }
         .alert("Install mosh-server?", isPresented: $showingMoshInstallPrompt) {
             Button("Install") {
-                Task {
-                    await installMoshServerAndReconnect()
-                }
+                requestMoshInstallAndReconnect()
             }
             Button("Continue with SSH", role: .cancel) {}
         } message: {
@@ -845,27 +841,31 @@ struct TerminalPaneView: View {
         }
     }
 
-    @MainActor
-    private func installMoshServerAndReconnect() async {
+    private func requestMoshInstallAndReconnect() {
         guard !isInstallingMosh else { return }
         isInstallingMosh = true
-        defer { isInstallingMosh = false }
+        operationNotice = nil
 
-        do {
-            try await TerminalTabManager.shared.installMoshServerAndReconnect(for: paneId)
-            operationNotice = nil
-            reconnectToken = UUID()
-        } catch {
-            operationNotice = NoticeItem(
-                id: "pane-mosh-install-error-\(paneId.uuidString)",
-                lane: .bottomOperation,
-                level: .error,
-                leading: .icon("xmark.octagon.fill"),
-                title: String(localized: "mosh-server install failed"),
-                message: error.localizedDescription,
-                dismissAction: { operationNotice = nil }
-            )
-        }
+        TerminalTabManager.shared.requestMoshInstallAndReconnect(
+            for: paneId,
+            onCompleted: {
+                isInstallingMosh = false
+                operationNotice = nil
+                reconnectToken = UUID()
+            },
+            onFailed: { error in
+                isInstallingMosh = false
+                operationNotice = NoticeItem(
+                    id: "pane-mosh-install-error-\(paneId.uuidString)",
+                    lane: .bottomOperation,
+                    level: .error,
+                    leading: .icon("xmark.octagon.fill"),
+                    title: String(localized: "mosh-server install failed"),
+                    message: error.localizedDescription,
+                    dismissAction: { operationNotice = nil }
+                )
+            }
+        )
     }
 
     private func updateTerminalBackgroundColor() {

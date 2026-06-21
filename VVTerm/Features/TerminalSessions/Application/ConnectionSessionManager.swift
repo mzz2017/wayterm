@@ -34,6 +34,19 @@ final class ConnectionSessionManager: ObservableObject {
         let shellTeardownTask: Task<Void, Never>?
     }
 
+    private struct TmuxInstallRequest {
+        let sessionId: UUID
+        let task: Task<Void, Never>
+        var onCompleted: [@MainActor () -> Void]
+    }
+
+    private struct MoshInstallRequest {
+        let sessionId: UUID
+        let task: Task<Void, Never>
+        var onCompleted: [@MainActor () -> Void]
+        var onFailed: [@MainActor (Error) -> Void]
+    }
+
     private final class SessionRuntimeState {
         let sessionId: UUID
         var server: Server
@@ -208,6 +221,13 @@ final class ConnectionSessionManager: ObservableObject {
     private var connectionOpenRequests: [UUID: Task<Void, Never>] = [:]
     private(set) var lastConnectionOpenFailure: Error?
     var pendingConnectionOpenRequestIDs: Set<UUID> { Set(connectionOpenRequests.keys) }
+    private var tmuxInstallRequests: [UUID: TmuxInstallRequest] = [:]
+    private var tmuxInstallRequestBySession: [UUID: UUID] = [:]
+    var pendingTmuxInstallRequestIDs: Set<UUID> { Set(tmuxInstallRequests.keys) }
+    private var moshInstallRequests: [UUID: MoshInstallRequest] = [:]
+    private var moshInstallRequestBySession: [UUID: UUID] = [:]
+    private(set) var lastMoshInstallFailure: Error?
+    var pendingMoshInstallRequestIDs: Set<UUID> { Set(moshInstallRequests.keys) }
     private var sessionReconnectsInFlight: Set<UUID> = []
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
     private var serverDisconnectTasks: [UUID: Task<Void, Never>] = [:]
@@ -226,6 +246,8 @@ final class ConnectionSessionManager: ObservableObject {
     private var testingTerminalConnectionClientFactory: (@MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient)?
     private var rejectedShellCleanupOperationForTesting: (@MainActor @Sendable () async -> Void)?
     private var tmuxKillOperationForTesting: (@MainActor @Sendable () async -> Void)?
+    private var tmuxInstallOperationForTesting: (@MainActor (UUID) async -> Void)?
+    private var moshInstallAndReconnectOperationForTesting: (@MainActor (ConnectionSession) async throws -> Void)?
     #endif
     @Published private(set) var isSuspendingForBackground = false
 
@@ -810,12 +832,27 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func clearRuntimeStateForClosedSession(_ sessionId: UUID) -> Task<Void, Never>? {
+        cancelInstallRequests(for: sessionId)
         let shellTeardownTask = cancelAndClearShellHandlers(for: sessionId)
         terminalsNeedingReconnectReset.remove(sessionId)
         terminalBrowseModeBySession.removeValue(forKey: sessionId)
         clearTmuxRuntimeState(for: sessionId)
         runtimeTitleBySession.removeValue(forKey: sessionId)
         return shellTeardownTask
+    }
+
+    private func cancelInstallRequests(for sessionId: UUID) {
+        if let requestID = tmuxInstallRequestBySession.removeValue(forKey: sessionId),
+           let request = tmuxInstallRequests.removeValue(forKey: requestID) {
+            request.task.cancel()
+            request.onCompleted.forEach { $0() }
+        }
+
+        if let requestID = moshInstallRequestBySession.removeValue(forKey: sessionId),
+           let request = moshInstallRequests.removeValue(forKey: requestID) {
+            request.task.cancel()
+            request.onCompleted.forEach { $0() }
+        }
     }
 
     private func handleTerminalCloseUI(
@@ -2014,6 +2051,114 @@ final class ConnectionSessionManager: ObservableObject {
         try await reconnect(session: session)
     }
 
+    @discardableResult
+    func requestTmuxInstall(
+        for sessionId: UUID,
+        onCompleted: @escaping @MainActor () -> Void = {}
+    ) -> UUID {
+        if let requestID = tmuxInstallRequestBySession[sessionId] {
+            tmuxInstallRequests[requestID]?.onCompleted.append(onCompleted)
+            return requestID
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.tmuxInstallRequests.removeValue(forKey: requestID)
+                if self.tmuxInstallRequestBySession[sessionId] == requestID {
+                    self.tmuxInstallRequestBySession.removeValue(forKey: sessionId)
+                }
+            }
+
+            #if DEBUG
+            if let operation = self.tmuxInstallOperationForTesting {
+                await operation(sessionId)
+            } else {
+                await self.startTmuxInstall(for: sessionId)
+            }
+            #else
+            await self.startTmuxInstall(for: sessionId)
+            #endif
+
+            guard !Task.isCancelled else { return }
+            let callbacks = self.tmuxInstallRequests[requestID]?.onCompleted ?? []
+            callbacks.forEach { $0() }
+        }
+        tmuxInstallRequests[requestID] = TmuxInstallRequest(
+            sessionId: sessionId,
+            task: task,
+            onCompleted: [onCompleted]
+        )
+        tmuxInstallRequestBySession[sessionId] = requestID
+        return requestID
+    }
+
+    func waitForTmuxInstallRequest(_ requestID: UUID) async {
+        await tmuxInstallRequests[requestID]?.task.value
+    }
+
+    @discardableResult
+    func requestMoshInstallAndReconnect(
+        session: ConnectionSession,
+        onCompleted: @escaping @MainActor () -> Void = {},
+        onFailed: @escaping @MainActor (Error) -> Void = { _ in }
+    ) -> UUID {
+        if let requestID = moshInstallRequestBySession[session.id] {
+            moshInstallRequests[requestID]?.onCompleted.append(onCompleted)
+            moshInstallRequests[requestID]?.onFailed.append(onFailed)
+            return requestID
+        }
+
+        lastMoshInstallFailure = nil
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.moshInstallRequests.removeValue(forKey: requestID)
+                if self.moshInstallRequestBySession[session.id] == requestID {
+                    self.moshInstallRequestBySession.removeValue(forKey: session.id)
+                }
+            }
+
+            do {
+                #if DEBUG
+                if let operation = self.moshInstallAndReconnectOperationForTesting {
+                    try await operation(session)
+                } else {
+                    try await self.installMoshServerAndReconnect(session: session)
+                }
+                #else
+                try await self.installMoshServerAndReconnect(session: session)
+                #endif
+
+                guard !Task.isCancelled else { return }
+                let callbacks = self.moshInstallRequests[requestID]?.onCompleted ?? []
+                callbacks.forEach { $0() }
+            } catch is CancellationError {
+                let callbacks = self.moshInstallRequests[requestID]?.onCompleted ?? []
+                callbacks.forEach { $0() }
+                return
+            } catch {
+                self.lastMoshInstallFailure = error
+                let callbacks = self.moshInstallRequests[requestID]?.onFailed ?? []
+                callbacks.forEach { $0(error) }
+            }
+        }
+        moshInstallRequests[requestID] = MoshInstallRequest(
+            sessionId: session.id,
+            task: task,
+            onCompleted: [onCompleted],
+            onFailed: [onFailed]
+        )
+        moshInstallRequestBySession[session.id] = requestID
+        return requestID
+    }
+
+    func waitForMoshInstallRequest(_ requestID: UUID) async {
+        await moshInstallRequests[requestID]?.task.value
+    }
+
     private func takeSSHClientRegistration(for sessionId: UUID) -> SSHUnregisterResult {
         let unregisterResult = shellRegistry.unregister(for: sessionId)
         var shellToClose: (client: SSHClient, shellId: UUID)?
@@ -2466,23 +2611,17 @@ extension ConnectionSessionManager {
         )
         await RemoteTmuxManager.shared.sendScript(script, using: registration.client, shellId: registration.shellId)
 
-        Task { [weak self] in
-            guard let self else { return }
-            for _ in 0..<6 {
-                try? await Task.sleep(for: .seconds(2))
-                let available = await RemoteTmuxManager.shared.isTmuxAvailable(using: registration.client, preferred: preferred)
-                if available {
-                    await MainActor.run {
-                        self.tmuxResolver.bindManagedSession(for: sessionId, serverId: serverId)
-                        self.updateTmuxStatus(sessionId, status: self.currentTmuxStatus(for: sessionId))
-                    }
-                    return
-                }
-            }
-            await MainActor.run {
-                self.updateTmuxStatus(sessionId, status: self.tmuxResolver.unavailableStatus(for: serverId))
+        for _ in 0..<6 {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            let available = await RemoteTmuxManager.shared.isTmuxAvailable(using: registration.client, preferred: preferred)
+            if available {
+                tmuxResolver.bindManagedSession(for: sessionId, serverId: serverId)
+                updateTmuxStatus(sessionId, status: currentTmuxStatus(for: sessionId))
+                return
             }
         }
+        updateTmuxStatus(sessionId, status: tmuxResolver.unavailableStatus(for: serverId))
     }
 
     func installMoshServer(for sessionId: UUID) async throws {
@@ -2561,6 +2700,13 @@ extension ConnectionSessionManager {
         connectionOpenRequests.values.forEach { $0.cancel() }
         connectionOpenRequests.removeAll()
         lastConnectionOpenFailure = nil
+        tmuxInstallRequests.values.forEach { $0.task.cancel() }
+        tmuxInstallRequests.removeAll()
+        tmuxInstallRequestBySession.removeAll()
+        moshInstallRequests.values.forEach { $0.task.cancel() }
+        moshInstallRequests.removeAll()
+        moshInstallRequestBySession.removeAll()
+        lastMoshInstallFailure = nil
         sessionReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
@@ -2577,6 +2723,8 @@ extension ConnectionSessionManager {
         testingTerminalConnectionClientFactory = nil
         rejectedShellCleanupOperationForTesting = nil
         tmuxKillOperationForTesting = nil
+        tmuxInstallOperationForTesting = nil
+        moshInstallAndReconnectOperationForTesting = nil
         isRestoring = false
 
         UserDefaults.standard.removeObject(forKey: persistenceKey)
@@ -2612,6 +2760,18 @@ extension ConnectionSessionManager {
         _ operation: (@MainActor @Sendable () async -> Void)?
     ) {
         tmuxKillOperationForTesting = operation
+    }
+
+    func setTmuxInstallOperationForTesting(
+        _ operation: (@MainActor (UUID) async -> Void)?
+    ) {
+        tmuxInstallOperationForTesting = operation
+    }
+
+    func setMoshInstallAndReconnectOperationForTesting(
+        _ operation: (@MainActor (ConnectionSession) async throws -> Void)?
+    ) {
+        moshInstallAndReconnectOperationForTesting = operation
     }
 
     func setCredentialsProviderForTesting(
