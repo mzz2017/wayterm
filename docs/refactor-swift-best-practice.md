@@ -5177,8 +5177,94 @@ Before review, verify request API names match the established TerminalSessions r
 
 Request code review for Task 67. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
+## Task 68: Stats Collection Request Intent Boundary
+
+**Files:**
+- Modify: `VVTerm/Features/Stats/Application/ServerStatsCollector.swift`
+- Modify: `VVTerm/Features/Stats/UI/ServerStatsView.swift`
+- Test: `VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift`
+- Create: `VVTermTests/Features/Stats/ServerStatsIntentBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing `ServerStatsCollector.startCollecting(for:using:) async`
+  - Existing `ServerStatsCollector.stopCollectingAndWait() async`
+  - Existing `ServerStatsView` visibility, retry, and borrowed-lease provider inputs.
+- Produces:
+  - `ServerStatsCollector.requestStartCollecting(for:using:) -> UUID?`
+  - `ServerStatsCollector.requestStopCollecting() -> UUID?`
+  - `ServerStatsCollector.pendingStatsCollectionRequestIDs`
+  - `ServerStatsCollector.waitForStatsCollectionRequest(_:) async`
+  - Collector-owned start/stop request tasks that supersede stale visibility/retry intent, keep canceled work awaitable until task exit, and prevent a canceled queued start from creating a replacement lease after a newer stop intent wins.
+  - `ServerStatsView` actions and lifecycle callbacks that synchronously send request intent instead of owning async collection tasks.
+
+- [ ] **Step 1: Add RED Stats request and boundary tests**
+
+Extend `ServerStatsCollectorLifecycleTests` with Test Context-preserving async ordering tests:
+- a start request remains pending while it waits behind an already-running stop task, and clears only after the underlying start request exits;
+- a stop request cancels a queued start request before the queued start creates a replacement owned Stats lease;
+- request cancellation is lifecycle intent and must not publish a user-facing connection error.
+
+Create `ServerStatsIntentBoundaryTests`:
+- `ServerStatsView.swift` must not create a `Task { await statsCollector.startCollecting(...) }` from Retry;
+- `ServerStatsView.swift` must not use `.task(id: makeTaskKey())` to directly await `startCollecting` or `stopCollectingAndWait`;
+- visible, hidden, disappearing, and retry intent must route through `requestStartCollecting(...)` / `requestStopCollecting()`.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests -only-testing:VVTermTests/ServerStatsIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails to compile because `requestStartCollecting`, `requestStopCollecting`, `pendingStatsCollectionRequestIDs`, and `waitForStatsCollectionRequest(_:)` do not exist. If it compiles unexpectedly, the boundary test must fail because `ServerStatsView` still starts async collection work directly from SwiftUI.
+
+- [ ] **Step 2: Add collector-owned request tracking**
+
+Update `ServerStatsCollector`:
+- store tracked collection request records by request ID, including the `Task<Void, Never>`;
+- expose visible pending IDs and an await hook that waits for the retained task even after cancellation;
+- make `requestStartCollecting(for:using:)` cancel any prior request, create a tracked task, check cancellation before and after waiting for pending stop work, then call `startCollecting`;
+- make `requestStopCollecting()` cancel any queued start request, create a tracked task, then await `stopCollectingAndWait()`;
+- clear request records only from the request task's `defer` when the request ID is still present;
+- keep `CancellationError` and task cancellation from publishing a connection error.
+
+- [ ] **Step 3: Harden start cancellation around pending stop**
+
+Update `startCollecting(for:using:)` so cancellation cannot leak through the existing pending-stop wait:
+- after awaiting `pendingStopTask.value`, check `Task.isCancelled` before credentials lookup or lease creation;
+- after awaiting any previous `collectTask.value`, check cancellation again before replacing connection state;
+- leave existing direct async API behavior intact for tests and internal callers, but make it cancellation-aware for request-owned tasks.
+
+- [ ] **Step 4: Route Stats UI through request APIs**
+
+Update `ServerStatsView`:
+- replace Retry's `Task { await statsCollector.startCollecting(...) }` with `statsCollector.requestStartCollecting(for:using:)`;
+- replace `.task(id: makeTaskKey())` direct awaits with synchronous visibility intent. Use `.onAppear` plus `.onChange(of: makeTaskKey())` or an equivalent SwiftUI lifecycle hook that only sends collector request intent;
+- keep `onDisappear` as `statsCollector.requestStopCollecting()`;
+- preserve existing copy, cards, error presentation, retry button, and borrowed lease behavior.
+
+- [ ] **Step 5: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests -only-testing:VVTermTests/ServerStatsIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{[[:space:]]*await statsCollector\\.startCollecting|\\.task\\(id: makeTaskKey\\(\\)\\)|await statsCollector\\.(startCollecting|stopCollectingAndWait)|requestStartCollecting|requestStopCollecting" VVTerm/Features/Stats/UI/ServerStatsView.swift VVTerm/Features/Stats/Application/ServerStatsCollector.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows Stats UI contains request API calls and no UI-owned async start/stop await; collector source contains the low-level async start/stop helpers and the tracked request APIs.
+
+- [ ] **Step 6: API and boundary cleanup**
+
+Before review, verify `ServerStatsCollector` is the single owner of collection request tasks, request names match existing application-layer intent style, canceled requests remain awaitable until exit, start-after-stop ordering is deterministic, UI only sends visibility/retry/disappear intent, and touched Stats tests include complete Test Context plus Given / When / Then comments.
+
+- [ ] **Step 7: Request review and commit**
+
+Request code review for Task 68. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-67 scan selected Task 68 as the next executable lifecycle slice. `ServerStatsView` still starts Stats collection work directly from SwiftUI: Retry wraps `await statsCollector.startCollecting(...)` in a `Task`, visibility uses `.task(id: makeTaskKey())` to await start/stop, and disappearance calls the low-level stop helper directly. Historical Task 18 allowed this as an intermediate state, but the current Swift lifecycle rule is stricter: UI should send intent while `ServerStatsCollector` owns tracked, awaitable lifecycle-critical tasks. Task 68 should add collector-owned start/stop request APIs, preserve borrowed lease behavior, and keep queued-start cancellation from creating a replacement Stats lease after a newer stop intent wins.
 - 2026-06-21: Task 67 RED/GREEN completed with review fixes. RED added `TerminalRichPasteUploadRequestTests` and `TerminalRichPasteIntentBoundaryTests`; after fixing test syntax, the focused suite failed to compile because `TerminalRichPasteUploadRequestResult`, session/pane rich paste request APIs, pending request IDs, wait hooks, and injectable upload/lease seams did not exist. GREEN adds `TerminalRichPasteUploadRequest` under TerminalSessions Application to own `lease.withExclusiveClient`, awaited `lease.close()`, progress/result mapping, and shell-escaped remote path input. `ConnectionSessionManager` and `TerminalTabManager` now own tracked rich paste upload request dictionaries, same-entity supersession, pending IDs, wait hooks, close/reset cancellation, default `TerminalRichPasteCoordinator` upload adaptation, and DEBUG lease/upload seams. `TerminalRichPasteSupport` now only intercepts paste, presents prompt/progress/banner state, and sends upload intent through `requestSessionRichPasteUpload(...)` / `requestPaneRichPasteUpload(...)`; it no longer stores `activePasteTask`, resolves leases, instantiates the coordinator, closes leases, or directly sends uploaded paths to terminal surfaces. `RemoteClipboardTransferService` no longer starts a delayed stale-file sweep task; cleanup is best-effort and awaited inside upload before the rich paste request closes its lease. Independent read-only review found two Important issues: close/reset cancellation dropped rich-paste request handles before tasks actually exited, and superseded requests could still clear newer visible progress. Follow-up RED reproduced early `closeSessionAndWait`/`closePaneAndWait` completion and stale progress cleanup; GREEN keeps canceled request handles until task defer cleanup, makes close/disconnect/reset await canceled rich-paste tasks before SSH unregister, and gates progress callbacks on the current request ID. Re-review then found root-session shell teardown still started before canceled rich-paste tasks exited because `closeSessionUI` created the shell teardown task immediately; strengthened RED proved the shell cancel handler started before the upload gate opened. Final GREEN carries an inert `ShellTeardownRequest` out of `closeSessionUI`, then runs shell/runtime teardown and unregister only after canceled rich-paste tasks exit. Focused GREEN verification passed `ConnectionLifecycleIntegrationTests`, `TerminalRichPasteIntentBoundaryTests`, and `TerminalRichPasteUploadRequestTests` with 102 Swift Testing tests using `ENABLE_DEBUG_DYLIB=NO`; source scan showed UI files contain only manager request APIs while application request code owns `withExclusiveClient` and `await lease.close()`, and `RemoteClipboardTransferService` has no `Task(priority: .utility)` stale sweep; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. The independent reviewer and re-review reported no Critical findings; all Important findings were fixed before commit.
 - 2026-06-21: Task 66 re-review completed clean after follow-up fixes. The reviewer confirmed the prior Critical queued-disconnect gap, wrong-server cancellation gap, and macOS inline-create ordering regression are resolved; no Critical, Important, or Minor findings remain. Task 67 is selected as the next executable lifecycle slice: Terminal rich paste image upload still has UI-owned `activePasteTask`, direct lease resolution/close, direct `TerminalRichPasteCoordinator.performRichPaste(...)`, and a delayed stale-file cleanup task in `RemoteClipboardTransferService` that can outlive the lease. The next task should move image upload request ownership into TerminalSessions Application/manager APIs while leaving prompt and notice presentation in UI.
 - 2026-06-21: Task 66 external read-only review completed and follow-up fixes passed. Reviewer found one Critical and two Important issues: pending navigation created before `BrowserState` existed was not canceled by `disconnect(serverId:)`, wrong-server navigation intent canceled the current tab request before validating, and macOS inline folder creation fired navigation intent then immediately computed a destination folder name and created the directory against stale entries. Follow-up RED added `disconnectCancelsQueuedNavigationBeforeRuntimeStateExists`, `wrongServerNavigationIntentDoesNotCancelCurrentTabRequest`, and a source-boundary assertion for navigation-dependent inline creation; the focused suite failed on all three behaviors before the fix. GREEN adds `serverId` to `NavigationRequest`, makes disconnect cancel pending navigation by server even without runtime state, validates tab/server identity before canceling/publishing a request, and continues macOS inline folder creation only from `.loadedDirectory(destinationPath)` completion while routing creation through `requestMutation`. Focused verification passed `RemoteFileBrowserStoreTests` plus `RemoteFileNavigationIntentBoundaryTests` with 20 Swift Testing tests; source scan showed scoped UI navigation uses `requestNavigation` and no inline-create fire-and-continue task remains; `git diff --check` passed. Reviewer Minor about `resetForTesting()` was classified as plan wording drift: `RemoteFileBrowserStore` has no reset hook and its tests use fresh store/defaults instances, so no cleanup hook is required for this task.
