@@ -42,12 +42,15 @@ struct TerminalContainerView: View {
 
     // Voice input state
     #if os(macOS) || os(iOS)
-    @StateObject private var audioService = AudioService()
+    @ObservedObject private var voiceInput = TerminalVoiceInputStore.shared
     @State private var showingVoiceRecording = false
-    @State private var voiceProcessing = false
     @State private var showingPermissionError = false
     @State private var permissionErrorMessage = ""
     @AppStorage("terminalVoiceButtonEnabled") private var voiceButtonEnabled = true
+
+    private var voiceTarget: TerminalVoiceInputTarget {
+        .session(session.id)
+    }
     #endif
 
     #if os(macOS)
@@ -356,9 +359,7 @@ struct TerminalContainerView: View {
         .onDisappear {
             cleanupKeyMonitor()
             if showingVoiceRecording {
-                audioService.cancelRecording()
-                showingVoiceRecording = false
-                voiceProcessing = false
+                cancelVoiceRecording()
             }
             onVoiceRecordingChange?(false)
         }
@@ -366,9 +367,7 @@ struct TerminalContainerView: View {
         #if os(iOS)
         .onDisappear {
             if showingVoiceRecording {
-                audioService.cancelRecording()
-                showingVoiceRecording = false
-                voiceProcessing = false
+                cancelVoiceRecording()
             }
             onVoiceRecordingChange?(false)
         }
@@ -757,17 +756,15 @@ struct TerminalContainerView: View {
     #if os(macOS) || os(iOS)
     private var voiceOverlay: some View {
         VoiceRecordingView(
-            audioService: audioService,
+            voiceInput: voiceInput,
+            target: voiceTarget,
             onSend: { transcribedText in
                 handleVoiceTranscription(transcribedText)
                 showingVoiceRecording = false
-                voiceProcessing = false
             },
             onCancel: {
                 showingVoiceRecording = false
-                voiceProcessing = false
-            },
-            isProcessing: $voiceProcessing
+            }
         )
     }
     #endif
@@ -813,9 +810,7 @@ struct TerminalContainerView: View {
 
         if showingVoiceRecording {
             if event.keyCode == keyCodeEscape {
-                audioService.cancelRecording()
-                showingVoiceRecording = false
-                voiceProcessing = false
+                cancelVoiceRecording()
                 return nil
             }
             if event.keyCode == keyCodeReturn {
@@ -835,15 +830,13 @@ struct TerminalContainerView: View {
     #if os(macOS) || os(iOS)
     private func toggleVoiceRecording() {
         if showingVoiceRecording {
-            Task {
-                let text = await audioService.stopRecording()
-                await MainActor.run {
-                    let fallback = text.isEmpty ? audioService.partialTranscription : text
-                    handleVoiceTranscription(fallback)
+            voiceInput.requestStopAndSend(
+                for: voiceTarget,
+                onCompleted: { text in
+                    handleVoiceTranscription(text)
                     showingVoiceRecording = false
-                    voiceProcessing = false
                 }
-            }
+            )
         } else {
             startVoiceRecording()
         }
@@ -852,27 +845,28 @@ struct TerminalContainerView: View {
 
     #if os(macOS) || os(iOS)
     private func startVoiceRecording() {
-        Task {
-            do {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                    showingVoiceRecording = true
-                }
-                try await audioService.startRecording()
-            } catch {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            showingVoiceRecording = true
+        }
+        voiceInput.requestStart(
+            for: voiceTarget,
+            onFailed: { message in
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     showingVoiceRecording = false
                 }
-                voiceProcessing = false
-                if let recordingError = error as? AudioService.RecordingError {
-                    permissionErrorMessage = recordingError.localizedDescription
-                        + "\n\n"
-                        + String(localized: "Enable Microphone and Speech Recognition in System Settings.")
-                } else {
-                    permissionErrorMessage = error.localizedDescription
-                }
+                permissionErrorMessage = message
                 showingPermissionError = true
             }
-        }
+        )
+    }
+
+    private func cancelVoiceRecording() {
+        voiceInput.requestCancel(
+            for: voiceTarget,
+            onCancelled: {
+                showingVoiceRecording = false
+            }
+        )
     }
     #endif
 
