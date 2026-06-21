@@ -23,6 +23,12 @@ extension RemoteFileBrowserStore {
         server: Server,
         onCompleted: @escaping @MainActor (RemoteFileNavigationResult) -> Void = { _ in }
     ) -> UUID {
+        guard tab.serverId == server.id else {
+            let requestID = UUID()
+            onCompleted(.skipped)
+            return requestID
+        }
+
         cancelNavigationRequest(for: tab.id)
 
         let requestID = UUID()
@@ -46,7 +52,7 @@ extension RemoteFileBrowserStore {
             onCompleted(result)
         }
 
-        navigationRequests[requestID] = NavigationRequest(tabId: tab.id, task: task)
+        navigationRequests[requestID] = NavigationRequest(tabId: tab.id, serverId: server.id, task: task)
         navigationRequestByTab[tab.id] = requestID
         return requestID
     }
@@ -68,8 +74,6 @@ extension RemoteFileBrowserStore {
         server: Server,
         requestID: UUID
     ) async -> RemoteFileNavigationResult {
-        guard tab.serverId == server.id else { return .skipped }
-
         switch action {
         case .loadInitialPath(let initialPath):
             await loadInitialPath(for: server, tab: tab, initialPath: initialPath)

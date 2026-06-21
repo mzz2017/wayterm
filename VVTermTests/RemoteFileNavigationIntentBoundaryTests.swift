@@ -38,6 +38,14 @@ struct RemoteFileNavigationIntentBoundaryTests {
             !containsRegex(#"await\s+browser\.(openDirectory|activate|openBreadcrumb)"#, in: source),
             "RemoteFileBrowserScreen should not directly await async navigation helpers."
         )
+        #expect(
+            source.contains("onCompleted: { result in"),
+            "Navigation-dependent flows such as macOS inline folder creation should continue from requestNavigation completion."
+        )
+        #expect(
+            !containsRegex(#"Task\s*\{\s*if\s+snapshot\.currentPath\s*!=\s*destinationPath[\s\S]*browser\.requestNavigation[\s\S]*browser\.createDirectory"#, in: source),
+            "RemoteFileBrowserScreen should not fire navigation intent and then continue folder creation before navigation completion."
+        )
     }
 
     @Test

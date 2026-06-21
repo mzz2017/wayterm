@@ -452,6 +452,90 @@ struct RemoteFileBrowserStoreTests {
     }
 
     @Test
+    func disconnectCancelsQueuedNavigationBeforeRuntimeStateExists() async throws {
+        let server = makeServer()
+        let tab = RemoteFileTab(serverId: server.id, seedPath: "/srv")
+        let client = BlockingNavigationRemoteFileClient(
+            listResponses: [
+                "/srv": [makeEntry(name: "app", path: "/srv/app", type: .directory)]
+            ]
+        )
+        let store = makeStore(server: server, client: client)
+
+        // Given SwiftUI has queued an initial-load navigation request, but the
+        // task has not yet created BrowserState for the tab.
+        let requestID = store.requestNavigation(
+            .loadInitialPath(initialPath: "/srv"),
+            in: tab,
+            server: server
+        )
+        #expect(store.pendingNavigationRequestIDs.contains(requestID))
+        #expect(
+            store.currentPathValue(for: tab) == nil,
+            "This regression covers disconnect before initial navigation creates runtime state."
+        )
+
+        // When the same server disconnects immediately.
+        _ = store.disconnect(serverId: server.id)
+        await store.waitForNavigationRequest(requestID)
+
+        // Then the queued request must be canceled by server identity and must
+        // not recreate runtime state or start remote listing after disconnect.
+        #expect(!store.pendingNavigationRequestIDs.contains(requestID))
+        #expect(store.currentPathValue(for: tab) == nil)
+        #expect(
+            await !client.hasListed(path: "/srv"),
+            "Server disconnect must cancel queued navigation even when no BrowserState exists yet."
+        )
+    }
+
+    @Test
+    func wrongServerNavigationIntentDoesNotCancelCurrentTabRequest() async throws {
+        let server = makeServer()
+        let wrongServer = Server(
+            id: UUID(),
+            workspaceId: server.workspaceId,
+            name: "Stale",
+            host: "stale.example.com",
+            username: "root"
+        )
+        let tab = RemoteFileTab(serverId: server.id)
+        let entry = makeEntry(name: "logs", path: "/logs", type: .directory)
+        let client = BlockingNavigationRemoteFileClient(
+            listResponses: [
+                "/logs": [makeEntry(name: "app.log", path: "/logs/app.log", type: .file)]
+            ],
+            blockedListPaths: ["/logs"]
+        )
+        let store = makeStore(server: server, client: client)
+
+        // Given a valid same-tab navigation request is blocked in remote IO.
+        let validRequestID = store.requestNavigation(.openDirectory(entry), in: tab, server: server)
+        await client.waitUntilListStarted(path: "/logs")
+
+        // When stale UI sends an intent for a different server using the same tab.
+        let staleRequestID = store.requestNavigation(
+            .loadInitialPath(initialPath: "/stale"),
+            in: tab,
+            server: wrongServer
+        )
+        await store.waitForNavigationRequest(staleRequestID)
+
+        // Then the invalid intent is skipped without canceling the current
+        // valid request for the tab.
+        #expect(
+            store.pendingNavigationRequestIDs.contains(validRequestID),
+            "Wrong-server navigation intent must validate before canceling the active tab request."
+        )
+
+        await client.releaseList(path: "/logs")
+        await store.waitForNavigationRequest(validRequestID)
+
+        #expect(store.currentPathValue(for: tab) == "/logs")
+        #expect(store.entries(for: tab).map(\.path) == ["/logs/app.log"])
+    }
+
+    @Test
     func activationRequestReportsSelectedFileWithoutUIOwnedAsyncTask() async throws {
         let server = makeServer()
         let tab = RemoteFileTab(serverId: server.id)
@@ -727,6 +811,10 @@ private actor BlockingNavigationRemoteFileClient: SFTPRemoteFileClient {
         let normalizedPath = RemoteFilePath.normalize(path)
         releasedListPaths.insert(normalizedPath)
         listReleaseWaiters.removeValue(forKey: normalizedPath)?.resume()
+    }
+
+    func hasListed(path: String) -> Bool {
+        listStartedPaths.contains(RemoteFilePath.normalize(path))
     }
 
     func waitUntilStatStarted(path: String) async {

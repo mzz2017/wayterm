@@ -1695,45 +1695,49 @@ struct RemoteFileBrowserScreen: View {
     func beginMacOSInlineCreateFolder(in remotePath: String) {
         let destinationPath = RemoteFilePath.normalize(remotePath, relativeTo: snapshot.currentPath)
 
-        Task {
-            if snapshot.currentPath != destinationPath {
-                browser.requestNavigation(
-                    .openBreadcrumb(RemoteFileBreadcrumb(title: "", path: destinationPath)),
-                    in: fileTab,
-                    server: server
-                )
+        guard snapshot.currentPath != destinationPath else {
+            createMacOSInlineFolder(in: destinationPath)
+            return
+        }
+
+        browser.requestNavigation(
+            .openBreadcrumb(RemoteFileBreadcrumb(title: "", path: destinationPath)),
+            in: fileTab,
+            server: server,
+            onCompleted: { result in
+                guard case .loadedDirectory(let loadedPath) = result,
+                      loadedPath == destinationPath else {
+                    return
+                }
+                createMacOSInlineFolder(in: destinationPath)
             }
+        )
+    }
 
-            let folderName = await MainActor.run {
-                uniqueMacOSFolderName(in: browser.entries(for: fileTab))
-            }
+    func createMacOSInlineFolder(in destinationPath: String) {
+        let folderName = uniqueMacOSFolderName(in: browser.entries(for: fileTab))
+        let createdPath = RemoteFilePath.appending(folderName, to: destinationPath)
 
-            let createdPath = RemoteFilePath.appending(folderName, to: destinationPath)
-
-            do {
+        performOperation(
+            operation: {
                 try await browser.createDirectory(
                     named: folderName,
                     in: destinationPath,
                     tab: fileTab,
                     server: server
                 )
-
-                await MainActor.run {
-                    macOSSelectedPaths = [createdPath]
-                    browser.clearViewer(for: fileTab)
-                    macOSInlineEditor = .rename(
-                        entryPath: createdPath,
-                        originalName: folderName,
-                        proposedName: folderName,
-                        isSubmitting: false
-                    )
-                }
-            } catch {
-                await MainActor.run {
-                    presentOperationError(error)
-                }
+            },
+            onSuccess: { _ in
+                macOSSelectedPaths = [createdPath]
+                browser.clearViewer(for: fileTab)
+                macOSInlineEditor = .rename(
+                    entryPath: createdPath,
+                    originalName: folderName,
+                    proposedName: folderName,
+                    isSubmitting: false
+                )
             }
-        }
+        )
     }
 
     func cancelMacOSInlineEdit() {

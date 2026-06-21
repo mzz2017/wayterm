@@ -112,6 +112,7 @@ final class RemoteFileBrowserStore: ObservableObject {
 
     struct NavigationRequest {
         let tabId: UUID
+        let serverId: UUID
         let task: Task<Void, Never>
     }
 
@@ -498,9 +499,14 @@ final class RemoteFileBrowserStore: ObservableObject {
 
     @discardableResult
     func disconnect(serverId: UUID) -> Task<Void, Never> {
-        let affectedTabIDs = Set(
+        var affectedTabIDs = Set(
             states.compactMap { tabId, state in
                 state.serverId == serverId ? tabId : nil
+            }
+        )
+        affectedTabIDs.formUnion(
+            navigationRequests.values.compactMap { request in
+                request.serverId == serverId ? request.tabId : nil
             }
         )
 
