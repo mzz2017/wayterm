@@ -52,7 +52,13 @@ final class ConnectionSessionManager: ObservableObject {
         let sessionId: UUID
         let serverId: UUID
         let tmuxSessionNameToKill: String?
-        let shellTeardownTask: Task<Void, Never>?
+        let richPasteUploadTasks: [Task<Void, Never>]
+        let shellTeardownRequest: ShellTeardownRequest?
+    }
+
+    private struct ShellTeardownRequest {
+        let sessionId: UUID
+        let handler: @MainActor (_ mode: ShellTeardownMode) async -> Void
     }
 
     private struct TmuxInstallRequest {
@@ -848,14 +854,16 @@ final class ConnectionSessionManager: ObservableObject {
     /// Closes a terminal session and removes it from the list
     func closeSession(_ session: ConnectionSession, notingSessionEnd: Bool = true) {
         guard let closeResult = closeSessionUI(session, notingSessionEnd: notingSessionEnd) else { return }
-        let unregisterTask = scheduleSSHUnregister(
-            for: closeResult.sessionId,
-            priority: .high,
-            killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
-        )
-        let teardownTask = Task {
-            await unregisterTask.value
-            await closeResult.shellTeardownTask?.value
+        let teardownTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for task in closeResult.richPasteUploadTasks {
+                await task.value
+            }
+            await self.runShellTeardown(closeResult.shellTeardownRequest)
+            await self.unregisterSSHClient(
+                for: closeResult.sessionId,
+                killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
+            )
         }
         trackServerTeardownTask(teardownTask, for: closeResult.serverId)
     }
@@ -864,11 +872,14 @@ final class ConnectionSessionManager: ObservableObject {
     func closeSessionAndWait(_ session: ConnectionSession, notingSessionEnd: Bool = true) async {
         await waitForServerTeardownTasks(session.serverId)
         guard let closeResult = closeSessionUI(session, notingSessionEnd: notingSessionEnd) else { return }
+        for task in closeResult.richPasteUploadTasks {
+            await task.value
+        }
+        await runShellTeardown(closeResult.shellTeardownRequest)
         await unregisterSSHClient(
             for: closeResult.sessionId,
             killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
         )
-        await closeResult.shellTeardownTask?.value
     }
 
     private func closeSessionUI(_ session: ConnectionSession, notingSessionEnd: Bool) -> SessionCloseResult? {
@@ -886,7 +897,7 @@ final class ConnectionSessionManager: ObservableObject {
             wasSelected: wasSelected
         )
 
-        let shellTeardownTask = clearRuntimeStateForClosedSession(sessionId)
+        let runtimeTeardown = clearRuntimeStateForClosedSession(sessionId)
         terminalConnectionRegistry.updateState(
             .disconnected,
             for: .session(sessionId),
@@ -926,7 +937,8 @@ final class ConnectionSessionManager: ObservableObject {
             sessionId: sessionId,
             serverId: session.serverId,
             tmuxSessionNameToKill: tmuxSessionToKill,
-            shellTeardownTask: shellTeardownTask
+            richPasteUploadTasks: runtimeTeardown.richPasteUploadTasks,
+            shellTeardownRequest: runtimeTeardown.shellTeardownRequest
         )
     }
 
@@ -950,21 +962,24 @@ final class ConnectionSessionManager: ObservableObject {
         return sessions.first(where: { $0.id != sessionId })?.id
     }
 
-    private func clearRuntimeStateForClosedSession(_ sessionId: UUID) -> Task<Void, Never>? {
+    private func clearRuntimeStateForClosedSession(_ sessionId: UUID) -> (
+        shellTeardownRequest: ShellTeardownRequest?,
+        richPasteUploadTasks: [Task<Void, Never>]
+    ) {
         cancelInstallRequests(for: sessionId)
         cancelSessionRetryRequest(for: sessionId)
         cancelSessionHostRetrustRequest(for: sessionId)
         cancelSessionCredentialLoadRequest(for: sessionId)
         cancelInputRequests(for: sessionId)
-        cancelSessionRichPasteUploadRequests(for: sessionId)
+        let richPasteUploadTasks = cancelSessionRichPasteUploadRequests(for: sessionId)
         cancelResizeRequests(for: sessionId)
         cancelProcessExitRequests(for: sessionId)
-        let shellTeardownTask = cancelAndClearShellHandlers(for: sessionId)
+        let shellTeardownRequest = takeShellTeardownRequestForClosedSession(sessionId)
         terminalsNeedingReconnectReset.remove(sessionId)
         terminalBrowseModeBySession.removeValue(forKey: sessionId)
         clearTmuxRuntimeState(for: sessionId)
         runtimeTitleBySession.removeValue(forKey: sessionId)
-        return shellTeardownTask
+        return (shellTeardownRequest, richPasteUploadTasks)
     }
 
     private func cancelInstallRequests(for sessionId: UUID) {
@@ -994,16 +1009,21 @@ final class ConnectionSessionManager: ObservableObject {
         lastInputTaskBySession.removeValue(forKey: sessionId)
     }
 
-    private func cancelSessionRichPasteUploadRequests(for sessionId: UUID) {
+    private func cancelSessionRichPasteUploadRequests(for sessionId: UUID) -> [Task<Void, Never>] {
         let requestIDs = richPasteUploadRequests.compactMap { requestID, request in
             request.sessionId == sessionId ? requestID : nil
         }
 
+        var tasks: [Task<Void, Never>] = []
         for requestID in requestIDs {
-            richPasteUploadRequests.removeValue(forKey: requestID)?.task.cancel()
+            if let task = richPasteUploadRequests[requestID]?.task {
+                task.cancel()
+                tasks.append(task)
+            }
         }
 
         richPasteUploadRequestBySession.removeValue(forKey: sessionId)
+        return tasks
     }
 
     private func cancelResizeRequests(for sessionId: UUID) {
@@ -1241,11 +1261,14 @@ final class ConnectionSessionManager: ObservableObject {
         }
 
         for closeResult in closeResults {
+            for task in closeResult.richPasteUploadTasks {
+                await task.value
+            }
+            await runShellTeardown(closeResult.shellTeardownRequest)
             await unregisterSSHClient(
                 for: closeResult.sessionId,
                 killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
             )
-            await closeResult.shellTeardownTask?.value
         }
 
         logger.info("Disconnected all sessions for server \(serverId)")
@@ -1672,6 +1695,22 @@ final class ConnectionSessionManager: ObservableObject {
         }
     }
 
+    private func takeShellTeardownRequestForClosedSession(_ sessionId: UUID) -> ShellTeardownRequest? {
+        let handler = shellCancelHandlers.removeValue(forKey: sessionId)
+        shellSuspendHandlers.removeValue(forKey: sessionId)
+        guard let handler else {
+            logger.info("No shell cancel handler registered for closed session [sessionId: \(sessionId.uuidString, privacy: .public)]")
+            return nil
+        }
+        return ShellTeardownRequest(sessionId: sessionId, handler: handler)
+    }
+
+    private func runShellTeardown(_ request: ShellTeardownRequest?) async {
+        guard let request else { return }
+        logger.info("Running shell cancel handler for closed session [sessionId: \(request.sessionId.uuidString, privacy: .public)]")
+        await request.handler(.fullDisconnect)
+    }
+
     func trackShellTeardownForClosedSession(
         sessionId: UUID,
         serverId: UUID,
@@ -2080,6 +2119,7 @@ final class ConnectionSessionManager: ObservableObject {
                 lease: self.richPasteLease(for: sessionId),
                 upload: upload,
                 onProgress: { message in
+                    guard self.richPasteUploadRequestBySession[sessionId] == requestID else { return }
                     onProgress(message)
                 },
                 pasteUploadedPath: { [weak self] text in
@@ -3376,7 +3416,11 @@ extension ConnectionSessionManager {
         inputRequests.removeAll()
         inputRequestBySession.removeAll()
         lastInputTaskBySession.removeAll()
-        richPasteUploadRequests.values.forEach { $0.task.cancel() }
+        let richPasteUploadTasks = richPasteUploadRequests.values.map(\.task)
+        richPasteUploadTasks.forEach { $0.cancel() }
+        for task in richPasteUploadTasks {
+            await task.value
+        }
         richPasteUploadRequests.removeAll()
         richPasteUploadRequestBySession.removeAll()
         resizeRequests.values.forEach { $0.task.cancel() }

@@ -24,6 +24,7 @@ final class TerminalTabManager: ObservableObject {
     private struct PaneCloseResult: Sendable {
         let paneId: UUID
         let tmuxSessionNameToKill: String?
+        let richPasteUploadTasks: [Task<Void, Never>]
     }
 
     private struct TabCloseResult: Sendable {
@@ -1029,6 +1030,7 @@ final class TerminalTabManager: ObservableObject {
                 lease: self.richPasteLease(for: paneId),
                 upload: upload,
                 onProgress: { message in
+                    guard self.richPasteUploadRequestByPane[paneId] == requestID else { return }
                     onProgress(message)
                 },
                 pasteUploadedPath: { [weak self] text in
@@ -2150,7 +2152,7 @@ final class TerminalTabManager: ObservableObject {
         cancelPaneHostRetrustRequest(for: paneId)
         cancelPaneCredentialLoadRequest(for: paneId)
         cancelInputRequests(for: paneId)
-        cancelPaneRichPasteUploadRequests(for: paneId)
+        let richPasteUploadTasks = cancelPaneRichPasteUploadRequests(for: paneId)
         cancelResizeRequests(for: paneId)
         cancelProcessExitRequests(for: paneId)
         clearTmuxRuntimeState(for: paneId)
@@ -2160,7 +2162,8 @@ final class TerminalTabManager: ObservableObject {
 
         return PaneCloseResult(
             paneId: paneId,
-            tmuxSessionNameToKill: tmuxSessionToKill
+            tmuxSessionNameToKill: tmuxSessionToKill,
+            richPasteUploadTasks: richPasteUploadTasks
         )
     }
 
@@ -2191,16 +2194,21 @@ final class TerminalTabManager: ObservableObject {
         lastInputTaskByPane.removeValue(forKey: paneId)
     }
 
-    private func cancelPaneRichPasteUploadRequests(for paneId: UUID) {
+    private func cancelPaneRichPasteUploadRequests(for paneId: UUID) -> [Task<Void, Never>] {
         let requestIDs = richPasteUploadRequests.compactMap { requestID, request in
             request.paneId == paneId ? requestID : nil
         }
 
+        var tasks: [Task<Void, Never>] = []
         for requestID in requestIDs {
-            richPasteUploadRequests.removeValue(forKey: requestID)?.task.cancel()
+            if let task = richPasteUploadRequests[requestID]?.task {
+                task.cancel()
+                tasks.append(task)
+            }
         }
 
         richPasteUploadRequestByPane.removeValue(forKey: paneId)
+        return tasks
     }
 
     private func cancelResizeRequests(for paneId: UUID) {
@@ -2255,6 +2263,10 @@ final class TerminalTabManager: ObservableObject {
     }
 
     private func finishPaneClose(_ closeResult: PaneCloseResult) async {
+        for task in closeResult.richPasteUploadTasks {
+            await task.value
+        }
+
         if await closeTestingRuntimeIfNeeded(forPane: closeResult.paneId) {
             paneRuntimes.removeValue(forKey: closeResult.paneId)
         } else {
@@ -3013,7 +3025,11 @@ extension TerminalTabManager {
         inputRequests.removeAll()
         inputRequestByPane.removeAll()
         lastInputTaskByPane.removeAll()
-        richPasteUploadRequests.values.forEach { $0.task.cancel() }
+        let richPasteUploadTasks = richPasteUploadRequests.values.map(\.task)
+        richPasteUploadTasks.forEach { $0.cancel() }
+        for task in richPasteUploadTasks {
+            await task.value
+        }
         richPasteUploadRequests.removeAll()
         richPasteUploadRequestByPane.removeAll()
         resizeRequests.values.forEach { $0.task.cancel() }

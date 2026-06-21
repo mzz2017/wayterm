@@ -161,6 +161,9 @@ struct TerminalRichPasteUploadRequestTests {
             manager.setInputOperationForTesting { data, _ in
                 await recorder.record("input-\(String(decoding: data, as: UTF8.self))")
             }
+            manager.registerShellCancelHandler({ _ in
+                await recorder.record("shell-teardown-start")
+            }, for: session.id)
 
             // Given a rich-paste upload request is in flight.
             let requestID = try! #require(
@@ -176,8 +179,25 @@ struct TerminalRichPasteUploadRequestTests {
             await recorder.waitForEvent("upload-start")
 
             // When the owning session close path runs before upload completes.
-            await manager.closeSessionAndWait(session)
+            let closeTask = Task { @MainActor in
+                await manager.closeSessionAndWait(session)
+                await recorder.record("close-finished")
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+
+            // Then close has issued cancellation but still waits for the
+            // lifecycle task to exit instead of dropping the request handle.
+            #expect(
+                !(await recorder.hasEvent("close-finished")),
+                "closeSessionAndWait must wait for a cancelled rich-paste request to exit before SSH teardown can finish."
+            )
+            #expect(
+                !(await recorder.hasEvent("shell-teardown-start")),
+                "Shell/runtime teardown must not start before a cancelled rich-paste upload exits its lease path."
+            )
+
             await uploadGate.open()
+            await closeTask.value
             await manager.waitForSessionRichPasteUploadRequest(requestID)
 
             // Then close owns cancellation and no remote path is pasted.
@@ -185,6 +205,71 @@ struct TerminalRichPasteUploadRequestTests {
             #expect(!events.contains { $0.hasPrefix("input-") })
             #expect(!events.contains { $0.hasPrefix("completed-failed") })
             #expect(manager.pendingSessionRichPasteUploadRequestIDs.isEmpty)
+        }
+    }
+
+    @Test
+    func closingPaneCancelsPendingRichPasteUploadBeforePaneTeardownFinishes() async {
+        await withCleanTabManager { manager in
+            let tab = TerminalTab(serverId: UUID(), title: "Tencent")
+            manager.tabsByServer[tab.serverId] = [tab]
+            manager.selectedTabByServer[tab.serverId] = tab.id
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: tab.serverId
+            )
+
+            let uploadGate = RichPasteGate()
+            let recorder = RichPasteRecorder()
+            let client = BlockingRichPasteClient(closeGate: RichPasteGate(open: true))
+
+            manager.setRichPasteLeaseProviderForTesting { _ in
+                RemoteConnectionLease(client: client, ownership: .owned)
+            }
+            manager.setRichPasteUploadOperationForTesting { _, _, _, _ in
+                await recorder.record("pane-upload-start")
+                await uploadGate.wait()
+                return RichPasteUploadResult(remotePath: "/tmp/should-not-paste-pane.png", seededRemoteClipboard: false)
+            }
+            manager.setInputOperationForTesting { data, _ in
+                await recorder.record("pane-input-\(String(decoding: data, as: UTF8.self))")
+            }
+
+            // Given a pane rich-paste upload request is in flight.
+            let requestID = try! #require(
+                manager.requestPaneRichPasteUpload(
+                    image: imagePayload(),
+                    settings: RichClipboardSettings(),
+                    forPane: tab.rootPaneId,
+                    onCompleted: { result in
+                        Task { await recorder.record("pane-completed-\(result.testDescription)") }
+                    }
+                )
+            )
+            await recorder.waitForEvent("pane-upload-start")
+
+            // When pane close starts while upload work is still blocked.
+            let closeTask = Task { @MainActor in
+                await manager.closePaneAndWait(tab: tab, paneId: tab.rootPaneId)
+                await recorder.record("pane-close-finished")
+            }
+            try? await Task.sleep(for: .milliseconds(20))
+
+            // Then pane teardown remains awaitable until the cancelled upload exits.
+            #expect(
+                !(await recorder.hasEvent("pane-close-finished")),
+                "closePaneAndWait must wait for a cancelled rich-paste request to exit before pane SSH teardown can finish."
+            )
+
+            await uploadGate.open()
+            await closeTask.value
+            await manager.waitForPaneRichPasteUploadRequest(requestID)
+
+            let events = await recorder.events()
+            #expect(!events.contains { $0.hasPrefix("pane-input-") })
+            #expect(!events.contains { $0.hasPrefix("pane-completed-failed") })
+            #expect(manager.pendingPaneRichPasteUploadRequestIDs.isEmpty)
         }
     }
 
@@ -252,6 +337,83 @@ struct TerminalRichPasteUploadRequestTests {
                 !events.contains("input-\(RemoteTerminalBootstrap.posixPastedPath("/tmp/old.png"))"),
                 "A superseded rich-paste upload must not paste an older remote path after a newer intent wins."
             )
+        }
+    }
+
+    @Test
+    func supersededSessionRichPasteRequestCannotClearNewerVisibleProgress() async {
+        await withCleanConnectionManager { manager in
+            let session = ConnectionSession(
+                serverId: UUID(),
+                title: "Tencent",
+                connectionState: .connected
+            )
+            manager.sessions = [session]
+
+            let firstGate = RichPasteGate()
+            let secondGate = RichPasteGate()
+            let recorder = RichPasteRecorder()
+            let client = BlockingRichPasteClient(closeGate: RichPasteGate(open: true))
+
+            manager.setRichPasteLeaseProviderForTesting { _ in
+                RemoteConnectionLease(client: client, ownership: .borrowed)
+            }
+            manager.setRichPasteUploadOperationForTesting { image, _, _, progress in
+                if image.data == Data("first".utf8) {
+                    await recorder.record("first-start")
+                    await progress("first-progress")
+                    await firstGate.wait()
+                    return RichPasteUploadResult(remotePath: "/tmp/old.png", seededRemoteClipboard: false)
+                }
+
+                await recorder.record("second-start")
+                await progress("second-progress")
+                await secondGate.wait()
+                return RichPasteUploadResult(remotePath: "/tmp/new.png", seededRemoteClipboard: false)
+            }
+
+            // Given one visible upload is running for the session.
+            let firstID = try! #require(
+                manager.requestSessionRichPasteUpload(
+                    image: imagePayload(data: Data("first".utf8)),
+                    settings: RichClipboardSettings(),
+                    for: session.id,
+                    onProgress: { message in
+                        Task { await recorder.record("first-progress-\(message ?? "nil")") }
+                    }
+                )
+            )
+            await recorder.waitForEvent("first-start")
+
+            // When a newer upload intent supersedes the first request.
+            let secondID = try! #require(
+                manager.requestSessionRichPasteUpload(
+                    image: imagePayload(data: Data("second".utf8)),
+                    settings: RichClipboardSettings(),
+                    for: session.id,
+                    onProgress: { message in
+                        Task { await recorder.record("second-progress-\(message ?? "nil")") }
+                    }
+                )
+            )
+            await recorder.waitForEvent("second-progress-second-progress")
+
+            // And the older cancelled task finally unwinds while the newer
+            // request is still visible.
+            await firstGate.open()
+            await manager.waitForSessionRichPasteUploadRequest(firstID)
+
+            // Then stale callbacks from the old request must not clear the UI
+            // notice owned by the newer request.
+            let events = await recorder.events()
+            #expect(
+                !events.contains("first-progress-nil"),
+                "A superseded rich-paste request must not send progress cleanup after a newer request owns visible progress."
+            )
+            #expect(manager.pendingSessionRichPasteUploadRequestIDs == [secondID])
+
+            await secondGate.open()
+            await manager.waitForSessionRichPasteUploadRequest(secondID)
         }
     }
 
@@ -347,6 +509,10 @@ private actor RichPasteRecorder {
 
     func events() -> [String] {
         recordedEvents
+    }
+
+    func hasEvent(_ event: String) -> Bool {
+        recordedEvents.contains(event)
     }
 
     func waitForEvent(_ event: String) async {
