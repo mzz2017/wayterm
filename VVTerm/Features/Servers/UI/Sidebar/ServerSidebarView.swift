@@ -297,19 +297,14 @@ struct ServerSidebarView: View {
                     environmentToDelete = nil
                     return
                 }
-                Task {
-                    let updatedWorkspace = try? await serverManager.deleteEnvironment(
-                        environment,
-                        in: workspace,
-                        fallback: .production
-                    )
-                    await MainActor.run {
-                        if let updatedWorkspace {
-                            selectedWorkspace = updatedWorkspace
-                        }
-                        environmentToDelete = nil
-                    }
+                serverManager.requestEnvironmentDeletion(
+                    environment,
+                    in: workspace,
+                    fallback: .production
+                ) { updatedWorkspace in
+                    selectedWorkspace = updatedWorkspace
                 }
+                environmentToDelete = nil
             }
         } message: {
             let name = environmentToDelete?.displayName ?? String(localized: "Custom")

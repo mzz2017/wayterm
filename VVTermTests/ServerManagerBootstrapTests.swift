@@ -9,8 +9,8 @@ import Testing
 // lifecycle closures so failures identify changes to local state invariants
 // rather than sync transport behavior. Update this context only when
 // bootstrap/backfill policy, known-host cleanup ownership, credential-save
-// ordering, server deletion teardown ownership, or user-initiated deletion
-// intent tracking changes intentionally.
+// ordering, server deletion teardown ownership, or user-initiated server,
+// workspace, and environment deletion intent tracking changes intentionally.
 @Suite(.serialized)
 @MainActor
 struct ServerManagerBootstrapTests {
@@ -397,6 +397,62 @@ struct ServerManagerBootstrapTests {
         #expect(
             manager.workspaces.contains { $0.id == workspace.id },
             "Failed workspace deletion intent must not silently remove workspace metadata."
+        )
+    }
+
+    @Test
+    func environmentDeletionIntentTracksRequestAndRunsSuccessAfterApplicationDelete() async throws {
+        // Given an environment deletion launched from a synchronous UI intent.
+        let environment = ServerEnvironment(
+            id: UUID(),
+            name: "QA",
+            shortName: "QA",
+            colorHex: "#FF00FF"
+        )
+        let workspace = Workspace(
+            id: UUID(),
+            name: "Main",
+            order: 0,
+            environments: ServerEnvironment.builtInEnvironments + [environment],
+            lastSelectedEnvironmentId: environment.id
+        )
+        let server = Server(
+            id: UUID(),
+            workspaceId: workspace.id,
+            environment: environment,
+            name: "Tencent",
+            host: "environment-intent.example.com",
+            username: "root"
+        )
+        let manager = ServerManager.makeForTesting(
+            servers: [server],
+            workspaces: [workspace]
+        )
+        var selectedWorkspace = workspace
+        var selectedEnvironment = environment
+
+        // When the UI sends deletion intent without starting its own Task.
+        let requestID = manager.requestEnvironmentDeletion(
+            environment,
+            in: workspace,
+            fallback: .production
+        ) { updatedWorkspace in
+            selectedWorkspace = updatedWorkspace
+            if selectedEnvironment.id == environment.id {
+                selectedEnvironment = .production
+            }
+        }
+        await manager.waitForDeletionRequest(requestID)
+
+        // Then the tracked request completes through ServerManager, and UI
+        // selection updates run only after the application delete succeeds.
+        #expect(!manager.pendingDeletionRequestIDs.contains(requestID))
+        #expect(selectedWorkspace.environments.allSatisfy { $0.id != environment.id })
+        #expect(selectedWorkspace.lastSelectedEnvironmentId == ServerEnvironment.production.id)
+        #expect(selectedEnvironment == .production)
+        #expect(
+            manager.servers.first?.environment == .production,
+            "Servers assigned to the deleted environment should move to the fallback environment."
         )
     }
 }

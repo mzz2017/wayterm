@@ -2,23 +2,27 @@ import Foundation
 import Testing
 
 // Test Context:
-// These tests protect user-initiated server/workspace deletion ownership at the
-// UI/Application boundary. Server and workspace delete operations tear down live
-// runtime state, credentials, known hosts, local data, and sync mutations, so UI
-// files must send intent to the application-layer deletion request API instead
-// of launching untracked tasks that swallow errors with try?. The tests inspect
-// source placement only; update them only when destructive delete intent
-// ownership intentionally moves to a different application-layer owner.
+// These tests protect user-initiated server/workspace/environment deletion
+// ownership at the UI/Application boundary. Server, workspace, and environment
+// delete operations mutate local data and sync state, and some paths also tear
+// down live runtime state, credentials, and known hosts, so UI files must send
+// intent to the application-layer deletion request API instead of launching
+// untracked tasks that swallow errors with try?. The tests inspect source
+// placement only; update them only when destructive delete intent ownership
+// intentionally moves to a different application-layer owner.
 @Suite
 struct ServerDeletionIntentBoundaryTests {
     @Test
-    func serverAndWorkspaceDeletionUIUsesApplicationIntentRequests() throws {
-        // Given server and workspace deletion entry points in shared and iOS UI.
+    func destructiveDeletionUIUsesApplicationIntentRequests() throws {
+        // Given server, workspace, and environment deletion entry points in
+        // shared, macOS, and iOS UI.
         let root = try sourceRoot()
         let sources = try [
             "VVTerm/Core/UI/SidebarComponents.swift",
             "VVTerm/App/iOS/iOSServerComponents.swift",
-            "VVTerm/Features/Servers/UI/Workspace/WorkspaceSwitcherSheet.swift"
+            "VVTerm/Features/Servers/UI/Workspace/WorkspaceSwitcherSheet.swift",
+            "VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift",
+            "VVTerm/App/iOS/iOSContentView.swift"
         ].map { path in
             try source(at: root.appendingPathComponent(path))
         }.joined(separator: "\n")
@@ -32,6 +36,10 @@ struct ServerDeletionIntentBoundaryTests {
         #expect(
             !sources.contains("try? await serverManager.deleteWorkspace"),
             "Workspace deletion UI should call ServerManager.requestWorkspaceDeletion instead of swallowing deleteWorkspace failures."
+        )
+        #expect(
+            !sources.contains("try? await serverManager.deleteEnvironment"),
+            "Environment deletion UI should call ServerManager.requestEnvironmentDeletion instead of swallowing deleteEnvironment failures."
         )
     }
 

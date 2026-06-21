@@ -8,6 +8,7 @@ struct ServerDeletionFailure: Identifiable, Equatable {
     enum Operation: Equatable {
         case deleteServer(UUID)
         case deleteWorkspace(UUID)
+        case deleteEnvironment(workspaceID: UUID, environmentID: UUID)
     }
 
     let id: UUID
@@ -1162,6 +1163,26 @@ final class ServerManager: ObservableObject {
             guard let self else { return }
             try await self.deleteWorkspace(workspace)
             onDeleted()
+        }
+    }
+
+    @discardableResult
+    func requestEnvironmentDeletion(
+        _ environment: ServerEnvironment,
+        in workspace: Workspace,
+        fallback: ServerEnvironment,
+        onDeleted: @escaping @MainActor (Workspace) -> Void = { _ in }
+    ) -> UUID {
+        trackDeletionRequest(
+            operation: .deleteEnvironment(workspaceID: workspace.id, environmentID: environment.id)
+        ) { [weak self] in
+            guard let self else { return }
+            let updatedWorkspace = try await self.deleteEnvironment(
+                environment,
+                in: workspace,
+                fallback: fallback
+            )
+            onDeleted(updatedWorkspace)
         }
     }
 

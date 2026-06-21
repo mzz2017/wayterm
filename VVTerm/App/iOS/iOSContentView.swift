@@ -363,22 +363,17 @@ struct iOSServerListView: View {
                     environmentToDelete = nil
                     return
                 }
-                Task {
-                    let updatedWorkspace = try? await serverManager.deleteEnvironment(
-                        environment,
-                        in: workspace,
-                        fallback: .production
-                    )
-                    await MainActor.run {
-                        if let updatedWorkspace {
-                            selectedWorkspace = updatedWorkspace
-                        }
-                        if selectedEnvironment?.id == environment.id {
-                            selectedEnvironment = .production
-                        }
-                        environmentToDelete = nil
+                serverManager.requestEnvironmentDeletion(
+                    environment,
+                    in: workspace,
+                    fallback: .production
+                ) { updatedWorkspace in
+                    selectedWorkspace = updatedWorkspace
+                    if selectedEnvironment?.id == environment.id {
+                        selectedEnvironment = .production
                     }
                 }
+                environmentToDelete = nil
             }
         } message: {
             let name = environmentToDelete?.displayName ?? String(localized: "Custom")
