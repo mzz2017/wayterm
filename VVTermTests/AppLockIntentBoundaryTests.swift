@@ -3,10 +3,11 @@ import Testing
 
 // Test Context:
 // These tests protect app-lock authentication ownership. SwiftUI may react to
-// scene changes, toggle settings, and button taps, but biometric authentication
-// tasks must be owned by AppLockManager so request ordering can be observed and
-// later lifecycle work can wait for completion. The tests inspect source
-// placement only; update this context only when app-lock authentication intent
+// scene changes, toggle settings, select protected servers, open active
+// connections, and handle button taps, but biometric authentication tasks must
+// be owned by AppLockManager so request ordering can be observed and later
+// lifecycle work can wait for completion. The tests inspect source placement
+// only; update this context only when app-lock authentication intent
 // intentionally moves to another application-layer owner.
 @Suite
 struct AppLockIntentBoundaryTests {
@@ -61,6 +62,56 @@ struct AppLockIntentBoundaryTests {
         #expect(
             fullLockToggleSource.contains("requestFullAppLockChange(newValue)"),
             "GeneralSettingsView should send full-lock change intent to AppLockManager."
+        )
+    }
+
+    @Test
+    func serverSelectionSendsServerUnlockIntentWithoutOwningTask() throws {
+        // Given the macOS sidebar SwiftUI source that selects saved servers.
+        let root = try sourceRoot()
+        let source = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift")
+        )
+        let selectServerSource = try slice(
+            startingAt: "private func selectServer(_ server: Server)",
+            endingBefore: "\n    private func connectToServer",
+            in: source
+        )
+
+        // Then the selection path should send server-unlock intent to the
+        // application owner instead of directly awaiting biometric auth.
+        #expect(
+            !selectServerSource.contains("ensureServerUnlocked("),
+            "ServerSidebarView should not call the async server-unlock behavior boundary directly."
+        )
+        #expect(
+            selectServerSource.contains("requestServerUnlock"),
+            "ServerSidebarView should send server-unlock intent to AppLockManager."
+        )
+    }
+
+    @Test
+    func iosActiveConnectionOpenSendsServerUnlockIntentWithoutDirectAuth() throws {
+        // Given the iOS root SwiftUI source that opens active connections.
+        let root = try sourceRoot()
+        let source = try source(
+            at: root.appendingPathComponent("VVTerm/App/iOS/iOSContentView.swift")
+        )
+        let openActiveConnectionSource = try slice(
+            startingAt: "private func openActiveConnection(_ connection: ActiveConnection)",
+            endingBefore: "\n    private func disconnectActiveConnection",
+            in: source
+        )
+
+        // Then opening an active connection should not directly own the server
+        // biometric-auth await; it should send unlock intent first.
+        #expect(
+            !openActiveConnectionSource.contains("ensureServerUnlocked("),
+            "iOSContentView should not call the async server-unlock behavior boundary directly."
+        )
+        #expect(
+            openActiveConnectionSource.contains("requestServerUnlock"),
+            "iOSContentView should send server-unlock intent to AppLockManager."
         )
     }
 

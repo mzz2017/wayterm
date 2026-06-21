@@ -5375,7 +5375,7 @@ Review result: independent read-only reviewer found no Critical, Important, or M
   - Same-server server-unlock request coalescing so duplicate UI intent does not create a second biometric prompt or a false denial while `isAuthenticating` is true.
   - Server UI paths that synchronously send unlock intent instead of launching SwiftUI-owned biometric-auth tasks.
 
-- [ ] **Step 1: Add RED server-unlock lifecycle and boundary tests**
+- [x] **Step 1: Add RED server-unlock lifecycle and boundary tests**
 
 Extend `AppLockManagerTests`:
 - `testServerUnlockRequestTracksAuthenticationUntilCompletion`: create a server with `requiresBiometricUnlock: true`, delay fake auth, call `requestServerUnlock`, assert the request ID is visible in both `pendingAppLockRequestIDs` and `pendingServerUnlockRequestIDs` until auth finishes, then assert `onUnlocked` fires and tracking clears.
@@ -5395,16 +5395,18 @@ xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=
 
 Expected RED result: the focused suite fails to compile because `requestServerUnlock`, `pendingServerUnlockRequestIDs`, and the server-unlock testing cancellation hook do not exist. If it compiles unexpectedly, the boundary tests must fail because `ServerSidebarView` and `iOSContentView` still call `ensureServerUnlocked(` directly.
 
-- [ ] **Step 2: Add AppLockManager-owned server-unlock request tracking**
+Actual RED result: the focused suite failed before production changes because `AppLockManager` did not expose `requestServerUnlock`, `pendingServerUnlockRequestIDs`, or the server-unlock testing cancellation hook. Review-fix RED added `testServerUnlockCancellationDuringFullAppUnlockDoesNotGrantAppAccess`, which failed until `ensureAppUnlocked()` checked cancellation before granting app-level unlock state.
+
+- [x] **Step 2: Add AppLockManager-owned server-unlock request tracking**
 
 Update `AppLockManager`:
 - add server-unlock request records keyed by server ID with request ID, `Task<Void, Never>`, and `onUnlocked` / `onDenied` callback arrays;
 - expose `pendingServerUnlockRequestIDs`;
-- implement `requestServerUnlock(_:onUnlocked:onDenied:)` so non-protected servers call `onUnlocked` synchronously through a tracked request, protected servers run `ensureServerUnlocked(_:)` from the tracked manager task, and duplicate same-server intent appends callbacks and returns the existing request ID;
+- implement `requestServerUnlock(_:onUnlocked:onDenied:)` so server-unlock decisions complete through a tracked manager task, protected servers run `ensureServerUnlocked(_:)` from that task, and duplicate same-server intent appends callbacks and returns the existing request ID;
 - canceling a server-unlock request must cancel the stored task, clear visible pending state only after task exit, avoid success/denied callbacks, and keep cancellation from surfacing as `lastErrorMessage`;
 - keep existing `ensureServerUnlocked(_:)` available for application-layer callers such as terminal open managers.
 
-- [ ] **Step 3: Route SwiftUI server unlock through request intent**
+- [x] **Step 3: Route SwiftUI server unlock through request intent**
 
 Update `ServerSidebarView.selectServer(_:)`:
 - replace the SwiftUI-owned `Task { await AppLockManager.shared.ensureServerUnlocked(server) }` with `AppLockManager.shared.requestServerUnlock(server) { selectedServer = server }`;
@@ -5415,7 +5417,7 @@ Update `iOSContentView.openActiveConnection(_:)`:
 - replace direct `ensureServerUnlocked` with `requestServerUnlock(server, onUnlocked:)`;
 - keep the existing reconnect/select/show-terminal sequence inside the unlocked continuation for now, and leave broader Active Connection reconnect ownership to a later task if needed.
 
-- [ ] **Step 4: Run focused verification**
+- [x] **Step 4: Run focused verification**
 
 ```bash
 xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/AppLockManagerTests -only-testing:VVTermTests/AppLockIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
@@ -5425,17 +5427,22 @@ git diff --check
 
 Expected GREEN result: focused tests pass; source scan shows UI files use `requestServerUnlock` and no direct `ensureServerUnlocked(`, while application-layer managers may still call the low-level async helper.
 
-- [ ] **Step 5: API and boundary cleanup**
+Actual GREEN result: the review-fix single regression passed with 1 XCTest test and 0 failures. The full focused suite passed 10 XCTest tests in `AppLockManagerTests` plus 4 Swift Testing tests in `AppLockIntentBoundaryTests`, with 0 failures. The source scan showed `ServerSidebarView` and `iOSContentView` only call `requestServerUnlock`; direct `ensureServerUnlocked(` remains in `AppLockManager` and test assertion text. `git diff --check` passed.
+
+- [x] **Step 5: API and boundary cleanup**
 
 Before review, verify `AppLockManager` is the single owner of server-unlock authentication request tasks, duplicate same-server unlock intent cannot be denied by `isAuthenticating`, callbacks fire only after unlock decision, cancellation is lifecycle completion, SwiftUI only sends unlock intent, and touched tests include complete Test Context plus Given / When / Then comments.
 
-- [ ] **Step 6: Request review and commit**
+- [x] **Step 6: Request review and commit**
 
 Request code review for Task 70. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
+
+Review result: independent read-only reviewer found one Important cancellation issue. A canceled server-unlock request that was inside nested full-app-lock authentication could still grant app unlock state because `ensureAppUnlocked()` wrote `isAppLocked = false` before the server-unlock caller checked cancellation. The fix adds a cancellation check inside `ensureAppUnlocked()` before mutating unlock state, with the focused review-fix regression covering that behavior. No other Critical or Important findings remain from that review.
 
 ## Progress Ledger
 
 - 2026-06-21: Post-Task-69 scan selected Task 70 as the next executable lifecycle slice. `ServerSidebarView.selectServer(_:)` and iOS `openActiveConnection(_:)` still create SwiftUI-owned tasks that directly await `AppLockManager.shared.ensureServerUnlocked(server)`. This is biometric authentication lifecycle work, and `AppLockManager` already owns nearby app-unlock/full-lock request tracking, so Task 70 should add a server-specific request API with same-server coalescing and route these UI paths through intent callbacks. Broader Active Connection reconnect orchestration, RemoteFiles move-destination directory loading, split-pane voice text injection, and terminal interaction-state cleanup remain deferred.
+- 2026-06-21: Task 70 RED/GREEN completed with review fix. `AppLockManager` now owns tracked server-unlock request tasks through `requestServerUnlock(_:onUnlocked:onDenied:)`, exposes `pendingServerUnlockRequestIDs`, coalesces duplicate same-server unlock intent into one biometric auth flow, cancels pending server-unlock work as lifecycle completion, and keeps server-unlock cancellation from running callbacks or granting prompt-free server access. `ServerSidebarView.selectServer(_:)` and iOS `openActiveConnection(_:)` now synchronously send server-unlock intent instead of directly awaiting `ensureServerUnlocked(_:)`; the iOS active-connection reconnect/select/show-terminal work remains inside the unlocked continuation and broader reconnect ownership stays deferred. Initial RED failed to build because the server-unlock request API, pending IDs, and testing cancellation hook did not exist. Independent review found one Important issue: cancellation during nested full-app-lock authentication could still unlock the app. Review-fix RED reproduced it, and GREEN passed after `ensureAppUnlocked()` checks cancellation before mutating app unlock state. Final focused verification passed 10 XCTest tests plus 4 Swift Testing tests; source scan showed UI files only call `requestServerUnlock`; `git diff --check` passed.
 - 2026-06-21: Task 69 RED/GREEN completed with independent review. `StoreManager` now owns tracked paywall product-load request tasks through `requestProductLoad(onCompleted:)`, exposes `pendingProductLoadRequestIDs` plus `waitForProductLoadRequest(_:)`, coalesces duplicate in-flight paywall load intent into one App Store product fetch, stores all completion callbacks, treats cancellation as lifecycle completion, and cancels pending product-load requests in `deinit`. `ProUpgradeSheet` no longer awaits `storeManager.loadProducts()` from SwiftUI `.task`; both iOS and macOS paywall branches synchronously send product-load intent and update `selectedPlan` from the manager request completion callback, preserving post-load default-plan selection. Initial RED failed to build because the product-load request API, pending IDs, wait hook, and testing cancellation hook did not exist. GREEN focused verification passed 12 Swift Testing tests across `StoreManagerLifecycleTests`, `StoreProductLoadIntentBoundaryTests`, and `StorePurchaseIntentBoundaryTests`; source scan showed `ProUpgradeSheet` only uses `requestProductLoad`; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Independent review found no Critical, Important, or Minor issues; residual callback-after-dismiss risk is noted for a possible later per-caller cancellation-token slice.
 - 2026-06-21: Post-Task-68 scan selected Task 69 as the next executable lifecycle slice. `ProUpgradeSheet` still awaits `storeManager.loadProducts()` directly from SwiftUI `.task` on both iOS and macOS while `StoreManager` already owns nearby StoreKit purchase, restore, startup refresh, review refresh, and transaction listener lifecycles. This Store product-load path affects the paywall and purchase decisions, so the next slice should add `StoreManager` product-load request tracking, duplicate paywall-load coalescing, and an await hook, then leave broader server unlock, RemoteFiles move-destination loading, split-pane voice text injection, and terminal interaction-state cleanup for later tasks.
 - 2026-06-21: Task 68 RED/GREEN completed with local lifecycle review. `ServerStatsCollector` now owns tracked Stats collection request tasks through `requestStartCollecting(for:using:)` and `requestStopCollecting()`, exposes `pendingStatsCollectionRequestIDs` and `waitForStatsCollectionRequest(_:)`, cancels stale visibility/retry requests, waits canceled queued start work from stop requests, and makes `startCollecting(for:using:)` cancellation-aware after pending stop/collection waits so a canceled queued start cannot create a replacement lease after a newer stop intent wins. `ServerStatsView` no longer starts collection from Retry with `Task { await ... }` and no longer uses `.task(id: makeTaskKey())` to directly await start/stop; it sends visible/hidden/retry/disappear intent synchronously to the collector. Initial RED failed to build because the request APIs and wait hook did not exist. GREEN focused verification passed 10 Swift Testing tests across `ServerStatsCollectorLifecycleTests` and `ServerStatsIntentBoundaryTests`; expanded Stats verification passed 10 XCTest parsing/domain tests plus the 10 Swift Testing lifecycle/boundary tests; source scan showed Stats UI has only request API calls and no direct await start/stop; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Local review found no Critical or Important issues.

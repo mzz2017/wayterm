@@ -2,9 +2,10 @@ import XCTest
 @testable import VVTerm
 
 // Test Context:
-// These tests protect app-lock state transitions and timeout behavior. Fakes use
-// controllable time/auth assumptions and no biometric hardware; update only when
-// app-lock product behavior intentionally changes.
+// These tests protect app-lock and server-unlock state transitions, request
+// ownership, coalescing, and timeout behavior. Fakes use controllable time/auth
+// assumptions and no biometric hardware; update only when app-lock product
+// behavior or the application-layer owner intentionally changes.
 
 @MainActor
 final class AppLockManagerTests: XCTestCase {
@@ -62,6 +63,20 @@ final class AppLockManagerTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
+    }
+
+    private func makeLockedServer(
+        id: UUID = UUID(),
+        name: String = "Protected Server"
+    ) -> Server {
+        Server(
+            id: id,
+            workspaceId: UUID(),
+            name: name,
+            host: "example.test",
+            username: "user",
+            requiresBiometricUnlock: true
+        )
     }
 
     func testEnableFullAppLockRequiresAvailableBiometry() async {
@@ -226,5 +241,202 @@ final class AppLockManagerTests: XCTestCase {
             "Cancellation should be lifecycle state, not a user-facing app-lock failure."
         )
         XCTAssertTrue(manager.isAppLocked)
+    }
+
+    func testServerUnlockRequestTracksAuthenticationUntilCompletion() async {
+        // Given a server requiring biometric unlock and a delayed fake
+        // authentication prompt.
+        let defaults = makeDefaults()
+        let authService = StubBiometricAuthService(
+            availabilityResult: .available(.faceID)
+        )
+        authService.delayAuthentication = true
+        let manager = AppLockManager(defaults: defaults, authService: authService)
+        let server = makeLockedServer(name: "Production")
+        var didUnlock = false
+        var didDeny = false
+
+        // When UI sends server-unlock intent through AppLockManager.
+        let requestID = manager.requestServerUnlock(
+            server,
+            onUnlocked: { didUnlock = true },
+            onDenied: { didDeny = true }
+        )
+        await authService.waitUntilAuthenticationStarted()
+
+        // Then AppLockManager tracks the server-unlock request until the
+        // biometric auth flow finishes.
+        XCTAssertTrue(
+            manager.pendingAppLockRequestIDs.contains(requestID),
+            "Server unlock should be visible in generic app-lock pending requests while auth is in flight."
+        )
+        XCTAssertTrue(
+            manager.pendingServerUnlockRequestIDs.contains(requestID),
+            "Server unlock should be visible in server-specific pending requests while auth is in flight."
+        )
+        XCTAssertFalse(didUnlock)
+        XCTAssertFalse(didDeny)
+
+        authService.finishAuthentication()
+        await manager.waitForAppLockRequest(requestID)
+
+        XCTAssertFalse(
+            manager.pendingAppLockRequestIDs.contains(requestID),
+            "Server-unlock request tracking should clear only after auth completion."
+        )
+        XCTAssertFalse(
+            manager.pendingServerUnlockRequestIDs.contains(requestID),
+            "Server-specific request tracking should clear after auth completion."
+        )
+        XCTAssertTrue(didUnlock, "Successful server unlock should run the unlocked callback.")
+        XCTAssertFalse(didDeny, "Successful server unlock should not run the denied callback.")
+        XCTAssertTrue(
+            manager.canAccessServerWithoutPrompt(server),
+            "Successful server unlock should grant prompt-free server access for the grace period."
+        )
+    }
+
+    func testDuplicateServerUnlockRequestsCoalesceUntilCompletion() async {
+        // Given a delayed server-unlock authentication request is already in
+        // flight for a biometric-protected server.
+        let defaults = makeDefaults()
+        let authService = StubBiometricAuthService(
+            availabilityResult: .available(.faceID)
+        )
+        authService.delayAuthentication = true
+        let manager = AppLockManager(defaults: defaults, authService: authService)
+        let server = makeLockedServer()
+        var unlockedCallbacks: [String] = []
+        var deniedCallbacks: [String] = []
+
+        // When the same server-unlock intent arrives twice before auth exits.
+        let firstID = manager.requestServerUnlock(
+            server,
+            onUnlocked: { unlockedCallbacks.append("first") },
+            onDenied: { deniedCallbacks.append("first") }
+        )
+        let secondID = manager.requestServerUnlock(
+            server,
+            onUnlocked: { unlockedCallbacks.append("second") },
+            onDenied: { deniedCallbacks.append("second") }
+        )
+        await authService.waitUntilAuthenticationStarted()
+
+        // Then the duplicate request joins the existing manager-owned task
+        // instead of starting a second auth call that would be denied by the
+        // in-progress authentication guard.
+        XCTAssertEqual(
+            firstID,
+            secondID,
+            "Duplicate same-server unlock intent should coalesce to the existing request ID."
+        )
+        XCTAssertEqual(
+            authService.authenticateReasons.count,
+            1,
+            "Duplicate same-server unlock intent should not start a second biometric prompt."
+        )
+        XCTAssertEqual(
+            manager.pendingServerUnlockRequestIDs,
+            [firstID],
+            "Only the coalesced server-unlock request should be visible as pending."
+        )
+
+        authService.finishAuthentication()
+        await manager.waitForAppLockRequest(firstID)
+
+        XCTAssertEqual(
+            unlockedCallbacks,
+            ["first", "second"],
+            "Every coalesced server-unlock caller should receive the unlocked callback after auth exits."
+        )
+        XCTAssertTrue(
+            deniedCallbacks.isEmpty,
+            "Duplicate same-server unlock intent must not be reported as denied while auth is already in progress."
+        )
+    }
+
+    func testServerUnlockCancellationDoesNotRunCallbacksOrSetError() async {
+        // Given lifecycle teardown cancels a pending server-unlock request.
+        let defaults = makeDefaults()
+        let authService = StubBiometricAuthService(
+            availabilityResult: .available(.faceID)
+        )
+        authService.delayAuthentication = true
+        let manager = AppLockManager(defaults: defaults, authService: authService)
+        let server = makeLockedServer()
+        var didUnlock = false
+        var didDeny = false
+
+        let requestID = manager.requestServerUnlock(
+            server,
+            onUnlocked: { didUnlock = true },
+            onDenied: { didDeny = true }
+        )
+        await authService.waitUntilAuthenticationStarted()
+
+        manager.cancelServerUnlockRequestForTesting(requestID)
+        authService.finishAuthentication()
+        await manager.waitForAppLockRequest(requestID)
+
+        // Then cancellation is lifecycle completion: callbacks and user-facing
+        // auth errors stay silent, pending state clears, and no unlock grant is
+        // recorded after cancellation.
+        XCTAssertFalse(didUnlock, "Canceled server-unlock requests should not run unlocked callbacks.")
+        XCTAssertFalse(didDeny, "Canceled server-unlock requests should not run denied callbacks.")
+        XCTAssertFalse(
+            manager.pendingServerUnlockRequestIDs.contains(requestID),
+            "Canceled server-unlock requests should clear pending state after the task exits."
+        )
+        XCTAssertNil(
+            manager.lastErrorMessage,
+            "Server-unlock cancellation should not surface as a user-facing auth failure."
+        )
+        XCTAssertFalse(
+            manager.canAccessServerWithoutPrompt(server),
+            "Canceled server-unlock requests should not leave a prompt-free access grant."
+        )
+    }
+
+    func testServerUnlockCancellationDuringFullAppUnlockDoesNotGrantAppAccess() async {
+        // Given full app lock is enabled and a server-unlock request must first
+        // unlock the app through delayed biometric authentication.
+        let defaults = makeDefaults()
+        defaults.set(true, forKey: "security.fullAppLockEnabled")
+        let authService = StubBiometricAuthService(
+            availabilityResult: .available(.faceID)
+        )
+        authService.delayAuthentication = true
+        let manager = AppLockManager(defaults: defaults, authService: authService)
+        let server = makeLockedServer()
+        var didUnlock = false
+        var didDeny = false
+
+        let requestID = manager.requestServerUnlock(
+            server,
+            onUnlocked: { didUnlock = true },
+            onDenied: { didDeny = true }
+        )
+        await authService.waitUntilAuthenticationStarted()
+
+        manager.cancelServerUnlockRequestForTesting(requestID)
+        authService.finishAuthentication()
+        await manager.waitForAppLockRequest(requestID)
+
+        // Then cancellation during the nested app-unlock phase must not leave
+        // an app-level unlock grant or unlock the server.
+        XCTAssertTrue(
+            manager.isAppLocked,
+            "Canceled server-unlock requests should not unlock the app during nested full-app-lock authentication."
+        )
+        XCTAssertFalse(didUnlock, "Canceled nested app-unlock work should not run server unlocked callbacks.")
+        XCTAssertFalse(didDeny, "Canceled nested app-unlock work should not run server denied callbacks.")
+        XCTAssertFalse(
+            manager.canAccessServerWithoutPrompt(server),
+            "Canceled nested app-unlock work should not grant prompt-free server access."
+        )
+        XCTAssertNil(
+            manager.lastErrorMessage,
+            "Cancellation during nested app unlock should not surface a user-facing auth error."
+        )
     }
 }

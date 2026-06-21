@@ -621,8 +621,7 @@ struct ServerSidebarView: View {
     // MARK: - Empty States
 
     private func selectServer(_ server: Server) {
-        Task { @MainActor in
-            guard await AppLockManager.shared.ensureServerUnlocked(server) else { return }
+        AppLockManager.shared.requestServerUnlock(server) {
             selectedServer = server
         }
     }
