@@ -3552,8 +3552,76 @@ Request code review for Task 47. Fix Critical and Important findings, update the
 
 Review result: subagent review was not spawned because the current tool contract permits spawning only when the user explicitly requests subagents. Local read-only review against the Swift lifecycle checklist found no Critical or Important issues. The stable owner is `ServerManager`; `WorkspaceFormSheet` sends intent only; save/delete work is tracked and awaitable through request IDs; expected Pro-limit failures remain distinguishable from ordinary save failures.
 
+## Task 48: Environment Form Save Intent Boundary
+
+**Files:**
+- Modify: `VVTerm/Features/Servers/Application/ServerManager.swift`
+- Modify: `VVTerm/Features/Servers/UI/Workspace/EnvironmentFormSheet.swift`
+- Test: `VVTermTests/ServerManagerBootstrapTests.swift`
+- Test: `VVTermTests/EnvironmentFormIntentBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `ServerManager.createCustomEnvironment(name:color:)`
+  - `ServerManager.updateEnvironment(_:in:)`
+  - `ServerManager.updateWorkspace(_:)`
+  - `EnvironmentFormSheet.saveEnvironment()`
+- Produces:
+  - `ServerEnvironmentSaveMode`: `.create` and `.update` modes for user-initiated environment save intent.
+  - `ServerEnvironmentSaveFailure`: application-layer diagnostic for failed user-initiated environment save intent.
+  - `ServerManager.requestEnvironmentSave(_:in:mode:onSaved:onFailed:)`: manager-owned, tracked environment create/update request API.
+  - `ServerManager.waitForEnvironmentSaveRequest(_:)` and `pendingEnvironmentSaveRequestIDs` for awaitable tests and later lifecycle ordering.
+  - `EnvironmentFormSheet` save action that synchronously sends intent to `ServerManager` instead of owning async workspace/environment update tasks.
+
+- [ ] **Step 1: Add RED manager and boundary tests**
+
+Extend `ServerManagerBootstrapTests` with request-save coverage for successful environment update and duplicate-name/update failure behavior if the failure can be expressed through the manager API. Add `EnvironmentFormIntentBoundaryTests` with a Test Context header. The source-boundary test must read `EnvironmentFormSheet.swift` and fail while the form owns a `Task { ... }` wrapper or directly calls:
+
+```swift
+try await serverManager.updateEnvironment
+try await serverManager.updateWorkspace
+```
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/EnvironmentFormIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: `ServerManagerBootstrapTests` fails to compile because environment save request APIs, save mode, pending request IDs, await hook, or failure state do not exist. If those compile unexpectedly, `EnvironmentFormIntentBoundaryTests` fails because `EnvironmentFormSheet.swift` still owns async save `Task` work and directly calls workspace/environment CRUD methods.
+
+- [ ] **Step 2: Add ServerManager environment save request tracking**
+
+Add a small save mode enum/failure type and manager-owned request dictionary. The request API should clear prior environment save failure, run create/update through existing application-layer methods, store the returned task by request ID, clear only its own ID, expose an await hook, call success only after the application-layer save succeeds, and call failure with the user-visible message without mutating UI state directly.
+
+For create mode, the manager should create the custom environment, append it to the workspace, and reuse `updateWorkspace(_:)` as the persistence/sync boundary. For update mode, it should reuse `updateEnvironment(_:in:)` so assigned servers and workspace selection keep the existing behavior.
+
+- [ ] **Step 3: Route EnvironmentFormSheet through request APIs**
+
+Replace the form-owned save `Task` block with a synchronous call to `requestEnvironmentSave`. Keep visible behavior: local duplicate-name validation remains immediate in the form, save sets `isSaving`, success calls `onSave` and dismisses, and failure shows local error text and clears saving.
+
+- [ ] **Step 4: Run focused verification**
+
+Run focused manager/boundary tests, source scans for old async CRUD ownership in `EnvironmentFormSheet.swift`, and `git diff --check`:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/EnvironmentFormIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{|try await serverManager\\.(updateEnvironment|updateWorkspace)" VVTerm/Features/Servers/UI/Workspace/EnvironmentFormSheet.swift
+git diff --check
+```
+
+- [ ] **Step 5: API and boundary cleanup**
+
+Before review, verify save request APIs live in Servers Application, UI callbacks only update UI state after application-layer completion, request tasks clear deterministically, no stale workspace copy is passed to UI on create/update success, and tests include enough context to distinguish behavior regressions from intentional ownership moves.
+
+- [ ] **Step 6: Request review and commit**
+
+Request code review for Task 48. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-47 scan selected Task 48 as the next executable lifecycle slice. Current plan checkboxes were all complete, so the codebase was rescanned for SwiftUI-owned lifecycle `Task` work, direct resource/singleton calls, and stale terminal runtime state. `EnvironmentFormSheet.saveEnvironment()` is the clearest unplanned Servers feature hit: it starts a SwiftUI-owned `Task` and directly calls `updateEnvironment` / `updateWorkspace` for user-initiated environment persistence. Broader hits remain intentionally deferred for later classification, including Server form save/move request ownership, RemoteFiles preview/navigation UI tasks that mostly load view data, terminal voice recording intent ownership, and residual terminal display-state reads from `ConnectionState`.
 - 2026-06-21: Task 47 RED/GREEN completed. `WorkspaceFormSheet` no longer owns async workspace save/delete `Task` blocks or directly calls `addWorkspace`, `updateWorkspace`, or `deleteWorkspace`; it sends synchronous intent to `ServerManager.requestWorkspaceSave` and `requestWorkspaceDeletion`. `ServerManager` now owns tracked workspace create/update request tasks, exposes pending request IDs plus `waitForWorkspaceSaveRequest`, records `ServerWorkspaceSaveFailure`, preserves Pro-required failures for the upgrade sheet, and returns saved workspace values to UI callbacks only after the application-layer CRUD path succeeds. RED failed to compile until save request APIs and failure state existed. GREEN focused tests passed 16 Swift Testing tests; the WorkspaceForm source boundary scan produced no matches; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings.
 - 2026-06-21: Task 46 RED/GREEN completed with review fix. `SyncSettingsView` no longer directly observes `CloudKitManager.shared` or calls `AppSyncCoordinator.shared`; it observes `SyncSettingsStore` in Settings Application and sends sync-toggle/recheck intent through that store. `SyncSettingsStore` owns CloudKit status bridging through `SyncSettingsCloudStatusProviding`, app-sync intent through `SyncSettingsCoordinating`, tracks returned coordinator tasks for sync-toggle and status refresh, and coalesces in-flight CloudKit status refresh requests. Initial RED failed to compile until the store/protocols existed. Review found a status-ordering issue where a void publisher plus post-publish property reads could lag behind real `@Published` updates; review-fix RED reproduced stale `.idle` / `available` state, and GREEN passed after the provider protocol emitted complete `SyncSettingsCloudStatusSnapshot` values with `CloudKitManager` using `CombineLatest4`. Final focused store/boundary tests passed 9 Swift Testing tests; source scan found no direct CloudKit/app-sync singleton references in `SyncSettingsView.swift`; `git diff --check` passed; iOS build-for-testing passed after a sequential rerun because an earlier parallel build hit Xcode's `build.db` lock; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings.
 - 2026-06-21: Task 45 RED/GREEN completed with review fix. `ServerFormSheet` no longer directly calls `KeychainManager.shared` for stored SSH key lists, stored key material, or edit-server credentials; it sends credential read intent through `ServerFormCredentialProvider` in Servers Application. The provider owns the server-form credential read boundary through `ServerFormCredentialLibrary`, decodes stored key data to form-ready values, preserves underlying keychain read errors for explicit stored-key loading, and matches reusable keys by private key plus passphrase outside SwiftUI. UI behavior is preserved for selected stored keys, including refreshing the public key field when stored private key data is absent. Initial RED failed to compile until the provider/protocol/value type existed. Review found automatic matching regressed by surfacing a broken candidate instead of skipping it; review-fix RED failed until candidate-scoped matching existed, and GREEN passed after matching used the loaded picker candidates and skipped per-candidate read/decode failures. Re-review found no Critical or Important issues, and the remaining Minor non-throwing API clarity note was addressed. Final focused provider/boundary tests passed 7 Swift Testing tests; source scan found no direct `KeychainManager.shared` in `ServerFormSheet.swift`; `git diff --check` passed; iOS build-for-testing passed after a sequential rerun because the first parallel build hit Xcode's `build.db` lock; signed macOS build-for-testing failed on missing local Mac Development signing assets, then macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO`. A task-introduced `ServerFormCredentialProvider.shared` main-actor warning was removed by keeping the provider non-main-actor; final macOS warning scan showed only existing unrelated Swift 6 / XCTest deployment warnings.
