@@ -139,13 +139,12 @@ final class CloudKitManager: ObservableObject {
         accountStatusDetail = String(localized: "Disabled")
     }
 
-    func handleSyncToggle(_ enabled: Bool) {
+    func handleSyncToggle(_ enabled: Bool) async {
         if enabled {
             accountStatusChecked = false
-            Task {
-                await checkAccountStatus()
-                await subscribeToChanges()
-            }
+            await checkAccountStatus()
+            guard !Task.isCancelled else { return }
+            await subscribeToChanges()
         } else {
             applySyncDisabledState()
         }
@@ -554,11 +553,14 @@ final class CloudKitManager: ObservableObject {
         do {
             if let existing = try? await database.subscription(for: subscriptionID) as? CKDatabaseSubscription,
                existing.notificationInfo?.shouldSendContentAvailable == true {
+                guard !Task.isCancelled, isSyncEnabled else { return }
                 logger.debug("CloudKit database subscription already configured")
                 return
             }
 
+            guard !Task.isCancelled, isSyncEnabled else { return }
             try await database.save(subscription)
+            guard !Task.isCancelled, isSyncEnabled else { return }
             logger.info("Subscribed to database changes")
         } catch {
             logger.error("Failed to subscribe to database changes: \(error.localizedDescription)")

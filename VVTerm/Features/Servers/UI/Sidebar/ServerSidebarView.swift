@@ -297,19 +297,14 @@ struct ServerSidebarView: View {
                     environmentToDelete = nil
                     return
                 }
-                Task {
-                    let updatedWorkspace = try? await serverManager.deleteEnvironment(
-                        environment,
-                        in: workspace,
-                        fallback: .production
-                    )
-                    await MainActor.run {
-                        if let updatedWorkspace {
-                            selectedWorkspace = updatedWorkspace
-                        }
-                        environmentToDelete = nil
-                    }
+                serverManager.requestEnvironmentDeletion(
+                    environment,
+                    in: workspace,
+                    fallback: .production
+                ) { updatedWorkspace in
+                    selectedWorkspace = updatedWorkspace
                 }
+                environmentToDelete = nil
             }
         } message: {
             let name = environmentToDelete?.displayName ?? String(localized: "Custom")
@@ -626,19 +621,19 @@ struct ServerSidebarView: View {
     // MARK: - Empty States
 
     private func selectServer(_ server: Server) {
-        Task { @MainActor in
-            guard await AppLockManager.shared.ensureServerUnlocked(server) else { return }
+        AppLockManager.shared.requestServerUnlock(server) {
             selectedServer = server
         }
     }
 
     private func connectToServer(_ server: Server) {
-        Task { @MainActor in
-            guard await AppLockManager.shared.ensureServerUnlocked(server) else { return }
-            selectedServer = server
-            tabManager.selectedViewByServer[server.id] = ViewTabConfigurationManager.shared.effectiveDefaultTab()
-            tabManager.connectedServerIds.insert(server.id)
-        }
+        tabManager.requestServerTerminalOpen(
+            for: server,
+            selectTerminalViewOnSuccess: true,
+            onOpened: { _ in
+                selectedServer = server
+            }
+        )
     }
 
     private func handleSavedServer(_ server: Server, originalServer: Server) {

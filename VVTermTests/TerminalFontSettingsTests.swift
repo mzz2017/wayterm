@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect terminal font preference defaults, validation, and storage
+// behavior. They use isolated settings values and no rendered terminal surface;
+// update only when intended font defaults or validation rules change.
+
 struct TerminalFontSettingsTests {
 
     // MARK: - Fresh default source

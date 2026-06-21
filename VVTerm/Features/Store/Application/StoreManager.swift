@@ -7,6 +7,8 @@ import os.log
 
 @MainActor
 final class StoreManager: ObservableObject {
+    private typealias StoreLifecycleAction = @MainActor (StoreManager) async -> Void
+
     static let shared = StoreManager()
     static let reviewModeCode = ReviewModeCode.value
 
@@ -20,10 +22,29 @@ final class StoreManager: ObservableObject {
     @Published private(set) var lastPurchasedProductId: String?
     private(set) var activePaywallSource: PaywallSource = .general
     private(set) var hasPresentedPaywallThisLaunch = false
+    private var purchaseRequestTasks: [UUID: Task<Void, Never>] = [:]
+    private var restoreRequestTasks: [UUID: Task<Void, Never>] = [:]
+    private(set) var lastPurchaseRequestFailure: Error?
+    private(set) var lastRestoreRequestFailure: Error?
+    var pendingPurchaseRequestIDs: Set<UUID> { Set(purchaseRequestTasks.keys) }
+    var pendingRestoreRequestIDs: Set<UUID> { Set(restoreRequestTasks.keys) }
+    var pendingProductLoadRequestIDs: Set<UUID> {
+        guard let productLoadRequestID else { return [] }
+        return [productLoadRequestID]
+    }
 
+    private var startupRefreshTask: Task<Void, Never>?
+    private var startupRefreshTaskID: UUID?
+    private var reviewModeRefreshTask: Task<Void, Never>?
+    private var reviewModeRefreshTaskID: UUID?
+    private var productLoadRequestTask: Task<Void, Never>?
+    private var productLoadRequestID: UUID?
+    private var productLoadCompletionCallbacks: [@MainActor () -> Void] = []
     private var updateListenerTask: Task<Void, Error>?
     private var reviewModeExpiryTask: Task<Void, Never>?
     private var reviewModeExpiresAt: Date?
+    private let loadProductsAction: StoreLifecycleAction
+    private let checkEntitlementsAction: StoreLifecycleAction
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Store")
     private let reviewModeDuration: TimeInterval = 60 * 60 * 5
 
@@ -43,19 +64,119 @@ final class StoreManager: ObservableObject {
 
     // MARK: - Initialization
 
-    private init() {
-        updateListenerTask = listenForTransactions()
-        Task {
-            await loadProducts()
-            await checkEntitlements()
+    private init(
+        startBackgroundTasks: Bool = true,
+        loadProductsAction: StoreLifecycleAction? = nil,
+        checkEntitlementsAction: StoreLifecycleAction? = nil
+    ) {
+        self.loadProductsAction = loadProductsAction ?? { manager in
+            await manager.loadProducts()
+        }
+        self.checkEntitlementsAction = checkEntitlementsAction ?? { manager in
+            await manager.checkEntitlements()
+        }
+
+        if startBackgroundTasks {
+            updateListenerTask = listenForTransactions()
+            startStartupRefresh()
         }
     }
 
     deinit {
         updateListenerTask?.cancel()
+        startupRefreshTask?.cancel()
+        reviewModeRefreshTask?.cancel()
+        productLoadRequestTask?.cancel()
+        purchaseRequestTasks.values.forEach { $0.cancel() }
+        restoreRequestTasks.values.forEach { $0.cancel() }
+    }
+
+    private func startStartupRefresh() {
+        startupRefreshTask?.cancel()
+        let taskID = UUID()
+        startupRefreshTaskID = taskID
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.startupRefreshTaskID == taskID {
+                    self.startupRefreshTaskID = nil
+                    self.startupRefreshTask = nil
+                }
+            }
+
+            await self.loadProductsAction(self)
+            guard !Task.isCancelled else { return }
+            await self.checkEntitlementsAction(self)
+        }
+
+        startupRefreshTask = task
+    }
+
+    private func startReviewModeRefresh() {
+        reviewModeRefreshTask?.cancel()
+        let taskID = UUID()
+        reviewModeRefreshTaskID = taskID
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.reviewModeRefreshTaskID == taskID {
+                    self.reviewModeRefreshTaskID = nil
+                    self.reviewModeRefreshTask = nil
+                }
+            }
+
+            guard !Task.isCancelled else { return }
+            await self.checkEntitlementsAction(self)
+        }
+
+        reviewModeRefreshTask = task
     }
 
     // MARK: - Load Products
+
+    @discardableResult
+    func requestProductLoad(
+        onCompleted: @escaping @MainActor () -> Void = {}
+    ) -> UUID {
+        if let productLoadRequestID {
+            productLoadCompletionCallbacks.append(onCompleted)
+            return productLoadRequestID
+        }
+
+        let requestID = UUID()
+        productLoadRequestID = requestID
+        productLoadCompletionCallbacks = [onCompleted]
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.productLoadRequestID == requestID {
+                    self.productLoadRequestID = nil
+                    self.productLoadRequestTask = nil
+                    self.productLoadCompletionCallbacks = []
+                }
+            }
+
+            await self.loadProductsAction(self)
+            guard !Task.isCancelled else { return }
+            guard self.productLoadRequestID == requestID else { return }
+
+            let callbacks = self.productLoadCompletionCallbacks
+            callbacks.forEach { $0() }
+        }
+
+        if productLoadRequestID == requestID {
+            productLoadRequestTask = task
+        }
+        return requestID
+    }
+
+    func waitForProductLoadRequest(_ requestID: UUID) async {
+        guard productLoadRequestID == requestID else { return }
+        await productLoadRequestTask?.value
+    }
 
     func loadProducts() async {
         let maxRetries = 3
@@ -87,6 +208,39 @@ final class StoreManager: ObservableObject {
 
     // MARK: - Purchase
 
+    @discardableResult
+    func requestPurchase(of product: Product) -> UUID {
+        requestPurchase { [weak self] in
+            await self?.purchase(product)
+        }
+    }
+
+    func waitForPurchaseRequest(_ requestID: UUID) async {
+        await purchaseRequestTasks[requestID]?.value
+    }
+
+    @discardableResult
+    fileprivate func requestPurchase(operation: @escaping @MainActor () async throws -> Void) -> UUID {
+        let requestID = UUID()
+        lastPurchaseRequestFailure = nil
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.purchaseRequestTasks.removeValue(forKey: requestID) }
+
+            do {
+                try await operation()
+            } catch is CancellationError {
+                return
+            } catch {
+                self.lastPurchaseRequestFailure = error
+            }
+        }
+
+        purchaseRequestTasks[requestID] = task
+        return requestID
+    }
+
     func purchase(_ product: Product) async {
         purchaseState = .purchasing
         lastPurchasedProductId = nil
@@ -112,12 +266,44 @@ final class StoreManager: ObservableObject {
                 purchaseState = .idle
             }
         } catch {
-            purchaseState = .failed(error.localizedDescription)
-            logger.error("Purchase failed: \(error.localizedDescription)")
+            applyPurchaseError(error)
         }
     }
 
     // MARK: - Restore Purchases
+
+    @discardableResult
+    func requestRestorePurchases() -> UUID {
+        requestRestorePurchases { [weak self] in
+            await self?.restorePurchases()
+        }
+    }
+
+    func waitForRestoreRequest(_ requestID: UUID) async {
+        await restoreRequestTasks[requestID]?.value
+    }
+
+    @discardableResult
+    fileprivate func requestRestorePurchases(operation: @escaping @MainActor () async throws -> Void) -> UUID {
+        let requestID = UUID()
+        lastRestoreRequestFailure = nil
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.restoreRequestTasks.removeValue(forKey: requestID) }
+
+            do {
+                try await operation()
+            } catch is CancellationError {
+                return
+            } catch {
+                self.lastRestoreRequestFailure = error
+            }
+        }
+
+        restoreRequestTasks[requestID] = task
+        return requestID
+    }
 
     func restorePurchases() async {
         restoreState = .restoring
@@ -127,8 +313,7 @@ final class StoreManager: ObservableObject {
             await checkEntitlements()
             applyRestoreResult(hasAccess: isPro)
         } catch {
-            restoreState = .failed(error.localizedDescription)
-            logger.error("Failed to restore purchases: \(error.localizedDescription)")
+            applyRestoreError(error)
         }
     }
 
@@ -247,7 +432,7 @@ final class StoreManager: ObservableObject {
             reviewModeExpiryTask?.cancel()
             reviewModeExpiryTask = nil
             logger.info("Review mode disabled")
-            Task { await checkEntitlements() }
+            startReviewModeRefresh()
         }
     }
 
@@ -285,9 +470,30 @@ final class StoreManager: ObservableObject {
         logger.info("\(logMessage)")
     }
 
+    private func applyPurchaseError(_ error: Error) {
+        if error is CancellationError {
+            applyIdlePurchaseState(logMessage: "Purchase cancelled")
+            return
+        }
+
+        purchaseState = .failed(error.localizedDescription)
+        logger.error("Purchase failed: \(error.localizedDescription)")
+    }
+
     private func applyRestoreResult(hasAccess: Bool) {
         restoreState = .restored(hasAccess: hasAccess)
         logger.info("Purchases restored")
+    }
+
+    private func applyRestoreError(_ error: Error) {
+        if error is CancellationError {
+            restoreState = .idle
+            logger.info("Restore cancelled")
+            return
+        }
+
+        restoreState = .failed(error.localizedDescription)
+        logger.error("Failed to restore purchases: \(error.localizedDescription)")
     }
 
     private func applyEntitlements(
@@ -302,3 +508,62 @@ final class StoreManager: ObservableObject {
         logger.info("Entitlements checked: isPro=\(hasAccess), isLifetime=\(hasLifetime), reviewMode=\(self.isReviewModeEnabled)")
     }
 }
+
+#if DEBUG
+extension StoreManager {
+    static func makeForTesting(
+        startBackgroundTasks: Bool = false,
+        loadProductsAction: (@MainActor (StoreManager) async -> Void)? = nil,
+        checkEntitlementsAction: (@MainActor (StoreManager) async -> Void)? = nil
+    ) -> StoreManager {
+        StoreManager(
+            startBackgroundTasks: startBackgroundTasks,
+            loadProductsAction: loadProductsAction,
+            checkEntitlementsAction: checkEntitlementsAction
+        )
+    }
+
+    @discardableResult
+    func requestPurchaseForTesting(
+        operation: @escaping @MainActor () async throws -> Void
+    ) -> UUID {
+        requestPurchase(operation: operation)
+    }
+
+    @discardableResult
+    func requestRestorePurchasesForTesting(
+        operation: @escaping @MainActor () async throws -> Void
+    ) -> UUID {
+        requestRestorePurchases(operation: operation)
+    }
+
+    func applyPurchaseErrorForTesting(_ error: Error) {
+        applyPurchaseError(error)
+    }
+
+    func applyRestoreErrorForTesting(_ error: Error) {
+        applyRestoreError(error)
+    }
+
+    var hasPendingStartupRefreshForTesting: Bool {
+        startupRefreshTask != nil
+    }
+
+    func waitForStartupRefreshForTesting() async {
+        await startupRefreshTask?.value
+    }
+
+    var hasPendingReviewModeRefreshForTesting: Bool {
+        reviewModeRefreshTask != nil
+    }
+
+    func waitForReviewModeRefreshForTesting() async {
+        await reviewModeRefreshTask?.value
+    }
+
+    func cancelProductLoadRequestForTesting(_ requestID: UUID) {
+        guard productLoadRequestID == requestID else { return }
+        productLoadRequestTask?.cancel()
+    }
+}
+#endif

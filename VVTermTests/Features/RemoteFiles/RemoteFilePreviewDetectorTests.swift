@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect previewability detection for remote-file names and types.
+// They use pure path/content-type fixtures and no file download; update only when
+// supported preview detection intentionally changes.
+
 struct RemoteFilePreviewDetectorTests {
     @Test
     func textPreviewIsDetectedAndDecoded() {

@@ -2,6 +2,11 @@ import Testing
 import Foundation
 @testable import VVTerm
 
+// Test Context:
+// These tests protect tmux session binding persistence used to reconnect terminal
+// panes to managed tmux sessions. Fakes use isolated storage and no remote tmux;
+// update only when binding persistence semantics intentionally change.
+
 struct TmuxSessionBindingStoreTests {
     private func makeStore() -> (TmuxSessionBindingStore, UserDefaults) {
         let suite = UserDefaults(suiteName: "test.\(UUID().uuidString)")!

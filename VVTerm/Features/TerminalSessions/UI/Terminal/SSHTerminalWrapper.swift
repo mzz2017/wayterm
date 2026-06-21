@@ -9,111 +9,6 @@ import SwiftUI
 import Foundation
 import os.log
 
-enum SSHConnectionRunner {
-    static func run(
-        server: Server,
-        credentials: ServerCredentials,
-        sshClient: SSHClient,
-        terminal: GhosttyTerminalView,
-        logger: Logger,
-        onAttempt: @MainActor @escaping (_ attempt: Int) -> Void,
-        startupPlan: @MainActor @escaping () async -> (command: String?, skipTmuxLifecycle: Bool),
-        registerShell: @MainActor @escaping (_ shell: ShellHandle, _ skipTmuxLifecycle: Bool) async -> Void,
-        onBeforeShellStart: @MainActor @escaping (_ cols: Int, _ rows: Int) async -> Void,
-        onShellStarted: @MainActor @escaping (_ terminal: GhosttyTerminalView, _ shellId: UUID) async -> Void,
-        onTitleChange: @MainActor @escaping (_ title: String) -> Void,
-        shouldContinueStreaming: @MainActor @escaping (_ data: Data, _ terminal: GhosttyTerminalView) -> Bool,
-        shouldResetClient: @escaping (_ error: SSHError) async -> Bool,
-        onProcessExit: @MainActor @escaping () -> Void,
-        onFailure: @MainActor @escaping (_ error: Error, _ terminal: GhosttyTerminalView) -> Void
-    ) async {
-        let maxAttempts = 3
-        var lastError: Error?
-        var titleParser = TerminalTitleSequenceParser()
-
-        for attempt in 1...maxAttempts {
-            guard !Task.isCancelled else { return }
-            await onAttempt(attempt)
-
-            do {
-                logger.info("Connecting to \(server.host)... (attempt \(attempt))")
-                _ = try await sshClient.connect(to: server, credentials: credentials)
-                guard !Task.isCancelled else { return }
-
-                let size = await MainActor.run {
-                    terminal.terminalSize()
-                }
-                let cols = Int(size?.columns ?? 80)
-                let rows = Int(size?.rows ?? 24)
-
-                await onBeforeShellStart(cols, rows)
-                let startup = await startupPlan()
-                let shell = try await sshClient.startShell(
-                    cols: cols,
-                    rows: rows,
-                    startupCommand: startup.command
-                )
-
-                guard !Task.isCancelled else {
-                    await sshClient.closeShell(shell.id)
-                    return
-                }
-
-                await registerShell(shell, startup.skipTmuxLifecycle)
-                await onShellStarted(terminal, shell.id)
-
-                guard !Task.isCancelled else { return }
-                for await data in shell.stream {
-                    guard !Task.isCancelled else { break }
-                    for title in titleParser.parse(data) {
-                        await onTitleChange(title)
-                    }
-                    let shouldContinue = await shouldContinueStreaming(data, terminal)
-                    if !shouldContinue { break }
-                }
-
-                guard !Task.isCancelled else { return }
-                logger.info("SSH shell ended")
-                // External backend: tell ghostty the session ended so it shows the
-                // real "session ended" UI (same as a local process exit).
-                // GhosttyTerminalView is @MainActor; hop to main to call it.
-                await MainActor.run { terminal.externalExited(0) }
-                await onProcessExit()
-                return
-            } catch {
-                guard !Task.isCancelled else { return }
-                lastError = error
-                logger.error("SSH connection failed (attempt \(attempt)): \(error.localizedDescription)")
-
-                // Do not retry deterministic failures (bad auth, host-key mismatch):
-                // repeated failed auths trip sshd's penalty system.
-                if let sshError = error as? SSHError, !sshError.isRetryable {
-                    logger.warning("Non-retryable SSH error; aborting retries")
-                    break
-                }
-
-                if attempt < maxAttempts, let sshError = error as? SSHError {
-                    let shouldReset = await shouldResetClient(sshError)
-                    if shouldReset {
-                        logger.warning("Resetting SSH client before retrying connection")
-                        await sshClient.disconnect()
-                    }
-                }
-
-                if attempt < maxAttempts {
-                    let delay = pow(2.0, Double(attempt - 1))
-                    try? await Task.sleep(for: .seconds(delay))
-                    continue
-                }
-            }
-        }
-
-        if let lastError {
-            await onFailure(lastError, terminal)
-        }
-    }
-}
-
 // MARK: - SSH Terminal Coordinator Protocol
 
 /// Protocol for shared SSH terminal coordinator functionality across platforms
@@ -124,223 +19,26 @@ protocol SSHTerminalCoordinator: AnyObject {
     var sessionId: UUID { get }
     var onProcessExit: () -> Void { get }
     var terminalView: GhosttyTerminalView? { get set }
-    var sshClient: SSHClient { get }
-    var shellId: UUID? { get set }
-    var shellTask: Task<Void, Never>? { get set }
+    var sessionManager: ConnectionSessionManager { get }
     var logger: Logger { get }
-
-    /// Platform-specific hook called after shell starts (before reading output)
-    func onShellStarted(terminal: GhosttyTerminalView) async
-
-    /// Platform-specific hook called before starting shell (after connect, after registering client)
-    func onBeforeShellStart(cols: Int, rows: Int) async
-
-    /// Fallback route when local shellId is temporarily unavailable.
-    func fallbackRoute() -> (client: SSHClient, shellId: UUID)?
 }
 
 extension SSHTerminalCoordinator {
     func sendToSSH(_ data: Data) {
-        if let shellId {
-            // Preserve task ordering from the caller to avoid input reordering under high throughput.
-            Task(priority: .userInitiated) { [sshClient, logger, shellId] in
-                do {
-                    try await sshClient.write(data, to: shellId)
-                } catch {
-                    logger.error("Failed to send to SSH: \(error.localizedDescription)")
-                }
-            }
-            return
-        }
-
-        // Coordinator can be recreated while an existing shell is still registered.
-        // Fall back to the manager registry so input keeps working after view reattachment.
-        Task(priority: .userInitiated) { [logger] in
-            let route = await MainActor.run {
-                self.fallbackRoute()
-            }
-
-            guard let route else { return }
-            do {
-                try await route.client.write(data, to: route.shellId)
-            } catch {
-                logger.error("Failed to send to SSH: \(error.localizedDescription)")
-            }
-        }
+        sessionManager.requestSessionInput(data, to: sessionId)
     }
 
-    func cancelShell(mode: ShellTeardownMode) async {
-        shellTask?.cancel()
-        shellTask = nil
-        let shellId = self.shellId
-        let sshClient = self.sshClient
-        let shouldDisconnectClient = mode == .fullDisconnect
-        self.shellId = nil
-
-        // Cleanup terminal to break retain cycles and release resources
-        if let terminal = terminalView {
-            terminal.cleanup()
-        }
-        terminalView = nil
-
-        if let shellId {
-            await sshClient.closeShell(shellId)
-            if shouldDisconnectClient {
-                await sshClient.disconnect()
-            }
-        } else if shouldDisconnectClient {
-            await sshClient.disconnect()
-        }
-    }
-
-    func suspendShell() {
-        // Cancel in-flight SSH work but keep the terminal surface for reuse
-        shellTask?.cancel()
-        shellTask = nil
-        self.shellId = nil
-    }
-
-    func startSSHConnection(terminal: GhosttyTerminalView) {
-        if shellTask != nil {
-            logger.debug("Ignoring duplicate start request for session \(self.sessionId)")
-            return
-        }
-
-        if let existingShellId = ConnectionSessionManager.shared.shellId(for: sessionId) {
-            shellId = existingShellId
-            deferSessionStateUpdate(.connected)
-            logger.debug("Reusing existing shell for session \(self.sessionId)")
-            return
-        }
-
-        if shellId != nil {
-            deferSessionStateUpdate(.connected)
-            return
-        }
-
-        guard ConnectionSessionManager.shared.tryBeginShellStart(
-            for: sessionId,
-            client: sshClient
-        ) else {
-            if ConnectionSessionManager.shared.shellId(for: sessionId) != nil {
-                deferSessionStateUpdate(.connected)
-            }
-            logger.debug("Shell start already in progress for session \(self.sessionId)")
-            return
-        }
-
-        // Capture all values needed in the detached task before creating it
-        // to avoid accessing main actor-isolated properties from detached context
-        let sshClient = self.sshClient
-        let server = self.server
-        let credentials = self.credentials
-        let sessionId = self.sessionId
-        let onProcessExit = self.onProcessExit
-        let logger = self.logger
-
-        shellTask = Task.detached(priority: .userInitiated) { [weak self, weak terminal] in
-            defer {
-                Task { @MainActor [weak self] in
-                    ConnectionSessionManager.shared.finishShellStart(for: sessionId, client: sshClient)
-                    self?.shellTask = nil
-                }
-            }
-
-            guard let terminal else { return }
-            await SSHConnectionRunner.run(
-                server: server,
-                credentials: credentials,
-                sshClient: sshClient,
-                terminal: terminal,
-                logger: logger,
-                onAttempt: { attempt in
-                    if attempt == 1 {
-                        ConnectionSessionManager.shared.updateSessionState(sessionId, to: .connecting)
-                    } else {
-                        ConnectionSessionManager.shared.updateSessionState(sessionId, to: .reconnecting(attempt: attempt))
-                    }
-                },
-                startupPlan: {
-                    await ConnectionSessionManager.shared.tmuxStartupPlan(
-                        for: sessionId,
-                        serverId: server.id,
-                        client: sshClient
-                    )
-                },
-                registerShell: { [weak self] shell, skipTmuxLifecycle in
-                    ConnectionSessionManager.shared.registerSSHClient(
-                        sshClient,
-                        shellId: shell.id,
-                        for: sessionId,
-                        serverId: server.id,
-                        transport: shell.transport,
-                        fallbackReason: shell.fallbackReason,
-                        skipTmuxLifecycle: skipTmuxLifecycle
-                    )
-                    ConnectionSessionManager.shared.updateSessionState(sessionId, to: .connected)
-                    self?.shellId = shell.id
-                },
-                onBeforeShellStart: { [weak self] cols, rows in
-                    guard let self else { return }
-                    await self.onBeforeShellStart(cols: cols, rows: rows)
-                },
-                onShellStarted: { [weak self] terminal, _ in
-                    guard let self else { return }
-                    await self.onShellStarted(terminal: terminal)
-                },
-                onTitleChange: { title in
-                    ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
-                },
-                shouldContinueStreaming: { data, terminal in
-                    let sessionExists = ConnectionSessionManager.shared.sessions.contains { $0.id == sessionId }
-                    guard sessionExists else { return false }
-                    terminal.writeOutput(data)
-                    return true
-                },
-                shouldResetClient: { sshError in
-                    switch sshError {
-                    case .notConnected, .connectionFailed, .socketError, .timeout:
-                        return true
-                    case .channelOpenFailed, .shellRequestFailed:
-                        let hasOtherRegistrations = await ConnectionSessionManager.shared.hasOtherRegistrations(
-                            using: sshClient,
-                            excluding: sessionId
-                        )
-                        return !hasOtherRegistrations
-                    case .authenticationFailed, .tailscaleAuthenticationNotAccepted, .cloudflareConfigurationRequired, .cloudflareAuthenticationFailed, .cloudflareTunnelFailed, .hostKeyVerificationFailed, .moshServerMissing, .moshBootstrapFailed, .moshSessionFailed, .unknown:
-                        return false
-                    }
-                },
-                onProcessExit: {
-                    onProcessExit()
-                },
-                onFailure: { error, terminal in
-                    let errorMsg = "\r\n\u{001B}[31mSSH Error: \(error.localizedDescription)\u{001B}[0m\r\n"
-                    if let data = errorMsg.data(using: .utf8) {
-                        terminal.writeOutput(data)
-                    }
-                    ConnectionSessionManager.shared.updateSessionState(sessionId, to: .failed(error.localizedDescription))
-                }
-            )
-        }
-    }
-
-    private func deferSessionStateUpdate(_ state: ConnectionState) {
-        Task { @MainActor [self] in
-            ConnectionSessionManager.shared.updateSessionState(sessionId, to: state)
-        }
-    }
-
-    // Default no-op implementations for hooks
-    func onShellStarted(terminal: GhosttyTerminalView) async {}
-    func onBeforeShellStart(cols: Int, rows: Int) async {}
-    func fallbackRoute() -> (client: SSHClient, shellId: UUID)? {
-        guard let session = ConnectionSessionManager.shared.sessions.first(where: { $0.id == sessionId }),
-              let client = ConnectionSessionManager.shared.sshClient(for: session),
-              let shellId = ConnectionSessionManager.shared.shellId(for: session) else {
-            return nil
-        }
-        return (client: client, shellId: shellId)
+    func attachSurface(
+        _ terminal: GhosttyTerminalView,
+        context: TerminalSurfaceAttachContext,
+        resetTerminal: @escaping @MainActor () -> Void = {}
+    ) {
+        sessionManager.requestSurfaceAttach(
+            sessionId: sessionId,
+            terminal: terminal,
+            context: context,
+            resetTerminal: resetTerminal
+        )
     }
 }
 
@@ -354,6 +52,7 @@ struct SSHTerminalWrapper: NSViewRepresentable {
     let server: Server
     let credentials: ServerCredentials
     let richPasteUIModel: TerminalRichPasteUIModel
+    let sessionManager: ConnectionSessionManager
     var isActive: Bool = true
     let onProcessExit: () -> Void
     let onReady: () -> Void
@@ -361,17 +60,22 @@ struct SSHTerminalWrapper: NSViewRepresentable {
 
     @EnvironmentObject var ghosttyApp: Ghostty.App
 
+    private var surfaceAttachContext: TerminalSurfaceAttachContext {
+        TerminalSurfaceAttachContext(
+            isAppActive: true,
+            isViewActive: isActive,
+            autoReconnectEnabled: (UserDefaults.standard.object(forKey: "sshAutoReconnect") as? Bool) ?? true
+        )
+    }
+
     func makeCoordinator() -> Coordinator {
-        // Use a dedicated SSH client per tab/session to avoid channel contention
-        // and startup races when many tabs are opened quickly.
-        let client = SSHClient()
         return Coordinator(
             server: server,
             credentials: credentials,
             sessionId: session.id,
             onProcessExit: onProcessExit,
-            sshClient: client,
-            richPasteUIModel: richPasteUIModel
+            richPasteUIModel: richPasteUIModel,
+            sessionManager: sessionManager
         )
     }
 
@@ -382,35 +86,38 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         }
 
         let coordinator = context.coordinator
+        sessionManager.configureRuntime(
+            for: session.id,
+            server: server,
+            credentials: credentials,
+            onProcessExit: onProcessExit
+        )
 
         // Check if terminal already exists for this session (reuse to save memory)
         // Each Ghostty surface uses ~50-100MB (font atlas, Metal textures, scrollback)
-        if let existingTerminal = ConnectionSessionManager.shared.getTerminal(for: session.id) {
-            // Mark coordinator as reusing existing terminal - don't cleanup on deinit
+        if let existingTerminal = sessionManager.getTerminal(for: session.id) {
+            // Mark coordinator as reusing existing terminal so dismantle keeps the surface alive.
             coordinator.isReusingTerminal = true
             coordinator.terminalView = existingTerminal
 
-            // Update resize callback to use session manager's registered SSH client
-            // (the old coordinator that created the connection is being deallocated)
-            existingTerminal.onResize = { [session] cols, rows in
-                guard cols > 0 && rows > 0 else { return }
-                Task {
-                    if let client = ConnectionSessionManager.shared.sshClient(for: session),
-                       let shellId = ConnectionSessionManager.shared.shellId(for: session) {
-                        try? await client.resize(cols: cols, rows: rows, for: shellId)
-                    }
-                }
+            // Update callbacks because the SwiftUI coordinator can be recreated
+            // while the application-owned runtime stays alive.
+            existingTerminal.onResize = { [sessionManager, session] cols, rows in
+                sessionManager.requestSessionResize(
+                    TerminalResizeRequestSize(cols: cols, rows: rows),
+                    for: session.id
+                )
             }
-            existingTerminal.onPwdChange = { [sessionId = session.id] rawDirectory in
-                ConnectionSessionManager.shared.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
+            existingTerminal.onPwdChange = { [sessionManager, sessionId = session.id] rawDirectory in
+                sessionManager.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
             }
-            existingTerminal.onTitleChange = { [sessionId = session.id] title in
-                ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
+            existingTerminal.onTitleChange = { [sessionManager, sessionId = session.id] title in
+                sessionManager.updateSessionTitle(sessionId, rawTitle: title)
             }
-            existingTerminal.onZoomAction = { [sessionId = session.id] action in
-                ConnectionSessionManager.shared.handleTerminalZoom(action, for: sessionId)
+            existingTerminal.onZoomAction = { [sessionManager, sessionId = session.id] action in
+                sessionManager.handleTerminalZoom(action, for: sessionId)
             }
-            existingTerminal.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
+            existingTerminal.applyPresentationOverrides(sessionManager.presentationOverrides(for: session.id))
             existingTerminal.writeCallback = { [weak coordinator] data in
                 coordinator?.sendToSSH(data)
             }
@@ -426,14 +133,13 @@ struct SSHTerminalWrapper: NSViewRepresentable {
             // Use async to avoid calling during view construction
             DispatchQueue.main.async {
                 onReady()
-                let shellMissing = ConnectionSessionManager.shared.shellId(for: session) == nil
-                let shellStartInFlight = ConnectionSessionManager.shared.isShellStartInFlight(for: session.id)
-                if shellMissing && !shellStartInFlight {
-                    if ConnectionSessionManager.shared.consumeTerminalReconnectReset(for: session.id) {
+                coordinator.attachSurface(
+                    existingTerminal,
+                    context: surfaceAttachContext,
+                    resetTerminal: {
                         existingTerminal.resetTerminalForReconnect()
                     }
-                    coordinator.startSSHConnection(terminal: existingTerminal)
-                }
+                )
             }
 
             return scrollView
@@ -455,33 +161,25 @@ struct SSHTerminalWrapper: NSViewRepresentable {
             onReady()
             // Start SSH connection after terminal is ready
             if let terminalView = terminalView {
-                coordinator?.startSSHConnection(terminal: terminalView)
+                coordinator?.attachSurface(terminalView, context: surfaceAttachContext)
             }
         }
         terminalView.onProcessExit = onProcessExit
-        terminalView.onPwdChange = { [sessionId = session.id] rawDirectory in
-            ConnectionSessionManager.shared.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
+        terminalView.onPwdChange = { [sessionManager, sessionId = session.id] rawDirectory in
+            sessionManager.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
         }
-        terminalView.onTitleChange = { [sessionId = session.id] title in
-            ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
+        terminalView.onTitleChange = { [sessionManager, sessionId = session.id] title in
+            sessionManager.updateSessionTitle(sessionId, rawTitle: title)
         }
-        terminalView.onZoomAction = { [sessionId = session.id] action in
-            ConnectionSessionManager.shared.handleTerminalZoom(action, for: sessionId)
+        terminalView.onZoomAction = { [sessionManager, sessionId = session.id] action in
+            sessionManager.handleTerminalZoom(action, for: sessionId)
         }
-        terminalView.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
+        terminalView.applyPresentationOverrides(sessionManager.presentationOverrides(for: session.id))
 
         // Store terminal reference in coordinator and register with session manager
         coordinator.terminalView = terminalView
         coordinator.installRichPasteInterception(on: terminalView)
-        ConnectionSessionManager.shared.registerTerminal(terminalView, for: session.id)
-
-        // Register shell cancel handler so closeSession can cancel the shell task
-        ConnectionSessionManager.shared.registerShellCancelHandler({ [weak coordinator] mode in
-            await coordinator?.cancelShell(mode: mode)
-        }, for: session.id)
-        ConnectionSessionManager.shared.registerShellSuspendHandler({ [weak coordinator] in
-            coordinator?.suspendShell()
-        }, for: session.id)
+        sessionManager.registerTerminal(terminalView, for: session.id)
 
         // Setup write callback to send keyboard input to SSH
         terminalView.writeCallback = { [weak coordinator] data in
@@ -489,8 +187,11 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         }
 
         // Setup resize callback to notify SSH of terminal size changes
-        terminalView.onResize = { [weak coordinator] cols, rows in
-            coordinator?.handleResize(cols: cols, rows: rows)
+        terminalView.onResize = { [sessionManager, sessionId = session.id] cols, rows in
+            sessionManager.requestSessionResize(
+                TerminalResizeRequestSize(cols: cols, rows: rows),
+                for: sessionId
+            )
         }
 
         // Wrap in scroll view
@@ -504,46 +205,60 @@ struct SSHTerminalWrapper: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         // Check if session still exists - if not, cleanup and return
-        let sessionExists = ConnectionSessionManager.shared.sessions.contains { $0.id == session.id }
+        let sessionExists = sessionManager.sessions.contains { $0.id == session.id }
         if !sessionExists {
-            ConnectionSessionManager.shared.trackShellTeardownForClosedSession(
+            sessionManager.handleClosedSessionSurfaceTeardown(
                 sessionId: session.id,
                 serverId: session.serverId,
                 reason: "mac update missing session"
-            ) { [coordinator = context.coordinator] in
-                await coordinator.cancelShell(mode: .fullDisconnect)
-            }
+            )
             return
         }
 
         if let scrollView = nsView as? TerminalScrollView {
             scrollView.shouldOwnFirstResponder = isActive
             let terminalView = scrollView.surfaceView
-            if terminalView.surfacePresentationOverrides != ConnectionSessionManager.shared.presentationOverrides(for: session.id) {
-                terminalView.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
+            if terminalView.surfacePresentationOverrides != sessionManager.presentationOverrides(for: session.id) {
+                terminalView.applyPresentationOverrides(sessionManager.presentationOverrides(for: session.id))
             }
         }
     }
 
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        let sessionStillExists = coordinator.sessionManager.sessions.contains { $0.id == coordinator.sessionId }
+
+        if sessionStillExists {
+            if let scrollView = nsView as? TerminalScrollView {
+                scrollView.surfaceView.pauseRendering()
+            }
+            coordinator.isReusingTerminal = true
+            coordinator.sessionManager.detachSurfaceForViewDisappeared(from: coordinator.sessionId)
+            return
+        }
+
+        coordinator.terminalView = nil
+        coordinator.sessionManager.handleClosedSessionSurfaceTeardown(
+            sessionId: coordinator.sessionId,
+            serverId: coordinator.server.id,
+            reason: "mac dismantle closed session"
+        )
+    }
+
     // MARK: - Coordinator
 
+    @MainActor
     class Coordinator: SSHTerminalCoordinator {
         let server: Server
         let credentials: ServerCredentials
         let sessionId: UUID
         let onProcessExit: () -> Void
+        let sessionManager: ConnectionSessionManager
         weak var terminalView: GhosttyTerminalView?
 
-        let sshClient: SSHClient
-        var shellId: UUID?
-        var shellTask: Task<Void, Never>?
         private let richPasteRuntime: TerminalRichPasteRuntime
         let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "SSHTerminal")
 
-        /// Last known terminal size to detect changes
-        private var lastSize: (cols: Int, rows: Int) = (0, 0)
-
-        /// If true, this coordinator is reusing an existing terminal and should NOT cleanup on deinit
+        /// If true, this coordinator is reusing an existing terminal and should keep the surface alive.
         var isReusingTerminal = false
 
         init(
@@ -551,97 +266,24 @@ struct SSHTerminalWrapper: NSViewRepresentable {
             credentials: ServerCredentials,
             sessionId: UUID,
             onProcessExit: @escaping () -> Void,
-            sshClient: SSHClient,
-            richPasteUIModel: TerminalRichPasteUIModel
+            richPasteUIModel: TerminalRichPasteUIModel,
+            sessionManager: ConnectionSessionManager
         ) {
             self.server = server
             self.credentials = credentials
             self.sessionId = sessionId
             self.onProcessExit = onProcessExit
-            self.sshClient = sshClient
+            self.sessionManager = sessionManager
             self.richPasteRuntime = .connectionSession(
                 sessionId: sessionId,
-                sshClient: sshClient,
-                uiModel: richPasteUIModel
+                uiModel: richPasteUIModel,
+                sessionManager: sessionManager
             )
         }
 
         @MainActor
         func installRichPasteInterception(on terminal: GhosttyTerminalView) {
             richPasteRuntime.install(on: terminal)
-        }
-
-        /// Handle terminal resize notification from GhosttyTerminalView
-        func handleResize(cols: Int, rows: Int) {
-            guard cols > 0 && rows > 0 else { return }
-            guard cols != lastSize.cols || rows != lastSize.rows else { return }
-            guard let shellId else { return }
-
-            lastSize = (cols, rows)
-            logger.info("Terminal resized to \(cols)x\(rows)")
-
-            Task {
-                do {
-                    try await sshClient.resize(cols: cols, rows: rows, for: shellId)
-                } catch {
-                    logger.warning("Failed to resize PTY: \(error.localizedDescription)")
-                }
-            }
-        }
-
-        // MARK: - SSHTerminalCoordinator hooks
-
-        func onBeforeShellStart(cols: Int, rows: Int) async {
-            // Store initial size to avoid redundant resize on first update
-            await MainActor.run {
-                self.lastSize = (cols, rows)
-            }
-        }
-
-        func onShellStarted(terminal: GhosttyTerminalView) async {
-            await applyWorkingDirectoryIfNeeded()
-        }
-
-        private func applyWorkingDirectoryIfNeeded() async {
-            let cwd: String? = await MainActor.run {
-                guard ConnectionSessionManager.shared.shouldApplyWorkingDirectory(for: sessionId) else { return nil }
-                return ConnectionSessionManager.shared.workingDirectory(for: sessionId)
-            }
-            guard let cwd else { return }
-            let environment = await sshClient.remoteEnvironment()
-            guard environment.shellProfile.family != .unknown else { return }
-            guard let payload = RemoteTerminalBootstrap.directoryChangeCommand(for: cwd, environment: environment).data(using: .utf8) else { return }
-            if let shellId {
-                try? await sshClient.write(payload, to: shellId)
-            }
-        }
-
-        deinit {
-            // Don't cleanup if we're just reusing an existing terminal (e.g., switching to split view)
-            // isReusingTerminal is set when we find an existing terminal in makeNSView
-            guard !isReusingTerminal else { return }
-
-            // Check if terminal view is still alive (session manager holds strong reference)
-            // If it is, the terminal is being reused by another view (e.g., split view)
-            guard terminalView == nil else { return }
-
-            shellTask?.cancel()
-            let shellId = self.shellId
-            let sshClient = self.sshClient
-            let sessionId = self.sessionId
-            let serverId = self.server.id
-            Task { @MainActor in
-                ConnectionSessionManager.shared.trackShellTeardownForClosedSession(
-                    sessionId: sessionId,
-                    serverId: serverId,
-                    reason: "mac coordinator deinit"
-                ) {
-                    if let shellId {
-                        await sshClient.closeShell(shellId)
-                    }
-                    await sshClient.disconnect()
-                }
-            }
         }
     }
 }
@@ -658,6 +300,7 @@ struct SSHTerminalWrapper: View {
     let server: Server
     let credentials: ServerCredentials
     let richPasteUIModel: TerminalRichPasteUIModel
+    let sessionManager: ConnectionSessionManager
     var isActive: Bool = true
     var shouldPreserveKeyboardDuringReconnect: Bool = false
     let onProcessExit: () -> Void
@@ -671,6 +314,7 @@ struct SSHTerminalWrapper: View {
                 server: server,
                 credentials: credentials,
                 richPasteUIModel: richPasteUIModel,
+                sessionManager: sessionManager,
                 size: geo.size,
                 isActive: isActive,
                 shouldPreserveKeyboardDuringReconnect: shouldPreserveKeyboardDuringReconnect,
@@ -688,6 +332,7 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
     let server: Server
     let credentials: ServerCredentials
     let richPasteUIModel: TerminalRichPasteUIModel
+    let sessionManager: ConnectionSessionManager
     let size: CGSize
     var isActive: Bool = true
     var shouldPreserveKeyboardDuringReconnect: Bool = false
@@ -698,17 +343,22 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
     @EnvironmentObject var ghosttyApp: Ghostty.App
     @Environment(\.scenePhase) private var scenePhase
 
+    private var surfaceAttachContext: TerminalSurfaceAttachContext {
+        TerminalSurfaceAttachContext(
+            isAppActive: scenePhase == .active,
+            isViewActive: isActive,
+            autoReconnectEnabled: (UserDefaults.standard.object(forKey: "sshAutoReconnect") as? Bool) ?? true
+        )
+    }
+
     func makeCoordinator() -> Coordinator {
-        // Use a dedicated SSH client per tab/session to avoid channel contention
-        // and startup races when many tabs are opened quickly.
-        let client = SSHClient()
         return Coordinator(
             server: server,
             credentials: credentials,
             sessionId: session.id,
             onProcessExit: onProcessExit,
-            sshClient: client,
-            richPasteUIModel: richPasteUIModel
+            richPasteUIModel: richPasteUIModel,
+            sessionManager: sessionManager
         )
     }
 
@@ -718,41 +368,44 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         }
 
         let coordinator = context.coordinator
+        sessionManager.configureRuntime(
+            for: session.id,
+            server: server,
+            credentials: credentials,
+            onProcessExit: onProcessExit
+        )
 
         // Check if terminal already exists for this session (reuse to save memory)
-        if let existingTerminal = ConnectionSessionManager.shared.peekTerminal(for: session.id) {
-            ConnectionSessionManager.shared.markTerminalUsed(for: session.id)
+        if let existingTerminal = sessionManager.peekTerminal(for: session.id) {
+            sessionManager.markTerminalUsed(for: session.id)
             coordinator.terminalView = existingTerminal
             coordinator.isTerminalReady = true
             coordinator.preserveSession = true
             existingTerminal.onVoiceButtonTapped = onVoiceTrigger
             existingTerminal.onProcessExit = onProcessExit
-            existingTerminal.onPwdChange = { [sessionId = session.id] rawDirectory in
+            existingTerminal.onPwdChange = { [sessionManager, sessionId = session.id] rawDirectory in
                 DispatchQueue.main.async {
-                    ConnectionSessionManager.shared.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
+                    sessionManager.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
                 }
             }
-            existingTerminal.onTitleChange = { [sessionId = session.id] title in
-                ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
+            existingTerminal.onTitleChange = { [sessionManager, sessionId = session.id] title in
+                sessionManager.updateSessionTitle(sessionId, rawTitle: title)
             }
-            existingTerminal.onZoomAction = { [sessionId = session.id] action in
-                ConnectionSessionManager.shared.handleTerminalZoom(action, for: sessionId)
+            existingTerminal.onZoomAction = { [sessionManager, sessionId = session.id] action in
+                sessionManager.handleTerminalZoom(action, for: sessionId)
             }
-            existingTerminal.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
+            existingTerminal.applyPresentationOverrides(sessionManager.presentationOverrides(for: session.id))
 
-            // Route through coordinator to preserve write ordering and transport behavior.
+            // Route UI input intent through the application-owned runtime.
             existingTerminal.writeCallback = { [weak coordinator] data in
                 coordinator?.sendToSSH(data)
             }
             coordinator.installRichPasteInterception(on: existingTerminal)
-            existingTerminal.onResize = { [session] cols, rows in
-                guard cols > 0 && rows > 0 else { return }
-                Task {
-                    if let sshClient = ConnectionSessionManager.shared.sshClient(for: session),
-                       let shellId = ConnectionSessionManager.shared.shellId(for: session) {
-                        try? await sshClient.resize(cols: cols, rows: rows, for: shellId)
-                    }
-                }
+            existingTerminal.onResize = { [sessionManager, session] cols, rows in
+                sessionManager.requestSessionResize(
+                    TerminalResizeRequestSize(cols: cols, rows: rows),
+                    for: session.id
+                )
             }
 
             if size.width > 0 && size.height > 0 {
@@ -763,17 +416,13 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
 
             DispatchQueue.main.async {
                 onReady()
-                let shellMissing = ConnectionSessionManager.shared.shellId(for: session) == nil
-                let shellStartInFlight = ConnectionSessionManager.shared.isShellStartInFlight(for: session.id)
-                if shellMissing,
-                   !shellStartInFlight,
-                   UIApplication.shared.applicationState == .active,
-                   !ConnectionSessionManager.shared.isSuspendingForBackground {
-                    if ConnectionSessionManager.shared.consumeTerminalReconnectReset(for: session.id) {
+                coordinator.attachSurface(
+                    existingTerminal,
+                    context: surfaceAttachContext,
+                    resetTerminal: {
                         existingTerminal.resetTerminalForReconnect()
                     }
-                    coordinator.startSSHConnection(terminal: existingTerminal)
-                }
+                )
             }
             return terminalHostView(for: existingTerminal)
         }
@@ -792,49 +441,38 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             coordinator?.isTerminalReady = true
             DispatchQueue.main.async {
                 onReady()
-                if let terminalView = terminalView,
-                   UIApplication.shared.applicationState == .active,
-                   !ConnectionSessionManager.shared.isSuspendingForBackground {
-                    coordinator?.startSSHConnection(terminal: terminalView)
+                if let terminalView = terminalView {
+                    coordinator?.attachSurface(terminalView, context: surfaceAttachContext)
                 }
             }
         }
         terminalView.onProcessExit = onProcessExit
         terminalView.onVoiceButtonTapped = onVoiceTrigger
-        terminalView.onPwdChange = { [sessionId = session.id] rawDirectory in
+        terminalView.onPwdChange = { [sessionManager, sessionId = session.id] rawDirectory in
             DispatchQueue.main.async {
-                ConnectionSessionManager.shared.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
+                sessionManager.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
             }
         }
-        terminalView.onTitleChange = { [sessionId = session.id] title in
-            ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
+        terminalView.onTitleChange = { [sessionManager, sessionId = session.id] title in
+            sessionManager.updateSessionTitle(sessionId, rawTitle: title)
         }
-        terminalView.onZoomAction = { [sessionId = session.id] action in
-            ConnectionSessionManager.shared.handleTerminalZoom(action, for: sessionId)
+        terminalView.onZoomAction = { [sessionManager, sessionId = session.id] action in
+            sessionManager.handleTerminalZoom(action, for: sessionId)
         }
-        terminalView.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
+        terminalView.applyPresentationOverrides(sessionManager.presentationOverrides(for: session.id))
 
         coordinator.terminalView = terminalView
         coordinator.installRichPasteInterception(on: terminalView)
-        ConnectionSessionManager.shared.registerTerminal(terminalView, for: session.id)
-        ConnectionSessionManager.shared.registerShellCancelHandler({ [weak coordinator] mode in
-            await coordinator?.cancelShell(mode: mode)
-        }, for: session.id)
-        ConnectionSessionManager.shared.registerShellSuspendHandler({ [weak coordinator] in
-            coordinator?.suspendShell()
-        }, for: session.id)
+        sessionManager.registerTerminal(terminalView, for: session.id)
 
         terminalView.writeCallback = { [weak coordinator] data in
             coordinator?.sendToSSH(data)
         }
-        terminalView.onResize = { [session] cols, rows in
-            guard cols > 0 && rows > 0 else { return }
-            Task {
-                if let sshClient = ConnectionSessionManager.shared.sshClient(for: session),
-                   let shellId = ConnectionSessionManager.shared.shellId(for: session) {
-                    try? await sshClient.resize(cols: cols, rows: rows, for: shellId)
-                }
-            }
+        terminalView.onResize = { [sessionManager, session] cols, rows in
+            sessionManager.requestSessionResize(
+                TerminalResizeRequestSize(cols: cols, rows: rows),
+                for: session.id
+            )
         }
 
         coordinator.lastReportedSize = initialSize
@@ -855,16 +493,14 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         }
 
         // Check if session still exists - if not, cleanup and return
-        let sessionExists = ConnectionSessionManager.shared.sessions.contains { $0.id == session.id }
+        let sessionExists = sessionManager.sessions.contains { $0.id == session.id }
         if !sessionExists {
             // Session was closed externally, cleanup terminal
-            ConnectionSessionManager.shared.trackShellTeardownForClosedSession(
+            sessionManager.handleClosedSessionSurfaceTeardown(
                 sessionId: session.id,
                 serverId: session.serverId,
                 reason: "ios update missing session"
-            ) { [coordinator = context.coordinator] in
-                await coordinator.cancelShell(mode: .fullDisconnect)
-            }
+            )
             terminalView.writeCallback = nil
             terminalView.onReady = nil
             terminalView.onProcessExit = nil
@@ -875,8 +511,8 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         let shouldRenderTerminal = isActive && scenePhase == .active
 
         terminalView.onVoiceButtonTapped = onVoiceTrigger
-        if terminalView.surfacePresentationOverrides != ConnectionSessionManager.shared.presentationOverrides(for: session.id) {
-            terminalView.applyPresentationOverrides(ConnectionSessionManager.shared.presentationOverrides(for: session.id))
+        if terminalView.surfacePresentationOverrides != sessionManager.presentationOverrides(for: session.id) {
+            terminalView.applyPresentationOverrides(sessionManager.presentationOverrides(for: session.id))
         }
         if size.width > 0, size.height > 0, size != context.coordinator.lastReportedSize {
             context.coordinator.lastReportedSize = size
@@ -895,43 +531,20 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         }
         context.coordinator.wasActive = shouldRenderTerminal
 
-        let autoReconnectEnabled = (UserDefaults.standard.object(forKey: "sshAutoReconnect") as? Bool) ?? true
-        let shellMissing = ConnectionSessionManager.shared.shellId(for: session) == nil
-        let shellStartInFlight = ConnectionSessionManager.shared.isShellStartInFlight(for: session.id)
         let shouldRestoreKeyboardFocus =
             shouldPreserveKeyboardDuringReconnect
             && session.connectionState.isConnecting
             && terminalView.shouldRestoreKeyboardFocusOnReconnect
         let shouldKeepExistingKeyboardFocus = terminalView.isFirstResponder && shouldRestoreKeyboardFocus
         terminalView.acceptsTerminalInput = session.connectionState.isConnected
-        let shouldStartSSHConnection: Bool = {
-            switch session.connectionState {
-            case .connecting, .reconnecting, .connected:
-                return true
-            case .disconnected:
-                return isActive && autoReconnectEnabled
-            case .failed, .idle:
-                return false
-            }
-        }()
-        if context.coordinator.isTerminalReady
-            && shellMissing
-            && context.coordinator.shellTask == nil
-            && !shellStartInFlight
-            && shouldStartSSHConnection
-            && scenePhase == .active
-            && !ConnectionSessionManager.shared.isSuspendingForBackground {
-            let coordinator = context.coordinator
-            DispatchQueue.main.async { [weak terminalView] in
-                guard let terminalView else { return }
-                guard ConnectionSessionManager.shared.sessions.contains(where: { $0.id == session.id }) else { return }
-                guard ConnectionSessionManager.shared.shellId(for: session) == nil else { return }
-                guard !ConnectionSessionManager.shared.isShellStartInFlight(for: session.id) else { return }
-                if ConnectionSessionManager.shared.consumeTerminalReconnectReset(for: session.id) {
+        if context.coordinator.isTerminalReady {
+            context.coordinator.attachSurface(
+                terminalView,
+                context: surfaceAttachContext,
+                resetTerminal: {
                     terminalView.resetTerminalForReconnect()
                 }
-                coordinator.startSSHConnection(terminal: terminalView)
-            }
+            )
         }
 
         // Keep the terminal from reclaiming focus while an overlay (for example
@@ -961,7 +574,7 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
 
         // Check if session still exists - if it does, user just navigated away
         // Keep terminal alive for when they come back
-        let sessionStillExists = ConnectionSessionManager.shared.sessions.contains { $0.id == coordinator.sessionId }
+        let sessionStillExists = coordinator.sessionManager.sessions.contains { $0.id == coordinator.sessionId }
 
         if sessionStillExists {
             // Session still active - user just navigated away
@@ -969,26 +582,22 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             terminalView.pauseRendering()
             _ = terminalView.resignFirstResponder()
 
-            // Mark coordinator to not cleanup in deinit
+            // Mark coordinator so dismantle keeps the surface alive.
             // IMPORTANT: Do NOT set terminalView = nil here!
             // The SSH output loop checks terminalView != nil to continue running.
             // Setting it to nil would break the loop and close the connection.
             coordinator.preserveSession = true
+            coordinator.sessionManager.detachSurfaceForViewDisappeared(from: coordinator.sessionId)
             return
         }
 
         // Session was closed - full cleanup
-        ConnectionSessionManager.shared.unregisterShellCancelHandler(for: coordinator.sessionId)
-        ConnectionSessionManager.shared.unregisterShellSuspendHandler(for: coordinator.sessionId)
         coordinator.terminalView = nil
-        ConnectionSessionManager.shared.unregisterTerminal(for: coordinator.sessionId)
-        ConnectionSessionManager.shared.trackShellTeardownForClosedSession(
+        coordinator.sessionManager.handleClosedSessionSurfaceTeardown(
             sessionId: coordinator.sessionId,
             serverId: coordinator.server.id,
             reason: "ios dismantle closed session"
-        ) { [coordinator] in
-            await coordinator.cancelShell(mode: .fullDisconnect)
-        }
+        )
     }
 
     private func terminalHostView(for terminalView: GhosttyTerminalView) -> UIView {
@@ -1012,23 +621,22 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
 
     // MARK: - Coordinator
 
+    @MainActor
     class Coordinator: SSHTerminalCoordinator {
         let server: Server
         let credentials: ServerCredentials
         let sessionId: UUID
         let onProcessExit: () -> Void
+        let sessionManager: ConnectionSessionManager
         weak var terminalView: GhosttyTerminalView?
 
-        let sshClient: SSHClient
-        var shellId: UUID?
-        var shellTask: Task<Void, Never>?
         private let richPasteRuntime: TerminalRichPasteRuntime
         let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "SSHTerminal")
 
         /// Tracks whether the terminal surface has been created and is ready for interaction
         var isTerminalReady = false
 
-        /// If true, session is still active and we shouldn't cleanup on deinit (user just navigated away)
+        /// If true, session is still active and dismantle should keep the surface alive.
         var preserveSession = false
         var wasActive = false
         var lastReportedSize: CGSize = .zero
@@ -1038,71 +646,24 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             credentials: ServerCredentials,
             sessionId: UUID,
             onProcessExit: @escaping () -> Void,
-            sshClient: SSHClient,
-            richPasteUIModel: TerminalRichPasteUIModel
+            richPasteUIModel: TerminalRichPasteUIModel,
+            sessionManager: ConnectionSessionManager
         ) {
             self.server = server
             self.credentials = credentials
             self.sessionId = sessionId
             self.onProcessExit = onProcessExit
-            self.sshClient = sshClient
+            self.sessionManager = sessionManager
             self.richPasteRuntime = .connectionSession(
                 sessionId: sessionId,
-                sshClient: sshClient,
-                uiModel: richPasteUIModel
+                uiModel: richPasteUIModel,
+                sessionManager: sessionManager
             )
         }
 
         @MainActor
         func installRichPasteInterception(on terminal: GhosttyTerminalView) {
             richPasteRuntime.install(on: terminal)
-        }
-
-        // MARK: - SSHTerminalCoordinator hooks
-
-        func onShellStarted(terminal: GhosttyTerminalView) async {
-            await applyWorkingDirectoryIfNeeded()
-            await MainActor.run {
-                terminal.forceRefresh()
-            }
-        }
-
-        private func applyWorkingDirectoryIfNeeded() async {
-            let cwd: String? = await MainActor.run {
-                guard ConnectionSessionManager.shared.shouldApplyWorkingDirectory(for: sessionId) else { return nil }
-                return ConnectionSessionManager.shared.workingDirectory(for: sessionId)
-            }
-            guard let cwd else { return }
-            let environment = await sshClient.remoteEnvironment()
-            guard environment.shellProfile.family != .unknown else { return }
-            guard let payload = RemoteTerminalBootstrap.directoryChangeCommand(for: cwd, environment: environment).data(using: .utf8) else { return }
-            if let shellId {
-                try? await sshClient.write(payload, to: shellId)
-            }
-        }
-
-        deinit {
-            // Don't cleanup if session is still active (user just navigated away)
-            guard !preserveSession else { return }
-            shellTask?.cancel()
-            let shellId = self.shellId
-            let sshClient = self.sshClient
-            let terminalView = self.terminalView
-            let sessionId = self.sessionId
-            let serverId = self.server.id
-            Task { @MainActor in
-                ConnectionSessionManager.shared.trackShellTeardownForClosedSession(
-                    sessionId: sessionId,
-                    serverId: serverId,
-                    reason: "ios coordinator deinit"
-                ) {
-                    if let shellId {
-                        await sshClient.closeShell(shellId)
-                    }
-                    await sshClient.disconnect()
-                    terminalView?.cleanup()
-                }
-            }
         }
     }
 }

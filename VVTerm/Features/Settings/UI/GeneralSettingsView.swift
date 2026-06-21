@@ -365,9 +365,7 @@ struct GeneralSettingsView: View {
                     isOn: Binding(
                         get: { appLockManager.fullAppLockEnabled },
                         set: { newValue in
-                            Task {
-                                await appLockManager.requestSetFullAppLockEnabled(newValue)
-                            }
+                            appLockManager.requestFullAppLockChange(newValue)
                         }
                     )
                 )

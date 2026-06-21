@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect remote-file permission parsing and display rules. They use
+// pure permission fixtures and no SFTP calls; update only when permission
+// semantics intentionally change.
+
 struct RemoteFilePermissionTests {
     @Test
     func draftUpdatesBitsAndSummaries() {
@@ -9,9 +14,9 @@ struct RemoteFilePermissionTests {
         draft.set(true, capability: .execute, for: .owner)
         draft.set(false, capability: .read, for: .group)
 
-        #expect(draft.accessBits == 0o740)
-        #expect(draft.octalSummary == "740")
-        #expect(draft.symbolicSummary == "rwxr-----")
+        #expect(draft.accessBits == 0o700)
+        #expect(draft.octalSummary == "700")
+        #expect(draft.symbolicSummary == "rwx------")
     }
 
     @Test

@@ -14,8 +14,9 @@ struct TranscriptionSettingsView: View {
     @AppStorage(TranscriptionSettingsKeys.language) private var language = TranscriptionSettingsDefaults.language
     @AppStorage("terminalVoiceButtonEnabled") private var terminalVoiceButtonEnabled = true
 
-    @StateObject private var whisperManager: MLXModelManager
-    @StateObject private var parakeetManager: MLXModelManager
+    @ObservedObject private var modelDownloads: VoiceModelDownloadStore
+    @ObservedObject private var whisperManager: MLXModelManager
+    @ObservedObject private var parakeetManager: MLXModelManager
 
     private let mlxAvailable = MLXAudioSupport.isSupported
 
@@ -32,11 +33,10 @@ struct TranscriptionSettingsView: View {
         ("auto", String(localized: "Auto-detect"))
     ]
 
-    init() {
-        let whisper = MLXModelManager(kind: .whisper, modelId: Self.resolveWhisperModelId())
-        let parakeet = MLXModelManager(kind: .parakeetTDT, modelId: Self.resolveParakeetModelId())
-        _whisperManager = StateObject(wrappedValue: whisper)
-        _parakeetManager = StateObject(wrappedValue: parakeet)
+    init(modelDownloads: VoiceModelDownloadStore = .shared) {
+        _modelDownloads = ObservedObject(wrappedValue: modelDownloads)
+        _whisperManager = ObservedObject(wrappedValue: modelDownloads.whisperManager)
+        _parakeetManager = ObservedObject(wrappedValue: modelDownloads.parakeetManager)
     }
 
     var body: some View {
@@ -89,6 +89,7 @@ struct TranscriptionSettingsView: View {
             if mlxAvailable && provider == TranscriptionProvider.mlxWhisper.rawValue {
                 modelSection(
                     manager: whisperManager,
+                    kind: .whisper,
                     modelBinding: $whisperModelId,
                     models: [
                         ("mlx-community/whisper-tiny-mlx", String(localized: "Tiny"), "~39 MB"),
@@ -104,6 +105,7 @@ struct TranscriptionSettingsView: View {
             if mlxAvailable && provider == TranscriptionProvider.mlxParakeet.rawValue {
                 modelSection(
                     manager: parakeetManager,
+                    kind: .parakeetTDT,
                     modelBinding: $parakeetModelId,
                     models: [
                         ("mlx-community/parakeet-tdt-0.6b-v2", String(localized: "Parakeet TDT 0.6B"), "~600 MB")
@@ -118,8 +120,9 @@ struct TranscriptionSettingsView: View {
         .formStyle(.grouped)
         .onAppear {
             migrateLegacySettings()
-            whisperManager.refreshStatus()
-            parakeetManager.refreshStatus()
+            modelDownloads.setModelId(whisperModelId, for: .whisper)
+            modelDownloads.setModelId(parakeetModelId, for: .parakeetTDT)
+            modelDownloads.refreshStatuses()
         }
     }
 
@@ -139,6 +142,7 @@ struct TranscriptionSettingsView: View {
     @ViewBuilder
     private func modelSection(
         manager: MLXModelManager,
+        kind: MLXModelKind,
         modelBinding: Binding<String>,
         models: [(String, String, String)],
         footnote: String? = nil
@@ -157,8 +161,7 @@ struct TranscriptionSettingsView: View {
                 }
             }
             .onChangeCompat(of: modelBinding.wrappedValue) { newValue in
-                manager.modelId = newValue
-                manager.refreshStatus()
+                modelDownloads.setModelId(newValue, for: kind)
             }
 
             modelStatusRow(manager: manager)
@@ -186,7 +189,7 @@ struct TranscriptionSettingsView: View {
 
             if manager.isModelAvailable {
                 Button("Delete Model", role: .destructive) {
-                    manager.removeModel()
+                    modelDownloads.removeModel(for: kind)
                 }
                 .padding(.top, 4)
             }
@@ -213,7 +216,7 @@ struct TranscriptionSettingsView: View {
             switch manager.state {
             case .idle:
                 Button("Download") {
-                    Task { await manager.downloadModel() }
+                    modelDownloads.downloadModel(for: manager.kind)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
@@ -268,38 +271,12 @@ struct TranscriptionSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     Button("Clear All Storage", role: .destructive) {
-                        MLXModelManager.clearAllStorage()
-                        whisperManager.refreshStatus()
-                        parakeetManager.refreshStatus()
+                        modelDownloads.clearAllStorage()
                     }
                 }
             }
         }
         #endif
-    }
-
-    private static func resolveWhisperModelId() -> String {
-        let defaults = UserDefaults.standard
-        if let current = defaults.string(forKey: TranscriptionSettingsKeys.mlxWhisperModelId) {
-            return current
-        }
-        if let legacy = defaults.string(forKey: "whisperModelId") {
-            defaults.set(legacy, forKey: TranscriptionSettingsKeys.mlxWhisperModelId)
-            return legacy
-        }
-        return TranscriptionSettingsDefaults.mlxWhisperModelId
-    }
-
-    private static func resolveParakeetModelId() -> String {
-        let defaults = UserDefaults.standard
-        if let current = defaults.string(forKey: TranscriptionSettingsKeys.mlxParakeetModelId) {
-            return current
-        }
-        if let legacy = defaults.string(forKey: "parakeetModelId") {
-            defaults.set(legacy, forKey: TranscriptionSettingsKeys.mlxParakeetModelId)
-            return legacy
-        }
-        return TranscriptionSettingsDefaults.mlxParakeetModelId
     }
 
     private func migrateLegacySettings() {

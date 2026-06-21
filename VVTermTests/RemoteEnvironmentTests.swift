@@ -1,6 +1,11 @@
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect remote environment parsing and platform classification used
+// by terminal, stats, and file features. They use fixture command output only;
+// update only when supported remote platform semantics intentionally change.
+
 struct RemoteEnvironmentTests {
     @Test
     func windowsPlatformDetectionRecognizesCmdVerOutput() {

@@ -1,18 +1,8 @@
 import Foundation
 
-enum IOSTerminalConnectionState: Equatable {
-    case disconnected
-    case connecting
-    case connected
-    case reconnecting
-    case failed
-    case idle
-}
-
 struct IOSTerminalSessionSnapshot: Equatable, Identifiable {
     let id: UUID
     let serverId: UUID
-    let connectionState: IOSTerminalConnectionState
 }
 
 enum IOSTerminalPreparationAction: Equatable {
@@ -67,6 +57,7 @@ enum IOSTerminalViewPolicy {
     static func foregroundReconnectAction(
         selectedViewId: String,
         selectedSession: IOSTerminalSessionSnapshot?,
+        selectedSessionHasLiveRuntime: Bool,
         refreshTerminal: Bool,
         autoReconnectEnabled: Bool,
         isSuspendingForBackground: Bool
@@ -76,7 +67,7 @@ enum IOSTerminalViewPolicy {
 
         let canReconnect = autoReconnectEnabled
             && !isSuspendingForBackground
-            && selectedSession.connectionState.shouldReconnectOnForeground
+            && !selectedSessionHasLiveRuntime
 
         return IOSTerminalForegroundReconnectAction(
             sessionId: selectedSession.id,
@@ -105,16 +96,5 @@ enum IOSTerminalViewPolicy {
             requestedTerminalDismissal: false,
             shouldCallBack: false
         )
-    }
-}
-
-private extension IOSTerminalConnectionState {
-    var shouldReconnectOnForeground: Bool {
-        switch self {
-        case .disconnected, .failed:
-            return true
-        case .connecting, .connected, .reconnecting, .idle:
-            return false
-        }
     }
 }

@@ -1,6 +1,11 @@
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect terminal multiplexer domain rules such as tmux/mosh mode
+// selection and value normalization. They use pure model values; update only
+// when supported multiplexer semantics intentionally change.
+
 struct TerminalMultiplexerTests {
     @Test func legacyTrueMapsToTmux() {
         #expect(TerminalMultiplexer.fromLegacyTmuxEnabled(true) == .tmux)

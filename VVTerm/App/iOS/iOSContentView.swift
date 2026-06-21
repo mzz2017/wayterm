@@ -53,32 +53,27 @@ struct iOSContentView: View {
                 selectedEnvironment: $selectedEnvironment,
                 showingTerminal: $showingTerminal,
                 onServerSelected: { server in
-                    Task {
-                        await MainActor.run {
-                            selectedServer = server
-                            connectingServer = server
-                            isConnecting = true
-                            showingTerminal = true
+                    selectedServer = server
+                    connectingServer = server
+                    isConnecting = true
+                    showingTerminal = true
+                    sessionManager.selectedViewByServer[server.id] = preferredConnectViewId
+
+                    sessionManager.requestConnectionOpen(
+                        to: server,
+                        forceNew: IOSServerListPolicy.shouldForceNewConnectionFromServerList,
+                        onOpened: { session in
                             sessionManager.selectedViewByServer[server.id] = preferredConnectViewId
-                        }
+                            sessionManager.selectedSessionId = session.id
+                            isConnecting = false
+                            connectingServer = nil
+                        },
+                        onFailed: { error in
+                            isConnecting = false
+                            connectingServer = nil
+                            showingTerminal = false
 
-                        do {
-                            let session = try await sessionManager.openConnection(
-                                to: server,
-                                forceNew: IOSServerListPolicy.shouldForceNewConnectionFromServerList
-                            )
-                            await MainActor.run {
-                                sessionManager.selectedViewByServer[server.id] = preferredConnectViewId
-                                sessionManager.selectedSessionId = session.id
-                                isConnecting = false
-                                connectingServer = nil
-                            }
-                        } catch let error as VVTermError {
-                            await MainActor.run {
-                                isConnecting = false
-                                connectingServer = nil
-                                showingTerminal = false
-
+                            if let error = error as? VVTermError {
                                 switch error {
                                 case .proRequired:
                                     showingTabLimitAlert = true
@@ -88,14 +83,8 @@ struct iOSContentView: View {
                                     break
                                 }
                             }
-                        } catch {
-                            await MainActor.run {
-                                isConnecting = false
-                                connectingServer = nil
-                                showingTerminal = false
-                            }
                         }
-                    }
+                    )
                 }
             )
             .navigationDestination(isPresented: $showingTerminal) {
@@ -363,22 +352,17 @@ struct iOSServerListView: View {
                     environmentToDelete = nil
                     return
                 }
-                Task {
-                    let updatedWorkspace = try? await serverManager.deleteEnvironment(
-                        environment,
-                        in: workspace,
-                        fallback: .production
-                    )
-                    await MainActor.run {
-                        if let updatedWorkspace {
-                            selectedWorkspace = updatedWorkspace
-                        }
-                        if selectedEnvironment?.id == environment.id {
-                            selectedEnvironment = .production
-                        }
-                        environmentToDelete = nil
+                serverManager.requestEnvironmentDeletion(
+                    environment,
+                    in: workspace,
+                    fallback: .production
+                ) { updatedWorkspace in
+                    selectedWorkspace = updatedWorkspace
+                    if selectedEnvironment?.id == environment.id {
+                        selectedEnvironment = .production
                     }
                 }
+                environmentToDelete = nil
             }
         } message: {
             let name = environmentToDelete?.displayName ?? String(localized: "Custom")
@@ -620,28 +604,26 @@ struct iOSServerListView: View {
 
     private func openActiveConnection(_ connection: ActiveConnection) {
         let targetViewId = preferredConnectViewId
-        Task {
-            guard let server = server(for: connection.id) else { return }
-            guard await AppLockManager.shared.ensureServerUnlocked(server) else { return }
+        guard let server = server(for: connection.id) else { return }
 
-            if !connection.session.connectionState.isConnected,
-               !connection.session.connectionState.isConnecting {
-                try? await sessionManager.reconnect(session: connection.session)
-            }
-
-            await MainActor.run {
-                sessionManager.selectSession(connection.session)
-                sessionManager.selectedViewByServer[server.id] = targetViewId
+        AppLockManager.shared.requestServerUnlock(server) {
+            sessionManager.requestActiveConnectionOpen(
+                session: connection.session,
+                preferredViewId: targetViewId
+            ) {
                 showingTerminal = true
             }
         }
     }
 
     private func disconnectActiveConnection(_ connection: ActiveConnection) {
-        fileBrowser.disconnect(serverId: connection.id)
-        Task {
-            await sessionManager.disconnectServerAndWait(connection.id)
-        }
+        ServerConnectionLifecycleCoordinator.shared.requestServerDisconnect(
+            serverId: connection.id,
+            disconnectRemoteFiles: { serverId in
+                fileBrowser.disconnect(serverId: serverId)
+            },
+            disconnectTerminals: sessionManager.disconnectServerAndWait
+        )
     }
 
     private func server(for serverId: UUID) -> Server? {
@@ -1027,25 +1009,22 @@ struct iOSTerminalView: View {
     }
 
     private func attemptForegroundReconnectIfNeeded(refreshTerminal: Bool = false) {
-        guard let session = selectedSession else { return }
-        guard let action = IOSTerminalViewPolicy.foregroundReconnectAction(
+        sessionManager.requestForegroundReconnectForSelectedSession(
             selectedViewId: selectedView,
-            selectedSession: session.iosTerminalSessionSnapshot,
+            terminalViewId: ConnectionViewTab.terminal.id,
             refreshTerminal: refreshTerminal,
-            autoReconnectEnabled: autoReconnectEnabled,
-            isSuspendingForBackground: sessionManager.isSuspendingForBackground
-        ) else {
-            return
-        }
+            autoReconnectEnabled: autoReconnectEnabled
+        ) { action in
+            guard let session = sessionManager.sessions.first(where: { $0.id == action.sessionId }) else { return }
 
-        if action.shouldRefreshTerminal {
-            activateTerminal(session)
-        }
+            if action.shouldRefreshTerminal {
+                activateTerminal(session)
+            }
 
-        if action.shouldReconnect {
-            Task { try? await sessionManager.reconnect(session: session) }
-            reconnectTokenBySession[action.sessionId] = UUID()
-            shouldShowTerminalBySession[action.sessionId] = action.shouldForceTerminalVisible
+            if action.shouldReconnect {
+                reconnectTokenBySession[action.sessionId] = UUID()
+                shouldShowTerminalBySession[action.sessionId] = action.shouldForceTerminalVisible
+            }
         }
     }
 
@@ -1290,8 +1269,8 @@ struct iOSTerminalView: View {
                 server: server,
                 isVisible: true,
                 backgroundColor: Color(UIColor.systemGroupedBackground),
-                sharedClientProvider: { sessionManager.sharedStatsClient(for: server.id) },
-                statsCollector: ServerStatsCollector()
+                borrowedLeaseProvider: { sessionManager.sharedStatsLease(for: server.id) },
+                statsCollector: ServerStatsCollector(connectionProvider: StatsSSHConnectionProvider.makeProvider())
             )
         }
     }
@@ -1303,8 +1282,8 @@ struct iOSTerminalView: View {
                     server: server,
                     isVisible: true,
                     backgroundColor: Color(UIColor.systemGroupedBackground),
-                    sharedClientProvider: { sessionManager.sharedStatsClient(for: server.id) },
-                    statsCollector: ServerStatsCollector()
+                    borrowedLeaseProvider: { sessionManager.sharedStatsLease(for: server.id) },
+                    statsCollector: ServerStatsCollector(connectionProvider: StatsSSHConnectionProvider.makeProvider())
                 )
                 .zIndex(1)
             }
@@ -1729,23 +1708,25 @@ struct iOSTerminalView: View {
             showingTabLimitAlert = true
             return
         }
-        Task {
-            do {
-                let session = try await sessionManager.openConnection(to: server, forceNew: true)
-                await MainActor.run {
-                    sessionManager.selectedViewByServer[server.id] = IOSConnectionViewSelectionPolicy.preferredConnectViewId(
-                        isTerminalVisible: viewTabConfig.isTabVisible(ConnectionViewTab.terminal.id),
-                        effectiveDefaultViewId: viewTabConfig.effectiveDefaultTab()
-                    )
-                    currentServerId = server.id
-                    shouldShowTerminalBySession[session.id] = true
-                    reconnectTokenBySession[session.id] = session.id
-                    sessionManager.selectedSessionId = session.id
+        sessionManager.requestConnectionOpen(
+            to: server,
+            forceNew: true,
+            onOpened: { session in
+                sessionManager.selectedViewByServer[server.id] = IOSConnectionViewSelectionPolicy.preferredConnectViewId(
+                    isTerminalVisible: viewTabConfig.isTabVisible(ConnectionViewTab.terminal.id),
+                    effectiveDefaultViewId: viewTabConfig.effectiveDefaultTab()
+                )
+                currentServerId = server.id
+                shouldShowTerminalBySession[session.id] = true
+                reconnectTokenBySession[session.id] = session.id
+                sessionManager.selectedSessionId = session.id
+            },
+            onFailed: { error in
+                if case VVTermError.proRequired = error {
+                    showingTabLimitAlert = true
                 }
-            } catch {
-                // No-op: user cancelled biometric auth or open failed.
             }
-        }
+        )
     }
 
     private func openNewFileTab() {
@@ -1781,12 +1762,19 @@ struct iOSTerminalView: View {
             onBack()
             return
         }
-        fileBrowser.disconnect(serverId: serverId)
-        fileTabs.disconnect(serverId: serverId)
-        Task {
-            await sessionManager.disconnectServerAndWait(serverId)
-            onBack()
-        }
+        ServerConnectionLifecycleCoordinator.shared.requestServerDisconnect(
+            serverId: serverId,
+            disconnectRemoteFiles: { serverId in
+                fileBrowser.disconnect(serverId: serverId)
+            },
+            disconnectFileTabs: { serverId in
+                fileTabs.disconnect(serverId: serverId)
+            },
+            disconnectTerminals: sessionManager.disconnectServerAndWait,
+            onCompleted: {
+                onBack()
+            }
+        )
     }
 
     private func synchronizeRecoveredTerminalState() {
@@ -1910,13 +1898,14 @@ struct iOSTerminalView: View {
             terminal.forceRefresh()
 
             // Send resize to force server to redraw prompt
-            if let sshClient = ConnectionSessionManager.shared.sshClient(for: session),
-               let shellId = ConnectionSessionManager.shared.shellId(for: session) {
-                Task {
-                    if let size = terminal.terminalSize() {
-                        try? await sshClient.resize(cols: Int(size.columns), rows: Int(size.rows), for: shellId)
-                    }
-                }
+            if let size = terminal.terminalSize() {
+                ConnectionSessionManager.shared.requestSessionResize(
+                    TerminalResizeRequestSize(
+                        cols: Int(size.columns),
+                        rows: Int(size.rows)
+                    ),
+                    for: session.id
+                )
             }
         }
     }
@@ -2035,28 +2024,8 @@ private extension ConnectionSession {
     var iosTerminalSessionSnapshot: IOSTerminalSessionSnapshot {
         IOSTerminalSessionSnapshot(
             id: id,
-            serverId: serverId,
-            connectionState: connectionState.iosTerminalConnectionState
+            serverId: serverId
         )
-    }
-}
-
-private extension ConnectionState {
-    var iosTerminalConnectionState: IOSTerminalConnectionState {
-        switch self {
-        case .disconnected:
-            return .disconnected
-        case .connecting:
-            return .connecting
-        case .connected:
-            return .connected
-        case .reconnecting:
-            return .reconnecting
-        case .failed:
-            return .failed
-        case .idle:
-            return .idle
-        }
     }
 }
 

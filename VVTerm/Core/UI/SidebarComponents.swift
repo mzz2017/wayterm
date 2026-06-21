@@ -76,7 +76,7 @@ struct ServerRow: View {
                         Label("Server Settings", systemImage: "slider.horizontal.3")
                     }
                     Button(role: .destructive) {
-                        Task { try? await ServerManager.shared.deleteServer(server) }
+                        serverManager.requestServerDeletion(server)
                     } label: {
                         Label("Delete Server", systemImage: "trash")
                     }
@@ -85,8 +85,7 @@ struct ServerRow: View {
                         if let onConnect {
                             onConnect(server)
                         } else {
-                            tabManager.selectedViewByServer[server.id] = ViewTabConfigurationManager.shared.effectiveDefaultTab()
-                            tabManager.connectedServerIds.insert(server.id)
+                            tabManager.requestServerTerminalOpen(for: server, selectTerminalViewOnSuccess: true)
                         }
                     } label: {
                         Label("Open Connection", systemImage: "point.forward.to.point.capsulepath.fill")
@@ -101,7 +100,7 @@ struct ServerRow: View {
                     }
                     Divider()
                     Button(role: .destructive) {
-                        Task { try? await ServerManager.shared.deleteServer(server) }
+                        serverManager.requestServerDeletion(server)
                     } label: {
                         Label("Delete Server", systemImage: "trash")
                     }

@@ -8,14 +8,28 @@ import AppKit
 #endif
 
 @MainActor
+protocol TerminalAccessoryCloudProfileSyncing {
+    func syncTerminalAccessoryProfile(_ profile: TerminalAccessoryProfile) async throws -> TerminalAccessoryProfile
+}
+
+@MainActor
+protocol TerminalAccessoryPendingSyncCoordinating {
+    func enqueueTerminalAccessoryProfileUpsert(_ profile: TerminalAccessoryProfile)
+    func drainPendingMutations() async
+}
+
+extension CloudKitManager: TerminalAccessoryCloudProfileSyncing {}
+extension CloudKitSyncCoordinator: TerminalAccessoryPendingSyncCoordinating {}
+
+@MainActor
 final class TerminalAccessoryPreferencesManager: ObservableObject {
     static let shared = TerminalAccessoryPreferencesManager()
 
     @Published private(set) var profile: TerminalAccessoryProfile
 
     private let defaults: UserDefaults
-    private let cloudKit: CloudKitManager
-    private let syncCoordinator = CloudKitSyncCoordinator.shared
+    private let cloudProfileSync: any TerminalAccessoryCloudProfileSyncing
+    private let syncCoordinator: any TerminalAccessoryPendingSyncCoordinating
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "app.vivy.vvterm",
         category: "TerminalAccessoryPreferences"
@@ -24,24 +38,36 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
     private var foregroundObserver: NSObjectProtocol?
     private var syncToggleObserver: NSObjectProtocol?
     private var cloudResolutionObserver: NSObjectProtocol?
+    private var startupCloudSyncTask: (id: UUID, task: Task<Void, Never>)?
+    private var foregroundCloudSyncTask: (id: UUID, task: Task<Void, Never>)?
+    private var syncToggleCloudSyncTask: (id: UUID, task: Task<Void, Never>)?
+    private var cloudResolutionTask: (id: UUID, task: Task<Void, Never>)?
     private var pendingSyncTask: Task<Void, Never>?
     private var lastKnownSyncEnabled: Bool
     private var lastForegroundSyncAt: Date = .distantPast
     private let foregroundSyncMinimumInterval: TimeInterval = 20
 
-    init(defaults: UserDefaults = .standard, cloudKit: CloudKitManager? = nil) {
+    init(
+        defaults: UserDefaults = .standard,
+        cloudProfileSync: (any TerminalAccessoryCloudProfileSyncing)? = nil,
+        syncCoordinator: (any TerminalAccessoryPendingSyncCoordinating)? = nil,
+        startObservers: Bool = true,
+        startInitialSync: Bool = true
+    ) {
         self.defaults = defaults
-        self.cloudKit = cloudKit ?? CloudKitManager.shared
+        self.cloudProfileSync = cloudProfileSync ?? CloudKitManager.shared
+        self.syncCoordinator = syncCoordinator ?? CloudKitSyncCoordinator.shared
         self.profile = TerminalAccessoryPreferencesManager.loadProfile(from: defaults)
         self.lastKnownSyncEnabled = SyncSettings.isEnabled
 
-        observeForegroundSync()
-        observeSyncToggleChanges()
-        observeCloudResolutionChanges()
+        if startObservers {
+            observeForegroundSync()
+            observeSyncToggleChanges()
+            observeCloudResolutionChanges()
+        }
 
-        Task {
-            await syncWithCloud()
-            await syncCoordinator.drainPendingMutations()
+        if startInitialSync {
+            startStartupCloudSync()
         }
     }
 
@@ -55,6 +81,10 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
         if let cloudResolutionObserver {
             NotificationCenter.default.removeObserver(cloudResolutionObserver)
         }
+        startupCloudSyncTask?.task.cancel()
+        foregroundCloudSyncTask?.task.cancel()
+        syncToggleCloudSyncTask?.task.cancel()
+        cloudResolutionTask?.task.cancel()
         pendingSyncTask?.cancel()
     }
 
@@ -226,6 +256,124 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
         await syncWithCloud()
     }
 
+    private func startStartupCloudSync() {
+        startupCloudSyncTask?.task.cancel()
+        let taskID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard !Task.isCancelled else {
+                self.clearStartupCloudSyncTask(id: taskID)
+                return
+            }
+            await self.syncWithCloud()
+            guard !Task.isCancelled, SyncSettings.isEnabled else {
+                self.clearStartupCloudSyncTask(id: taskID)
+                return
+            }
+            await self.syncCoordinator.drainPendingMutations()
+            self.clearStartupCloudSyncTask(id: taskID)
+        }
+        startupCloudSyncTask = (taskID, task)
+    }
+
+    private func startForegroundCloudSync() {
+        foregroundCloudSyncTask?.task.cancel()
+        let taskID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard !Task.isCancelled else {
+                self.clearForegroundCloudSyncTask(id: taskID)
+                return
+            }
+            await self.syncWithCloudIfNeededForForeground()
+            self.clearForegroundCloudSyncTask(id: taskID)
+        }
+        foregroundCloudSyncTask = (taskID, task)
+    }
+
+    private func startSyncToggleCloudSync() {
+        syncToggleCloudSyncTask?.task.cancel()
+        let taskID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard !Task.isCancelled else {
+                self.clearSyncToggleCloudSyncTask(id: taskID)
+                return
+            }
+            let isEnabled = SyncSettings.isEnabled
+            guard isEnabled != self.lastKnownSyncEnabled else {
+                self.clearSyncToggleCloudSyncTask(id: taskID)
+                return
+            }
+
+            self.lastKnownSyncEnabled = isEnabled
+            if isEnabled {
+                guard !Task.isCancelled else {
+                    self.clearSyncToggleCloudSyncTask(id: taskID)
+                    return
+                }
+                await self.syncWithCloud()
+            } else {
+                self.cancelCloudSyncTasksForDisabledSync(currentToggleTaskID: taskID)
+            }
+            self.clearSyncToggleCloudSyncTask(id: taskID)
+        }
+        syncToggleCloudSyncTask = (taskID, task)
+    }
+
+    private func startCloudResolutionApply(_ resolvedProfile: TerminalAccessoryProfile) {
+        cloudResolutionTask?.task.cancel()
+        let taskID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard !Task.isCancelled else {
+                self.clearCloudResolutionTask(id: taskID)
+                return
+            }
+            guard SyncSettings.isEnabled else {
+                self.clearCloudResolutionTask(id: taskID)
+                return
+            }
+            let mergedWithCurrent = TerminalAccessoryProfile
+                .merged(local: self.profile, remote: resolvedProfile)
+                .normalized()
+            self.applyProfile(mergedWithCurrent, scheduleCloudSync: false)
+            self.clearCloudResolutionTask(id: taskID)
+        }
+        cloudResolutionTask = (taskID, task)
+    }
+
+    private func clearStartupCloudSyncTask(id: UUID) {
+        guard startupCloudSyncTask?.id == id else { return }
+        startupCloudSyncTask = nil
+    }
+
+    private func clearForegroundCloudSyncTask(id: UUID) {
+        guard foregroundCloudSyncTask?.id == id else { return }
+        foregroundCloudSyncTask = nil
+    }
+
+    private func clearSyncToggleCloudSyncTask(id: UUID) {
+        guard syncToggleCloudSyncTask?.id == id else { return }
+        syncToggleCloudSyncTask = nil
+    }
+
+    private func clearCloudResolutionTask(id: UUID) {
+        guard cloudResolutionTask?.id == id else { return }
+        cloudResolutionTask = nil
+    }
+
+    private func cancelCloudSyncTasksForDisabledSync(currentToggleTaskID: UUID? = nil) {
+        startupCloudSyncTask?.task.cancel()
+        foregroundCloudSyncTask?.task.cancel()
+        if syncToggleCloudSyncTask?.id != currentToggleTaskID {
+            syncToggleCloudSyncTask?.task.cancel()
+        }
+        cloudResolutionTask?.task.cancel()
+        pendingSyncTask?.cancel()
+        pendingSyncTask = nil
+    }
+
     private func updateLayoutItems(_ items: [TerminalAccessoryItemRef]) {
         updateLayout { layout in
             layout.activeItems = items
@@ -351,7 +499,8 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
         let localSnapshot = profile
 
         do {
-            let cloudResolved = try await cloudKit.syncTerminalAccessoryProfile(localSnapshot)
+            let cloudResolved = try await cloudProfileSync.syncTerminalAccessoryProfile(localSnapshot)
+            guard !Task.isCancelled, SyncSettings.isEnabled else { return }
             let mergedWithCurrent = TerminalAccessoryProfile.merged(local: profile, remote: cloudResolved).normalized()
             applyProfile(mergedWithCurrent, scheduleCloudSync: false)
         } catch {
@@ -373,8 +522,9 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                await self?.syncWithCloudIfNeededForForeground()
+            // NotificationCenter delivers this observer on `.main`; keep it as an intent handoff.
+            MainActor.assumeIsolated {
+                self?.startForegroundCloudSync()
             }
         }
     }
@@ -387,6 +537,7 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
 
         lastForegroundSyncAt = now
         await syncWithCloud()
+        guard !Task.isCancelled, SyncSettings.isEnabled else { return }
         await syncCoordinator.drainPendingMutations()
     }
 
@@ -396,17 +547,9 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
             object: defaults,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                let isEnabled = SyncSettings.isEnabled
-                guard isEnabled != self.lastKnownSyncEnabled else { return }
-                self.lastKnownSyncEnabled = isEnabled
-                if isEnabled {
-                    await self.syncWithCloud()
-                } else {
-                    self.pendingSyncTask?.cancel()
-                    self.pendingSyncTask = nil
-                }
+            // NotificationCenter delivers this observer on `.main`; keep it as an intent handoff.
+            MainActor.assumeIsolated {
+                self?.startSyncToggleCloudSync()
             }
         }
     }
@@ -417,18 +560,24 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] notification in
-            let resolvedProfile = notification.userInfo?["profile"] as? TerminalAccessoryProfile
-            Task { @MainActor [weak self] in
-                guard let self,
-                      let resolvedProfile else {
-                    return
-                }
-
-                let mergedWithCurrent = TerminalAccessoryProfile
-                    .merged(local: self.profile, remote: resolvedProfile)
-                    .normalized()
-                self.applyProfile(mergedWithCurrent, scheduleCloudSync: false)
+            // NotificationCenter delivers this observer on `.main`; keep it as an intent handoff.
+            MainActor.assumeIsolated {
+                let resolvedProfile = notification.userInfo?["profile"] as? TerminalAccessoryProfile
+                guard let resolvedProfile else { return }
+                self?.startCloudResolutionApply(resolvedProfile)
             }
         }
     }
 }
+
+#if DEBUG
+extension TerminalAccessoryPreferencesManager {
+    var hasPendingStartupCloudSyncForTesting: Bool {
+        startupCloudSyncTask != nil
+    }
+
+    func waitForStartupCloudSyncForTesting() async {
+        await startupCloudSyncTask?.task.value
+    }
+}
+#endif

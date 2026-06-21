@@ -347,11 +347,11 @@ enum SSHKeyGenerator {
     private static func sshMPInt(_ data: Data) -> Data {
         var trimmed = data
         // Remove leading zeros but keep one if the high bit is set
-        while trimmed.count > 1 && trimmed[0] == 0 {
-            trimmed = trimmed.dropFirst()
+        while trimmed.count > 1 && trimmed.first == 0 {
+            trimmed = Data(trimmed.dropFirst())
         }
         // Add leading zero if high bit is set (to indicate positive number)
-        if !trimmed.isEmpty && (trimmed[0] & 0x80) != 0 {
+        if let first = trimmed.first, (first & 0x80) != 0 {
             var padded = Data([0])
             padded.append(trimmed)
             trimmed = padded

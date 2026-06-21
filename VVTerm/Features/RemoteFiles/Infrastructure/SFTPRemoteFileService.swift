@@ -1,7 +1,7 @@
 import Foundation
 
 struct SFTPRemoteFileService: RemoteFileService {
-    let client: SSHClient
+    let client: any SFTPRemoteFileClient
 
     func listDirectory(at path: String, maxEntries: Int? = nil) async throws -> [RemoteFileEntry] {
         try await client.listDirectory(at: path, maxEntries: maxEntries)

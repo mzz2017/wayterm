@@ -8,11 +8,15 @@
 import SwiftUI
 
 struct VoiceRecordingView: View {
-    @ObservedObject var audioService: AudioService
+    @ObservedObject var voiceInput: TerminalVoiceInputStore
+    let target: TerminalVoiceInputTarget
     let onSend: (String) -> Void
     let onCancel: () -> Void
-    @Binding var isProcessing: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var isProcessing: Bool {
+        voiceInput.isProcessing && voiceInput.activeTarget == target
+    }
 
     var body: some View {
         voiceChrome {
@@ -32,8 +36,8 @@ struct VoiceRecordingView: View {
 
     private var recordingView: some View {
         VStack(spacing: 10) {
-            if !audioService.partialTranscription.isEmpty || !audioService.transcribedText.isEmpty {
-                Text(audioService.transcribedText.isEmpty ? audioService.partialTranscription : audioService.transcribedText)
+            if !voiceInput.partialTranscription.isEmpty || !voiceInput.transcribedText.isEmpty {
+                Text(voiceInput.transcribedText.isEmpty ? voiceInput.partialTranscription : voiceInput.transcribedText)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.primary)
                     .lineLimit(3)
@@ -50,23 +54,24 @@ struct VoiceRecordingView: View {
                     tint: .secondary,
                     accessibilityLabel: String(localized: "Cancel voice input")
                 ) {
-                    isProcessing = false
-                    audioService.cancelRecording()
-                    onCancel()
+                    voiceInput.requestCancel(
+                        for: target,
+                        onCancelled: onCancel
+                    )
                 }
 
                 HStack(spacing: 10) {
                     PulsingRecordingIndicator()
 
-                    Text(formatDuration(audioService.recordingDuration))
+                    Text(formatDuration(voiceInput.recordingDuration))
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .frame(minWidth: 36, alignment: .leading)
 
                     GeometryReader { geometry in
                         AnimatedWaveformView(
-                            audioLevel: audioService.audioLevel,
-                            isRecording: audioService.isRecording,
+                            audioLevel: voiceInput.audioLevel,
+                            isRecording: voiceInput.isRecording,
                             width: geometry.size.width,
                             height: 22
                         )
@@ -86,15 +91,10 @@ struct VoiceRecordingView: View {
                     accessibilityLabel: String(localized: "Send voice input")
                 ) {
                     guard !isProcessing else { return }
-                    isProcessing = true
-                    Task {
-                        let text = await audioService.stopRecording()
-                        let output = text.isEmpty ? audioService.partialTranscription : text
-                        await MainActor.run {
-                            isProcessing = false
-                            onSend(output)
-                        }
-                    }
+                    voiceInput.requestStopAndSend(
+                        for: target,
+                        onCompleted: onSend
+                    )
                 }
             }
         }

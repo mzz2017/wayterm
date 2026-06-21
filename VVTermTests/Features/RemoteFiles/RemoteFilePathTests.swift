@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect remote-file path normalization and joining rules. They use
+// pure path strings and no remote filesystem; update only when path semantics
+// intentionally change.
+
 struct RemoteFilePathTests {
     @Test
     func normalizeResolvesRelativeAndParentComponents() {

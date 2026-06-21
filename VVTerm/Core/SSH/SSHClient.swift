@@ -3,27 +3,6 @@ import os.log
 import MoshCore
 import MoshBootstrap
 
-// MARK: - libssh2 Runtime
-
-/// libssh2 has process-global lifecycle (`libssh2_init`/`libssh2_exit`).
-/// Initialize once and keep alive for the app lifetime to avoid tearing down
-/// the library while other SSH sessions are still active.
-private enum LibSSH2Runtime {
-    private static let lock = NSLock()
-    private static var initialized = false
-
-    static func ensureInitialized() throws {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !initialized else { return }
-        let rc = libssh2_init(0)
-        guard rc == 0 else {
-            throw SSHError.unknown("libssh2_init failed: \(rc)")
-        }
-        initialized = true
-    }
-}
-
 // MARK: - SSH Client using libssh2
 
 struct ShellHandle {
@@ -50,9 +29,108 @@ enum SSHUploadStrategy: Sendable {
     case execPreferred
 }
 
+private final class SSHClientAbortState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var aborted = false
+    private var sessionForAbort: SSHSession?
+
+    var isAborted: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return aborted
+    }
+
+    func reset() {
+        lock.lock()
+        aborted = false
+        lock.unlock()
+    }
+
+    func setSessionForAbort(_ session: SSHSession?) {
+        lock.lock()
+        sessionForAbort = session
+        lock.unlock()
+    }
+
+    func abort() {
+        lock.lock()
+        aborted = true
+        let session = sessionForAbort
+        lock.unlock()
+        session?.abort()
+    }
+}
+
+// Mosh stream termination is a synchronous callback outside SSHClient actor
+// isolation; this registry lets the client own and await teardown tasks without
+// exposing actor-isolated mosh runtime state.
+private final class SSHMoshTeardownTaskRegistry: @unchecked Sendable {
+    private final class Record {
+        var task: Task<Void, Never>?
+    }
+
+    private let lock = NSLock()
+    private var records: [UUID: Record] = [:]
+
+    @discardableResult
+    func track(_ operation: @escaping @Sendable () async -> Void) -> UUID {
+        let requestID = UUID()
+        let record = Record()
+
+        lock.lock()
+        records[requestID] = record
+        lock.unlock()
+
+        let task = Task { [weak self] in
+            await operation()
+            self?.remove(requestID)
+        }
+
+        lock.lock()
+        if records[requestID] === record {
+            record.task = task
+        }
+        lock.unlock()
+
+        return requestID
+    }
+
+    func tasks() -> [Task<Void, Never>] {
+        lock.lock()
+        defer { lock.unlock() }
+        return records.values.compactMap(\.task)
+    }
+
+    private func remove(_ requestID: UUID) {
+        lock.lock()
+        records.removeValue(forKey: requestID)
+        lock.unlock()
+    }
+}
+
 actor SSHClient {
-    private struct MoshShellRuntime {
+    private final class MoshShellRuntime: @unchecked Sendable {
         let session: MoshClientSession
+        private let lock = NSLock()
+        private var streamTask: Task<Void, Never>?
+
+        init(session: MoshClientSession) {
+            self.session = session
+        }
+
+        func setStreamTask(_ task: Task<Void, Never>) {
+            lock.lock()
+            streamTask = task
+            lock.unlock()
+        }
+
+        func cancelStreamTask() {
+            lock.lock()
+            let task = streamTask
+            streamTask = nil
+            lock.unlock()
+            task?.cancel()
+        }
     }
 
     private var session: SSHSession?
@@ -65,35 +143,31 @@ actor SSHClient {
     private var resolvedRemoteEnvironment: RemoteEnvironment?
     private var resolvedRemoteTerminalType: RemoteTerminalType?
     private var moshShells: [UUID: MoshShellRuntime] = [:]
+    nonisolated private let moshTeardownTasks = SSHMoshTeardownTaskRegistry()
     private let cloudflareTransportManager = CloudflareTransportManager()
     private let moshStartupTimeout: Duration = .seconds(8)
     private let connectTimeout: Duration = .seconds(30)
     private let disconnectTimeout: Duration = .seconds(4)
+    private let shellStartTimeout: Duration = .seconds(20)
     private let execTimeout: Duration = .seconds(20)
     private let downloadTimeout: Duration = .seconds(120)
     private let uploadTimeout: Duration = .seconds(60)
-
-    /// Stored session reference for nonisolated abort access
-    private nonisolated(unsafe) var _sessionForAbort: SSHSession?
-
-    /// Flag to track if abort was called - prevents new operations
-    private nonisolated(unsafe) var _isAborted = false
+    private let abortState = SSHClientAbortState()
 
     /// Immediately abort the connection by closing the socket (non-blocking, can be called from any thread)
     nonisolated func abort() {
-        _isAborted = true
-        _sessionForAbort?.abort()
+        abortState.abort()
     }
 
     /// Check if the client has been aborted
     var isAborted: Bool {
-        _isAborted
+        abortState.isAborted
     }
 
     // MARK: - Connection
 
     func connect(to server: Server, credentials: ServerCredentials) async throws -> SSHSession {
-        _isAborted = false
+        abortState.reset()
         try Task.checkCancellation()
 
         let key = "\(server.host):\(server.port):\(server.username):\(server.connectionMode):\(server.authMethod):\(server.cloudflareAccessMode?.rawValue ?? "none"):\(server.cloudflareTeamDomainOverride ?? "")"
@@ -143,13 +217,20 @@ actor SSHClient {
 
         let pendingSession = SSHSession(config: config)
         pendingConnectSession = pendingSession
+        abortState.setSessionForAbort(pendingSession)
 
         let task = Task { [connectTimeout] () -> SSHSession in
             try Task.checkCancellation()
             do {
-                try await SSHClient.runWithTimeout(connectTimeout) {
-                    try await pendingSession.connect()
-                }
+                try await SSHClient.runWithTimeout(
+                    connectTimeout,
+                    operation: {
+                        try await pendingSession.connect()
+                    },
+                    onTimeout: {
+                        pendingSession.abort()
+                    }
+                )
                 try Task.checkCancellation()
                 return pendingSession
             } catch {
@@ -165,19 +246,19 @@ actor SSHClient {
         do {
             let session = try await task.value
             pendingConnectSession = nil
-            if _isAborted || Task.isCancelled || task.isCancelled {
+            if abortState.isAborted || Task.isCancelled || task.isCancelled {
                 session.abort()
                 await session.disconnect()
                 connectTask = nil
                 connectionKey = nil
                 self.session = nil
-                self._sessionForAbort = nil
+                abortState.setSessionForAbort(nil)
                 self.connectedServer = nil
                 await disconnectCloudflareTransport(reason: "connect cancellation")
                 throw CancellationError()
             }
             self.session = session
-            self._sessionForAbort = session
+            abortState.setSessionForAbort(session)
             self.connectedServer = server
             self.resolvedRemoteEnvironment = nil
             self.resolvedRemoteTerminalType = nil
@@ -190,14 +271,15 @@ actor SSHClient {
             connectTask = nil
             connectionKey = nil
             self.session = nil
-            self._sessionForAbort = nil
+            abortState.setSessionForAbort(nil)
             self.connectedServer = nil
             self.resolvedRemoteEnvironment = nil
             self.resolvedRemoteTerminalType = nil
             await disconnectCloudflareTransport(reason: "connect failure")
             if server.connectionMode == .cloudflare,
-               case SSHError.connectionFailed(let message) = error,
-               message.contains("SSH handshake failed: -13") {
+               case SSHError.libssh2(let rawError) = error,
+               rawError.operation == .handshake,
+               rawError.code == LIBSSH2_ERROR_SOCKET_RECV {
                 throw SSHError.cloudflareTunnelFailed(
                     String(
                         localized: "Cloudflare tunnel connected, but SSH handshake was closed by the upstream target. Verify Access policy and service token scope."
@@ -209,13 +291,17 @@ actor SSHClient {
     }
 
     func disconnect() async {
-        _isAborted = true
+        abortState.abort()
 
         let activeMoshShells = Array(moshShells.values)
         moshShells.removeAll()
         for runtime in activeMoshShells {
-            await runtime.session.stop()
+            trackMoshTeardownTask {
+                runtime.cancelStreamTask()
+                await runtime.session.stop()
+            }
         }
+        await waitForMoshTeardownTasks()
 
         keepAliveTask?.cancel()
         keepAliveTask = nil
@@ -227,11 +313,10 @@ actor SSHClient {
 
         let activeSession = session
         session = nil
-        _sessionForAbort = nil
+        abortState.setSessionForAbort(nil)
         connectedServer = nil
         resolvedRemoteEnvironment = nil
         resolvedRemoteTerminalType = nil
-        activeSession?.abort()
         await disconnectSSHSession(activeSession)
         await disconnectCloudflareTransport(reason: "client disconnect")
 
@@ -241,7 +326,7 @@ actor SSHClient {
     // MARK: - Command Execution
 
     func execute(_ command: String, timeout: Duration? = nil) async throws -> String {
-        guard !_isAborted else {
+        guard !abortState.isAborted else {
             throw SSHError.notConnected
         }
         guard let session = session else {
@@ -260,7 +345,7 @@ actor SSHClient {
         permissions: Int32 = 0o600,
         strategy: SSHUploadStrategy = .automatic
     ) async throws {
-        guard !_isAborted else {
+        guard !abortState.isAborted else {
             throw SSHError.notConnected
         }
         guard let session = session else {
@@ -329,49 +414,49 @@ actor SSHClient {
     // MARK: - Remote Files
 
     func listDirectory(at path: String, maxEntries: Int? = nil) async throws -> [RemoteFileEntry] {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         return try await session.listDirectory(at: path, maxEntries: maxEntries)
     }
 
     func stat(at path: String) async throws -> RemoteFileEntry {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         return try await session.stat(at: path)
     }
 
     func lstat(at path: String) async throws -> RemoteFileEntry {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         return try await session.lstat(at: path)
     }
 
     func readlink(at path: String) async throws -> String {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         return try await session.readlink(at: path)
     }
 
     func readFile(at path: String, maxBytes: Int, offset: UInt64 = 0) async throws -> Data {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         return try await session.readFile(at: path, maxBytes: maxBytes, offset: offset)
     }
 
     func fileSystemStatus(at path: String) async throws -> RemoteFileFilesystemStatus {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         return try await session.fileSystemStatus(at: path)
     }
 
     func downloadFile(at path: String, to localURL: URL) async throws {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
 
@@ -385,42 +470,42 @@ actor SSHClient {
     }
 
     func resolveHomeDirectory() async throws -> String {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         return try await session.resolveHomeDirectory()
     }
 
     func createDirectory(at path: String, permissions: Int32 = 0o755) async throws {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         try await session.createDirectory(at: path, permissions: permissions)
     }
 
     func setPermissions(at path: String, permissions: UInt32) async throws {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         try await session.setPermissions(at: path, permissions: permissions)
     }
 
     func renameItem(at sourcePath: String, to destinationPath: String) async throws {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         try await session.renameItem(at: sourcePath, to: destinationPath)
     }
 
     func deleteFile(at path: String) async throws {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         try await session.deleteFile(at: path)
     }
 
     func deleteDirectory(at path: String) async throws {
-        guard !_isAborted, let session = session else {
+        guard !abortState.isAborted, let session = session else {
             throw RemoteFileBrowserError.disconnected
         }
         try await session.deleteDirectory(at: path)
@@ -437,7 +522,8 @@ actor SSHClient {
         let environment = await remoteEnvironment()
         let terminalType = await remoteTerminalType()
         if connectionMode != .mosh {
-            let sshShell = try await session.startShell(
+            let sshShell = try await startSSHShell(
+                using: session,
                 cols: cols,
                 rows: rows,
                 startupCommand: startupCommand,
@@ -453,7 +539,8 @@ actor SSHClient {
 
         guard environment.platform != .windows && environment.shellProfile.family == .posix else {
             logger.warning("Mosh requested, but remote environment does not support Mosh runtime. Falling back to SSH.")
-            let fallbackShell = try await session.startShell(
+            let fallbackShell = try await startSSHShell(
+                using: session,
                 cols: cols,
                 rows: rows,
                 startupCommand: startupCommand,
@@ -479,7 +566,8 @@ actor SSHClient {
             logger.warning("Mosh startup failed, using SSH fallback: \(moshError.localizedDescription)")
 
             do {
-                let fallbackShell = try await session.startShell(
+                let fallbackShell = try await startSSHShell(
+                    using: session,
                     cols: cols,
                     rows: rows,
                     startupCommand: startupCommand,
@@ -500,8 +588,33 @@ actor SSHClient {
         }
     }
 
+    private func startSSHShell(
+        using session: SSHSession,
+        cols: Int,
+        rows: Int,
+        startupCommand: String?,
+        environment: RemoteEnvironment,
+        terminalType: RemoteTerminalType
+    ) async throws -> ShellHandle {
+        try await SSHClient.runWithTimeout(
+            shellStartTimeout,
+            operation: {
+                try await session.startShell(
+                    cols: cols,
+                    rows: rows,
+                    startupCommand: startupCommand,
+                    environment: environment,
+                    terminalType: terminalType
+                )
+            },
+            onTimeout: {
+                session.abort()
+            }
+        )
+    }
+
     func write(_ data: Data, to shellId: UUID) async throws {
-        guard !_isAborted else {
+        guard !abortState.isAborted else {
             throw SSHError.notConnected
         }
 
@@ -538,6 +651,7 @@ actor SSHClient {
 
     func closeShell(_ shellId: UUID) async {
         if let runtime = moshShells.removeValue(forKey: shellId) {
+            runtime.cancelStreamTask()
             await runtime.session.stop()
             return
         }
@@ -561,9 +675,15 @@ actor SSHClient {
     private func disconnectSSHSession(_ activeSession: SSHSession?) async {
         guard let activeSession else { return }
         do {
-            try await SSHClient.runWithTimeout(disconnectTimeout) {
-                await activeSession.disconnect()
-            }
+            try await SSHClient.runWithTimeout(
+                disconnectTimeout,
+                operation: {
+                    await activeSession.disconnect()
+                },
+                onTimeout: {
+                    activeSession.abort()
+                }
+            )
         } catch {
             logger.warning("Timed out while disconnecting SSH session; aborting socket")
             activeSession.abort()
@@ -667,6 +787,8 @@ actor SSHClient {
         }
         let hostOpStream = await moshSession.hostOpStream()
         let moshLogger = logger
+        let runtime = MoshShellRuntime(session: moshSession)
+        moshShells[shellId] = runtime
         let stream = AsyncStream<Data> { continuation in
             // Replay any ops that arrived before the stream was created
             for op in pendingOps {
@@ -698,16 +820,16 @@ actor SSHClient {
                 continuation.finish()
                 await self?.closeShell(shellId)
             }
+            runtime.setStreamTask(streamTask)
 
             continuation.onTermination = { [weak self] _ in
-                streamTask.cancel()
-                Task { [weak self] in
+                runtime.cancelStreamTask()
+                self?.trackMoshTeardownTask { [weak self] in
                     await self?.closeShell(shellId)
                 }
             }
         }
 
-        moshShells[shellId] = MoshShellRuntime(session: moshSession)
         return ShellHandle(
             id: shellId,
             stream: stream,
@@ -715,9 +837,24 @@ actor SSHClient {
         )
     }
 
-    private nonisolated static func runWithTimeout<T: Sendable>(
+    nonisolated private func trackMoshTeardownTask(_ operation: @escaping @Sendable () async -> Void) {
+        moshTeardownTasks.track(operation)
+    }
+
+    private func waitForMoshTeardownTasks() async {
+        while true {
+            let tasks = moshTeardownTasks.tasks()
+            guard !tasks.isEmpty else { return }
+            for task in tasks {
+                await task.value
+            }
+        }
+    }
+
+    nonisolated static func runWithTimeout<T: Sendable>(
         _ timeout: Duration,
-        operation: @escaping @Sendable () async throws -> T
+        operation: @escaping @Sendable () async throws -> T,
+        onTimeout: (@Sendable () async -> Void)? = nil
     ) async throws -> T {
         try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask {
@@ -725,14 +862,22 @@ actor SSHClient {
             }
             group.addTask {
                 try await Task.sleep(for: timeout)
+                if let onTimeout {
+                    await onTimeout()
+                }
                 throw SSHError.timeout
             }
 
-            guard let result = try await group.next() else {
-                throw SSHError.timeout
+            do {
+                guard let result = try await group.next() else {
+                    throw SSHError.timeout
+                }
+                group.cancelAll()
+                return result
+            } catch {
+                group.cancelAll()
+                throw error
             }
-            group.cancelAll()
-            return result
         }
     }
 
@@ -861,6 +1006,53 @@ nonisolated(unsafe) private let kbdintCallback: @convention(c) (
     }
 }
 
+// AsyncStream termination and cancellation handlers are synchronous,
+// nonisolated callbacks, so this tiny registry uses a lock to let SSHSession
+// own and later await channel cleanup tasks without escaping actor state.
+private final class SSHChannelCleanupTaskRegistry: @unchecked Sendable {
+    private final class Record {
+        var task: Task<Void, Never>?
+    }
+
+    private let lock = NSLock()
+    private var records: [UUID: Record] = [:]
+
+    @discardableResult
+    func track(_ operation: @escaping @Sendable () async -> Void) -> UUID {
+        let requestID = UUID()
+        let record = Record()
+
+        lock.lock()
+        records[requestID] = record
+        lock.unlock()
+
+        let task = Task { [weak self] in
+            await operation()
+            self?.remove(requestID)
+        }
+
+        lock.lock()
+        if records[requestID] === record {
+            record.task = task
+        }
+        lock.unlock()
+
+        return requestID
+    }
+
+    func tasks() -> [Task<Void, Never>] {
+        lock.lock()
+        defer { lock.unlock() }
+        return records.values.compactMap(\.task)
+    }
+
+    private func remove(_ requestID: UUID) {
+        lock.lock()
+        records.removeValue(forKey: requestID)
+        lock.unlock()
+    }
+}
+
 // MARK: - SSH Session using libssh2
 
 actor SSHSession {
@@ -896,12 +1088,14 @@ actor SSHSession {
     }
 
     let config: SSHSessionConfig
+    private let driver: any LibSSH2SessionDriving
     private var libssh2Session: OpaquePointer?
     private var sftpSession: OpaquePointer?
     private var shellChannels: [UUID: ShellChannelState] = [:]
     private var socket: Int32 = -1
     private var isActive = false
     private var ioTask: Task<Void, Never>?
+    nonisolated private let channelCleanupTasks = SSHChannelCleanupTaskRegistry()
     private var execRequests: [UUID: ExecRequest] = [:]
     private var connectedPeerAddress: String?
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "SSHSession")
@@ -915,8 +1109,9 @@ actor SSHSession {
     /// Track if cleanup has been performed
     private var hasBeenCleaned = false
 
-    init(config: SSHSessionConfig) {
+    init(config: SSHSessionConfig, driver: any LibSSH2SessionDriving = LibSSH2SessionDriver()) {
         self.config = config
+        self.driver = driver
     }
 
     var isConnected: Bool {
@@ -932,110 +1127,53 @@ actor SSHSession {
 
     func connect() async throws {
         try Task.checkCancellation()
-        try LibSSH2Runtime.ensureInitialized()
+        try driver.ensureRuntimeInitialized()
         socket = -1
         connectedPeerAddress = nil
 
-        // Resolve host
-        var hints = addrinfo()
-        hints.ai_family = AF_UNSPEC
-        hints.ai_socktype = SOCK_STREAM
-        hints.ai_protocol = IPPROTO_TCP
-        var result: UnsafeMutablePointer<addrinfo>?
-
-        let portString = String(config.dialPort)
-        let resolveResult = getaddrinfo(config.dialHost, portString, &hints, &result)
-        guard resolveResult == 0, let addrInfo = result else {
-            throw SSHError.connectionFailed("Failed to resolve host: \(config.dialHost)")
-        }
-        defer { freeaddrinfo(result) }
-
-        // Connect socket (try all resolved addresses so IPv6-only MagicDNS hosts work)
-        var lastConnectError: Int32 = 0
-        var candidate: UnsafeMutablePointer<addrinfo>? = addrInfo
-
-        while let current = candidate {
-            try Task.checkCancellation()
-            let family = current.pointee.ai_family
-            let sockType = current.pointee.ai_socktype == 0 ? SOCK_STREAM : current.pointee.ai_socktype
-            let protocolNumber = current.pointee.ai_protocol
-
-            let candidateSocket = Darwin.socket(family, sockType, protocolNumber)
-            if candidateSocket < 0 {
-                lastConnectError = errno
-                candidate = current.pointee.ai_next
-                continue
-            }
-
-            let connectResult = Darwin.connect(candidateSocket, current.pointee.ai_addr, current.pointee.ai_addrlen)
-            if connectResult == 0 {
-                socket = candidateSocket
-                break
-            }
-
-            lastConnectError = errno
-            Darwin.close(candidateSocket)
-            candidate = current.pointee.ai_next
-        }
-
-        guard socket >= 0 else {
-            let message = lastConnectError == 0 ? "Unknown connect failure" : String(cString: strerror(lastConnectError))
-            throw SSHError.connectionFailed("Failed to connect: \(message)")
-        }
-
-        // Disable Nagle's algorithm for low-latency interactive typing
-        // Without this, small packets (keystrokes) are batched causing 40-200ms delays
-        var noDelay: Int32 = 1
-        setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, &noDelay, socklen_t(MemoryLayout<Int32>.size))
-
-        // Optimize socket buffers for interactive SSH:
-        // - Small send buffer (8KB) reduces buffering delay for keystrokes
-        // - Larger receive buffer (64KB) improves throughput for command output
-        var sendBufSize: Int32 = 8192
-        var recvBufSize: Int32 = 65536
-        setsockopt(socket, SOL_SOCKET, SO_SNDBUF, &sendBufSize, socklen_t(MemoryLayout<Int32>.size))
-        setsockopt(socket, SOL_SOCKET, SO_RCVBUF, &recvBufSize, socklen_t(MemoryLayout<Int32>.size))
-
-        // Prevent SIGPIPE on broken connections (handle errors in code instead)
-        var noSigPipe: Int32 = 1
-        setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
-
-        // Store in atomic storage for emergency abort
-        atomicSocket.socket = socket
-        connectedPeerAddress = resolveNumericPeerAddress(for: socket)
+        let connectedSocket = try driver.connectSocket(host: config.dialHost, port: config.dialPort)
+        socket = connectedSocket.descriptor
+        connectedPeerAddress = connectedSocket.peerAddress
+        driver.configureInteractiveSocket(socket)
 
         // Create libssh2 session (use _ex variant since macros not available in Swift)
         let sessionAbstract = Unmanaged.passUnretained(keyboardInteractiveContext).toOpaque()
-        libssh2Session = libssh2_session_init_ex(nil, nil, nil, sessionAbstract)
+        libssh2Session = driver.makeSession(abstract: sessionAbstract)
         guard let session = libssh2Session else {
-            Darwin.close(socket)
+            driver.closeSocket(socket)
+            socket = -1
+            connectedPeerAddress = nil
             throw SSHError.unknown("Failed to create libssh2 session")
         }
+
+        // Store in atomic storage only after libssh2 has a session owner.
+        atomicSocket.socket = socket
 
         // Prefer fast ciphers - AES-GCM and ChaCha20 are hardware-accelerated on Apple Silicon
         // This reduces CPU overhead for encryption/decryption
         let fastCiphers = "aes128-gcm@openssh.com,aes256-gcm@openssh.com,chacha20-poly1305@openssh.com,aes128-ctr,aes256-ctr"
-        libssh2_session_method_pref(session, LIBSSH2_METHOD_CRYPT_CS, fastCiphers)
-        libssh2_session_method_pref(session, LIBSSH2_METHOD_CRYPT_SC, fastCiphers)
+        driver.setMethodPreference(session: session, method: LIBSSH2_METHOD_CRYPT_CS, preferences: fastCiphers)
+        driver.setMethodPreference(session: session, method: LIBSSH2_METHOD_CRYPT_SC, preferences: fastCiphers)
 
         // Prefer fast MACs (message authentication codes)
         let fastMACs = "hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,hmac-sha2-256,hmac-sha2-512"
-        libssh2_session_method_pref(session, LIBSSH2_METHOD_MAC_CS, fastMACs)
-        libssh2_session_method_pref(session, LIBSSH2_METHOD_MAC_SC, fastMACs)
+        driver.setMethodPreference(session: session, method: LIBSSH2_METHOD_MAC_CS, preferences: fastMACs)
+        driver.setMethodPreference(session: session, method: LIBSSH2_METHOD_MAC_SC, preferences: fastMACs)
 
         // Set blocking mode for handshake
-        libssh2_session_set_blocking(session, 1)
+        driver.setBlocking(session: session, isBlocking: true)
 
         // Perform SSH handshake
         try Task.checkCancellation()
-        let handshakeResult = libssh2_session_handshake(session, socket)
+        let handshakeResult = driver.handshake(session: session, socket: socket)
         guard handshakeResult == 0 else {
+            let rawError = driver.lastError(session: session, operation: .handshake, fallbackCode: handshakeResult)
             cleanup()
-            throw SSHError.connectionFailed("SSH handshake failed: \(handshakeResult)")
+            throw SSHError.libssh2(rawError)
         }
 
         do {
-            try verifyHostKey()
+            try await verifyHostKey()
         } catch {
             cleanup()
             throw error
@@ -1046,7 +1184,7 @@ actor SSHSession {
         try await authenticate()
 
         // Set non-blocking for I/O
-        libssh2_session_set_blocking(session, 0)
+        driver.setBlocking(session: session, isBlocking: false)
 
         isActive = true
         logger.info("SSH session established")
@@ -1060,17 +1198,24 @@ actor SSHSession {
         let username = config.username
         var authResult: Int32 = -1
 
-        // Query supported auth methods
-        let authList = libssh2_userauth_list(session, username, UInt32(username.utf8.count))
-        if let authListPtr = authList {
-            let methods = String(cString: authListPtr)
+        // Query supported auth methods.
+        let authDiscoveryResult = driver.supportedAuthenticationMethods(session: session, username: username)
+        let authMethods: String?
+        switch authDiscoveryResult {
+        case .methods(let methods):
+            authMethods = methods
             logger.info("Server auth methods [mode: \(self.config.connectionMode.rawValue)]: \(methods)")
-        } else {
+        case .unavailable:
+            authMethods = nil
             logger.warning("Could not get auth methods list")
+        case .failure(let rawError):
+            let errorMsg = rawError.message ?? "Unknown error"
+            logger.error("Auth method discovery failed (\(rawError.code)): \(errorMsg)")
+            throw SSHError.libssh2(rawError)
         }
 
         if config.connectionMode == .tailscale {
-            if libssh2_userauth_authenticated(session) != 0 {
+            if driver.isAuthenticated(session: session) {
                 logger.info("Tailscale SSH authentication accepted by server policy")
                 return
             }
@@ -1079,7 +1224,7 @@ actor SSHSession {
         }
 
         // If authList is nil, check if already authenticated
-        if authList == nil, libssh2_userauth_authenticated(session) != 0 {
+        if authMethods == nil, driver.isAuthenticated(session: session) {
             logger.info("Already authenticated")
             return
         }
@@ -1092,33 +1237,23 @@ actor SSHSession {
             }
             logger.info("Attempting password auth for user: \(username)")
 
-            // Use _ex variant since macros not available in Swift
-            authResult = libssh2_userauth_password_ex(
-                session,
-                username,
-                UInt32(username.utf8.count),
-                password,
-                UInt32(password.utf8.count),
-                nil
-            )
+            authResult = driver.authenticateWithPassword(session: session, username: username, password: password)
 
             // If password auth fails, try keyboard-interactive ONLY if the server lists it.
             // When the method list is unavailable (nil), do not attempt it — guessing only
             // adds another failed-auth event toward sshd's penalty threshold.
             if authResult != 0 {
-                let advertisesKbdInteractive = authList
-                    .map { String(cString: $0).contains("keyboard-interactive") } ?? false
+                let advertisesKbdInteractive = authMethods?.contains("keyboard-interactive") ?? false
                 if advertisesKbdInteractive {
                     logger.info("Password auth failed, trying keyboard-interactive...")
 
                     keyboardInteractiveContext.setPassword(password)
                     defer { keyboardInteractiveContext.setPassword(nil) }
 
-                    authResult = libssh2_userauth_keyboard_interactive_ex(
-                        session,
-                        username,
-                        UInt32(username.utf8.count),
-                        kbdintCallback
+                    authResult = driver.authenticateWithKeyboardInteractive(
+                        session: session,
+                        username: username,
+                        callback: kbdintCallback
                     )
                 }
             }
@@ -1135,9 +1270,9 @@ actor SSHSession {
             let serverIdString = config.credentials.serverId.uuidString
             let authGateKey = "\(serverIdString):\(username)"
             logger.info("Waiting for publickey auth slot [serverId: \(serverIdString, privacy: .public), user: \(username, privacy: .public)]")
-            authResult = await SSHAuthenticationGate.shared.withExclusiveAccess(for: authGateKey) {
+            authResult = try await SSHAuthenticationGate.shared.withExclusiveAccess(for: authGateKey) {
                 logger.info("Acquired publickey auth slot [serverId: \(serverIdString, privacy: .public), user: \(username, privacy: .public)]")
-                return Self.authenticateWithPublicKey(
+                return driver.authenticateWithPublicKey(
                     session: session,
                     username: username,
                     keyData: keyData,
@@ -1148,106 +1283,50 @@ actor SSHSession {
         }
 
         if authResult != 0 {
-            // Get detailed error message
-            var errmsg: UnsafeMutablePointer<CChar>?
-            var errmsg_len: Int32 = 0
-            libssh2_session_last_error(session, &errmsg, &errmsg_len, 0)
-            let errorMsg = errmsg != nil ? String(cString: errmsg!) : "Unknown error"
-            logger.error("Auth failed (\(authResult)): \(errorMsg)")
+            let rawError = driver.lastError(session: session, operation: .authentication, fallbackCode: authResult)
+            let errorMsg = rawError.message ?? "Unknown error"
+            logger.error("Auth failed (\(rawError.code)): \(errorMsg)")
+            if rawError.code != LIBSSH2_ERROR_AUTHENTICATION_FAILED {
+                throw SSHError.libssh2(rawError)
+            }
             throw SSHError.authenticationFailed
         }
 
         logger.info("Authentication successful")
     }
 
-    private nonisolated static func authenticateWithPublicKey(
-        session: OpaquePointer,
-        username: String,
-        keyData: Data,
-        publicKeyData: Data?,
-        passphrase: String?
-    ) -> Int32 {
-        keyData.withUnsafeBytes { rawBuffer -> Int32 in
-            guard let baseAddress = rawBuffer.bindMemory(to: CChar.self).baseAddress else {
-                return LIBSSH2_ERROR_ALLOC
-            }
-
-            if let publicKeyData, !publicKeyData.isEmpty {
-                return publicKeyData.withUnsafeBytes { publicBuffer -> Int32 in
-                    guard let publicBase = publicBuffer.bindMemory(to: CChar.self).baseAddress else {
-                        return LIBSSH2_ERROR_ALLOC
-                    }
-                    return libssh2_userauth_publickey_frommemory(
-                        session,
-                        username,
-                        Int(username.utf8.count),
-                        publicBase,
-                        Int(publicKeyData.count),
-                        baseAddress,
-                        Int(keyData.count),
-                        passphrase
-                    )
-                }
-            }
-
-            return libssh2_userauth_publickey_frommemory(
-                session,
-                username,
-                Int(username.utf8.count),
-                nil,
-                0,
-                baseAddress,
-                Int(keyData.count),
-                passphrase
-            )
-        }
-    }
-
-    private func verifyHostKey() throws {
+    private func verifyHostKey() async throws {
         guard let session = libssh2Session else {
             throw SSHError.notConnected
         }
 
-        let (fingerprint, keyType) = try hostKeyFingerprint(for: session)
+        let (fingerprint, keyType) = try driver.hostKeyFingerprint(session: session)
         let host = config.hostKeyHost
         let port = config.hostKeyPort
+        let verifier = KnownHostVerificationService()
 
-        if let entry = KnownHostsManager.shared.entry(for: host, port: port) {
-            if entry.fingerprint != fingerprint {
-                logger.error("Host key mismatch for \(host):\(port). Known: \(entry.fingerprint), Presented: \(fingerprint)")
-                throw SSHError.hostKeyVerificationFailed
-            }
-            KnownHostsManager.shared.updateSeen(host: host, port: port)
-            logger.info("Host key verified for \(host):\(port)")
-            return
-        }
-
-        let entry = KnownHostsManager.Entry(
+        let result = try await verifier.verify(
             host: host,
             port: port,
             fingerprint: fingerprint,
-            keyType: keyType,
-            addedAt: Date(),
-            lastSeenAt: Date()
+            keyType: keyType
         )
-        KnownHostsManager.shared.save(entry: entry)
-        logger.info("Trusted new host key for \(host):\(port) (\(fingerprint))")
-    }
 
-    private func hostKeyFingerprint(for session: OpaquePointer) throws -> (String, Int) {
-        guard let hashPtr = libssh2_hostkey_hash(session, Int32(LIBSSH2_HOSTKEY_HASH_SHA256)) else {
+        switch result {
+        case .trusted:
+            logger.info("Host key verified for \(host):\(port)")
+        case .newHost:
+            await verifier.trust(
+                host: host,
+                port: port,
+                fingerprint: fingerprint,
+                keyType: keyType
+            )
+            logger.info("Trusted new host key for \(host):\(port) (\(fingerprint))")
+        case .changed(let knownFingerprint, let presentedFingerprint):
+            logger.error("Host key mismatch for \(host):\(port). Known: \(knownFingerprint), Presented: \(presentedFingerprint)")
             throw SSHError.hostKeyVerificationFailed
         }
-
-        let hash = Data(bytes: hashPtr, count: 32)
-        let base64 = hash.base64EncodedString().trimmingCharacters(in: CharacterSet(charactersIn: "="))
-        let fingerprint = "SHA256:\(base64)"
-
-        var keyLen: size_t = 0
-        var keyType: Int32 = 0
-        _ = libssh2_session_hostkey(session, &keyLen, &keyType)
-
-        return (fingerprint, Int(keyType))
     }
 
     func disconnect() async {
@@ -1264,6 +1343,7 @@ actor SSHSession {
 
         // Fail any pending exec requests
         failAllExecRequests(error: SSHError.notConnected)
+        await waitForChannelCleanupTasks()
 
         // Close socket first to abort any blocking I/O in libssh2
         atomicSocket.closeImmediately()
@@ -1285,8 +1365,33 @@ actor SSHSession {
         closeAllExecChannels()
 
         if let session = libssh2Session {
-            libssh2_session_disconnect_ex(session, 11, "Normal shutdown", "")
-            libssh2_session_free(session)
+            let disconnectResult = driver.disconnect(
+                session: session,
+                reasonCode: 11,
+                description: "Normal shutdown",
+                language: ""
+            )
+            if disconnectResult != 0 {
+                let rawError = driver.lastError(
+                    session: session,
+                    operation: .sessionDisconnect,
+                    fallbackCode: disconnectResult
+                )
+                logger.debug(
+                    "libssh2 disconnect returned \(rawError.code) [message: \(rawError.message ?? "none", privacy: .public)]"
+                )
+            }
+            let freeResult = driver.free(session: session)
+            if freeResult != 0, freeResult != LIBSSH2_ERROR_EAGAIN {
+                let rawError = driver.lastError(
+                    session: session,
+                    operation: .sessionFree,
+                    fallbackCode: freeResult
+                )
+                logger.debug(
+                    "libssh2 session free returned \(rawError.code) [message: \(rawError.message ?? "none", privacy: .public)]"
+                )
+            }
             libssh2Session = nil
         }
     }
@@ -1309,7 +1414,7 @@ actor SSHSession {
         let sftp = try await ensureSFTPSession()
         let normalizedPath = RemoteFilePath.normalize(path)
         let handle = try await openDirectoryHandle(at: normalizedPath, sftp: sftp)
-        defer { libssh2_sftp_close_handle(handle) }
+        defer { driver.closeSFTPHandle(handle) }
 
         let limit = maxEntries ?? .max
         var entries: [RemoteFileEntry] = []
@@ -1319,22 +1424,11 @@ actor SSHSession {
             try Task.checkCancellation()
             var attributes = LIBSSH2_SFTP_ATTRIBUTES()
 
-            let bytesRead = nameBuffer.withUnsafeMutableBufferPointer { buffer -> Int in
-                guard let baseAddress = buffer.baseAddress else {
-                    return Int(LIBSSH2_ERROR_EAGAIN)
-                }
-
-                return Int(
-                    libssh2_sftp_readdir_ex(
-                        handle,
-                        baseAddress,
-                        buffer.count,
-                        nil,
-                        0,
-                        &attributes
-                    )
-                )
-            }
+            let bytesRead = driver.readSFTPDirectory(
+                handle: handle,
+                into: &nameBuffer,
+                attributes: &attributes
+            )
 
             if bytesRead > 0 {
                 let name = Self.string(from: nameBuffer, length: bytesRead)
@@ -1367,7 +1461,7 @@ actor SSHSession {
                 continue
             }
 
-            throw Self.remoteFileError(from: sftp, operation: "read directory", path: normalizedPath)
+            throw remoteFileError(from: sftp, operation: "read directory", path: normalizedPath)
         }
 
         return entries
@@ -1397,10 +1491,10 @@ actor SSHSession {
             flags: UInt32(LIBSSH2_FXF_READ),
             mode: 0
         )
-        defer { libssh2_sftp_close_handle(handle) }
+        defer { driver.closeSFTPHandle(handle) }
 
         if offset > 0 {
-            libssh2_sftp_seek64(handle, offset)
+            driver.seekSFTPFile(handle: handle, offset: offset)
         }
 
         var data = Data()
@@ -1412,12 +1506,7 @@ actor SSHSession {
             let chunkSize = min(32 * 1024, remaining)
             var buffer = [CChar](repeating: 0, count: chunkSize)
 
-            let bytesRead = buffer.withUnsafeMutableBufferPointer { bufferPtr -> Int in
-                guard let baseAddress = bufferPtr.baseAddress else {
-                    return Int(LIBSSH2_ERROR_EAGAIN)
-                }
-                return Int(libssh2_sftp_read(handle, baseAddress, bufferPtr.count))
-            }
+            let bytesRead = driver.readSFTPFile(handle: handle, into: &buffer)
 
             if bytesRead > 0 {
                 buffer.withUnsafeBufferPointer { bufferPtr in
@@ -1436,7 +1525,7 @@ actor SSHSession {
                 continue
             }
 
-            throw Self.remoteFileError(from: sftp, operation: "read file", path: normalizedPath)
+            throw remoteFileError(from: sftp, operation: "read file", path: normalizedPath)
         }
 
         return data
@@ -1451,7 +1540,7 @@ actor SSHSession {
             flags: UInt32(LIBSSH2_FXF_READ),
             mode: 0
         )
-        defer { libssh2_sftp_close_handle(handle) }
+        defer { driver.closeSFTPHandle(handle) }
 
         let fileManager = FileManager.default
         let destinationDirectory = localURL.deletingLastPathComponent()
@@ -1467,23 +1556,12 @@ actor SSHSession {
         do {
             while true {
                 try Task.checkCancellation()
-                var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+                var buffer = [CChar](repeating: 0, count: 64 * 1024)
 
-                let bytesRead = buffer.withUnsafeMutableBufferPointer { bufferPtr -> Int in
-                    guard let baseAddress = bufferPtr.baseAddress else {
-                        return Int(LIBSSH2_ERROR_EAGAIN)
-                    }
-                    return Int(
-                        libssh2_sftp_read(
-                            handle,
-                            UnsafeMutableRawPointer(baseAddress).assumingMemoryBound(to: CChar.self),
-                            bufferPtr.count
-                        )
-                    )
-                }
+                let bytesRead = driver.readSFTPFile(handle: handle, into: &buffer)
 
                 if bytesRead > 0 {
-                    try localFileHandle.write(contentsOf: Data(buffer.prefix(bytesRead)))
+                    try localFileHandle.write(contentsOf: Data(buffer.prefix(bytesRead).map { UInt8(bitPattern: $0) }))
                     continue
                 }
 
@@ -1496,7 +1574,7 @@ actor SSHSession {
                     continue
                 }
 
-                throw Self.remoteFileError(from: sftp, operation: "download file", path: normalizedPath)
+                throw remoteFileError(from: sftp, operation: "download file", path: normalizedPath)
             }
         } catch {
             try? localFileHandle.close()
@@ -1517,20 +1595,18 @@ actor SSHSession {
             mode: permissions,
             operation: "write file"
         )
-        defer { libssh2_sftp_close_handle(handle) }
+        defer { driver.closeSFTPHandle(handle) }
 
         var totalBytesWritten = 0
         while totalBytesWritten < data.count {
             try Task.checkCancellation()
 
-            let bytesWritten = data.withUnsafeBytes { rawBuffer -> Int in
-                guard let baseAddress = rawBuffer.baseAddress else { return 0 }
-                let remainingCount = min(64 * 1024, data.count - totalBytesWritten)
-                let writeBaseAddress = baseAddress
-                    .advanced(by: totalBytesWritten)
-                    .assumingMemoryBound(to: CChar.self)
-                return Int(libssh2_sftp_write(handle, writeBaseAddress, remainingCount))
-            }
+            let bytesWritten = driver.writeSFTPFile(
+                handle: handle,
+                data: data,
+                offset: totalBytesWritten,
+                maxLength: min(64 * 1024, data.count - totalBytesWritten)
+            )
 
             if bytesWritten > 0 {
                 totalBytesWritten += bytesWritten
@@ -1542,7 +1618,7 @@ actor SSHSession {
                 continue
             }
 
-            throw Self.remoteFileError(from: sftp, operation: "write file", path: normalizedPath)
+            throw remoteFileError(from: sftp, operation: "write file", path: normalizedPath)
         }
     }
 
@@ -1560,14 +1636,7 @@ actor SSHSession {
         while true {
             try Task.checkCancellation()
 
-            let result = normalizedPath.withCString { pathPtr in
-                libssh2_sftp_statvfs(
-                    sftp,
-                    pathPtr,
-                    normalizedPath.utf8.count,
-                    &status
-                )
-            }
+            let result = driver.statSFTPFileSystem(sftp: sftp, path: normalizedPath, status: &status)
 
             if result == 0 {
                 let fragmentSize = UInt64(status.f_frsize)
@@ -1585,7 +1654,7 @@ actor SSHSession {
                 continue
             }
 
-            throw Self.remoteFileError(from: sftp, operation: "read filesystem status", path: normalizedPath)
+            throw remoteFileError(from: sftp, operation: "read filesystem status", path: normalizedPath)
         }
     }
 
@@ -1596,15 +1665,8 @@ actor SSHSession {
             at: normalizedPath,
             sftp: sftp,
             operation: "create directory"
-        ) { sftpHandle, pathPtr, pathLength in
-            Int(
-                libssh2_sftp_mkdir_ex(
-                    sftpHandle,
-                    pathPtr,
-                    pathLength,
-                    Int(permissions)
-                )
-            )
+        ) { sftpHandle, mutationPath in
+            driver.makeSFTPDirectory(sftp: sftpHandle, path: mutationPath, permissions: permissions)
         }
     }
 
@@ -1618,15 +1680,12 @@ actor SSHSession {
         while true {
             try Task.checkCancellation()
 
-            let result = normalizedPath.withCString { pathPtr in
-                libssh2_sftp_stat_ex(
-                    sftp,
-                    pathPtr,
-                    UInt32(normalizedPath.utf8.count),
-                    Int32(LIBSSH2_SFTP_SETSTAT),
-                    &attributes
-                )
-            }
+            let result = driver.statSFTPPath(
+                sftp: sftp,
+                path: normalizedPath,
+                statType: Int32(LIBSSH2_SFTP_SETSTAT),
+                attributes: &attributes
+            )
 
             if result == 0 {
                 return
@@ -1637,7 +1696,7 @@ actor SSHSession {
                 continue
             }
 
-            throw Self.remoteFileError(from: sftp, operation: "set permissions", path: normalizedPath)
+            throw remoteFileError(from: sftp, operation: "set permissions", path: normalizedPath)
         }
     }
 
@@ -1663,19 +1722,13 @@ actor SSHSession {
                     at: normalizedSource,
                     sftp: sftp,
                     operation: "rename"
-                ) { sftpHandle, sourcePtr, sourceLength in
-                    normalizedDestination.withCString { destinationPtr in
-                        Int(
-                            libssh2_sftp_rename_ex(
-                                sftpHandle,
-                                sourcePtr,
-                                sourceLength,
-                                destinationPtr,
-                                UInt32(normalizedDestination.utf8.count),
-                                flags
-                            )
-                        )
-                    }
+                ) { sftpHandle, sourcePath in
+                    driver.renameSFTPPath(
+                        sftp: sftpHandle,
+                        sourcePath: sourcePath,
+                        destinationPath: normalizedDestination,
+                        flags: flags
+                    )
                 }
                 return
             } catch {
@@ -1693,14 +1746,8 @@ actor SSHSession {
             at: normalizedPath,
             sftp: sftp,
             operation: "delete file"
-        ) { sftpHandle, pathPtr, pathLength in
-            Int(
-                libssh2_sftp_unlink_ex(
-                    sftpHandle,
-                    pathPtr,
-                    pathLength
-                )
-            )
+        ) { sftpHandle, mutationPath in
+            driver.unlinkSFTPFile(sftp: sftpHandle, path: mutationPath)
         }
     }
 
@@ -1711,18 +1758,59 @@ actor SSHSession {
             at: normalizedPath,
             sftp: sftp,
             operation: "delete directory"
-        ) { sftpHandle, pathPtr, pathLength in
-            Int(
-                libssh2_sftp_rmdir_ex(
-                    sftpHandle,
-                    pathPtr,
-                    pathLength
-                )
-            )
+        ) { sftpHandle, mutationPath in
+            driver.removeSFTPDirectory(sftp: sftpHandle, path: mutationPath)
         }
     }
 
     // MARK: - Shell
+
+    private func logChannelFailure(
+        session: OpaquePointer,
+        operation: LibSSH2RawError.Operation,
+        fallbackCode: Int32
+    ) {
+        let rawError = driver.lastError(session: session, operation: operation, fallbackCode: fallbackCode)
+        logger.debug(
+            "libssh2 \(operation.rawValue) returned \(rawError.code) [message: \(rawError.message ?? "none", privacy: .public)]"
+        )
+    }
+
+    private func libSSH2Error(
+        session: OpaquePointer,
+        operation: LibSSH2RawError.Operation,
+        fallbackCode: Int32
+    ) -> SSHError {
+        let rawError = driver.lastError(
+            session: session,
+            operation: operation,
+            fallbackCode: fallbackCode
+        )
+        logger.debug(
+            "libssh2 \(operation.rawValue) returned \(rawError.code) [message: \(rawError.message ?? "none", privacy: .public)]"
+        )
+        return SSHError.libssh2(rawError)
+    }
+
+    private func closeAndFreeChannel(_ channel: OpaquePointer) {
+        let closeResult = driver.closeChannel(channel)
+        if closeResult != 0, closeResult != LIBSSH2_ERROR_EAGAIN {
+            if let session = libssh2Session {
+                logChannelFailure(session: session, operation: .channelClose, fallbackCode: closeResult)
+            } else {
+                logger.debug("libssh2 channel close returned \(closeResult) [message: no active session]")
+            }
+        }
+
+        let freeResult = driver.freeChannel(channel)
+        if freeResult != 0, freeResult != LIBSSH2_ERROR_EAGAIN {
+            if let session = libssh2Session {
+                logChannelFailure(session: session, operation: .channelFree, fallbackCode: freeResult)
+            } else {
+                logger.debug("libssh2 channel free returned \(freeResult) [message: no active session]")
+            }
+        }
+    }
 
     func startShell(
         cols: Int,
@@ -1736,32 +1824,21 @@ actor SSHSession {
         }
 
         // Set blocking for channel setup
-        libssh2_session_set_blocking(session, 1)
-        defer { libssh2_session_set_blocking(session, 0) }
+        driver.setBlocking(session: session, isBlocking: true)
+        defer { driver.setBlocking(session: session, isBlocking: false) }
 
-        // Open channel (use _ex variant since macros not available in Swift)
-        // LIBSSH2_CHANNEL_WINDOW_DEFAULT = 2*1024*1024, LIBSSH2_CHANNEL_PACKET_DEFAULT = 32768
-        guard let channel = libssh2_channel_open_ex(
-            session,
-            "session",
-            UInt32("session".utf8.count),
-            2 * 1024 * 1024,  // window size
-            32768,             // packet size
-            nil,
-            0
-        ) else {
+        guard let channel = driver.openSessionChannel(session: session) else {
+            logChannelFailure(session: session, operation: .channelOpen, fallbackCode: 0)
             throw SSHError.channelOpenFailed
         }
 
         // Mirror Ghostty's SSH behavior so remote prompts/themes can detect
         // 24-bit color support without changing TERM compatibility.
         for variable in RemoteTerminalBootstrap.terminalEnvironment() {
-            let result = libssh2_channel_setenv_ex(
-                channel,
-                variable.name,
-                UInt32(variable.name.utf8.count),
-                variable.value,
-                UInt32(variable.value.utf8.count)
+            let result = driver.setChannelEnvironment(
+                channel: channel,
+                name: variable.name,
+                value: variable.value
             )
 
             // Many SSH servers gate env forwarding via AcceptEnv; continue when
@@ -1772,20 +1849,15 @@ actor SSHSession {
         }
 
         // Request PTY
-        let ptyResult = libssh2_channel_request_pty_ex(
-            channel,
-            terminalType.rawValue,
-            UInt32(terminalType.rawValue.utf8.count),
-            nil,
-            0,
-            Int32(cols),
-            Int32(rows),
-            0,
-            0
+        let ptyResult = driver.requestPty(
+            channel: channel,
+            terminalType: terminalType,
+            cols: cols,
+            rows: rows
         )
         guard ptyResult == 0 else {
-            libssh2_channel_close(channel)
-            libssh2_channel_free(channel)
+            logChannelFailure(session: session, operation: .channelRequestPty, fallbackCode: ptyResult)
+            closeAndFreeChannel(channel)
             throw SSHError.shellRequestFailed
         }
 
@@ -1793,20 +1865,17 @@ actor SSHSession {
         // and mosh share the same environment and quoting behavior.
         switch RemoteTerminalBootstrap.launchPlan(startupCommand: startupCommand, environment: environment) {
         case .shell:
-            let shellResult = libssh2_channel_process_startup(channel, "shell", 5, nil, 0)
+            let shellResult = driver.startShell(channel: channel)
             guard shellResult == 0 else {
-                libssh2_channel_close(channel)
-                libssh2_channel_free(channel)
+                logChannelFailure(session: session, operation: .channelProcessStartup, fallbackCode: shellResult)
+                closeAndFreeChannel(channel)
                 throw SSHError.shellRequestFailed
             }
         case .exec(let command):
-            let commandLength = UInt32(command.utf8.count)
-            let execResult: Int32 = command.withCString { ptr in
-                libssh2_channel_process_startup(channel, "exec", 4, ptr, commandLength)
-            }
+            let execResult = driver.startExec(channel: channel, command: command)
             guard execResult == 0 else {
-                libssh2_channel_close(channel)
-                libssh2_channel_free(channel)
+                logChannelFailure(session: session, operation: .channelProcessStartup, fallbackCode: execResult)
+                closeAndFreeChannel(channel)
                 throw SSHError.shellRequestFailed
             }
         }
@@ -1819,7 +1888,7 @@ actor SSHSession {
             self.shellChannels[shellId] = state
 
             continuation.onTermination = { [weak self] _ in
-                Task { [weak self] in
+                self?.trackChannelCleanupTask { [weak self] in
                     await self?.closeShell(shellId)
                 }
             }
@@ -1860,8 +1929,7 @@ actor SSHSession {
             if !shellChannels.isEmpty {
                 let states = Array(shellChannels.values)
                 for state in states {
-                    // Use _ex variant since macros not available in Swift (stream_id 0 = stdout)
-                    let bytesRead = libssh2_channel_read_ex(state.channel, 0, &buffer, buffer.count)
+                    let bytesRead = driver.readChannel(state.channel, stream: 0, into: &buffer)
 
                     if bytesRead > 0 {
                         let readCount = Int(bytesRead)
@@ -1912,7 +1980,7 @@ actor SSHSession {
                     }
 
                     // Check for EOF
-                    if libssh2_channel_eof(state.channel) != 0 {
+                    if driver.isChannelEOF(state.channel) {
                         if !state.batchBuffer.isEmpty {
                             state.continuation.yield(state.batchBuffer)
                         }
@@ -1931,7 +1999,7 @@ actor SSHSession {
 
                     guard let execChannel = request.channel else { continue }
 
-                    let bytesRead = libssh2_channel_read_ex(execChannel, 0, &buffer, buffer.count)
+                    let bytesRead = driver.readChannel(execChannel, stream: 0, into: &buffer)
                     if bytesRead > 0 {
                         request.output.append(Data(bytes: buffer, count: Int(bytesRead)))
                         didWork = true
@@ -1942,7 +2010,7 @@ actor SSHSession {
                         continue
                     }
 
-                    let stderrRead = libssh2_channel_read_ex(execChannel, 1, &buffer, buffer.count)
+                    let stderrRead = driver.readChannel(execChannel, stream: 1, into: &buffer)
                     if stderrRead > 0 {
                         request.stderr.append(Data(bytes: buffer, count: Int(stderrRead)))
                         didWork = true
@@ -1953,7 +2021,7 @@ actor SSHSession {
                         continue
                     }
 
-                    if let currentChannel = request.channel, libssh2_channel_eof(currentChannel) != 0 {
+                    if let currentChannel = request.channel, driver.isChannelEOF(currentChannel) {
                         finishExecRequest(requestId, error: nil)
                         didWork = true
                     }
@@ -1981,13 +2049,26 @@ actor SSHSession {
         closeShellInternal(shellId)
     }
 
+    nonisolated private func trackChannelCleanupTask(_ operation: @escaping @Sendable () async -> Void) {
+        channelCleanupTasks.track(operation)
+    }
+
+    private func waitForChannelCleanupTasks() async {
+        while true {
+            let tasks = channelCleanupTasks.tasks()
+            guard !tasks.isEmpty else { return }
+            for task in tasks {
+                await task.value
+            }
+        }
+    }
+
     private func closeShellInternal(_ shellId: UUID) {
         guard let state = shellChannels.removeValue(forKey: shellId) else { return }
         if !state.batchBuffer.isEmpty {
             state.continuation.yield(state.batchBuffer)
         }
-        libssh2_channel_close(state.channel)
-        libssh2_channel_free(state.channel)
+        closeAndFreeChannel(state.channel)
         state.continuation.finish()
     }
 
@@ -1998,8 +2079,7 @@ actor SSHSession {
             if !state.batchBuffer.isEmpty {
                 state.continuation.yield(state.batchBuffer)
             }
-            libssh2_channel_close(state.channel)
-            libssh2_channel_free(state.channel)
+            closeAndFreeChannel(state.channel)
             state.continuation.finish()
         }
     }
@@ -2007,8 +2087,7 @@ actor SSHSession {
     private func closeAllExecChannels() {
         for request in execRequests.values {
             if let channel = request.channel {
-                libssh2_channel_close(channel)
-                libssh2_channel_free(channel)
+                closeAndFreeChannel(channel)
                 request.channel = nil
             }
         }
@@ -2020,8 +2099,7 @@ actor SSHSession {
         execRequests.removeAll()
         for request in requests.values {
             if let channel = request.channel {
-                libssh2_channel_close(channel)
-                libssh2_channel_free(channel)
+                closeAndFreeChannel(channel)
                 request.channel = nil
             }
             request.continuation.resume(throwing: error)
@@ -2035,40 +2113,31 @@ actor SSHSession {
         }
 
         if request.channel == nil {
-            let newChannel = libssh2_channel_open_ex(
-                session,
-                "session",
-                UInt32("session".utf8.count),
-                2 * 1024 * 1024,
-                32768,
-                nil,
-                0
-            )
+            let newChannel = driver.openSessionChannel(session: session)
             if let newChannel = newChannel {
                 request.channel = newChannel
             } else {
-                let lastError = libssh2_session_last_errno(session)
-                if lastError == LIBSSH2_ERROR_EAGAIN {
+                let rawError = driver.lastError(session: session, operation: .channelOpen, fallbackCode: 0)
+                if rawError.code == LIBSSH2_ERROR_EAGAIN {
                     return false
                 }
-                finishExecRequest(request.id, error: SSHError.channelOpenFailed)
+                finishExecRequest(request.id, error: SSHError.libssh2(rawError))
                 return false
             }
         }
 
         if !request.isStarted, let execChannel = request.channel {
-            let execResult = libssh2_channel_process_startup(
-                execChannel,
-                "exec",
-                4,
-                request.command,
-                UInt32(request.command.utf8.count)
-            )
+            let execResult = driver.startExec(channel: execChannel, command: request.command)
             if execResult == Int32(LIBSSH2_ERROR_EAGAIN) {
                 return false
             }
             if execResult != 0 {
-                finishExecRequest(request.id, error: SSHError.unknown("Exec failed: \(execResult)"))
+                let error = libSSH2Error(
+                    session: session,
+                    operation: .channelProcessStartup,
+                    fallbackCode: execResult
+                )
+                finishExecRequest(request.id, error: error)
                 return false
             }
             request.isStarted = true
@@ -2086,8 +2155,7 @@ actor SSHSession {
         guard let request = execRequests.removeValue(forKey: requestId) else { return }
 
         if let channel = request.channel {
-            libssh2_channel_close(channel)
-            libssh2_channel_free(channel)
+            closeAndFreeChannel(channel)
             request.channel = nil
         }
 
@@ -2108,7 +2176,7 @@ actor SSHSession {
     private func waitForSocket() async {
         guard let session = libssh2Session, socket >= 0 else { return }
 
-        let direction = libssh2_session_block_directions(session)
+        let direction = driver.sessionBlockDirections(session: session)
         guard direction != 0 else { return }
 
         // Use poll() for reliable, low-overhead socket waiting
@@ -2128,35 +2196,6 @@ actor SSHSession {
         _ = poll(&pfd, 1, 5)
     }
 
-    private func resolveNumericPeerAddress(for socket: Int32) -> String? {
-        var storage = sockaddr_storage()
-        var storageLen = socklen_t(MemoryLayout<sockaddr_storage>.size)
-
-        let peerResult = withUnsafeMutablePointer(to: &storage) { storagePtr in
-            storagePtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
-                getpeername(socket, sockaddrPtr, &storageLen)
-            }
-        }
-        guard peerResult == 0 else { return nil }
-
-        var hostBuffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-        let nameResult = withUnsafePointer(to: &storage) { storagePtr in
-            storagePtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
-                getnameinfo(
-                    sockaddrPtr,
-                    storageLen,
-                    &hostBuffer,
-                    socklen_t(hostBuffer.count),
-                    nil,
-                    0,
-                    NI_NUMERICHOST
-                )
-            }
-        }
-        guard nameResult == 0 else { return nil }
-        return String(cString: hostBuffer)
-    }
-
     // MARK: - Write
 
     func write(_ data: Data, to shellId: UUID) async throws {
@@ -2164,21 +2203,19 @@ actor SSHSession {
             throw SSHError.notConnected
         }
 
-        // Copy data to array for async-safe access (withUnsafeBytes doesn't support async)
-        var bytes = [UInt8](data)
+        let bytes = [UInt8](data)
         var remaining = bytes.count
         var offset = 0
 
         while remaining > 0 {
-            // Use _ex variant since macros not available in Swift (stream_id 0 = stdin)
-            let written = bytes.withUnsafeMutableBufferPointer { buffer -> Int in
-                guard let ptr = buffer.baseAddress else { return -1 }
-                return Int(libssh2_channel_write_ex(
-                    state.channel, 0,
-                    UnsafeRawPointer(ptr.advanced(by: offset)).assumingMemoryBound(to: CChar.self),
-                    remaining
-                ))
-            }
+            try Task.checkCancellation()
+            let written = driver.writeChannel(
+                state.channel,
+                stream: 0,
+                bytes: bytes,
+                offset: offset,
+                remaining: remaining
+            )
 
             if written > 0 {
                 offset += written
@@ -2186,6 +2223,7 @@ actor SSHSession {
             } else if written == Int(LIBSSH2_ERROR_EAGAIN) {
                 // Would block - actually wait for socket to be ready
                 await waitForSocket()
+                try Task.checkCancellation()
             } else {
                 throw SSHError.socketError("Write failed: \(written)")
             }
@@ -2228,30 +2266,26 @@ actor SSHSession {
         do {
             while scpChannel == nil {
                 try Task.checkCancellation()
-                scpChannel = remotePath.withCString { pathPtr in
-                    libssh2_scp_send64(
-                        session,
-                        pathPtr,
-                        permissions,
-                        Int64(data.count),
-                        0,
-                        0
-                    )
-                }
+                scpChannel = driver.openSCPChannel(
+                    session: session,
+                    path: remotePath,
+                    permissions: permissions,
+                    size: Int64(data.count)
+                )
 
                 if scpChannel != nil {
                     break
                 }
 
-                let lastError = libssh2_session_last_errno(session)
-                if lastError == LIBSSH2_ERROR_EAGAIN {
+                let rawError = driver.lastError(session: session, operation: .scpChannelOpen, fallbackCode: 0)
+                if rawError.code == LIBSSH2_ERROR_EAGAIN {
                     await waitForSocket()
                     continue
                 }
-                throw SSHError.socketError("SCP channel open failed: \(lastError)")
+                throw SSHError.socketError("SCP channel open failed: \(rawError.code)")
             }
 
-            guard let scpChannel else {
+            guard let openedSCPChannel = scpChannel else {
                 throw SSHError.socketError("SCP channel open failed")
             }
 
@@ -2259,11 +2293,13 @@ actor SSHSession {
             var offset = 0
             while offset < bytes.count {
                 try Task.checkCancellation()
-                let written = bytes.withUnsafeBufferPointer { buffer -> Int in
-                    guard let baseAddress = buffer.baseAddress else { return -1 }
-                    let pointer = UnsafeRawPointer(baseAddress.advanced(by: offset)).assumingMemoryBound(to: CChar.self)
-                    return Int(libssh2_channel_write_ex(scpChannel, 0, pointer, bytes.count - offset))
-                }
+                let written = driver.writeChannel(
+                    openedSCPChannel,
+                    stream: 0,
+                    bytes: bytes,
+                    offset: offset,
+                    remaining: bytes.count - offset
+                )
 
                 if written > 0 {
                     offset += written
@@ -2274,12 +2310,12 @@ actor SSHSession {
                 }
             }
 
-            _ = try await finishUploadChannel(scpChannel)
+            _ = try await finishUploadChannel(openedSCPChannel)
+            scpChannel = nil
             logger.info("SCP upload finished [path: \(remotePath, privacy: .public)]")
         } catch {
             if let scpChannel {
-                libssh2_channel_close(scpChannel)
-                libssh2_channel_free(scpChannel)
+                closeAndFreeChannel(scpChannel)
             }
             throw error
         }
@@ -2300,46 +2336,32 @@ actor SSHSession {
         do {
             while execChannel == nil {
                 try Task.checkCancellation()
-                execChannel = libssh2_channel_open_ex(
-                    session,
-                    "session",
-                    UInt32("session".utf8.count),
-                    2 * 1024 * 1024,
-                    32768,
-                    nil,
-                    0
-                )
+                execChannel = driver.openSessionChannel(session: session)
 
                 if execChannel != nil {
                     break
                 }
 
-                let lastError = libssh2_session_last_errno(session)
-                if lastError == LIBSSH2_ERROR_EAGAIN {
+                let rawError = driver.lastError(session: session, operation: .channelOpen, fallbackCode: 0)
+                if rawError.code == LIBSSH2_ERROR_EAGAIN {
                     await waitForSocket()
                     continue
                 }
-                throw SSHError.socketError("Exec upload channel open failed: \(lastError)")
+                throw SSHError.libssh2(rawError)
             }
 
-            guard let execChannel else {
+            guard let openedExecChannel = execChannel else {
                 throw SSHError.socketError("Exec upload channel open failed")
             }
 
-            _ = libssh2_channel_handle_extended_data2(
-                execChannel,
-                LIBSSH2_CHANNEL_EXTENDED_DATA_IGNORE
+            _ = driver.handleExtendedData(
+                channel: openedExecChannel,
+                mode: LIBSSH2_CHANNEL_EXTENDED_DATA_IGNORE
             )
 
             while true {
                 try Task.checkCancellation()
-                let execResult = libssh2_channel_process_startup(
-                    execChannel,
-                    "exec",
-                    4,
-                    command,
-                    UInt32(command.utf8.count)
-                )
+                let execResult = driver.startExec(channel: openedExecChannel, command: command)
                 if execResult == 0 {
                     break
                 }
@@ -2347,37 +2369,47 @@ actor SSHSession {
                     await waitForSocket()
                     continue
                 }
-                throw SSHError.socketError("Exec upload startup failed: \(execResult)")
+                throw libSSH2Error(
+                    session: session,
+                    operation: .channelProcessStartup,
+                    fallbackCode: execResult
+                )
             }
 
             let bytes = [UInt8](data)
             var offset = 0
             while offset < bytes.count {
                 try Task.checkCancellation()
-                let written = bytes.withUnsafeBufferPointer { buffer -> Int in
-                    guard let baseAddress = buffer.baseAddress else { return -1 }
-                    let pointer = UnsafeRawPointer(baseAddress.advanced(by: offset)).assumingMemoryBound(to: CChar.self)
-                    return Int(libssh2_channel_write_ex(execChannel, 0, pointer, bytes.count - offset))
-                }
+                let written = driver.writeChannel(
+                    openedExecChannel,
+                    stream: 0,
+                    bytes: bytes,
+                    offset: offset,
+                    remaining: bytes.count - offset
+                )
 
                 if written > 0 {
                     offset += written
                 } else if written == Int(LIBSSH2_ERROR_EAGAIN) {
                     await waitForSocket()
                 } else {
-                    throw SSHError.socketError("Exec upload write failed: \(written)")
+                    throw libSSH2Error(
+                        session: session,
+                        operation: .channelWrite,
+                        fallbackCode: Int32(written)
+                    )
                 }
             }
 
-            let exitStatus = try await finishUploadChannel(execChannel, drainOutput: true)
+            let exitStatus = try await finishUploadChannel(openedExecChannel, drainOutput: true)
+            execChannel = nil
             guard exitStatus == 0 else {
                 throw SSHError.socketError("Exec upload failed with exit status \(exitStatus)")
             }
             logger.info("Exec upload finished [path: \(remotePath, privacy: .public)]")
         } catch {
             if let execChannel {
-                libssh2_channel_close(execChannel)
-                libssh2_channel_free(execChannel)
+                closeAndFreeChannel(execChannel)
             }
             throw error
         }
@@ -2389,13 +2421,20 @@ actor SSHSession {
     ) async throws -> Int32 {
         while true {
             try Task.checkCancellation()
-            let sendEOFResult = libssh2_channel_send_eof(channel)
+            let sendEOFResult = driver.sendChannelEOF(channel)
             if sendEOFResult == 0 {
                 break
             }
             if sendEOFResult == Int32(LIBSSH2_ERROR_EAGAIN) {
                 await waitForSocket()
                 continue
+            }
+            if let session = libssh2Session {
+                throw libSSH2Error(
+                    session: session,
+                    operation: .channelEOF,
+                    fallbackCode: sendEOFResult
+                )
             }
             throw SSHError.socketError("SCP send EOF failed: \(sendEOFResult)")
         }
@@ -2405,7 +2444,7 @@ actor SSHSession {
             if drainOutput {
                 try await drainChannelOutput(channel)
             }
-            let waitEOFResult = libssh2_channel_wait_eof(channel)
+            let waitEOFResult = driver.waitChannelEOF(channel)
             if waitEOFResult == 0 {
                 break
             }
@@ -2413,12 +2452,19 @@ actor SSHSession {
                 await waitForSocket()
                 continue
             }
+            if let session = libssh2Session {
+                throw libSSH2Error(
+                    session: session,
+                    operation: .channelWaitEOF,
+                    fallbackCode: waitEOFResult
+                )
+            }
             throw SSHError.socketError("SCP wait EOF failed: \(waitEOFResult)")
         }
 
         while true {
             try Task.checkCancellation()
-            let closeResult = libssh2_channel_close(channel)
+            let closeResult = driver.closeChannel(channel)
             if closeResult == 0 {
                 break
             }
@@ -2426,12 +2472,19 @@ actor SSHSession {
                 await waitForSocket()
                 continue
             }
+            if let session = libssh2Session {
+                throw libSSH2Error(
+                    session: session,
+                    operation: .channelClose,
+                    fallbackCode: closeResult
+                )
+            }
             throw SSHError.socketError("SCP close failed: \(closeResult)")
         }
 
         while true {
             try Task.checkCancellation()
-            let waitClosedResult = libssh2_channel_wait_closed(channel)
+            let waitClosedResult = driver.waitChannelClosed(channel)
             if waitClosedResult == 0 {
                 break
             }
@@ -2439,11 +2492,25 @@ actor SSHSession {
                 await waitForSocket()
                 continue
             }
+            if let session = libssh2Session {
+                throw libSSH2Error(
+                    session: session,
+                    operation: .channelWaitClosed,
+                    fallbackCode: waitClosedResult
+                )
+            }
             throw SSHError.socketError("SCP wait close failed: \(waitClosedResult)")
         }
 
-        let exitStatus = libssh2_channel_get_exit_status(channel)
-        libssh2_channel_free(channel)
+        let exitStatus = driver.channelExitStatus(channel)
+        let freeResult = driver.freeChannel(channel)
+        if freeResult != 0, freeResult != LIBSSH2_ERROR_EAGAIN {
+            if let session = libssh2Session {
+                logChannelFailure(session: session, operation: .channelFree, fallbackCode: freeResult)
+            } else {
+                logger.debug("libssh2 upload channel free returned \(freeResult) [message: no active session]")
+            }
+        }
         return exitStatus
     }
 
@@ -2452,7 +2519,7 @@ actor SSHSession {
 
         while true {
             try Task.checkCancellation()
-            let stdoutRead = libssh2_channel_read_ex(channel, 0, &buffer, buffer.count)
+            let stdoutRead = driver.readChannel(channel, stream: 0, into: &buffer)
             if stdoutRead > 0 {
                 continue
             }
@@ -2464,7 +2531,7 @@ actor SSHSession {
 
         while true {
             try Task.checkCancellation()
-            let stderrRead = libssh2_channel_read_ex(channel, 1, &buffer, buffer.count)
+            let stderrRead = driver.readChannel(channel, stream: 1, into: &buffer)
             if stderrRead > 0 {
                 continue
             }
@@ -2482,8 +2549,7 @@ actor SSHSession {
             throw SSHError.notConnected
         }
 
-        // Use _ex variant since macros not available in Swift
-        let result = libssh2_channel_request_pty_size_ex(state.channel, Int32(cols), Int32(rows), 0, 0)
+        let result = driver.requestPtySize(channel: state.channel, cols: cols, rows: rows)
         if result != 0 && result != Int32(LIBSSH2_ERROR_EAGAIN) {
             logger.warning("PTY resize failed: \(result)")
         }
@@ -2495,16 +2561,16 @@ actor SSHSession {
         guard libssh2Session != nil else {
             throw SSHError.notConnected
         }
-        startIOLoop()
 
         let requestId = UUID()
         return try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { continuation in
                 let request = ExecRequest(id: requestId, command: command, continuation: continuation)
                 execRequests[request.id] = request
+                startIOLoop()
             }
         }, onCancel: { [weak self] in
-            Task {
+            self?.trackChannelCleanupTask { [weak self] in
                 await self?.cancelExecRequest(requestId, error: CancellationError())
             }
         })
@@ -2514,8 +2580,7 @@ actor SSHSession {
 
     func sendKeepAlive() {
         guard let session = libssh2Session else { return }
-        var secondsToNext: Int32 = 0
-        libssh2_keepalive_send(session, &secondsToNext)
+        _ = driver.sendKeepAlive(session: session)
     }
 
     private func ensureSFTPSession() async throws -> OpaquePointer {
@@ -2530,18 +2595,18 @@ actor SSHSession {
         while true {
             try Task.checkCancellation()
 
-            if let sftpSession = libssh2_sftp_init(session) {
+            if let sftpSession = driver.initSFTPSession(session: session) {
                 self.sftpSession = sftpSession
                 return sftpSession
             }
 
-            let lastError = libssh2_session_last_errno(session)
-            if lastError == LIBSSH2_ERROR_EAGAIN {
+            let rawError = driver.lastError(session: session, operation: .sftpInit, fallbackCode: 0)
+            if rawError.code == LIBSSH2_ERROR_EAGAIN {
                 await waitForSocket()
                 continue
             }
 
-            throw Self.remoteFileError(from: nil, operation: "start SFTP session", path: nil)
+            throw remoteFileError(from: nil, operation: "start SFTP session", path: nil)
         }
     }
 
@@ -2585,30 +2650,26 @@ actor SSHSession {
             throw RemoteFileBrowserError.disconnected
         }
 
-        let pathLength = UInt32(path.utf8.count)
         while true {
             try Task.checkCancellation()
 
-            if let handle = path.withCString({ pathPtr in
-                libssh2_sftp_open_ex(
-                    sftp,
-                    pathPtr,
-                    pathLength,
-                    UInt(flags),
-                    Int(mode),
-                    Int32(openType)
-                )
-            }) {
+            if let handle = driver.openSFTPHandle(
+                sftp: sftp,
+                path: path,
+                flags: flags,
+                mode: mode,
+                openType: openType
+            ) {
                 return handle
             }
 
-            let lastError = libssh2_session_last_errno(session)
-            if lastError == LIBSSH2_ERROR_EAGAIN {
+            let rawError = driver.lastError(session: session, operation: .sftpOpen, fallbackCode: 0)
+            if rawError.code == LIBSSH2_ERROR_EAGAIN {
                 await waitForSocket()
                 continue
             }
 
-            throw Self.remoteFileError(from: sftp, operation: operation, path: path)
+            throw remoteFileError(from: sftp, operation: operation, path: path)
         }
     }
 
@@ -2616,19 +2677,16 @@ actor SSHSession {
         at path: String,
         sftp: OpaquePointer,
         operation: String,
-        mutation: (OpaquePointer, UnsafePointer<CChar>, UInt32) -> Int
+        mutation: (OpaquePointer, String) -> Int
     ) async throws {
         guard libssh2Session != nil else {
             throw RemoteFileBrowserError.disconnected
         }
 
-        let pathLength = UInt32(path.utf8.count)
         while true {
             try Task.checkCancellation()
 
-            let result = path.withCString { pathPtr in
-                mutation(sftp, pathPtr, pathLength)
-            }
+            let result = mutation(sftp, path)
 
             if result == 0 {
                 return
@@ -2639,7 +2697,7 @@ actor SSHSession {
                 continue
             }
 
-            throw Self.remoteFileError(from: sftp, operation: operation, path: path)
+            throw remoteFileError(from: sftp, operation: operation, path: path)
         }
     }
 
@@ -2651,15 +2709,12 @@ actor SSHSession {
         while true {
             try Task.checkCancellation()
 
-            let result = normalizedPath.withCString { pathPtr in
-                libssh2_sftp_stat_ex(
-                    sftp,
-                    pathPtr,
-                    UInt32(normalizedPath.utf8.count),
-                    statType,
-                    &attributes
-                )
-            }
+            let result = driver.statSFTPPath(
+                sftp: sftp,
+                path: normalizedPath,
+                statType: statType,
+                attributes: &attributes
+            )
 
             if result == 0 {
                 let entryName = Self.fileName(for: normalizedPath)
@@ -2681,7 +2736,7 @@ actor SSHSession {
                 continue
             }
 
-            throw Self.remoteFileError(
+            throw remoteFileError(
                 from: sftp,
                 operation: statType == Int32(LIBSSH2_SFTP_LSTAT) ? "lstat" : "stat",
                 path: normalizedPath
@@ -2705,36 +2760,24 @@ actor SSHSession {
         while true {
             try Task.checkCancellation()
 
-            let result = buffer.withUnsafeMutableBufferPointer { bufferPtr -> Int in
-                guard let baseAddress = bufferPtr.baseAddress else {
-                    return Int(LIBSSH2_ERROR_EAGAIN)
-                }
-
-                return normalizedPath.withCString { pathPtr in
-                    Int(
-                        libssh2_sftp_symlink_ex(
-                            sftp,
-                            pathPtr,
-                            UInt32(normalizedPath.utf8.count),
-                            baseAddress,
-                            UInt32(bufferPtr.count),
-                            linkType
-                        )
-                    )
-                }
-            }
+            let result = driver.readSFTPSymlink(
+                sftp: sftp,
+                path: normalizedPath,
+                targetBuffer: &buffer,
+                linkType: linkType
+            )
 
             if result >= 0 {
                 return Self.string(from: buffer, length: result)
             }
 
-            let lastError = libssh2_session_last_errno(session)
-            if lastError == LIBSSH2_ERROR_EAGAIN {
+            let rawError = driver.lastError(session: session, operation: .sftpSymlink, fallbackCode: Int32(result))
+            if rawError.code == LIBSSH2_ERROR_EAGAIN {
                 await waitForSocket()
                 continue
             }
 
-            throw Self.remoteFileError(
+            throw remoteFileError(
                 from: sftp,
                 operation: linkType == Int32(LIBSSH2_SFTP_REALPATH) ? "resolve path" : "read link",
                 path: normalizedPath
@@ -2744,7 +2787,21 @@ actor SSHSession {
 
     private func closeSFTPSession() {
         guard let sftpSession else { return }
-        _ = libssh2_sftp_shutdown(sftpSession)
+        let shutdownResult = driver.shutdownSFTPSession(sftpSession)
+        if shutdownResult != 0, shutdownResult != LIBSSH2_ERROR_EAGAIN {
+            if let session = libssh2Session {
+                let rawError = driver.lastError(
+                    session: session,
+                    operation: .sftpShutdown,
+                    fallbackCode: shutdownResult
+                )
+                logger.debug(
+                    "libssh2 sftp shutdown returned \(rawError.code) [message: \(rawError.message ?? "none", privacy: .public)]"
+                )
+            } else {
+                logger.debug("libssh2 sftp shutdown returned \(shutdownResult) [message: no active session]")
+            }
+        }
         self.sftpSession = nil
     }
 
@@ -2759,13 +2816,13 @@ actor SSHSession {
         return String(decoding: bytes, as: UTF8.self)
     }
 
-    private static func remoteFileError(
+    private func remoteFileError(
         from sftp: OpaquePointer?,
         operation: String,
         path: String?
     ) -> RemoteFileBrowserError {
-        let code = sftp.map { libssh2_sftp_last_error($0) } ?? 0
-        return remoteFileError(lastError: UInt(code), operation: operation, path: path)
+        let code = sftp.map { driver.lastSFTPError($0) } ?? 0
+        return Self.remoteFileError(lastError: code, operation: operation, path: path)
     }
 
     private static func remoteFileError(
@@ -2855,6 +2912,7 @@ enum SSHError: LocalizedError {
     case shellRequestFailed
     case hostKeyVerificationFailed
     case socketError(String)
+    case libssh2(LibSSH2RawError)
     case unknown(String)
 
     var errorDescription: String? {
@@ -2882,6 +2940,9 @@ enum SSHError: LocalizedError {
         case .hostKeyVerificationFailed:
             return "Host key verification failed. The saved SSH host fingerprint does not match the server's current key."
         case .socketError(let msg): return "Socket error: \(msg)"
+        case .libssh2(let error):
+            let detail = error.message ?? "code \(error.code)"
+            return "libssh2 \(error.operation.rawValue) failed: \(detail)"
         case .unknown(let msg): return "Unknown error: \(msg)"
         }
     }

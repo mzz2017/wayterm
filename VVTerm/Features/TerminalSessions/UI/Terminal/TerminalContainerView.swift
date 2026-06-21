@@ -18,6 +18,7 @@ struct TerminalContainerView: View {
     var isActive: Bool = true
     var onVoiceRecordingChange: ((Bool) -> Void)? = nil
     var onVoiceTranscriptionSent: (() -> Void)? = nil
+    private let sessionManager = ConnectionSessionManager.shared
     @EnvironmentObject var ghosttyApp: Ghostty.App
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
@@ -30,8 +31,6 @@ struct TerminalContainerView: View {
     @State private var isInstallingMosh = false
     @State private var operationNotice: NoticeItem?
     @State private var dismissFallbackBanner = false
-    @State private var reconnectInFlight = false
-    @State private var connectWatchdogToken = UUID()
     @State private var hasEstablishedConnection = false
     @State private var showingRetrustHostConfirmation = false
     @StateObject private var richPasteUI = TerminalRichPasteUIModel()
@@ -39,17 +38,20 @@ struct TerminalContainerView: View {
 
     /// Check if terminal already exists (was previously created)
     private var terminalAlreadyExists: Bool {
-        ConnectionSessionManager.shared.hasTerminal(for: session.id)
+        sessionManager.hasTerminal(for: session.id)
     }
 
     // Voice input state
     #if os(macOS) || os(iOS)
-    @StateObject private var audioService = AudioService()
+    @ObservedObject private var voiceInput = TerminalVoiceInputStore.shared
     @State private var showingVoiceRecording = false
-    @State private var voiceProcessing = false
     @State private var showingPermissionError = false
     @State private var permissionErrorMessage = ""
     @AppStorage("terminalVoiceButtonEnabled") private var voiceButtonEnabled = true
+
+    private var voiceTarget: TerminalVoiceInputTarget {
+        .session(session.id)
+    }
     #endif
 
     #if os(macOS)
@@ -238,10 +240,12 @@ struct TerminalContainerView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
-            loadCredentialsIfNeeded(force: true)
+            requestCredentialLoadIfNeeded(force: true)
         }
         .onChange(of: server?.id) { _ in
-            loadCredentialsIfNeeded(force: true)
+            credentials = nil
+            credentialLoadErrorMessage = nil
+            requestCredentialLoadIfNeeded(force: true)
         }
         .onAppear {
             updateTerminalBackgroundColor()
@@ -271,7 +275,6 @@ struct TerminalContainerView: View {
             }
         }
         .onChange(of: isReady) { _ in
-            connectWatchdogToken = UUID()
             startConnectWatchdog()
         }
         .onChange(of: session.connectionState) { state in
@@ -282,8 +285,6 @@ struct TerminalContainerView: View {
                 if state.isConnected {
                     hasEstablishedConnection = true
                 }
-                reconnectInFlight = false
-                connectWatchdogToken = UUID()
                 startConnectWatchdog()
             } else if case .disconnected = state {
                 attemptAutoReconnectIfNeeded()
@@ -328,9 +329,7 @@ struct TerminalContainerView: View {
         #endif
         .alert("Install tmux?", isPresented: $showingTmuxInstallPrompt) {
             Button("Install") {
-                Task {
-                    await ConnectionSessionManager.shared.startTmuxInstall(for: session.id)
-                }
+                ConnectionSessionManager.shared.requestTmuxInstall(for: session.id)
             }
             Button("Continue without persistence", role: .cancel) {
                 disableTmuxForServer()
@@ -340,9 +339,7 @@ struct TerminalContainerView: View {
         }
         .alert("Install mosh-server?", isPresented: $showingMoshInstallPrompt) {
             Button("Install") {
-                Task {
-                    await installMoshServerAndReconnect()
-                }
+                requestMoshInstallAndReconnect()
             }
             Button("Continue with SSH", role: .cancel) {}
         } message: {
@@ -363,9 +360,7 @@ struct TerminalContainerView: View {
         .onDisappear {
             cleanupKeyMonitor()
             if showingVoiceRecording {
-                audioService.cancelRecording()
-                showingVoiceRecording = false
-                voiceProcessing = false
+                cancelVoiceRecording()
             }
             onVoiceRecordingChange?(false)
         }
@@ -373,9 +368,7 @@ struct TerminalContainerView: View {
         #if os(iOS)
         .onDisappear {
             if showingVoiceRecording {
-                audioService.cancelRecording()
-                showingVoiceRecording = false
-                voiceProcessing = false
+                cancelVoiceRecording()
             }
             onVoiceRecordingChange?(false)
         }
@@ -432,12 +425,11 @@ struct TerminalContainerView: View {
             server: server,
             credentials: credentials,
             richPasteUIModel: richPasteUI,
+            sessionManager: sessionManager,
             isActive: isActive,
             shouldPreserveKeyboardDuringReconnect: true,
             onProcessExit: {
-                DispatchQueue.main.async {
-                    ConnectionSessionManager.shared.handleShellExit(for: session.id)
-                }
+                ConnectionSessionManager.shared.requestSessionProcessExit(forSession: session.id)
             },
             onReady: {
                 isReady = true
@@ -450,11 +442,10 @@ struct TerminalContainerView: View {
             server: server,
             credentials: credentials,
             richPasteUIModel: richPasteUI,
+            sessionManager: sessionManager,
             isActive: isActive,
             onProcessExit: {
-                DispatchQueue.main.async {
-                    ConnectionSessionManager.shared.handleShellExit(for: session.id)
-                }
+                ConnectionSessionManager.shared.requestSessionProcessExit(forSession: session.id)
             },
             onReady: {
                 isReady = true
@@ -505,7 +496,7 @@ struct TerminalContainerView: View {
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                         Button("Retry") {
-                            Task { await retryConnection() }
+                            retryConnection()
                         }
                         .buttonStyle(.bordered)
                     }
@@ -558,7 +549,7 @@ struct TerminalContainerView: View {
                                     .multilineTextAlignment(.center)
                             }
                             Button("Reconnect") {
-                                Task { await retryConnection() }
+                                retryConnection()
                             }
                             .buttonStyle(.bordered)
                         }
@@ -583,7 +574,7 @@ struct TerminalContainerView: View {
                                 .buttonStyle(.borderedProminent)
                             }
                             Button("Retry") {
-                                Task { await retryConnection() }
+                                retryConnection()
                             }
                             .buttonStyle(.bordered)
                         }
@@ -659,116 +650,109 @@ struct TerminalContainerView: View {
 
     private func retrustHostAndRetry() {
         guard let server else { return }
-        KnownHostsManager.shared.remove(host: server.host, port: server.port)
-        Task { await retryConnection() }
+        ConnectionSessionManager.shared.requestSessionHostRetrust(
+            session: session,
+            server: server,
+            onCompleted: { didReconnect in
+                guard didReconnect else { return }
+                reconnectToken = UUID()
+            }
+        )
     }
 
     private func attemptAutoReconnectIfNeeded() {
-        guard scenePhase == .active else { return }
-        guard !reconnectInFlight else { return }
-        guard !ConnectionSessionManager.shared.isSuspendingForBackground else { return }
-        guard autoReconnectEnabled else { return }
-        guard session.connectionState == .disconnected else { return }
-        Task { await retryConnection() }
+        guard ConnectionSessionManager.shared.shouldAutoReconnectSession(
+            session.id,
+            isSceneActive: scenePhase == .active,
+            autoReconnectEnabled: autoReconnectEnabled
+        ) else { return }
+        retryConnection()
     }
 
     private func startConnectWatchdog() {
-        let shouldWatchConnecting = session.connectionState.isConnecting
-        let shouldWatchConnectedNoTerminal = session.connectionState.isConnected && !isReady && !terminalAlreadyExists
-        guard shouldWatchConnecting || shouldWatchConnectedNoTerminal else { return }
-        let token = connectWatchdogToken
-
-        Task {
-            try? await Task.sleep(for: .seconds(20))
-            guard !Task.isCancelled else { return }
-
-            await MainActor.run {
-                guard token == connectWatchdogToken else { return }
-
-                let stillConnecting = session.connectionState.isConnecting
-                let stillConnectedNoTerminal = session.connectionState.isConnected && !isReady && !terminalAlreadyExists
-                guard stillConnecting || stillConnectedNoTerminal else { return }
-
-                if stillConnectedNoTerminal {
-                    ConnectionSessionManager.shared.updateSessionState(session.id, to: .disconnected)
-                    Task { await retryConnection() }
-                    return
-                }
-
-                if ConnectionSessionManager.shared.shellId(for: session.id) != nil {
-                    ConnectionSessionManager.shared.updateSessionState(session.id, to: .connected)
-                    return
-                }
-
-                let inFlight = ConnectionSessionManager.shared.isShellStartInFlight(for: session.id)
-                if inFlight {
-                    // Keep polling while shell start is in-flight so a hung start cannot
-                    // leave the UI stuck in "Connecting...".
-                    startConnectWatchdog()
-                    return
-                }
-
-                ConnectionSessionManager.shared.updateSessionState(
-                    session.id,
-                    to: .failed(String(localized: "Connection timed out. Please retry."))
-                )
-            }
+        ConnectionSessionManager.shared.scheduleConnectWatchdog(
+            forSessionId: session.id,
+            isReady: isReady,
+            terminalExists: terminalAlreadyExists,
+            timeoutMessage: String(localized: "Connection timed out. Please retry.")
+        ) {
+            retryConnection()
         }
     }
 
-    @MainActor
-    private func retryConnection() async {
-        guard !reconnectInFlight else { return }
-        guard !session.connectionState.isConnecting else { return }
-        reconnectInFlight = true
-        defer { reconnectInFlight = false }
+    private func retryConnection() {
         isReady = false
         operationNotice = nil
-        loadCredentialsIfNeeded(force: true)
-        guard credentials != nil else { return }
-        ghosttyApp.startIfNeeded()
-        try? await ConnectionSessionManager.shared.reconnect(session: session)
-        connectWatchdogToken = UUID()
-        startConnectWatchdog()
-        reconnectToken = UUID()
+        ConnectionSessionManager.shared.requestSessionRetry(
+            session: session,
+            server: server,
+            onCompleted: { result in
+                guard let loadedCredentials = result.credentials else {
+                    if let message = result.errorMessage {
+                        credentialLoadErrorMessage = String(
+                            format: String(localized: "Failed to load credentials: %@"),
+                            message
+                        )
+                    }
+                    return
+                }
+                credentials = loadedCredentials
+                credentialLoadErrorMessage = nil
+                ghosttyApp.startIfNeeded()
+                startConnectWatchdog()
+                reconnectToken = UUID()
+            }
+        )
     }
 
-    @MainActor
-    private func installMoshServerAndReconnect() async {
+    private func requestMoshInstallAndReconnect() {
         guard !isInstallingMosh else { return }
         isInstallingMosh = true
-        defer { isInstallingMosh = false }
+        operationNotice = nil
 
-        do {
-            try await ConnectionSessionManager.shared.installMoshServer(for: session.id)
-            operationNotice = nil
-            await retryConnection()
-        } catch {
-            operationNotice = NoticeItem(
-                id: "terminal-mosh-install-error-\(session.id.uuidString)",
-                lane: .bottomOperation,
-                level: .error,
-                leading: .icon("xmark.octagon.fill"),
-                title: String(localized: "mosh-server install failed"),
-                message: error.localizedDescription,
-                dismissAction: { operationNotice = nil }
-            )
-        }
+        ConnectionSessionManager.shared.requestMoshInstallAndReconnect(
+            session: session,
+            onCompleted: {
+                isInstallingMosh = false
+                operationNotice = nil
+                reconnectToken = UUID()
+            },
+            onFailed: { error in
+                isInstallingMosh = false
+                operationNotice = NoticeItem(
+                    id: "terminal-mosh-install-error-\(session.id.uuidString)",
+                    lane: .bottomOperation,
+                    level: .error,
+                    leading: .icon("xmark.octagon.fill"),
+                    title: String(localized: "mosh-server install failed"),
+                    message: error.localizedDescription,
+                    dismissAction: { operationNotice = nil }
+                )
+            }
+        )
     }
 
     @MainActor
-    private func loadCredentialsIfNeeded(force: Bool) {
+    private func requestCredentialLoadIfNeeded(force: Bool) {
         guard let server else { return }
         if !force, credentials != nil { return }
-        do {
-            credentials = try KeychainManager.shared.getCredentials(for: server)
-            credentialLoadErrorMessage = nil
-        } catch {
-            credentialLoadErrorMessage = String(
-                format: String(localized: "Failed to load credentials: %@"),
-                error.localizedDescription
-            )
-        }
+        let serverId = server.id
+        ConnectionSessionManager.shared.requestSessionCredentialLoad(
+            session: session,
+            server: server,
+            onCompleted: { result in
+                guard self.server?.id == serverId else { return }
+                if let loadedCredentials = result.credentials {
+                    credentials = loadedCredentials
+                    credentialLoadErrorMessage = nil
+                } else if let message = result.errorMessage {
+                    credentialLoadErrorMessage = String(
+                        format: String(localized: "Failed to load credentials: %@"),
+                        message
+                    )
+                }
+            }
+        )
     }
 
     // MARK: - Voice Input (macOS / iOS)
@@ -776,17 +760,15 @@ struct TerminalContainerView: View {
     #if os(macOS) || os(iOS)
     private var voiceOverlay: some View {
         VoiceRecordingView(
-            audioService: audioService,
+            voiceInput: voiceInput,
+            target: voiceTarget,
             onSend: { transcribedText in
                 handleVoiceTranscription(transcribedText)
                 showingVoiceRecording = false
-                voiceProcessing = false
             },
             onCancel: {
                 showingVoiceRecording = false
-                voiceProcessing = false
-            },
-            isProcessing: $voiceProcessing
+            }
         )
     }
     #endif
@@ -832,9 +814,7 @@ struct TerminalContainerView: View {
 
         if showingVoiceRecording {
             if event.keyCode == keyCodeEscape {
-                audioService.cancelRecording()
-                showingVoiceRecording = false
-                voiceProcessing = false
+                cancelVoiceRecording()
                 return nil
             }
             if event.keyCode == keyCodeReturn {
@@ -854,15 +834,13 @@ struct TerminalContainerView: View {
     #if os(macOS) || os(iOS)
     private func toggleVoiceRecording() {
         if showingVoiceRecording {
-            Task {
-                let text = await audioService.stopRecording()
-                await MainActor.run {
-                    let fallback = text.isEmpty ? audioService.partialTranscription : text
-                    handleVoiceTranscription(fallback)
+            voiceInput.requestStopAndSend(
+                for: voiceTarget,
+                onCompleted: { text in
+                    handleVoiceTranscription(text)
                     showingVoiceRecording = false
-                    voiceProcessing = false
                 }
-            }
+            )
         } else {
             startVoiceRecording()
         }
@@ -871,27 +849,28 @@ struct TerminalContainerView: View {
 
     #if os(macOS) || os(iOS)
     private func startVoiceRecording() {
-        Task {
-            do {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                    showingVoiceRecording = true
-                }
-                try await audioService.startRecording()
-            } catch {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+            showingVoiceRecording = true
+        }
+        voiceInput.requestStart(
+            for: voiceTarget,
+            onFailed: { message in
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     showingVoiceRecording = false
                 }
-                voiceProcessing = false
-                if let recordingError = error as? AudioService.RecordingError {
-                    permissionErrorMessage = recordingError.localizedDescription
-                        + "\n\n"
-                        + String(localized: "Enable Microphone and Speech Recognition in System Settings.")
-                } else {
-                    permissionErrorMessage = error.localizedDescription
-                }
+                permissionErrorMessage = message
                 showingPermissionError = true
             }
-        }
+        )
+    }
+
+    private func cancelVoiceRecording() {
+        voiceInput.requestCancel(
+            for: voiceTarget,
+            onCancelled: {
+                showingVoiceRecording = false
+            }
+        )
     }
     #endif
 

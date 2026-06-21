@@ -3,6 +3,11 @@ import AppKit
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect macOS keyboard shortcut parsing and display rules used by
+// terminal commands. They use pure shortcut values and no AppKit event dispatch;
+// update only when the product intentionally changes shortcut grammar or labels.
+
 struct MacKeyboardShortcutTests {
     @Test
     func commandVMatchesPhysicalVKey() {

@@ -1,8 +1,13 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect terminal accessory profile modeling, ordering, and defaults.
+// They use pure values and no rendered keyboard accessory UI; update only when
+// accessory profile semantics intentionally change.
+
 final class TerminalAccessoryProfileTests: XCTestCase {
-    func testNormalizedRemovesDuplicateActiveItems() {
+    func testNormalizedFallsBackToDefaultsWhenDeduplicatedItemsAreBelowMinimum() {
         let profile = TerminalAccessoryProfile(
             schemaVersion: TerminalAccessoryProfile.schemaVersion,
             layout: TerminalAccessoryLayout(
@@ -21,13 +26,10 @@ final class TerminalAccessoryProfileTests: XCTestCase {
 
         let normalized = profile.normalized()
 
-        XCTAssertEqual(
-            normalized.layout.activeItems,
-            [TerminalAccessoryItemRef.system(.escape), TerminalAccessoryItemRef.system(.tab)]
-        )
+        XCTAssertEqual(normalized.layout.activeItems, TerminalAccessoryProfile.defaultActiveItems)
     }
 
-    func testNormalizedDropsDeletedCustomActionReferences() {
+    func testNormalizedFallsBackToDefaultsWhenDeletedCustomActionsLeaveNoActiveItems() {
         let deletedAction = TerminalAccessoryCustomAction(
             id: UUID(),
             title: "Deleted",
@@ -53,6 +55,6 @@ final class TerminalAccessoryProfileTests: XCTestCase {
 
         let normalized = profile.normalized()
 
-        XCTAssertTrue(normalized.layout.activeItems.isEmpty)
+        XCTAssertEqual(normalized.layout.activeItems, TerminalAccessoryProfile.defaultActiveItems)
     }
 }

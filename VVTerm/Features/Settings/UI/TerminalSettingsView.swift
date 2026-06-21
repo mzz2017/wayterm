@@ -177,13 +177,13 @@ struct TerminalSettingsView: View {
 
     @EnvironmentObject private var terminalThemeManager: TerminalThemeManager
     @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var trustedHostsStore = TrustedHostsSettingsStore.shared
 
     @State private var availableFonts: [String] = []
     @State private var builtInThemeNames: [String] = []
     @State private var customThemeErrorMessage: String?
     @State private var showingCustomThemeManager = false
     @State private var showingResetKnownHostsConfirmation = false
-    @State private var knownHostCount = 0
 
     private var builtInThemeOptions: [String] {
         Set(builtInThemeNames)
@@ -516,7 +516,7 @@ struct TerminalSettingsView: View {
                     .foregroundStyle(.red)
             }
             .tint(.red)
-            .disabled(knownHostCount == 0)
+            .disabled(trustedHostsStore.knownHostCount == 0)
         } header: {
             Text("Danger Zone")
         } footer: {
@@ -527,7 +527,7 @@ struct TerminalSettingsView: View {
     }
 
     private var knownHostsFooterText: String {
-        let count = Int64(knownHostCount)
+        let count = Int64(trustedHostsStore.knownHostCount)
         if count == 1 {
             return String(localized: "VVTerm has 1 trusted SSH host on this device. Resetting trusted hosts makes VVTerm trust the host key presented on the next connection.")
         }
@@ -561,7 +561,7 @@ struct TerminalSettingsView: View {
                     try createAndApplyCustomTheme(name: name, content: content, applyTarget: applyTarget)
                 },
                 onDelete: { themeID in
-                    terminalThemeManager.deleteCustomTheme(id: themeID)
+                    try terminalThemeManager.deleteCustomTheme(id: themeID)
                     ensureThemeSelectionIsValid()
                 },
                 onSaveEdit: { themeID, name, content in
@@ -582,8 +582,7 @@ struct TerminalSettingsView: View {
         .alert("Reset Trusted SSH Hosts", isPresented: $showingResetKnownHostsConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Reset", role: .destructive) {
-                KnownHostsManager.shared.removeAll()
-                refreshKnownHostCount()
+                resetKnownHosts()
             }
         } message: {
             Text("VVTerm will forget all saved SSH host fingerprints on this device. The next connection to each host will trust the key it presents.")
@@ -627,7 +626,11 @@ struct TerminalSettingsView: View {
     }
 
     private func refreshKnownHostCount() {
-        knownHostCount = KnownHostsManager.shared.entries().count
+        trustedHostsStore.refreshKnownHostCount()
+    }
+
+    private func resetKnownHosts() {
+        trustedHostsStore.resetTrustedHosts()
     }
 
     #if os(macOS)
@@ -843,7 +846,7 @@ private struct ManageCustomThemesSheet: View {
     let usePerAppearanceTheme: Bool
     let onSuggestThemeName: (String) -> String
     let onCreateTheme: (String, String, CustomThemeApplyTarget) throws -> Void
-    let onDelete: (UUID) -> Void
+    let onDelete: (UUID) throws -> Void
     let onSaveEdit: (UUID, String, String) throws -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -907,7 +910,7 @@ private struct ManageCustomThemesSheet: View {
                 initialName: theme.name,
                 initialContent: theme.content,
                 onDeleteRequest: {
-                    onDelete(theme.id)
+                    try deleteTheme(theme.id)
                     themePendingEdit = nil
                 }
             ) { name, content, _ in
@@ -943,7 +946,11 @@ private struct ManageCustomThemesSheet: View {
         .alert("Delete Custom Theme?", isPresented: deleteThemeAlertBinding) {
             Button("Delete", role: .destructive) {
                 if let themePendingDeletion {
-                    onDelete(themePendingDeletion.id)
+                    do {
+                        try deleteTheme(themePendingDeletion.id)
+                    } catch {
+                        customThemeErrorMessage = error.localizedDescription
+                    }
                 }
                 themePendingDeletion = nil
             }
@@ -1139,6 +1146,10 @@ private struct ManageCustomThemesSheet: View {
         }
 
         return darkThemeName == theme ? String(localized: "Active") : nil
+    }
+
+    private func deleteTheme(_ themeID: UUID) throws {
+        try onDelete(themeID)
     }
 
     @ViewBuilder
@@ -1356,7 +1367,7 @@ private struct ThemeBuilderSheet: View {
     let showApplyTarget: Bool
     let title: String
     let preservedExtraLines: [String]
-    let onDeleteRequest: (() -> Void)?
+    let onDeleteRequest: (() throws -> Void)?
     let onSave: (String, String, CustomThemeApplyTarget) throws -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -1391,7 +1402,7 @@ private struct ThemeBuilderSheet: View {
         initialName: String = "Custom Theme",
         initialContent: String? = nil,
         initialApplyTarget: CustomThemeApplyTarget = .dark,
-        onDeleteRequest: (() -> Void)? = nil,
+        onDeleteRequest: (() throws -> Void)? = nil,
         onSave: @escaping (String, String, CustomThemeApplyTarget) throws -> Void
     ) {
         self.usePerAppearanceTheme = usePerAppearanceTheme
@@ -1507,7 +1518,11 @@ private struct ThemeBuilderSheet: View {
         }
         .alert("Delete Custom Theme?", isPresented: $showingDeleteConfirmation) {
             Button("Delete", role: .destructive) {
-                onDeleteRequest?()
+                do {
+                    try onDeleteRequest?()
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {

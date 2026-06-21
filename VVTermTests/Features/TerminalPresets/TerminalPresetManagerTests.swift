@@ -1,6 +1,11 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect terminal preset manager persistence and mutation rules.
+// Fakes use isolated storage and no terminal launch; update only when preset
+// manager behavior intentionally changes.
+
 final class TerminalPresetManagerTests: XCTestCase {
     private var suiteName: String!
     private var defaults: UserDefaults!

@@ -13,6 +13,32 @@ enum ShellTeardownMode: Equatable, Sendable {
     case fullDisconnect
 }
 
+enum TerminalSurfaceDetachReason: Equatable, Sendable {
+    case viewDisappeared
+    case sessionClosed
+}
+
+struct TerminalSurfaceAttachContext: Equatable, Sendable {
+    var isAppActive: Bool
+    var isViewActive: Bool
+    var autoReconnectEnabled: Bool
+
+    static let active = TerminalSurfaceAttachContext(
+        isAppActive: true,
+        isViewActive: true,
+        autoReconnectEnabled: true
+    )
+}
+
+struct TerminalResizeRequestSize: Equatable, Sendable {
+    let cols: Int
+    let rows: Int
+
+    var isValid: Bool {
+        cols > 0 && rows > 0
+    }
+}
+
 @MainActor
 final class ConnectionSessionManager: ObservableObject {
     static let shared = ConnectionSessionManager()
@@ -26,14 +52,123 @@ final class ConnectionSessionManager: ObservableObject {
         let sessionId: UUID
         let serverId: UUID
         let tmuxSessionNameToKill: String?
-        let shellTeardownTask: Task<Void, Never>?
+        let richPasteUploadTasks: [Task<Void, Never>]
+        let shellTeardownRequest: ShellTeardownRequest?
+    }
+
+    private struct ShellTeardownRequest {
+        let sessionId: UUID
+        let handler: @MainActor (_ mode: ShellTeardownMode) async -> Void
+    }
+
+    private struct TmuxInstallRequest {
+        let sessionId: UUID
+        let task: Task<Void, Never>
+        var onCompleted: [@MainActor () -> Void]
+    }
+
+    private struct MoshInstallRequest {
+        let sessionId: UUID
+        let task: Task<Void, Never>
+        var onCompleted: [@MainActor () -> Void]
+        var onFailed: [@MainActor (Error) -> Void]
+    }
+
+    private struct SessionRetryRequest {
+        let sessionId: UUID
+        let task: Task<Void, Never>
+        var onCompleted: [@MainActor (TerminalReconnectRequestResult) -> Void]
+    }
+
+    private struct ActiveConnectionOpenRequest {
+        let sessionId: UUID
+        var task: Task<Void, Never>?
+        var onOpened: [@MainActor () -> Void]
+    }
+
+    private struct ForegroundReconnectRequest {
+        let sessionId: UUID
+        var task: Task<Void, Never>?
+        var callbacks: [ForegroundReconnectCallback]
+    }
+
+    private struct ForegroundReconnectCallback {
+        let action: TerminalForegroundReconnectAction
+        let onAction: @MainActor (TerminalForegroundReconnectAction) -> Void
+    }
+
+    private struct SessionHostRetrustRequest {
+        let sessionId: UUID
+        let task: Task<Void, Never>
+        var onCompleted: [@MainActor (Bool) -> Void]
+    }
+
+    private struct SessionCredentialLoadRequest {
+        let sessionId: UUID
+        let task: Task<Void, Never>
+        var onCompleted: [@MainActor (TerminalCredentialLoadResult) -> Void]
+    }
+
+    private struct SurfaceAttachRequest {
+        let sessionId: UUID
+        var context: TerminalSurfaceAttachContext
+        let task: Task<Void, Never>
+    }
+
+    private struct InputRequest {
+        let sessionId: UUID
+        let task: Task<Void, Never>
+    }
+
+    private struct RichPasteUploadRequest {
+        let sessionId: UUID
+        let task: Task<Void, Never>
+    }
+
+    private struct ResizeRequest {
+        let sessionId: UUID
+        var size: TerminalResizeRequestSize
+        let task: Task<Void, Never>
+    }
+
+    private struct ProcessExitRequest {
+        let sessionId: UUID
+        let task: Task<Void, Never>
+    }
+
+    private final class SessionRuntimeState {
+        let sessionId: UUID
+        var server: Server
+        var credentials: ServerCredentials
+        let runtime: TerminalConnectionRuntime
+        var onProcessExit: () -> Void
+
+        init(
+            sessionId: UUID,
+            server: Server,
+            credentials: ServerCredentials,
+            runtime: TerminalConnectionRuntime,
+            onProcessExit: @escaping () -> Void
+        ) {
+            self.sessionId = sessionId
+            self.server = server
+            self.credentials = credentials
+            self.runtime = runtime
+            self.onProcessExit = onProcessExit
+        }
     }
 
     @Published var sessions: [ConnectionSession] = [] {
         didSet {
-            LiveActivityManager.shared.refresh(with: sessions)
+            liveActivityRefresh(liveActivitySnapshots)
             schedulePersist()
         }
+    }
+    var liveActivityRefresh: @MainActor ([TerminalLiveActivitySnapshot]) -> Void = {
+        LiveActivityManager.shared.refresh(with: $0)
+    }
+    var successfulConnectionRecorder: @MainActor (_ id: UUID, _ transport: String) -> Void = {
+        EngagementTracker.shared.recordSuccessfulConnection(id: $0, transport: $1)
     }
     @Published var selectedSessionId: UUID? {
         didSet {
@@ -46,9 +181,10 @@ final class ConnectionSessionManager: ObservableObject {
         }
     }
 
-    /// Servers we're currently connected to (persists even when all terminals closed)
-    /// Cleared when user explicitly disconnects from a server
-    @Published var connectedServerIds: Set<UUID> = []
+    /// Legacy alias for servers with live terminal transports. Open-but-restored sessions are tracked by `openServerIds`.
+    var connectedServerIds: Set<UUID> {
+        activeServerIds
+    }
 
     /// Per-server view state (stats/terminal) - persists when switching servers
     @Published var selectedViewByServer: [UUID: String] = [:] {
@@ -69,34 +205,180 @@ final class ConnectionSessionManager: ObservableObject {
 
     /// Legacy single server ID for backward compatibility
     var connectedServerId: UUID? {
-        get { connectedServerIds.first }
-        set {
-            if let id = newValue {
-                connectedServerIds.insert(id)
-            } else {
-                connectedServerIds.removeAll()
-            }
+        connectedServerIds.first
+    }
+
+    var openServerIds: Set<UUID> {
+        Set(sessions.map(\.serverId))
+    }
+
+    var activeServerIds: Set<UUID> {
+        terminalConnectionRegistry.activeServerIds
+    }
+
+    func hasLiveRuntime(forSessionId sessionId: UUID) -> Bool {
+        terminalConnectionRegistry.isOpeningOrStreaming(.session(sessionId))
+    }
+
+    func shouldAutoReconnectSession(
+        _ sessionId: UUID,
+        isSceneActive: Bool,
+        autoReconnectEnabled: Bool,
+        reconnectInFlight: Bool = false
+    ) -> Bool {
+        guard let state = sessionState(for: sessionId) else { return false }
+        return TerminalAutoReconnectPolicy.shouldAttemptReconnect(
+            isSceneActive: isSceneActive,
+            autoReconnectEnabled: autoReconnectEnabled,
+            reconnectInFlight: reconnectInFlight || sessionReconnectsInFlight.contains(sessionId),
+            isSuspendingForBackground: isSuspendingForBackground,
+            connectionState: state,
+            hasLiveRuntime: hasLiveRuntime(forSessionId: sessionId)
+        )
+    }
+
+    func shouldManuallyReconnectSession(
+        _ sessionId: UUID,
+        reconnectInFlight: Bool
+    ) -> Bool {
+        guard let state = sessionState(for: sessionId) else { return false }
+        return TerminalManualReconnectPolicy.shouldAttemptReconnect(
+            reconnectInFlight: reconnectInFlight || sessionReconnectsInFlight.contains(sessionId),
+            snapshotState: state,
+            hasLiveRuntime: hasLiveRuntime(forSessionId: sessionId)
+        )
+    }
+
+    func foregroundReconnectActionForSelectedSession(
+        selectedViewId: String,
+        terminalViewId: String,
+        refreshTerminal: Bool,
+        autoReconnectEnabled: Bool
+    ) -> TerminalForegroundReconnectAction? {
+        guard let sessionId = selectedSessionId,
+              sessionWithID(sessionId) != nil else {
+            return nil
         }
+        return TerminalForegroundReconnectPolicy.action(
+            selectedViewId: selectedViewId,
+            terminalViewId: terminalViewId,
+            selectedSessionId: sessionId,
+            selectedSessionHasLiveRuntime: hasLiveRuntime(forSessionId: sessionId),
+            refreshTerminal: refreshTerminal,
+            autoReconnectEnabled: autoReconnectEnabled,
+            isSuspendingForBackground: isSuspendingForBackground
+        )
+    }
+
+    func handleForegroundReconnectForSelectedSession(
+        selectedViewId: String,
+        terminalViewId: String,
+        refreshTerminal: Bool,
+        autoReconnectEnabled: Bool
+    ) async -> TerminalForegroundReconnectAction? {
+        guard let action = foregroundReconnectActionForSelectedSession(
+            selectedViewId: selectedViewId,
+            terminalViewId: terminalViewId,
+            refreshTerminal: refreshTerminal,
+            autoReconnectEnabled: autoReconnectEnabled
+        ) else {
+            return nil
+        }
+
+        if action.shouldReconnect,
+           let session = sessionWithID(action.sessionId) {
+            _ = await reconnectSessionIfRuntimeInactive(session)
+        }
+
+        return action
     }
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ConnectionSession")
     private var shellRegistry = SSHShellRegistry(staleThreshold: 120)
 
-    /// Terminal views indexed by session ID for voice input and other external interactions
-    private var terminalViews: [UUID: GhosttyTerminalView] = [:]
+    /// Terminal UI surfaces indexed by session entity. SSH runtime ownership is separate.
+    private let terminalSurfaceRegistry = TerminalSurfaceRegistry()
     /// Sessions whose preserved terminal must be reset before attaching a fresh shell.
     private var terminalsNeedingReconnectReset: Set<UUID> = []
 
     /// Shell cancel handlers indexed by session ID - called before closing to cancel async tasks
     private var shellCancelHandlers: [UUID: @MainActor (_ mode: ShellTeardownMode) async -> Void] = [:]
     /// Shell suspend handlers indexed by session ID - cancel in-flight connects without destroying terminals
-    private var shellSuspendHandlers: [UUID: () -> Void] = [:]
+    private var shellSuspendHandlers: [UUID: @MainActor () async -> Void] = [:]
     /// Server IDs with an in-flight open request, used to collapse repeated clicks.
     private var sessionOpensInFlight: Set<UUID> = []
+    private var connectionOpenRequests: [UUID: Task<Void, Never>] = [:]
+    private(set) var lastConnectionOpenFailure: Error?
+    var pendingConnectionOpenRequestIDs: Set<UUID> { Set(connectionOpenRequests.keys) }
+    private var tmuxInstallRequests: [UUID: TmuxInstallRequest] = [:]
+    private var tmuxInstallRequestBySession: [UUID: UUID] = [:]
+    var pendingTmuxInstallRequestIDs: Set<UUID> { Set(tmuxInstallRequests.keys) }
+    private var moshInstallRequests: [UUID: MoshInstallRequest] = [:]
+    private var moshInstallRequestBySession: [UUID: UUID] = [:]
+    private(set) var lastMoshInstallFailure: Error?
+    var pendingMoshInstallRequestIDs: Set<UUID> { Set(moshInstallRequests.keys) }
+    private var sessionRetryRequests: [UUID: SessionRetryRequest] = [:]
+    private var sessionRetryRequestBySession: [UUID: UUID] = [:]
+    var pendingSessionRetryRequestIDs: Set<UUID> { Set(sessionRetryRequests.keys) }
+    private var activeConnectionOpenRequests: [UUID: ActiveConnectionOpenRequest] = [:]
+    private var activeConnectionOpenRequestBySession: [UUID: UUID] = [:]
+    var pendingActiveConnectionOpenRequestIDs: Set<UUID> { Set(activeConnectionOpenRequestBySession.values) }
+    private var foregroundReconnectRequests: [UUID: ForegroundReconnectRequest] = [:]
+    private var foregroundReconnectRequestBySession: [UUID: UUID] = [:]
+    var pendingForegroundReconnectRequestIDs: Set<UUID> { Set(foregroundReconnectRequestBySession.values) }
+    private var sessionHostRetrustRequests: [UUID: SessionHostRetrustRequest] = [:]
+    private var sessionHostRetrustRequestBySession: [UUID: UUID] = [:]
+    var pendingSessionHostRetrustRequestIDs: Set<UUID> { Set(sessionHostRetrustRequests.keys) }
+    private var sessionCredentialLoadRequests: [UUID: SessionCredentialLoadRequest] = [:]
+    private var sessionCredentialLoadRequestBySession: [UUID: UUID] = [:]
+    var pendingSessionCredentialLoadRequestIDs: Set<UUID> { Set(sessionCredentialLoadRequestBySession.values) }
+    private var surfaceAttachRequests: [UUID: SurfaceAttachRequest] = [:]
+    private var surfaceAttachRequestBySession: [UUID: UUID] = [:]
+    var pendingSurfaceAttachRequestIDs: Set<UUID> { Set(surfaceAttachRequests.keys) }
+    private var inputRequests: [UUID: InputRequest] = [:]
+    private var inputRequestBySession: [UUID: UUID] = [:]
+    private var lastInputTaskBySession: [UUID: Task<Void, Never>] = [:]
+    var pendingInputRequestIDs: Set<UUID> { Set(inputRequests.keys) }
+    private var richPasteUploadRequests: [UUID: RichPasteUploadRequest] = [:]
+    private var richPasteUploadRequestBySession: [UUID: UUID] = [:]
+    var pendingSessionRichPasteUploadRequestIDs: Set<UUID> { Set(richPasteUploadRequests.keys) }
+    private var resizeRequests: [UUID: ResizeRequest] = [:]
+    private var resizeRequestBySession: [UUID: UUID] = [:]
+    var pendingResizeRequestIDs: Set<UUID> { Set(resizeRequests.keys) }
+    private var processExitRequests: [UUID: ProcessExitRequest] = [:]
+    private var processExitRequestBySession: [UUID: UUID] = [:]
+    var pendingProcessExitRequestIDs: Set<UUID> { Set(processExitRequests.keys) }
+    private var sessionReconnectsInFlight: Set<UUID> = []
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
     private var serverDisconnectTasks: [UUID: Task<Void, Never>] = [:]
+    /// Application-owned connect watchdog timers keyed by session.
+    private var connectWatchdogTasks: [UUID: Task<Void, Never>] = [:]
+    private var connectWatchdogGenerations: [UUID: UUID] = [:]
+    private var credentialsProvider: @MainActor (Server) async throws -> ServerCredentials = { server in
+        try KeychainManager.shared.getCredentials(for: server)
+    }
     /// Per-server teardown work from ordinary tab closes. New opens wait for this too.
     private var serverTeardownTasks: [UUID: [UUID: Task<Void, Never>]] = [:]
+    /// Application-owned tab SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
+    private var sessionRuntimes: [UUID: SessionRuntimeState] = [:]
+    private let terminalConnectionRegistry = TerminalConnectionRegistry()
+    #if DEBUG
+    private var testingTerminalConnectionClientFactory: (@MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient)?
+    private var rejectedShellCleanupOperationForTesting: (@MainActor @Sendable () async -> Void)?
+    private var tmuxKillOperationForTesting: (@MainActor @Sendable () async -> Void)?
+    private var tmuxInstallOperationForTesting: (@MainActor (UUID) async -> Void)?
+    private var moshInstallAndReconnectOperationForTesting: (@MainActor (ConnectionSession) async throws -> Void)?
+    private var sessionRetryOperationForTesting: (@MainActor (ConnectionSession, Server?) async -> TerminalReconnectRequestResult)?
+    private var activeConnectionOpenReconnectOperationForTesting: (@MainActor (ConnectionSession) async -> Bool)?
+    private var foregroundReconnectOperationForTesting: (@MainActor (ConnectionSession) async -> Bool)?
+    private var sessionHostRetrustOperationForTesting: (@MainActor (ConnectionSession, Server) async -> Bool)?
+    private var surfaceAttachOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
+    private var inputOperationForTesting: (@MainActor (Data, TerminalEntityID) async -> Void)?
+    private var richPasteLeaseProviderForTesting: (@MainActor (UUID) -> RemoteConnectionLease?)?
+    private var richPasteUploadOperationForTesting: TerminalRichPasteUploadOperation?
+    private var resizeOperationForTesting: (@MainActor (TerminalResizeRequestSize, TerminalEntityID) async -> Void)?
+    private var processExitOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
+    #endif
     @Published private(set) var isSuspendingForBackground = false
 
     /// Servers that already ran tmux cleanup (per app launch)
@@ -107,9 +389,6 @@ final class ConnectionSessionManager: ObservableObject {
     /// Maximum number of terminal surfaces to keep in memory
     /// Each Ghostty surface uses ~50-100MB (font atlas, Metal textures, scrollback)
     private let maxTerminals = 20
-
-    /// LRU access order - most recently accessed at the end
-    private var terminalAccessOrder: [UUID] = []
 
     private let persistenceKey = "connectionSessionsSnapshot.v1"
     private var persistTask: Task<Void, Never>?
@@ -131,8 +410,16 @@ final class ConnectionSessionManager: ObservableObject {
         sessions.first { $0.serverId == serverId }
     }
 
-    private func firstConnectedSession(for serverId: UUID) -> ConnectionSession? {
-        sessions.first { $0.serverId == serverId && $0.connectionState.isConnected }
+    private func registryLiveSession(for serverId: UUID) -> ConnectionSession? {
+        let liveEntityIDs = terminalConnectionRegistry.openingOrStreamingEntityIDs(for: serverId)
+        if let selected = selectedSession(for: serverId),
+           liveEntityIDs.contains(.session(selected.id)) {
+            return selected
+        }
+
+        return sessions.first {
+            $0.serverId == serverId && liveEntityIDs.contains(.session($0.id))
+        }
     }
 
     private func selectedSession(for serverId: UUID) -> ConnectionSession? {
@@ -207,7 +494,10 @@ final class ConnectionSessionManager: ObservableObject {
 
         logger.warning("\(logMessage) \(sessionId.uuidString, privacy: .public)")
         if !shellRegistry.hasClientReferences(staleContext.client) {
-            Task.detached(priority: .utility) { [client = staleContext.client] in
+            trackShellCleanup(
+                for: staleContext.serverId,
+                reason: "stale session start"
+            ) { [client = staleContext.client] in
                 await client.disconnect()
             }
         }
@@ -225,15 +515,93 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     var activeSessions: [ConnectionSession] {
-        sessions.filter { $0.connectionState.isConnected || $0.connectionState.isConnecting }
+        let liveEntityIDs = sessions.reduce(into: Set<TerminalEntityID>()) { result, session in
+            let serverLiveEntityIDs = terminalConnectionRegistry.openingOrStreamingEntityIDs(for: session.serverId)
+            result.formUnion(serverLiveEntityIDs)
+        }
+        return sessions.filter { liveEntityIDs.contains(.session($0.id)) }
+    }
+
+    private var liveActivitySnapshots: [TerminalLiveActivitySnapshot] {
+        sessions.compactMap { session in
+            let entityId = TerminalEntityID.session(session.id)
+            guard let state = terminalConnectionRegistry.state(for: entityId) else { return nil }
+            guard state.isConnected || state.isOpening else { return nil }
+            return TerminalLiveActivitySnapshot(
+                sessionId: session.id,
+                serverId: session.serverId,
+                state: state
+            )
+        }
     }
 
     var canOpenNewTab: Bool {
         if StoreManager.shared.isPro { return true }
-        return activeSessions.count < FreeTierLimits.maxTabs
+        return sessions.filter(\.isTabRoot).count < FreeTierLimits.maxTabs
     }
 
     // MARK: - Open Connection
+
+    @discardableResult
+    func requestConnectionOpen(
+        to server: Server,
+        forceNew: Bool = false,
+        onOpened: @escaping @MainActor (ConnectionSession) -> Void = { _ in },
+        onFailed: @escaping @MainActor (Error) -> Void = { _ in }
+    ) -> UUID {
+        let requestID = UUID()
+        lastConnectionOpenFailure = nil
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.connectionOpenRequests.removeValue(forKey: requestID) }
+
+            do {
+                let session = try await self.openConnection(to: server, forceNew: forceNew)
+                onOpened(session)
+            } catch is CancellationError {
+                return
+            } catch {
+                self.lastConnectionOpenFailure = error
+                onFailed(error)
+            }
+        }
+
+        connectionOpenRequests[requestID] = task
+        return requestID
+    }
+
+    func waitForConnectionOpenRequest(_ requestID: UUID) async {
+        await connectionOpenRequests[requestID]?.value
+    }
+
+    func waitForSurfaceAttachRequest(_ requestID: UUID) async {
+        await surfaceAttachRequests[requestID]?.task.value
+    }
+
+    func waitForInputRequest(_ requestID: UUID) async {
+        await inputRequests[requestID]?.task.value
+    }
+
+    func waitForSessionRichPasteUploadRequest(_ requestID: UUID) async {
+        await richPasteUploadRequests[requestID]?.task.value
+    }
+
+    func waitForResizeRequest(_ requestID: UUID) async {
+        await resizeRequests[requestID]?.task.value
+    }
+
+    func waitForProcessExitRequest(_ requestID: UUID) async {
+        await processExitRequests[requestID]?.task.value
+    }
+
+    func waitForActiveConnectionOpenRequest(_ requestID: UUID) async {
+        await activeConnectionOpenRequests[requestID]?.task?.value
+    }
+
+    func waitForForegroundReconnectRequest(_ requestID: UUID) async {
+        await foregroundReconnectRequests[requestID]?.task?.value
+    }
 
     /// Opens a connection to a server
     /// - Parameters:
@@ -266,8 +634,8 @@ final class ConnectionSessionManager: ObservableObject {
         // Check if already have a session for this server (unless forcing new)
         if !forceNew, let existingSession = firstSession(for: server.id) {
             selectedSessionId = existingSession.id
-            if !existingSession.connectionState.isConnected,
-               !existingSession.connectionState.isConnecting {
+            let hasLiveOrOpeningRuntime = terminalConnectionRegistry.isOpeningOrStreaming(.session(existingSession.id))
+            if !hasLiveOrOpeningRuntime {
                 try await reconnect(session: existingSession)
             }
             return existingSession
@@ -303,7 +671,6 @@ final class ConnectionSessionManager: ObservableObject {
 
         sessions.append(session)
         selectedSessionId = session.id
-        connectedServerId = server.id
 
         // Update server's last connected after the navigation animation completes
         Task { [server] in
@@ -320,29 +687,29 @@ final class ConnectionSessionManager: ObservableObject {
     func updateSessionState(_ sessionId: UUID, to state: ConnectionState) {
         guard let index = indexOfSession(sessionId) else { return }
 
-        sessions[index].connectionState = state
-        let serverId = sessions[index].serverId
+        var updatedSession = sessions[index]
+        updatedSession.connectionState = state
+        let serverId = updatedSession.serverId
+        terminalConnectionRegistry.updateState(
+            TerminalEntityConnectionState(connectionState: state),
+            for: .session(sessionId),
+            serverId: serverId
+        )
+        sessions[index] = updatedSession
 
         switch state {
         case .connected:
-            connectedServerIds.insert(serverId)
-            EngagementTracker.shared.recordSuccessfulConnection(
-                id: sessionId,
-                transport: sessions[index].activeTransport.rawValue
+            successfulConnectionRecorder(
+                sessionId,
+                successfulConnectionTransport(for: sessionId).rawValue
             )
         case .disconnected, .failed:
             if case .failed = state {
                 sessions[index].presentationOverrides = .empty
-                terminalViews[sessionId]?.applyPresentationOverrides(.empty)
+                terminalSurfaceRegistry.surface(for: .session(sessionId))?.applyPresentationOverrides(.empty)
             }
             if sessions[index].tmuxStatus == .foreground {
                 setTmuxStatus(.background, for: sessionId)
-            }
-            let hasOtherConnections = sessions.contains {
-                $0.serverId == serverId && $0.connectionState.isConnected
-            }
-            if !hasOtherConnections {
-                connectedServerIds.remove(serverId)
             }
         case .connecting, .reconnecting:
             sessions[index].activeTransport = .ssh
@@ -352,16 +719,114 @@ final class ConnectionSessionManager: ObservableObject {
         }
     }
 
+    private func successfulConnectionTransport(for sessionId: UUID) -> ShellTransport {
+        shellRegistry.registration(for: sessionId)?.transport
+            ?? .ssh
+    }
+
     func sessionState(for sessionId: UUID) -> ConnectionState? {
         sessionWithID(sessionId)?.connectionState
     }
 
-    func hasOtherActiveSessions(for serverId: UUID, excluding sessionId: UUID) -> Bool {
-        sessions.contains {
-            $0.serverId == serverId
-                && $0.id != sessionId
-                && $0.connectionState.isConnected
+    func shouldScheduleConnectWatchdog(
+        forSessionId sessionId: UUID,
+        isReady: Bool,
+        terminalExists: Bool
+    ) -> Bool {
+        guard let state = sessionState(for: sessionId) else { return false }
+        return state.isConnecting || (state.isConnected && !isReady && !terminalExists)
+    }
+
+    func scheduleConnectWatchdog(
+        forSessionId sessionId: UUID,
+        isReady: Bool,
+        terminalExists: Bool,
+        timeout: Duration = .seconds(20),
+        timeoutMessage: String,
+        onRetry: @escaping @MainActor () async -> Void
+    ) {
+        connectWatchdogTasks[sessionId]?.cancel()
+        connectWatchdogTasks[sessionId] = nil
+
+        guard shouldScheduleConnectWatchdog(
+            forSessionId: sessionId,
+            isReady: isReady,
+            terminalExists: terminalExists
+        ) else {
+            connectWatchdogGenerations.removeValue(forKey: sessionId)
+            return
         }
+
+        let generation = UUID()
+        connectWatchdogGenerations[sessionId] = generation
+        let task = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+            guard self.connectWatchdogGenerations[sessionId] == generation else { return }
+
+            let action = self.handleConnectWatchdogTimeout(
+                forSessionId: sessionId,
+                isReady: isReady,
+                terminalExists: terminalExists,
+                timeoutMessage: timeoutMessage
+            )
+
+            switch action {
+            case .retry:
+                self.connectWatchdogTasks[sessionId] = nil
+                self.connectWatchdogGenerations.removeValue(forKey: sessionId)
+                await onRetry()
+            case .continueWatching:
+                self.scheduleConnectWatchdog(
+                    forSessionId: sessionId,
+                    isReady: isReady,
+                    terminalExists: terminalExists,
+                    timeout: timeout,
+                    timeoutMessage: timeoutMessage,
+                    onRetry: onRetry
+                )
+            case .none:
+                self.connectWatchdogTasks[sessionId] = nil
+                self.connectWatchdogGenerations.removeValue(forKey: sessionId)
+            }
+        }
+        connectWatchdogTasks[sessionId] = task
+    }
+
+    func handleConnectWatchdogTimeout(
+        forSessionId sessionId: UUID,
+        isReady: Bool,
+        terminalExists: Bool,
+        timeoutMessage: String
+    ) -> TerminalConnectWatchdogAction {
+        guard let state = sessionState(for: sessionId) else { return .none }
+        let connectedWithoutTerminal = state.isConnected && !isReady && !terminalExists
+        guard state.isConnecting || connectedWithoutTerminal else { return .none }
+
+        if connectedWithoutTerminal {
+            updateSessionState(sessionId, to: .disconnected)
+            return .retry
+        }
+
+        if shellId(for: sessionId) != nil {
+            updateSessionState(sessionId, to: .connected)
+            return .none
+        }
+
+        if isShellStartInFlight(for: sessionId) {
+            return .continueWatching
+        }
+
+        updateSessionState(sessionId, to: .failed(timeoutMessage))
+        return .none
+    }
+
+    func hasOtherActiveSessions(for serverId: UUID, excluding sessionId: UUID) -> Bool {
+        terminalConnectionRegistry.hasActiveEntity(
+            for: serverId,
+            excluding: .session(sessionId)
+        )
     }
 
     /// Returns true when the same SSH client instance is registered to another live session.
@@ -406,7 +871,7 @@ final class ConnectionSessionManager: ObservableObject {
         }
         setPresentationOverrides(overrides, for: sessionId)
         schedulePersist()
-        terminalViews[sessionId]?.applyPresentationOverrides(overrides)
+        terminalSurfaceRegistry.surface(for: .session(sessionId))?.applyPresentationOverrides(overrides)
         return TerminalZoomResult(
             presentationOverrides: overrides,
             effectiveFontSize: overrides.resolvedFontSize()
@@ -422,16 +887,32 @@ final class ConnectionSessionManager: ObservableObject {
     /// Closes a terminal session and removes it from the list
     func closeSession(_ session: ConnectionSession, notingSessionEnd: Bool = true) {
         guard let closeResult = closeSessionUI(session, notingSessionEnd: notingSessionEnd) else { return }
-        let unregisterTask = scheduleSSHUnregister(
-            for: closeResult.sessionId,
-            priority: .high,
-            killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
-        )
-        let teardownTask = Task {
-            await unregisterTask.value
-            await closeResult.shellTeardownTask?.value
+        let teardownTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for task in closeResult.richPasteUploadTasks {
+                await task.value
+            }
+            await self.runShellTeardown(closeResult.shellTeardownRequest)
+            await self.unregisterSSHClient(
+                for: closeResult.sessionId,
+                killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
+            )
         }
         trackServerTeardownTask(teardownTask, for: closeResult.serverId)
+    }
+
+    /// Closes a terminal session and waits for shell cancellation and SSH teardown to finish.
+    func closeSessionAndWait(_ session: ConnectionSession, notingSessionEnd: Bool = true) async {
+        await waitForServerTeardownTasks(session.serverId)
+        guard let closeResult = closeSessionUI(session, notingSessionEnd: notingSessionEnd) else { return }
+        for task in closeResult.richPasteUploadTasks {
+            await task.value
+        }
+        await runShellTeardown(closeResult.shellTeardownRequest)
+        await unregisterSSHClient(
+            for: closeResult.sessionId,
+            killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
+        )
     }
 
     private func closeSessionUI(_ session: ConnectionSession, notingSessionEnd: Bool) -> SessionCloseResult? {
@@ -449,7 +930,12 @@ final class ConnectionSessionManager: ObservableObject {
             wasSelected: wasSelected
         )
 
-        let shellTeardownTask = clearRuntimeStateForClosedSession(sessionId)
+        let runtimeTeardown = clearRuntimeStateForClosedSession(sessionId)
+        terminalConnectionRegistry.updateState(
+            .disconnected,
+            for: .session(sessionId),
+            serverId: session.serverId
+        )
 
         // Remove from UI immediately
         sessions.removeAll { $0.id == sessionId }
@@ -484,7 +970,8 @@ final class ConnectionSessionManager: ObservableObject {
             sessionId: sessionId,
             serverId: session.serverId,
             tmuxSessionNameToKill: tmuxSessionToKill,
-            shellTeardownTask: shellTeardownTask
+            richPasteUploadTasks: runtimeTeardown.richPasteUploadTasks,
+            shellTeardownRequest: runtimeTeardown.shellTeardownRequest
         )
     }
 
@@ -508,13 +995,120 @@ final class ConnectionSessionManager: ObservableObject {
         return sessions.first(where: { $0.id != sessionId })?.id
     }
 
-    private func clearRuntimeStateForClosedSession(_ sessionId: UUID) -> Task<Void, Never>? {
-        let shellTeardownTask = cancelAndClearShellHandlers(for: sessionId)
+    private func clearRuntimeStateForClosedSession(_ sessionId: UUID) -> (
+        shellTeardownRequest: ShellTeardownRequest?,
+        richPasteUploadTasks: [Task<Void, Never>]
+    ) {
+        cancelInstallRequests(for: sessionId)
+        cancelSessionRetryRequest(for: sessionId)
+        cancelActiveConnectionOpenRequest(for: sessionId)
+        cancelForegroundReconnectRequest(for: sessionId)
+        cancelSessionHostRetrustRequest(for: sessionId)
+        cancelSessionCredentialLoadRequest(for: sessionId)
+        cancelInputRequests(for: sessionId)
+        let richPasteUploadTasks = cancelSessionRichPasteUploadRequests(for: sessionId)
+        cancelResizeRequests(for: sessionId)
+        cancelProcessExitRequests(for: sessionId)
+        let shellTeardownRequest = takeShellTeardownRequestForClosedSession(sessionId)
         terminalsNeedingReconnectReset.remove(sessionId)
         terminalBrowseModeBySession.removeValue(forKey: sessionId)
         clearTmuxRuntimeState(for: sessionId)
         runtimeTitleBySession.removeValue(forKey: sessionId)
-        return shellTeardownTask
+        return (shellTeardownRequest, richPasteUploadTasks)
+    }
+
+    private func cancelInstallRequests(for sessionId: UUID) {
+        if let requestID = tmuxInstallRequestBySession.removeValue(forKey: sessionId),
+           let request = tmuxInstallRequests.removeValue(forKey: requestID) {
+            request.task.cancel()
+            request.onCompleted.forEach { $0() }
+        }
+
+        if let requestID = moshInstallRequestBySession.removeValue(forKey: sessionId),
+           let request = moshInstallRequests.removeValue(forKey: requestID) {
+            request.task.cancel()
+            request.onCompleted.forEach { $0() }
+        }
+    }
+
+    private func cancelInputRequests(for sessionId: UUID) {
+        let requestIDs = inputRequests.compactMap { requestID, request in
+            request.sessionId == sessionId ? requestID : nil
+        }
+
+        for requestID in requestIDs {
+            inputRequests.removeValue(forKey: requestID)?.task.cancel()
+        }
+
+        inputRequestBySession.removeValue(forKey: sessionId)
+        lastInputTaskBySession.removeValue(forKey: sessionId)
+    }
+
+    private func cancelSessionRichPasteUploadRequests(for sessionId: UUID) -> [Task<Void, Never>] {
+        let requestIDs = richPasteUploadRequests.compactMap { requestID, request in
+            request.sessionId == sessionId ? requestID : nil
+        }
+
+        var tasks: [Task<Void, Never>] = []
+        for requestID in requestIDs {
+            if let task = richPasteUploadRequests[requestID]?.task {
+                task.cancel()
+                tasks.append(task)
+            }
+        }
+
+        richPasteUploadRequestBySession.removeValue(forKey: sessionId)
+        return tasks
+    }
+
+    private func cancelResizeRequests(for sessionId: UUID) {
+        let requestIDs = resizeRequests.compactMap { requestID, request in
+            request.sessionId == sessionId ? requestID : nil
+        }
+
+        for requestID in requestIDs {
+            resizeRequests.removeValue(forKey: requestID)?.task.cancel()
+        }
+
+        resizeRequestBySession.removeValue(forKey: sessionId)
+    }
+
+    private func cancelProcessExitRequests(for sessionId: UUID) {
+        let requestIDs = processExitRequests.compactMap { requestID, request in
+            request.sessionId == sessionId ? requestID : nil
+        }
+
+        for requestID in requestIDs {
+            processExitRequests.removeValue(forKey: requestID)?.task.cancel()
+        }
+
+        processExitRequestBySession.removeValue(forKey: sessionId)
+    }
+
+    private func cancelSessionRetryRequest(for sessionId: UUID) {
+        if let requestID = sessionRetryRequestBySession.removeValue(forKey: sessionId),
+           let request = sessionRetryRequests.removeValue(forKey: requestID) {
+            request.task.cancel()
+            request.onCompleted.forEach { $0(.skipped) }
+        }
+    }
+
+    private func cancelActiveConnectionOpenRequest(for sessionId: UUID) {
+        guard let requestID = activeConnectionOpenRequestBySession.removeValue(forKey: sessionId) else { return }
+        activeConnectionOpenRequests[requestID]?.task?.cancel()
+    }
+
+    private func cancelForegroundReconnectRequest(for sessionId: UUID) {
+        guard let requestID = foregroundReconnectRequestBySession.removeValue(forKey: sessionId) else { return }
+        foregroundReconnectRequests[requestID]?.task?.cancel()
+    }
+
+    private func cancelSessionHostRetrustRequest(for sessionId: UUID) {
+        if let requestID = sessionHostRetrustRequestBySession.removeValue(forKey: sessionId),
+           let request = sessionHostRetrustRequests.removeValue(forKey: requestID) {
+            request.task.cancel()
+            request.onCompleted.forEach { $0(false) }
+        }
     }
 
     private func handleTerminalCloseUI(
@@ -522,7 +1116,7 @@ final class ConnectionSessionManager: ObservableObject {
         wasSelected: Bool,
         replacementSessionId: UUID?
     ) {
-        if let terminal = terminalViews[sessionId], terminal.window != nil {
+        if let terminal = terminalSurfaceRegistry.surface(for: .session(sessionId)), terminal.window != nil {
             terminal.pauseRendering()
             if !wasSelected {
                 _ = terminal.resignFirstResponder()
@@ -532,7 +1126,7 @@ final class ConnectionSessionManager: ObservableObject {
         }
 
         guard let replacementSessionId,
-              let replacementTerminal = terminalViews[replacementSessionId],
+              let replacementTerminal = terminalSurfaceRegistry.surface(for: .session(replacementSessionId)),
               replacementTerminal.window != nil else {
             return
         }
@@ -548,7 +1142,7 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func redrawSessionAfterClose(_ session: ConnectionSession) {
-        guard let terminal = terminalViews[session.id] else { return }
+        guard let terminal = terminalSurfaceRegistry.surface(for: .session(session.id)) else { return }
         terminal.resumeRendering()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak terminal] in
@@ -556,10 +1150,9 @@ final class ConnectionSessionManager: ObservableObject {
             terminal.forceRefresh()
 
             if let size = terminal.terminalSize(),
-               let client = self?.sshClient(for: session),
-               let shellId = self?.shellId(for: session) {
+               let self {
                 Task {
-                    try? await client.resize(cols: Int(size.columns), rows: Int(size.rows), for: shellId)
+                    await self.resizeSession(session.id, cols: Int(size.columns), rows: Int(size.rows))
                 }
             }
 
@@ -580,8 +1173,18 @@ final class ConnectionSessionManager: ObservableObject {
         for session in sessionsToClose {
             closeSession(session, notingSessionEnd: false)
         }
-        connectedServerId = nil
         logger.info("Disconnected all sessions")
+    }
+
+    /// Closes every session and waits for SSH and shell teardown to finish.
+    func disconnectAllAndWait() async {
+        await waitForAllServerTeardownTasks()
+        let sessionsToClose = sessions
+        for session in sessionsToClose {
+            await closeSessionAndWait(session, notingSessionEnd: false)
+        }
+        await waitForAllServerTeardownTasks()
+        logger.info("Disconnected all sessions after awaiting teardown")
     }
 
     /// Disconnects all sessions without removing tabs (used when app backgrounds)
@@ -595,12 +1198,12 @@ final class ConnectionSessionManager: ObservableObject {
         var unregisterResults: [SSHUnregisterResult] = []
         unregisterResults.reserveCapacity(sessionsToSuspend.count)
         for session in sessionsToSuspend {
-            if session.connectionState.isConnected || session.connectionState.isConnecting {
+            if terminalConnectionRegistry.isOpeningOrStreaming(.session(session.id)) {
                 updateSessionState(session.id, to: .disconnected)
                 markTerminalForReconnectReset(for: session.id)
             }
             // Cancel any in-flight connects while preserving terminal state
-            shellSuspendHandlers[session.id]?()
+            await shellSuspendHandlers[session.id]?()
             unregisterResults.append(takeSSHClientRegistration(for: session.id))
         }
 
@@ -620,10 +1223,47 @@ final class ConnectionSessionManager: ObservableObject {
     /// Handle shell exit without removing the session (keeps tab for reconnect)
     func handleShellExit(for sessionId: UUID) {
         setPresentationOverrides(.empty, for: sessionId)
-        terminalViews[sessionId]?.applyPresentationOverrides(.empty)
+        terminalSurfaceRegistry.surface(for: .session(sessionId))?.applyPresentationOverrides(.empty)
         updateSessionState(sessionId, to: .disconnected)
         markTerminalForReconnectReset(for: sessionId)
         scheduleSSHUnregister(for: sessionId)
+    }
+
+    @discardableResult
+    func requestSessionProcessExit(forSession sessionId: UUID) -> UUID? {
+        guard sessionWithID(sessionId) != nil else { return nil }
+
+        if let existingRequestID = processExitRequestBySession[sessionId],
+           processExitRequests[existingRequestID] != nil {
+            return existingRequestID
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.processExitRequests.removeValue(forKey: requestID)
+                if self.processExitRequestBySession[sessionId] == requestID {
+                    self.processExitRequestBySession.removeValue(forKey: sessionId)
+                }
+            }
+
+            guard !Task.isCancelled else { return }
+            guard self.sessionWithID(sessionId) != nil else { return }
+
+            #if DEBUG
+            if let processExitOperationForTesting = self.processExitOperationForTesting {
+                await processExitOperationForTesting(.session(sessionId))
+                return
+            }
+            #endif
+
+            self.handleShellExit(for: sessionId)
+        }
+
+        processExitRequests[requestID] = ProcessExitRequest(sessionId: sessionId, task: task)
+        processExitRequestBySession[sessionId] = requestID
+        return requestID
     }
 
     /// Disconnect all sessions for a specific server
@@ -631,10 +1271,6 @@ final class ConnectionSessionManager: ObservableObject {
         let sessionsToClose = sessions.filter { $0.serverId == serverId }
         for session in sessionsToClose {
             closeSession(session)
-        }
-        connectedServerIds.remove(serverId)
-        if connectedServerIds.isEmpty {
-            connectedServerId = nil
         }
         logger.info("Disconnected all sessions for server \(serverId)")
     }
@@ -669,17 +1305,15 @@ final class ConnectionSessionManager: ObservableObject {
             }
         }
 
-        connectedServerIds.remove(serverId)
-        if connectedServerIds.isEmpty {
-            connectedServerId = nil
-        }
-
         for closeResult in closeResults {
+            for task in closeResult.richPasteUploadTasks {
+                await task.value
+            }
+            await runShellTeardown(closeResult.shellTeardownRequest)
             await unregisterSSHClient(
                 for: closeResult.sessionId,
                 killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
             )
-            await closeResult.shellTeardownTask?.value
         }
 
         logger.info("Disconnected all sessions for server \(serverId)")
@@ -737,6 +1371,7 @@ final class ConnectionSessionManager: ObservableObject {
 
     // MARK: - SSH Client Registration
 
+    @discardableResult
     func registerSSHClient(
         _ client: SSHClient,
         shellId: UUID,
@@ -745,27 +1380,69 @@ final class ConnectionSessionManager: ObservableObject {
         transport: ShellTransport = .ssh,
         fallbackReason: MoshFallbackReason? = nil,
         skipTmuxLifecycle: Bool = false
-    ) {
+    ) -> Bool {
+        registerSSHClient(
+            client,
+            shellId: shellId,
+            for: sessionId,
+            serverId: serverId,
+            transport: transport,
+            fallbackReason: fallbackReason,
+            generation: nil,
+            skipTmuxLifecycle: skipTmuxLifecycle
+        )
+    }
+
+    @discardableResult
+    func registerSSHClient(
+        _ client: SSHClient,
+        shellId: UUID,
+        for sessionId: UUID,
+        serverId: UUID,
+        transport: ShellTransport = .ssh,
+        fallbackReason: MoshFallbackReason? = nil,
+        generation: SSHShellRegistry.Generation?,
+        skipTmuxLifecycle: Bool = false
+    ) -> Bool {
+        guard sessionWithID(sessionId) != nil else {
+            logger.warning("Ignoring shell registration for missing session [sessionId: \(sessionId.uuidString, privacy: .public), serverId: \(serverId.uuidString, privacy: .public)]")
+            trackShellCleanup(
+                for: serverId,
+                reason: "missing session shell"
+            ) { [client, shellId] in
+                await client.closeShell(shellId)
+                await client.disconnect()
+            }
+            return false
+        }
+
         let registerResult = shellRegistry.register(
             client: client,
             shellId: shellId,
             for: sessionId,
             serverId: serverId,
             transport: transport,
-            fallbackReason: fallbackReason
+            fallbackReason: fallbackReason,
+            generation: generation
         )
 
         if let stale = registerResult.staleIncomingShell {
             logger.warning("Ignoring stale shell registration [sessionId: \(sessionId.uuidString, privacy: .public), serverId: \(serverId.uuidString, privacy: .public)]")
-            Task.detached(priority: .utility) { [client = stale.client, shellId = stale.shellId] in
+            trackShellCleanup(
+                for: serverId,
+                reason: "rejected session shell"
+            ) { [client = stale.client, shellId = stale.shellId] in
                 await client.closeShell(shellId)
                 await client.disconnect()
             }
-            return
+            return false
         }
 
         if let replaced = registerResult.replacedShell {
-            Task.detached { [client = replaced.client, shellId = replaced.shellId] in
+            trackShellCleanup(
+                for: serverId,
+                reason: "replaced session shell"
+            ) { [client = replaced.client, shellId = replaced.shellId] in
                 await client.closeShell(shellId)
             }
         }
@@ -778,6 +1455,7 @@ final class ConnectionSessionManager: ObservableObject {
                 await self?.handleTmuxLifecycle(sessionId: sessionId, serverId: serverId, client: client, shellId: shellId)
             }
         }
+        return true
     }
 
     func unregisterSSHClient(for sessionId: UUID) async {
@@ -798,12 +1476,18 @@ final class ConnectionSessionManager: ObservableObject {
         await Self.finishSSHCleanup(for: unregisterResult)
     }
 
-    func sshClient(for session: ConnectionSession) -> SSHClient? {
+    private func sshClient(for session: ConnectionSession) -> SSHClient? {
         shellRegistry.client(for: session.id)
     }
 
-    func sshClient(forSessionId sessionId: UUID) -> SSHClient? {
+    private func sshClient(forSessionId sessionId: UUID) -> SSHClient? {
         shellRegistry.client(for: sessionId)
+    }
+
+    func remoteConnectionLease(forSessionId sessionId: UUID) -> RemoteConnectionLease? {
+        sshClient(forSessionId: sessionId).map {
+            RemoteConnectionLease(client: $0, ownership: .borrowed)
+        }
     }
 
     func shellId(for session: ConnectionSession) -> UUID? {
@@ -816,8 +1500,12 @@ final class ConnectionSessionManager: ObservableObject {
 
     /// Returns true only for the first caller while no live shell exists for the session.
     func tryBeginShellStart(for sessionId: UUID, client: SSHClient) -> Bool {
+        beginShellStart(for: sessionId, client: client)?.started == true
+    }
+
+    func beginShellStart(for sessionId: UUID, client: SSHClient) -> SSHShellRegistry.StartResult? {
         guard let serverId = sessionWithID(sessionId)?.serverId else {
-            return false
+            return nil
         }
 
         let startResult = shellRegistry.tryBeginStart(
@@ -831,11 +1519,11 @@ final class ConnectionSessionManager: ObservableObject {
             logMessage: "Recovered stale session shell-start lock for",
             sessionId: sessionId
         )
-        return startResult.started
+        return startResult
     }
 
-    func finishShellStart(for sessionId: UUID, client: SSHClient) {
-        shellRegistry.finishStart(for: sessionId, client: client)
+    func finishShellStart(for sessionId: UUID, client: SSHClient, generation: SSHShellRegistry.Generation? = nil) {
+        shellRegistry.finishStart(for: sessionId, client: client, generation: generation)
     }
 
     func isShellStartInFlight(for sessionId: UUID) -> Bool {
@@ -849,20 +1537,8 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func preferredSSHClient(for serverId: UUID, allowPendingStart: Bool) -> SSHClient? {
-        if let selectedId = selectedSessionId,
-           let selectedSession = sessionWithID(selectedId),
-           selectedSession.serverId == serverId,
-           let client = shellRegistry.client(for: selectedSession.id) {
-            return client
-        }
-
-        if let anySession = firstSession(for: serverId),
-           let client = shellRegistry.client(for: anySession.id) {
-            return client
-        }
-
-        if let client = shellRegistry.firstRegisteredClient(for: serverId) {
-            return client
+        if let registration = preferredSSHRegistration(for: serverId) {
+            return registration.client
         }
 
         if allowPendingStart, let client = shellRegistry.firstPendingClient(for: serverId) {
@@ -872,31 +1548,51 @@ final class ConnectionSessionManager: ObservableObject {
         return nil
     }
 
-    func sshClient(for serverId: UUID) -> SSHClient? {
+    private func preferredSSHRegistration(for serverId: UUID) -> SSHShellRegistry.Registration? {
+        if let selectedId = selectedSessionId,
+           let selectedSession = sessionWithID(selectedId),
+           selectedSession.serverId == serverId,
+           let registration = shellRegistry.registration(for: selectedSession.id) {
+            return registration
+        }
+
+        if let anySession = firstSession(for: serverId),
+           let registration = shellRegistry.registration(for: anySession.id) {
+            return registration
+        }
+
+        return shellRegistry.firstRegistration(for: serverId)
+    }
+
+    private func sshClient(for serverId: UUID) -> SSHClient? {
         preferredSSHClient(for: serverId, allowPendingStart: true)
     }
 
-    func activeSSHClient(for serverId: UUID) -> SSHClient? {
+    private func activeSSHClient(for serverId: UUID) -> SSHClient? {
         preferredSSHClient(for: serverId, allowPendingStart: false)
     }
 
-    func sharedStatsClient(for serverId: UUID) -> SSHClient? {
-        if selectedTransport(for: serverId) == .mosh {
-            return nil
+    private func sharedStatsClient(for serverId: UUID) -> SSHClient? {
+        if let liveSession = registryLiveSession(for: serverId) {
+            guard let registration = shellRegistry.registration(for: liveSession.id),
+                  registration.transport != .mosh else {
+                return nil
+            }
+            return registration.client
         }
-        return sshClient(for: serverId)
+
+        if let registration = preferredSSHRegistration(for: serverId) {
+            guard registration.transport != .mosh else { return nil }
+            return registration.client
+        }
+
+        return shellRegistry.firstPendingClient(for: serverId)
     }
 
-    private func selectedTransport(for serverId: UUID) -> ShellTransport {
-        if let session = selectedSession(for: serverId) {
-            return session.activeTransport
+    func sharedStatsLease(for serverId: UUID) -> RemoteConnectionLease? {
+        sharedStatsClient(for: serverId).map {
+            RemoteConnectionLease(client: $0, ownership: .borrowed)
         }
-
-        if let connected = firstConnectedSession(for: serverId) {
-            return connected.activeTransport
-        }
-
-        return firstSession(for: serverId)?.activeTransport ?? .ssh
     }
 
     // MARK: - Terminal Registration (with LRU caching)
@@ -917,21 +1613,20 @@ final class ConnectionSessionManager: ObservableObject {
             }
         }
         #endif
-        terminalViews[sessionId] = terminal
+        terminalSurfaceRegistry.register(terminal, for: .session(sessionId))
         #if os(iOS)
         Task { @MainActor [weak self, weak terminal] in
-            guard let self, let terminal, self.terminalViews[sessionId] === terminal else { return }
+            guard let self, let terminal, self.terminalSurfaceRegistry.surface(for: .session(sessionId)) === terminal else { return }
             self.setTerminalBrowseMode(terminal.isKeyboardInBrowseMode, for: sessionId)
             self.setTerminalFindNavigatorVisible(terminal.isFindNavigatorVisible, for: sessionId)
         }
         #endif
-        touchTerminal(sessionId)
 
-        logger.debug("Registered terminal for session, total: \(self.terminalViews.count)/\(self.maxTerminals)")
+        logger.debug("Registered terminal for session, total: \(self.terminalSurfaceRegistry.count)/\(self.maxTerminals)")
     }
 
     func unregisterTerminal(for sessionId: UUID) {
-        cleanupTerminalSurface(for: sessionId)
+        terminalSurfaceRegistry.removeSurface(for: .session(sessionId), cleanup: true)
         terminalsNeedingReconnectReset.remove(sessionId)
         #if os(iOS)
         Task { @MainActor [weak self] in
@@ -942,24 +1637,12 @@ final class ConnectionSessionManager: ObservableObject {
         terminalBrowseModeBySession.removeValue(forKey: sessionId)
         terminalFindNavigatorVisibleBySession.removeValue(forKey: sessionId)
         #endif
-        removeTerminalFromAccessOrder(sessionId)
-        logger.debug("Unregistered terminal, remaining: \(self.terminalViews.count)")
+        logger.debug("Unregistered terminal, remaining: \(self.terminalSurfaceRegistry.count)")
     }
 
     /// Update access order for LRU tracking
     private func touchTerminal(_ sessionId: UUID) {
-        removeTerminalFromAccessOrder(sessionId)
-        terminalAccessOrder.append(sessionId)
-    }
-
-    private func cleanupTerminalSurface(for sessionId: UUID) {
-        if let terminal = terminalViews.removeValue(forKey: sessionId) {
-            #if os(iOS)
-            terminal.onKeyboardBrowseModeChange = nil
-            terminal.onFindNavigatorVisibilityChange = nil
-            #endif
-            terminal.cleanup()
-        }
+        terminalSurfaceRegistry.touch(.session(sessionId))
     }
 
     private func setTerminalBrowseMode(_ isBrowsing: Bool, for sessionId: UUID) {
@@ -974,33 +1657,21 @@ final class ConnectionSessionManager: ObservableObject {
         }
     }
 
-    private func removeTerminalFromAccessOrder(_ sessionId: UUID) {
-        terminalAccessOrder.removeAll { $0 == sessionId }
-    }
-
     /// Evict least recently used terminals if over capacity
     private func evictOldTerminalsIfNeeded() {
-        while terminalViews.count >= maxTerminals, let oldestId = terminalAccessOrder.first {
-            // Don't evict the currently selected session
-            if oldestId == selectedSessionId {
-                terminalAccessOrder.removeFirst()
-                terminalAccessOrder.append(oldestId)
-                continue
+        let selectedEntityId = selectedSessionId.map(TerminalEntityID.session)
+        terminalSurfaceRegistry.evictOldest(maxCount: maxTerminals, preserving: selectedEntityId) { [weak self] entityId in
+            guard let self else { return }
+            guard case .session(let oldestId) = entityId else { return }
+            logger.info("Evicting oldest terminal to free memory (count: \(self.terminalSurfaceRegistry.count))")
+            let unregisterTask = scheduleSSHUnregister(for: oldestId)
+            let shellTeardownTask = cancelAndClearShellHandlers(for: oldestId)
+            guard let serverId = sessionWithID(oldestId)?.serverId else { return }
+            let teardownTask = Task(priority: .utility) {
+                await unregisterTask.value
+                await shellTeardownTask?.value
             }
-
-            logger.info("Evicting oldest terminal to free memory (count: \(self.terminalViews.count))")
-
-            // Remove from access order
-            terminalAccessOrder.removeFirst()
-
-            // Cleanup and remove terminal
-            cleanupTerminalSurface(for: oldestId)
-
-            // Also cleanup associated SSH shell
-            scheduleSSHUnregister(for: oldestId)
-
-            // Call shell cancel handler
-            cancelAndClearShellHandlers(for: oldestId)
+            trackServerTeardownTask(teardownTask, for: serverId)
         }
     }
 
@@ -1014,7 +1685,7 @@ final class ConnectionSessionManager: ObservableObject {
         shellCancelHandlers.removeValue(forKey: sessionId)
     }
 
-    func registerShellSuspendHandler(_ handler: @escaping () -> Void, for sessionId: UUID) {
+    func registerShellSuspendHandler(_ handler: @escaping @MainActor () async -> Void, for sessionId: UUID) {
         shellSuspendHandlers[sessionId] = handler
     }
 
@@ -1024,7 +1695,7 @@ final class ConnectionSessionManager: ObservableObject {
 
     private func pauseCachedTerminalsForBackground() {
         #if os(iOS)
-        for terminal in terminalViews.values {
+        for terminal in terminalSurfaceRegistry.allSurfaces {
             terminal.pauseRendering()
             if terminal.isFirstResponder {
                 terminal.markKeyboardFocusForReconnect()
@@ -1035,21 +1706,17 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     func getTerminal(for sessionId: UUID) -> GhosttyTerminalView? {
-        if let terminal = terminalViews[sessionId] {
-            touchTerminal(sessionId)
-            return terminal
-        }
-        return nil
+        terminalSurfaceRegistry.accessedSurface(for: .session(sessionId))
     }
 
     /// Returns a terminal without mutating LRU state.
     func peekTerminal(for sessionId: UUID) -> GhosttyTerminalView? {
-        terminalViews[sessionId]
+        terminalSurfaceRegistry.surface(for: .session(sessionId))
     }
 
     /// Returns whether a terminal exists without mutating LRU state.
     func hasTerminal(for sessionId: UUID) -> Bool {
-        terminalViews[sessionId] != nil
+        terminalSurfaceRegistry.hasSurface(for: .session(sessionId))
     }
 
     func markTerminalForReconnectReset(for sessionId: UUID) {
@@ -1073,6 +1740,22 @@ final class ConnectionSessionManager: ObservableObject {
         }
     }
 
+    private func takeShellTeardownRequestForClosedSession(_ sessionId: UUID) -> ShellTeardownRequest? {
+        let handler = shellCancelHandlers.removeValue(forKey: sessionId)
+        shellSuspendHandlers.removeValue(forKey: sessionId)
+        guard let handler else {
+            logger.info("No shell cancel handler registered for closed session [sessionId: \(sessionId.uuidString, privacy: .public)]")
+            return nil
+        }
+        return ShellTeardownRequest(sessionId: sessionId, handler: handler)
+    }
+
+    private func runShellTeardown(_ request: ShellTeardownRequest?) async {
+        guard let request else { return }
+        logger.info("Running shell cancel handler for closed session [sessionId: \(request.sessionId.uuidString, privacy: .public)]")
+        await request.handler(.fullDisconnect)
+    }
+
     func trackShellTeardownForClosedSession(
         sessionId: UUID,
         serverId: UUID,
@@ -1088,10 +1771,20 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func waitForServerTeardownTasks(_ serverId: UUID) async {
-        guard let tasksById = serverTeardownTasks[serverId], !tasksById.isEmpty else { return }
-        logger.info("Open waiting for tab teardown cleanup [serverId: \(serverId.uuidString, privacy: .public), count: \(tasksById.count)]")
-        for task in tasksById.values {
-            await task.value
+        while let tasksById = serverTeardownTasks[serverId], !tasksById.isEmpty {
+            logger.info("Open waiting for tab teardown cleanup [serverId: \(serverId.uuidString, privacy: .public), count: \(tasksById.count)]")
+            for (taskId, task) in tasksById {
+                await task.value
+                finishServerTeardownTask(taskId, for: serverId)
+            }
+        }
+    }
+
+    private func waitForAllServerTeardownTasks() async {
+        while !serverTeardownTasks.isEmpty {
+            for serverId in Array(serverTeardownTasks.keys) {
+                await waitForServerTeardownTasks(serverId)
+            }
         }
     }
 
@@ -1103,12 +1796,67 @@ final class ConnectionSessionManager: ObservableObject {
         Task { @MainActor [weak self] in
             await task.value
             guard let self else { return }
-            self.serverTeardownTasks[serverId]?.removeValue(forKey: taskId)
-            if self.serverTeardownTasks[serverId]?.isEmpty == true {
-                self.serverTeardownTasks.removeValue(forKey: serverId)
-            }
-            self.logger.info("Finished server teardown [serverId: \(serverId.uuidString, privacy: .public), taskId: \(taskId.uuidString, privacy: .public), remaining: \(self.serverTeardownTasks[serverId]?.count ?? 0)]")
+            self.finishServerTeardownTask(taskId, for: serverId)
         }
+    }
+
+    private func finishServerTeardownTask(_ taskId: UUID, for serverId: UUID) {
+        guard serverTeardownTasks[serverId]?.removeValue(forKey: taskId) != nil else { return }
+        if serverTeardownTasks[serverId]?.isEmpty == true {
+            serverTeardownTasks.removeValue(forKey: serverId)
+        }
+        let remainingTasks = serverTeardownTasks[serverId]?.count ?? 0
+        logger.info("Finished server teardown [serverId: \(serverId.uuidString, privacy: .public), taskId: \(taskId.uuidString, privacy: .public), remaining: \(remainingTasks)]")
+    }
+
+    private func trackShellCleanup(
+        for serverId: UUID,
+        reason: String,
+        priority: TaskPriority = .utility,
+        operation: @escaping @Sendable () async -> Void
+    ) {
+#if DEBUG
+        let testingOperation = rejectedShellCleanupOperationForTesting
+#endif
+        let task = Task.detached(priority: priority) { [logger] in
+            logger.info("Shell cleanup started [serverId: \(serverId.uuidString, privacy: .public), reason: \(reason, privacy: .public)]")
+#if DEBUG
+            if let testingOperation {
+                await testingOperation()
+            } else {
+                await operation()
+            }
+#else
+            await operation()
+#endif
+            logger.info("Shell cleanup finished [serverId: \(serverId.uuidString, privacy: .public), reason: \(reason, privacy: .public)]")
+        }
+        trackServerTeardownTask(task, for: serverId)
+    }
+
+    private func trackTmuxKill(
+        for serverId: UUID,
+        sessionName: String,
+        client: SSHClient,
+        preferred: TerminalMultiplexer
+    ) {
+#if DEBUG
+        let testingOperation = tmuxKillOperationForTesting
+#endif
+        let task = Task.detached(priority: .utility) { [logger] in
+            logger.info("Managed tmux kill started [serverId: \(serverId.uuidString, privacy: .public), sessionName: \(sessionName, privacy: .public)]")
+#if DEBUG
+            if let testingOperation {
+                await testingOperation()
+            } else {
+                await RemoteTmuxManager.shared.killSession(named: sessionName, using: client, preferred: preferred)
+            }
+#else
+            await RemoteTmuxManager.shared.killSession(named: sessionName, using: client, preferred: preferred)
+#endif
+            logger.info("Managed tmux kill finished [serverId: \(serverId.uuidString, privacy: .public), sessionName: \(sessionName, privacy: .public)]")
+        }
+        trackServerTeardownTask(task, for: serverId)
     }
 
     @discardableResult
@@ -1127,13 +1875,657 @@ final class ConnectionSessionManager: ObservableObject {
 
     /// Marks an existing terminal as recently used without fetching it for body evaluation.
     func markTerminalUsed(for sessionId: UUID) {
-        guard terminalViews[sessionId] != nil else { return }
+        guard terminalSurfaceRegistry.hasSurface(for: .session(sessionId)) else { return }
         touchTerminal(sessionId)
+    }
+
+    func configureRuntime(
+        for sessionId: UUID,
+        server: Server,
+        credentials: ServerCredentials,
+        onProcessExit: @escaping () -> Void
+    ) {
+        if let runtime = sessionRuntimes[sessionId] {
+            runtime.server = server
+            runtime.credentials = credentials
+            runtime.onProcessExit = onProcessExit
+            return
+        }
+
+        let entityId = TerminalEntityID.session(sessionId)
+        let runtime = makeTerminalConnectionRuntime(entityId: entityId, server: server)
+        terminalConnectionRegistry.register(runtime, for: entityId, serverId: server.id)
+        sessionRuntimes[sessionId] = SessionRuntimeState(
+            sessionId: sessionId,
+            server: server,
+            credentials: credentials,
+            runtime: runtime,
+            onProcessExit: onProcessExit
+        )
+    }
+
+    private func makeTerminalConnectionRuntime(
+        entityId: TerminalEntityID,
+        server: Server?
+    ) -> TerminalConnectionRuntime {
+        #if DEBUG
+        if let testingTerminalConnectionClientFactory {
+            return TerminalConnectionRuntime(
+                entityId: entityId,
+                clientFactory: { testingTerminalConnectionClientFactory(entityId, server) }
+            )
+        }
+        #endif
+
+        return TerminalConnectionRuntime(entityId: entityId)
+    }
+
+    func attachSurface(_ terminal: GhosttyTerminalView, to sessionId: UUID) async {
+        if terminalSurfaceRegistry.surface(for: .session(sessionId)) !== terminal {
+            registerTerminal(terminal, for: sessionId)
+        }
+
+        registerShellCancelHandler({ [weak self] mode in
+            await self?.cancelRuntime(for: sessionId, mode: mode, cleanupTerminal: true)
+        }, for: sessionId)
+        registerShellSuspendHandler({ [weak self] in
+            await self?.suspendRuntime(for: sessionId)
+        }, for: sessionId)
+
+        await startRuntimeIfNeeded(for: sessionId, terminal: terminal)
+    }
+
+    @discardableResult
+    func requestSurfaceAttach(
+        sessionId: UUID,
+        terminal: GhosttyTerminalView,
+        context: TerminalSurfaceAttachContext,
+        resetTerminal: @escaping @MainActor () -> Void
+    ) -> UUID? {
+        requestSurfaceAttach(
+            sessionId: sessionId,
+            context: context,
+            resetTerminal: resetTerminal,
+            attachOperation: { [weak self, weak terminal] in
+                guard let self, let terminal else { return }
+                await self.attachSurface(terminal, to: sessionId)
+            }
+        )
+    }
+
+    @discardableResult
+    private func requestSurfaceAttach(
+        sessionId: UUID,
+        context: TerminalSurfaceAttachContext,
+        resetTerminal: @escaping @MainActor () -> Void = {},
+        attachOperation: @escaping @MainActor () async -> Void
+    ) -> UUID? {
+        if let requestID = surfaceAttachRequestBySession[sessionId] {
+            guard shouldAcceptSurfaceAttach(sessionId: sessionId, context: context) else {
+                surfaceAttachRequests[requestID]?.context = context
+                return nil
+            }
+            surfaceAttachRequests[requestID]?.context = context
+            return requestID
+        }
+
+        guard shouldAcceptSurfaceAttach(sessionId: sessionId, context: context) else { return nil }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.surfaceAttachRequests.removeValue(forKey: requestID)
+                if self.surfaceAttachRequestBySession[sessionId] == requestID {
+                    self.surfaceAttachRequestBySession.removeValue(forKey: sessionId)
+                }
+            }
+
+            let latestContext = self.surfaceAttachRequests[requestID]?.context ?? context
+            guard self.shouldAcceptSurfaceAttach(sessionId: sessionId, context: latestContext) else { return }
+            if self.consumeTerminalReconnectReset(for: sessionId) {
+                resetTerminal()
+            }
+            await attachOperation()
+        }
+
+        surfaceAttachRequests[requestID] = SurfaceAttachRequest(sessionId: sessionId, context: context, task: task)
+        surfaceAttachRequestBySession[sessionId] = requestID
+        return requestID
+    }
+
+    private func shouldAcceptSurfaceAttach(
+        sessionId: UUID,
+        context: TerminalSurfaceAttachContext
+    ) -> Bool {
+        guard let session = sessionWithID(sessionId) else { return false }
+        guard context.isAppActive, context.isViewActive, !isSuspendingForBackground else { return false }
+        guard shellId(for: session) == nil else { return false }
+        guard !isShellStartInFlight(for: sessionId) else { return false }
+
+        switch session.connectionState {
+        case .connecting, .reconnecting, .connected:
+            return true
+        case .disconnected:
+            return context.autoReconnectEnabled
+        case .failed, .idle:
+            return false
+        }
+    }
+
+    func detachSurface(from sessionId: UUID, reason: TerminalSurfaceDetachReason) async {
+        switch reason {
+        case .viewDisappeared:
+            detachSurfaceForViewDisappeared(from: sessionId)
+        case .sessionClosed:
+            detachSurfaceForClosedSession(sessionId)
+        }
+    }
+
+    func detachSurfaceForViewDisappeared(from sessionId: UUID) {
+        terminalSurfaceRegistry.detachSurface(for: .session(sessionId), cleanup: false)
+    }
+
+    func detachSurfaceForClosedSession(_ sessionId: UUID) {
+        unregisterTerminal(for: sessionId)
+    }
+
+    func handleClosedSessionSurfaceTeardown(
+        sessionId: UUID,
+        serverId: UUID,
+        reason: String
+    ) {
+        trackShellTeardownForClosedSession(
+            sessionId: sessionId,
+            serverId: serverId,
+            reason: reason
+        ) { [weak self] in
+            self?.detachSurfaceForClosedSession(sessionId)
+        }
+    }
+
+    func sendInput(_ data: Data, to sessionId: UUID) async {
+        if let runtime = terminalConnectionRegistry.runtime(for: .session(sessionId)) {
+            do {
+                try await runtime.send(data)
+                return
+            } catch SSHError.notConnected {
+                // Input can arrive before shell registration; fallback routes
+                // below handle existing registered shells without noisy logs.
+            } catch {
+                logger.error("Failed to send to SSH: \(error.localizedDescription)")
+            }
+        }
+
+        guard let runtime = sessionRuntimes[sessionId] else {
+            if let route = registeredShellRoute(for: sessionId) {
+                try? await route.client.write(data, to: route.shellId)
+            }
+            return
+        }
+
+        if let shellId = await runtime.runtime.currentShellId(),
+           let client = await runtime.runtime.runnerClientIfCreated() {
+            do {
+                try await client.write(data, to: shellId)
+            } catch {
+                logger.error("Failed to send to SSH: \(error.localizedDescription)")
+            }
+            return
+        }
+
+        if let route = registeredShellRoute(for: sessionId) {
+            do {
+                try await route.client.write(data, to: route.shellId)
+            } catch {
+                logger.error("Failed to send to SSH: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    @discardableResult
+    func requestSessionInput(_ data: Data, to sessionId: UUID) -> UUID? {
+        guard !data.isEmpty else { return nil }
+        guard sessionWithID(sessionId) != nil else { return nil }
+
+        let requestID = UUID()
+        let previousTask = lastInputTaskBySession[sessionId]
+        let task = Task { @MainActor [weak self] in
+            if let previousTask {
+                await previousTask.value
+            }
+
+            guard let self else { return }
+            defer {
+                self.inputRequests.removeValue(forKey: requestID)
+                if self.inputRequestBySession[sessionId] == requestID {
+                    self.inputRequestBySession.removeValue(forKey: sessionId)
+                    self.lastInputTaskBySession.removeValue(forKey: sessionId)
+                }
+            }
+
+            guard !Task.isCancelled else { return }
+            guard self.sessionWithID(sessionId) != nil else { return }
+
+            #if DEBUG
+            if let inputOperationForTesting = self.inputOperationForTesting {
+                await inputOperationForTesting(data, .session(sessionId))
+                return
+            }
+            #endif
+
+            await self.sendInput(data, to: sessionId)
+        }
+
+        inputRequests[requestID] = InputRequest(sessionId: sessionId, task: task)
+        inputRequestBySession[sessionId] = requestID
+        lastInputTaskBySession[sessionId] = task
+        return requestID
+    }
+
+    @discardableResult
+    func requestSessionRichPasteUpload(
+        image: ClipboardImagePayload,
+        settings: RichClipboardSettings,
+        for sessionId: UUID,
+        onProgress: @escaping @MainActor (String?) -> Void = { _ in },
+        onCompleted: @escaping @MainActor (TerminalRichPasteUploadRequestResult) -> Void = { _ in }
+    ) -> UUID? {
+        guard sessionWithID(sessionId) != nil else { return nil }
+
+        if let previousRequestID = richPasteUploadRequestBySession[sessionId],
+           let previousRequest = richPasteUploadRequests[previousRequestID] {
+            previousRequest.task.cancel()
+        }
+
+        let requestID = UUID()
+        let upload = richPasteUploadOperation(for: sessionId)
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.richPasteUploadRequests.removeValue(forKey: requestID)
+                if self.richPasteUploadRequestBySession[sessionId] == requestID {
+                    self.richPasteUploadRequestBySession.removeValue(forKey: sessionId)
+                }
+            }
+
+            guard !Task.isCancelled else {
+                onCompleted(.cancelled)
+                return
+            }
+            guard self.sessionWithID(sessionId) != nil else {
+                onCompleted(.cancelled)
+                return
+            }
+
+            let result = await TerminalRichPasteUploadRequest.perform(
+                image: image,
+                settings: settings,
+                lease: self.richPasteLease(for: sessionId),
+                upload: upload,
+                onProgress: { message in
+                    guard self.richPasteUploadRequestBySession[sessionId] == requestID else { return }
+                    onProgress(message)
+                },
+                pasteUploadedPath: { [weak self] text in
+                    guard let self else { return }
+                    guard self.sessionWithID(sessionId) != nil else { return }
+                    guard let inputRequestID = self.requestSessionInput(
+                        Data(text.utf8),
+                        to: sessionId
+                    ) else {
+                        return
+                    }
+                    await self.waitForInputRequest(inputRequestID)
+                }
+            )
+
+            if Task.isCancelled {
+                onCompleted(.cancelled)
+                return
+            }
+            onCompleted(result)
+        }
+
+        richPasteUploadRequests[requestID] = RichPasteUploadRequest(
+            sessionId: sessionId,
+            task: task
+        )
+        richPasteUploadRequestBySession[sessionId] = requestID
+        return requestID
+    }
+
+    private func richPasteLease(for sessionId: UUID) -> RemoteConnectionLease? {
+        #if DEBUG
+        if let richPasteLeaseProviderForTesting {
+            return richPasteLeaseProviderForTesting(sessionId)
+        }
+        #endif
+
+        return remoteConnectionLease(forSessionId: sessionId)
+    }
+
+    private func richPasteUploadOperation(for sessionId: UUID) -> TerminalRichPasteUploadOperation {
+        #if DEBUG
+        if let richPasteUploadOperationForTesting {
+            return richPasteUploadOperationForTesting
+        }
+        #endif
+
+        let coordinator = TerminalRichPasteCoordinator(sessionId: sessionId)
+        return { image, settings, client, _ in
+            try await coordinator.performRichPaste(
+                image: image,
+                settings: settings,
+                client: client
+            )
+        }
+    }
+
+    func resizeSession(_ sessionId: UUID, cols: Int, rows: Int) async {
+        guard cols > 0 && rows > 0 else { return }
+
+        if let runtime = terminalConnectionRegistry.runtime(for: .session(sessionId)) {
+            do {
+                try await runtime.resize(cols: cols, rows: rows)
+                return
+            } catch SSHError.notConnected {
+                // The first resize often arrives before the remote shell exists.
+            } catch {
+                logger.warning("Failed to resize PTY: \(error.localizedDescription)")
+            }
+        }
+
+        if let runtime = sessionRuntimes[sessionId] {
+            if let shellId = await runtime.runtime.currentShellId(),
+               let client = await runtime.runtime.runnerClientIfCreated() {
+                do {
+                    try await client.resize(cols: cols, rows: rows, for: shellId)
+                } catch {
+                    logger.warning("Failed to resize PTY: \(error.localizedDescription)")
+                }
+                return
+            }
+        }
+
+        guard let route = registeredShellRoute(for: sessionId) else { return }
+        do {
+            try await route.client.resize(cols: cols, rows: rows, for: route.shellId)
+        } catch {
+            logger.warning("Failed to resize PTY: \(error.localizedDescription)")
+        }
+    }
+
+    @discardableResult
+    func requestSessionResize(_ size: TerminalResizeRequestSize, for sessionId: UUID) -> UUID? {
+        guard size.isValid else { return nil }
+        guard sessionWithID(sessionId) != nil else { return nil }
+
+        if let existingRequestID = resizeRequestBySession[sessionId],
+           var request = resizeRequests[existingRequestID] {
+            request.size = size
+            resizeRequests[existingRequestID] = request
+            return existingRequestID
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.resizeRequests.removeValue(forKey: requestID)
+                if self.resizeRequestBySession[sessionId] == requestID {
+                    self.resizeRequestBySession.removeValue(forKey: sessionId)
+                }
+            }
+
+            var appliedSize: TerminalResizeRequestSize?
+            while !Task.isCancelled {
+                guard self.sessionWithID(sessionId) != nil else { return }
+                guard let request = self.resizeRequests[requestID] else { return }
+                let size = request.size
+                guard size != appliedSize else { return }
+
+                #if DEBUG
+                if let resizeOperationForTesting = self.resizeOperationForTesting {
+                    await resizeOperationForTesting(size, .session(sessionId))
+                } else {
+                    await self.resizeSession(sessionId, cols: size.cols, rows: size.rows)
+                }
+                #else
+                await self.resizeSession(sessionId, cols: size.cols, rows: size.rows)
+                #endif
+
+                appliedSize = size
+            }
+        }
+
+        resizeRequests[requestID] = ResizeRequest(sessionId: sessionId, size: size, task: task)
+        resizeRequestBySession[sessionId] = requestID
+        return requestID
+    }
+
+    private func startRuntimeIfNeeded(for sessionId: UUID, terminal: GhosttyTerminalView) async {
+        guard let runtime = runtimeStateForStarting(sessionId: sessionId) else { return }
+        await startRuntimeIfNeeded(runtime, terminal: terminal)
+    }
+
+    private func runtimeStateForStarting(sessionId: UUID) -> SessionRuntimeState? {
+        if let runtime = sessionRuntimes[sessionId] {
+            return runtime
+        }
+
+        guard let session = sessionWithID(sessionId),
+              let server = ServerManager.shared.servers.first(where: { $0.id == session.serverId }) else {
+            updateSessionState(sessionId, to: .failed("Server not found"))
+            return nil
+        }
+
+        do {
+            let credentials = try KeychainManager.shared.getCredentials(for: server)
+            configureRuntime(for: sessionId, server: server, credentials: credentials, onProcessExit: {})
+            return sessionRuntimes[sessionId]
+        } catch {
+            updateSessionState(sessionId, to: .failed(error.localizedDescription))
+            return nil
+        }
+    }
+
+    private func startRuntimeIfNeeded(_ runtime: SessionRuntimeState, terminal: any TerminalConnectionSurface) async {
+        let sessionId = runtime.sessionId
+
+        if await runtime.runtime.hasShellTask() {
+            logger.debug("Ignoring duplicate start request for session \(sessionId.uuidString, privacy: .public)")
+            return
+        }
+
+        if let existingShellId = shellId(for: sessionId) {
+            await runtime.runtime.setShellId(existingShellId)
+            updateSessionState(sessionId, to: .connected)
+            logger.debug("Reusing existing shell for session \(sessionId.uuidString, privacy: .public)")
+            return
+        }
+
+        if await runtime.runtime.currentShellId() != nil {
+            updateSessionState(sessionId, to: .connected)
+            return
+        }
+
+        let sshClient = await runtime.runtime.runnerClient()
+        guard let startResult = beginShellStart(for: sessionId, client: sshClient),
+              startResult.started else {
+            if shellId(for: sessionId) != nil {
+                updateSessionState(sessionId, to: .connected)
+            }
+            logger.debug("Shell start already in progress for session \(sessionId.uuidString, privacy: .public)")
+            return
+        }
+
+        let server = runtime.server
+        let credentials = runtime.credentials
+        let onProcessExit = runtime.onProcessExit
+        let logger = self.logger
+        let shellGeneration = startResult.generation
+
+        let shellTask = Task.detached(priority: .userInitiated) { [weak terminal] in
+            defer {
+                Task { @MainActor in
+                    ConnectionSessionManager.shared.finishShellStart(
+                        for: sessionId,
+                        client: sshClient,
+                        generation: shellGeneration
+                    )
+                    if let runtime = ConnectionSessionManager.shared.sessionRuntimes[sessionId]?.runtime {
+                        await runtime.clearShellTask(ifUsing: sshClient)
+                    }
+                }
+            }
+
+            guard let terminal else { return }
+            await TerminalConnectionRunner.run(
+                server: server,
+                credentials: credentials,
+                sshClient: sshClient,
+                terminal: terminal,
+                logger: logger,
+                onAttempt: { attempt in
+                    if attempt == 1 {
+                        ConnectionSessionManager.shared.updateSessionState(sessionId, to: .connecting)
+                    } else {
+                        ConnectionSessionManager.shared.updateSessionState(sessionId, to: .reconnecting(attempt: attempt))
+                    }
+                },
+                startupPlan: {
+                    await ConnectionSessionManager.shared.tmuxStartupPlan(
+                        for: sessionId,
+                        serverId: server.id,
+                        client: sshClient
+                    )
+                },
+                registerShell: { shell, skipTmuxLifecycle in
+                    let accepted = ConnectionSessionManager.shared.registerSSHClient(
+                        sshClient,
+                        shellId: shell.id,
+                        for: sessionId,
+                        serverId: server.id,
+                        transport: shell.transport,
+                        fallbackReason: shell.fallbackReason,
+                        generation: shellGeneration,
+                        skipTmuxLifecycle: skipTmuxLifecycle
+                    )
+                    guard accepted else { return false }
+                    await ConnectionSessionManager.shared.sessionRuntimes[sessionId]?.runtime.setShellId(shell.id)
+                    ConnectionSessionManager.shared.updateSessionState(sessionId, to: .connected)
+                    return true
+                },
+                onBeforeShellStart: { cols, rows in
+                    await ConnectionSessionManager.shared.sessionRuntimes[sessionId]?.runtime.updateLastSize(cols: cols, rows: rows)
+                },
+                onShellStarted: { _, shellId in
+                    await ConnectionSessionManager.shared.applyWorkingDirectoryIfNeeded(
+                        for: sessionId,
+                        client: sshClient,
+                        shellId: shellId
+                    )
+                },
+                onTitleChange: { title in
+                    ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
+                },
+                shouldContinueStreaming: { data, terminal in
+                    let sessionExists = ConnectionSessionManager.shared.sessions.contains { $0.id == sessionId }
+                    guard sessionExists else { return false }
+                    terminal.writeConnectionOutput(data)
+                    return true
+                },
+                shouldResetClient: { sshError in
+                    switch sshError {
+                    case .notConnected, .connectionFailed, .socketError, .timeout, .libssh2:
+                        return true
+                    case .channelOpenFailed, .shellRequestFailed:
+                        let hasOtherRegistrations = await ConnectionSessionManager.shared.hasOtherRegistrations(
+                            using: sshClient,
+                            excluding: sessionId
+                        )
+                        return !hasOtherRegistrations
+                    case .authenticationFailed, .tailscaleAuthenticationNotAccepted, .cloudflareConfigurationRequired, .cloudflareAuthenticationFailed, .cloudflareTunnelFailed, .hostKeyVerificationFailed, .moshServerMissing, .moshBootstrapFailed, .moshSessionFailed, .unknown:
+                        return false
+                    }
+                },
+                onProcessExit: {
+                    onProcessExit()
+                },
+                onFailure: { error, terminal in
+                    let errorMsg = "\r\n\u{001B}[31mSSH Error: \(error.localizedDescription)\u{001B}[0m\r\n"
+                    if let data = errorMsg.data(using: .utf8) {
+                        terminal.writeConnectionOutput(data)
+                    }
+                    ConnectionSessionManager.shared.updateSessionState(sessionId, to: .failed(error.localizedDescription))
+                }
+            )
+        }
+        await runtime.runtime.setShellTask(shellTask)
+    }
+
+    private func registeredShellRoute(for sessionId: UUID) -> (client: SSHClient, shellId: UUID)? {
+        guard let client = sshClient(forSessionId: sessionId),
+              let shellId = shellId(for: sessionId) else {
+            return nil
+        }
+        return (client: client, shellId: shellId)
+    }
+
+    private func suspendRuntime(for sessionId: UUID) async {
+        guard let runtime = sessionRuntimes[sessionId] else { return }
+        await runtime.runtime.suspend()
+    }
+
+    private func cancelRuntime(
+        for sessionId: UUID,
+        mode: ShellTeardownMode,
+        cleanupTerminal: Bool
+    ) async {
+        let runtime = sessionRuntimes[sessionId]
+        await runtime?.runtime.cancelShellTask()
+        let shellId = await runtime?.runtime.clearShellId()
+
+        if cleanupTerminal {
+            terminalSurfaceRegistry.removeSurface(for: .session(sessionId), cleanup: true)
+        }
+
+        guard let runtime else { return }
+        if let shellId {
+            await runtime.runtime.closeRunnerShell(shellId)
+        }
+        if mode == .fullDisconnect {
+            await runtime.runtime.disconnectRunnerClientAndClear()
+            sessionRuntimes.removeValue(forKey: sessionId)
+            terminalConnectionRegistry.discardRuntime(for: .session(sessionId))
+        }
+    }
+
+    private func applyWorkingDirectoryIfNeeded(
+        for sessionId: UUID,
+        client: SSHClient,
+        shellId: UUID
+    ) async {
+        let cwd: String? = await MainActor.run {
+            guard ConnectionSessionManager.shared.shouldApplyWorkingDirectory(for: sessionId) else { return nil }
+            return ConnectionSessionManager.shared.workingDirectory(for: sessionId)
+        }
+        guard let cwd else { return }
+        let environment = await client.remoteEnvironment()
+        guard environment.shellProfile.family != .unknown else { return }
+        guard let payload = RemoteTerminalBootstrap.directoryChangeCommand(
+            for: cwd,
+            environment: environment
+        ).data(using: .utf8) else {
+            return
+        }
+        try? await client.write(payload, to: shellId)
     }
 
     /// Send text to the terminal for a given session (used by voice input)
     func sendText(_ text: String, to sessionId: UUID) {
-        guard let terminal = terminalViews[sessionId] else { return }
+        guard let terminal = terminalSurfaceRegistry.surface(for: .session(sessionId)) else { return }
         terminal.sendText(text)
     }
 
@@ -1146,22 +2538,487 @@ final class ConnectionSessionManager: ObservableObject {
             throw SSHError.connectionFailed("Server not found")
         }
 
-        if let current = sessionWithID(session.id),
-           current.connectionState.isConnecting {
+        if terminalConnectionRegistry.isOpeningOrStreaming(.session(session.id)) {
             return
         }
 
         // Update state
-        if let index = indexOfSession(session.id) {
-            sessions[index].connectionState = .reconnecting(attempt: 1)
-        }
+        updateSessionState(session.id, to: .reconnecting(attempt: 1))
         markTerminalForReconnectReset(for: session.id)
 
         // Cancel in-flight shell work but keep the terminal surface for reuse
-        shellSuspendHandlers[session.id]?()
+        await shellSuspendHandlers[session.id]?()
 
         // Disconnect existing SSH client
         await unregisterSSHClient(for: session.id)
+    }
+
+    func reconnectSessionIfRuntimeInactive(_ session: ConnectionSession) async -> Bool {
+        guard canStartSessionReconnect(session.id) else {
+            return false
+        }
+
+        do {
+            try await reconnect(session: session)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
+    func requestActiveConnectionOpen(
+        session: ConnectionSession,
+        preferredViewId: String,
+        onOpened: @escaping @MainActor () -> Void = {}
+    ) -> UUID {
+        if let requestID = activeConnectionOpenRequestBySession[session.id] {
+            activeConnectionOpenRequests[requestID]?.onOpened.append(onOpened)
+            return requestID
+        }
+
+        let requestID = UUID()
+        activeConnectionOpenRequests[requestID] = ActiveConnectionOpenRequest(
+            sessionId: session.id,
+            task: nil,
+            onOpened: [onOpened]
+        )
+        activeConnectionOpenRequestBySession[session.id] = requestID
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.activeConnectionOpenRequests.removeValue(forKey: requestID)
+                if self.activeConnectionOpenRequestBySession[session.id] == requestID {
+                    self.activeConnectionOpenRequestBySession.removeValue(forKey: session.id)
+                }
+            }
+
+            #if DEBUG
+            if let operation = self.activeConnectionOpenReconnectOperationForTesting {
+                _ = await operation(session)
+            } else {
+                _ = await self.reconnectSessionIfRuntimeInactive(session)
+            }
+            #else
+            _ = await self.reconnectSessionIfRuntimeInactive(session)
+            #endif
+
+            guard !Task.isCancelled else { return }
+            guard self.sessionWithID(session.id) != nil else { return }
+
+            self.selectSession(session)
+            self.selectedViewByServer[session.serverId] = preferredViewId
+
+            let callbacks = self.activeConnectionOpenRequests[requestID]?.onOpened ?? []
+            callbacks.forEach { $0() }
+        }
+
+        if activeConnectionOpenRequests[requestID]?.sessionId == session.id {
+            activeConnectionOpenRequests[requestID]?.task = task
+        }
+
+        return requestID
+    }
+
+    @discardableResult
+    func requestForegroundReconnectForSelectedSession(
+        selectedViewId: String,
+        terminalViewId: String,
+        refreshTerminal: Bool,
+        autoReconnectEnabled: Bool,
+        onAction: @escaping @MainActor (TerminalForegroundReconnectAction) -> Void = { _ in }
+    ) -> UUID? {
+        guard let action = foregroundReconnectActionForSelectedSession(
+            selectedViewId: selectedViewId,
+            terminalViewId: terminalViewId,
+            refreshTerminal: refreshTerminal,
+            autoReconnectEnabled: autoReconnectEnabled
+        ) else {
+            return nil
+        }
+
+        if let requestID = foregroundReconnectRequestBySession[action.sessionId] {
+            foregroundReconnectRequests[requestID]?.callbacks.append(
+                ForegroundReconnectCallback(action: action, onAction: onAction)
+            )
+            return requestID
+        }
+
+        let requestID = UUID()
+        foregroundReconnectRequests[requestID] = ForegroundReconnectRequest(
+            sessionId: action.sessionId,
+            task: nil,
+            callbacks: [ForegroundReconnectCallback(action: action, onAction: onAction)]
+        )
+        foregroundReconnectRequestBySession[action.sessionId] = requestID
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.foregroundReconnectRequests.removeValue(forKey: requestID)
+                if self.foregroundReconnectRequestBySession[action.sessionId] == requestID {
+                    self.foregroundReconnectRequestBySession.removeValue(forKey: action.sessionId)
+                }
+            }
+
+            if action.shouldReconnect,
+               let session = self.sessionWithID(action.sessionId) {
+                #if DEBUG
+                if let operation = self.foregroundReconnectOperationForTesting {
+                    _ = await operation(session)
+                } else {
+                    _ = await self.reconnectSessionIfRuntimeInactive(session)
+                }
+                #else
+                _ = await self.reconnectSessionIfRuntimeInactive(session)
+                #endif
+            }
+
+            guard !Task.isCancelled else { return }
+            guard self.selectedSessionId == action.sessionId else { return }
+            guard self.sessionWithID(action.sessionId) != nil else { return }
+
+            let callbacks = self.foregroundReconnectRequests[requestID]?.callbacks ?? []
+            callbacks.forEach { $0.onAction($0.action) }
+        }
+
+        if foregroundReconnectRequests[requestID]?.sessionId == action.sessionId {
+            foregroundReconnectRequests[requestID]?.task = task
+        }
+
+        return requestID
+    }
+
+    private func canStartSessionReconnect(_ sessionId: UUID) -> Bool {
+        guard let state = sessionState(for: sessionId) else { return false }
+        return TerminalManualReconnectPolicy.shouldAttemptReconnect(
+            reconnectInFlight: false,
+            snapshotState: state,
+            hasLiveRuntime: hasLiveRuntime(forSessionId: sessionId)
+        )
+    }
+
+    func retrySessionConnection(
+        session: ConnectionSession,
+        server: Server?
+    ) async -> TerminalReconnectRequestResult {
+        guard let server else {
+            return .credentialLoadFailed(String(localized: "Failed to load credentials"))
+        }
+        guard shouldManuallyReconnectSession(
+            session.id,
+            reconnectInFlight: sessionReconnectsInFlight.contains(session.id)
+        ) else {
+            return .skipped
+        }
+
+        sessionReconnectsInFlight.insert(session.id)
+        defer { sessionReconnectsInFlight.remove(session.id) }
+
+        do {
+            let credentials = try await credentialsProvider(server)
+            guard canStartSessionReconnect(session.id) else {
+                return .skipped
+            }
+            try await reconnect(session: session)
+            return .started(credentials)
+        } catch {
+            return .credentialLoadFailed(error.localizedDescription)
+        }
+    }
+
+    @discardableResult
+    func requestSessionRetry(
+        session: ConnectionSession,
+        server: Server?,
+        onCompleted: @escaping @MainActor (TerminalReconnectRequestResult) -> Void = { _ in }
+    ) -> UUID {
+        if let requestID = sessionRetryRequestBySession[session.id] {
+            sessionRetryRequests[requestID]?.onCompleted.append(onCompleted)
+            return requestID
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.sessionRetryRequests.removeValue(forKey: requestID)
+                if self.sessionRetryRequestBySession[session.id] == requestID {
+                    self.sessionRetryRequestBySession.removeValue(forKey: session.id)
+                }
+            }
+
+            #if DEBUG
+            let result: TerminalReconnectRequestResult
+            if let operation = self.sessionRetryOperationForTesting {
+                result = await operation(session, server)
+            } else {
+                result = await self.retrySessionConnection(session: session, server: server)
+            }
+            #else
+            let result = await self.retrySessionConnection(session: session, server: server)
+            #endif
+
+            let callbacks = self.sessionRetryRequests[requestID]?.onCompleted ?? []
+            callbacks.forEach { $0(Task.isCancelled ? .skipped : result) }
+        }
+        sessionRetryRequests[requestID] = SessionRetryRequest(
+            sessionId: session.id,
+            task: task,
+            onCompleted: [onCompleted]
+        )
+        sessionRetryRequestBySession[session.id] = requestID
+        return requestID
+    }
+
+    func waitForSessionRetryRequest(_ requestID: UUID) async {
+        await sessionRetryRequests[requestID]?.task.value
+    }
+
+    func loadCredentials(for server: Server) async -> TerminalCredentialLoadResult {
+        do {
+            return .loaded(try await credentialsProvider(server))
+        } catch {
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    private func canRunSessionCredentialLoad(session: ConnectionSession, server: Server) -> Bool {
+        guard !Task.isCancelled else { return false }
+        return sessions.contains { $0.id == session.id && $0.serverId == server.id }
+    }
+
+    @discardableResult
+    func requestSessionCredentialLoad(
+        session: ConnectionSession,
+        server: Server,
+        onCompleted: @escaping @MainActor (TerminalCredentialLoadResult) -> Void = { _ in }
+    ) -> UUID {
+        if let requestID = sessionCredentialLoadRequestBySession[session.id] {
+            sessionCredentialLoadRequests[requestID]?.onCompleted.append(onCompleted)
+            return requestID
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.sessionCredentialLoadRequests.removeValue(forKey: requestID)
+                if self.sessionCredentialLoadRequestBySession[session.id] == requestID {
+                    self.sessionCredentialLoadRequestBySession.removeValue(forKey: session.id)
+                }
+            }
+
+            guard self.canRunSessionCredentialLoad(session: session, server: server) else { return }
+            let result = await self.loadCredentials(for: server)
+            guard self.canRunSessionCredentialLoad(session: session, server: server) else { return }
+
+            let callbacks = self.sessionCredentialLoadRequests[requestID]?.onCompleted ?? []
+            callbacks.forEach { $0(result) }
+        }
+        sessionCredentialLoadRequests[requestID] = SessionCredentialLoadRequest(
+            sessionId: session.id,
+            task: task,
+            onCompleted: [onCompleted]
+        )
+        sessionCredentialLoadRequestBySession[session.id] = requestID
+        return requestID
+    }
+
+    func waitForSessionCredentialLoadRequest(_ requestID: UUID) async {
+        await sessionCredentialLoadRequests[requestID]?.task.value
+    }
+
+    private func cancelSessionCredentialLoadRequest(for sessionId: UUID) {
+        guard let requestID = sessionCredentialLoadRequestBySession.removeValue(forKey: sessionId) else { return }
+        sessionCredentialLoadRequests[requestID]?.task.cancel()
+    }
+
+    func retrustHostAndReconnect(session: ConnectionSession, server: Server) async -> Bool {
+        guard canRunSessionHostRetrust(session: session, server: server) else { return false }
+        await KnownHostsStore.shared.remove(host: server.host, port: server.port)
+        guard canRunSessionHostRetrust(session: session, server: server) else { return false }
+        do {
+            try await reconnect(session: session)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func canRunSessionHostRetrust(session: ConnectionSession, server: Server) -> Bool {
+        guard !Task.isCancelled else { return false }
+        return sessions.contains { $0.id == session.id && $0.serverId == server.id }
+    }
+
+    @discardableResult
+    func requestSessionHostRetrust(
+        session: ConnectionSession,
+        server: Server,
+        onCompleted: @escaping @MainActor (Bool) -> Void = { _ in }
+    ) -> UUID {
+        if let requestID = sessionHostRetrustRequestBySession[session.id] {
+            sessionHostRetrustRequests[requestID]?.onCompleted.append(onCompleted)
+            return requestID
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.sessionHostRetrustRequests.removeValue(forKey: requestID)
+                if self.sessionHostRetrustRequestBySession[session.id] == requestID {
+                    self.sessionHostRetrustRequestBySession.removeValue(forKey: session.id)
+                }
+            }
+
+            guard self.canRunSessionHostRetrust(session: session, server: server) else {
+                let callbacks = self.sessionHostRetrustRequests[requestID]?.onCompleted ?? []
+                callbacks.forEach { $0(false) }
+                return
+            }
+
+            #if DEBUG
+            let didReconnect: Bool
+            if let operation = self.sessionHostRetrustOperationForTesting {
+                didReconnect = await operation(session, server)
+            } else {
+                didReconnect = await self.retrustHostAndReconnect(session: session, server: server)
+            }
+            #else
+            let didReconnect = await self.retrustHostAndReconnect(session: session, server: server)
+            #endif
+
+            let callbacks = self.sessionHostRetrustRequests[requestID]?.onCompleted ?? []
+            callbacks.forEach {
+                $0(self.canRunSessionHostRetrust(session: session, server: server) ? didReconnect : false)
+            }
+        }
+        sessionHostRetrustRequests[requestID] = SessionHostRetrustRequest(
+            sessionId: session.id,
+            task: task,
+            onCompleted: [onCompleted]
+        )
+        sessionHostRetrustRequestBySession[session.id] = requestID
+        return requestID
+    }
+
+    func waitForSessionHostRetrustRequest(_ requestID: UUID) async {
+        await sessionHostRetrustRequests[requestID]?.task.value
+    }
+
+    func installMoshServerAndReconnect(session: ConnectionSession) async throws {
+        try await installMoshServer(for: session.id)
+        try await reconnect(session: session)
+    }
+
+    @discardableResult
+    func requestTmuxInstall(
+        for sessionId: UUID,
+        onCompleted: @escaping @MainActor () -> Void = {}
+    ) -> UUID {
+        if let requestID = tmuxInstallRequestBySession[sessionId] {
+            tmuxInstallRequests[requestID]?.onCompleted.append(onCompleted)
+            return requestID
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.tmuxInstallRequests.removeValue(forKey: requestID)
+                if self.tmuxInstallRequestBySession[sessionId] == requestID {
+                    self.tmuxInstallRequestBySession.removeValue(forKey: sessionId)
+                }
+            }
+
+            #if DEBUG
+            if let operation = self.tmuxInstallOperationForTesting {
+                await operation(sessionId)
+            } else {
+                await self.startTmuxInstall(for: sessionId)
+            }
+            #else
+            await self.startTmuxInstall(for: sessionId)
+            #endif
+
+            guard !Task.isCancelled else { return }
+            let callbacks = self.tmuxInstallRequests[requestID]?.onCompleted ?? []
+            callbacks.forEach { $0() }
+        }
+        tmuxInstallRequests[requestID] = TmuxInstallRequest(
+            sessionId: sessionId,
+            task: task,
+            onCompleted: [onCompleted]
+        )
+        tmuxInstallRequestBySession[sessionId] = requestID
+        return requestID
+    }
+
+    func waitForTmuxInstallRequest(_ requestID: UUID) async {
+        await tmuxInstallRequests[requestID]?.task.value
+    }
+
+    @discardableResult
+    func requestMoshInstallAndReconnect(
+        session: ConnectionSession,
+        onCompleted: @escaping @MainActor () -> Void = {},
+        onFailed: @escaping @MainActor (Error) -> Void = { _ in }
+    ) -> UUID {
+        if let requestID = moshInstallRequestBySession[session.id] {
+            moshInstallRequests[requestID]?.onCompleted.append(onCompleted)
+            moshInstallRequests[requestID]?.onFailed.append(onFailed)
+            return requestID
+        }
+
+        lastMoshInstallFailure = nil
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.moshInstallRequests.removeValue(forKey: requestID)
+                if self.moshInstallRequestBySession[session.id] == requestID {
+                    self.moshInstallRequestBySession.removeValue(forKey: session.id)
+                }
+            }
+
+            do {
+                #if DEBUG
+                if let operation = self.moshInstallAndReconnectOperationForTesting {
+                    try await operation(session)
+                } else {
+                    try await self.installMoshServerAndReconnect(session: session)
+                }
+                #else
+                try await self.installMoshServerAndReconnect(session: session)
+                #endif
+
+                guard !Task.isCancelled else { return }
+                let callbacks = self.moshInstallRequests[requestID]?.onCompleted ?? []
+                callbacks.forEach { $0() }
+            } catch is CancellationError {
+                let callbacks = self.moshInstallRequests[requestID]?.onCompleted ?? []
+                callbacks.forEach { $0() }
+                return
+            } catch {
+                self.lastMoshInstallFailure = error
+                let callbacks = self.moshInstallRequests[requestID]?.onFailed ?? []
+                callbacks.forEach { $0(error) }
+            }
+        }
+        moshInstallRequests[requestID] = MoshInstallRequest(
+            sessionId: session.id,
+            task: task,
+            onCompleted: [onCompleted],
+            onFailed: [onFailed]
+        )
+        moshInstallRequestBySession[session.id] = requestID
+        return requestID
+    }
+
+    func waitForMoshInstallRequest(_ requestID: UUID) async {
+        await moshInstallRequests[requestID]?.task.value
     }
 
     private func takeSSHClientRegistration(for sessionId: UUID) -> SSHUnregisterResult {
@@ -1245,7 +3102,6 @@ extension ConnectionSessionManager {
                 return (snapshot.serverId, view)
             }
         )
-        connectedServerIds = Set(restoredSessions.map(\.serverId))
     }
 
     private func schedulePersist() {
@@ -1617,23 +3473,17 @@ extension ConnectionSessionManager {
         )
         await RemoteTmuxManager.shared.sendScript(script, using: registration.client, shellId: registration.shellId)
 
-        Task { [weak self] in
-            guard let self else { return }
-            for _ in 0..<6 {
-                try? await Task.sleep(for: .seconds(2))
-                let available = await RemoteTmuxManager.shared.isTmuxAvailable(using: registration.client, preferred: preferred)
-                if available {
-                    await MainActor.run {
-                        self.tmuxResolver.bindManagedSession(for: sessionId, serverId: serverId)
-                        self.updateTmuxStatus(sessionId, status: self.currentTmuxStatus(for: sessionId))
-                    }
-                    return
-                }
-            }
-            await MainActor.run {
-                self.updateTmuxStatus(sessionId, status: self.tmuxResolver.unavailableStatus(for: serverId))
+        for _ in 0..<6 {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            let available = await RemoteTmuxManager.shared.isTmuxAvailable(using: registration.client, preferred: preferred)
+            if available {
+                tmuxResolver.bindManagedSession(for: sessionId, serverId: serverId)
+                updateTmuxStatus(sessionId, status: currentTmuxStatus(for: sessionId))
+                return
             }
         }
+        updateTmuxStatus(sessionId, status: tmuxResolver.unavailableStatus(for: serverId))
     }
 
     func installMoshServer(for sessionId: UUID) async throws {
@@ -1657,9 +3507,12 @@ extension ConnectionSessionManager {
 
         let sessionName = tmuxResolver.sessionName(for: sessionId)
         let preferred = tmuxResolver.multiplexer(for: registration.serverId)
-        Task.detached { [client = registration.client, sessionName, preferred] in
-            await RemoteTmuxManager.shared.killSession(named: sessionName, using: client, preferred: preferred)
-        }
+        trackTmuxKill(
+            for: registration.serverId,
+            sessionName: sessionName,
+            client: registration.client,
+            preferred: preferred
+        )
     }
 
     func disableTmux(for serverId: UUID) {
@@ -1677,6 +3530,7 @@ extension ConnectionSessionManager {
     func resetForTesting() async {
         persistTask?.cancel()
         persistTask = nil
+        await waitForAllServerTeardownTasks()
 
         let allSessionIds = Set(sessions.map(\.id))
             .union(shellRegistry.startsInFlight.keys)
@@ -1692,11 +3546,12 @@ extension ConnectionSessionManager {
             uniqueClients[ObjectIdentifier(context.client)] = context.client
         }
 
-        let terminals = Array(terminalViews.values)
+        let terminals = terminalSurfaceRegistry.removeAll(cleanup: false)
         isRestoring = true
+        liveActivityRefresh = { LiveActivityManager.shared.refresh(with: $0) }
+        successfulConnectionRecorder = { EngagementTracker.shared.recordSuccessfulConnection(id: $0, transport: $1) }
         sessions = []
         selectedSessionId = nil
-        connectedServerIds = []
         selectedViewByServer = [:]
         selectedSessionByServer = [:]
         tmuxAttachPrompt = nil
@@ -1704,12 +3559,78 @@ extension ConnectionSessionManager {
         shellCancelHandlers.removeAll()
         shellSuspendHandlers.removeAll()
         sessionOpensInFlight.removeAll()
+        connectionOpenRequests.values.forEach { $0.cancel() }
+        connectionOpenRequests.removeAll()
+        lastConnectionOpenFailure = nil
+        tmuxInstallRequests.values.forEach { $0.task.cancel() }
+        tmuxInstallRequests.removeAll()
+        tmuxInstallRequestBySession.removeAll()
+        moshInstallRequests.values.forEach { $0.task.cancel() }
+        moshInstallRequests.removeAll()
+        moshInstallRequestBySession.removeAll()
+        lastMoshInstallFailure = nil
+        sessionRetryRequests.values.forEach { $0.task.cancel() }
+        sessionRetryRequests.removeAll()
+        sessionRetryRequestBySession.removeAll()
+        activeConnectionOpenRequests.values.compactMap(\.task).forEach { $0.cancel() }
+        activeConnectionOpenRequests.removeAll()
+        activeConnectionOpenRequestBySession.removeAll()
+        foregroundReconnectRequests.values.compactMap(\.task).forEach { $0.cancel() }
+        foregroundReconnectRequests.removeAll()
+        foregroundReconnectRequestBySession.removeAll()
+        sessionHostRetrustRequests.values.forEach { $0.task.cancel() }
+        sessionHostRetrustRequests.removeAll()
+        sessionHostRetrustRequestBySession.removeAll()
+        sessionCredentialLoadRequests.values.forEach { $0.task.cancel() }
+        sessionCredentialLoadRequests.removeAll()
+        sessionCredentialLoadRequestBySession.removeAll()
+        surfaceAttachRequests.values.forEach { $0.task.cancel() }
+        surfaceAttachRequests.removeAll()
+        surfaceAttachRequestBySession.removeAll()
+        inputRequests.values.forEach { $0.task.cancel() }
+        inputRequests.removeAll()
+        inputRequestBySession.removeAll()
+        lastInputTaskBySession.removeAll()
+        let richPasteUploadTasks = richPasteUploadRequests.values.map(\.task)
+        richPasteUploadTasks.forEach { $0.cancel() }
+        for task in richPasteUploadTasks {
+            await task.value
+        }
+        richPasteUploadRequests.removeAll()
+        richPasteUploadRequestBySession.removeAll()
+        resizeRequests.values.forEach { $0.task.cancel() }
+        resizeRequests.removeAll()
+        resizeRequestBySession.removeAll()
+        processExitRequests.values.forEach { $0.task.cancel() }
+        processExitRequests.removeAll()
+        processExitRequestBySession.removeAll()
+        sessionReconnectsInFlight.removeAll()
+        connectWatchdogTasks.values.forEach { $0.cancel() }
+        connectWatchdogTasks.removeAll()
+        connectWatchdogGenerations.removeAll()
+        credentialsProvider = { server in
+            try KeychainManager.shared.getCredentials(for: server)
+        }
         serverDisconnectTasks.removeAll()
         terminalsNeedingReconnectReset.removeAll()
         isSuspendingForBackground = false
         tmuxCleanupServers.removeAll()
-        terminalViews.removeAll()
-        terminalAccessOrder.removeAll()
+        sessionRuntimes.removeAll()
+        terminalConnectionRegistry.removeAll()
+        testingTerminalConnectionClientFactory = nil
+        rejectedShellCleanupOperationForTesting = nil
+        tmuxKillOperationForTesting = nil
+        tmuxInstallOperationForTesting = nil
+        moshInstallAndReconnectOperationForTesting = nil
+        sessionRetryOperationForTesting = nil
+        activeConnectionOpenReconnectOperationForTesting = nil
+        sessionHostRetrustOperationForTesting = nil
+        surfaceAttachOperationForTesting = nil
+        inputOperationForTesting = nil
+        richPasteLeaseProviderForTesting = nil
+        richPasteUploadOperationForTesting = nil
+        resizeOperationForTesting = nil
+        processExitOperationForTesting = nil
         isRestoring = false
 
         UserDefaults.standard.removeObject(forKey: persistenceKey)
@@ -1725,8 +3646,211 @@ extension ConnectionSessionManager {
         isSuspendingForBackground = isSuspending
     }
 
+    func setSurfaceAttachOperationForTesting(
+        _ operation: (@MainActor (TerminalEntityID) async -> Void)?
+    ) {
+        surfaceAttachOperationForTesting = operation
+    }
+
+    func setInputOperationForTesting(
+        _ operation: (@MainActor (Data, TerminalEntityID) async -> Void)?
+    ) {
+        inputOperationForTesting = operation
+    }
+
+    func setRichPasteLeaseProviderForTesting(
+        _ provider: (@MainActor (UUID) -> RemoteConnectionLease?)?
+    ) {
+        richPasteLeaseProviderForTesting = provider
+    }
+
+    func setRichPasteUploadOperationForTesting(
+        _ operation: TerminalRichPasteUploadOperation?
+    ) {
+        richPasteUploadOperationForTesting = operation
+    }
+
+    func setResizeOperationForTesting(
+        _ operation: (@MainActor (TerminalResizeRequestSize, TerminalEntityID) async -> Void)?
+    ) {
+        resizeOperationForTesting = operation
+    }
+
+    func setProcessExitOperationForTesting(
+        _ operation: (@MainActor (TerminalEntityID) async -> Void)?
+    ) {
+        processExitOperationForTesting = operation
+    }
+
+    @discardableResult
+    func requestSurfaceAttachForTesting(
+        sessionId: UUID,
+        context: TerminalSurfaceAttachContext,
+        resetTerminal: @escaping @MainActor () -> Void = {}
+    ) -> UUID? {
+        requestSurfaceAttach(
+            sessionId: sessionId,
+            context: context,
+            resetTerminal: resetTerminal,
+            attachOperation: { [weak self] in
+                guard let self else { return }
+                if let surfaceAttachOperationForTesting = self.surfaceAttachOperationForTesting {
+                    await surfaceAttachOperationForTesting(.session(sessionId))
+                }
+            }
+        )
+    }
+
     func setServerDisconnectTaskForTesting(_ serverId: UUID, task: Task<Void, Never>?) {
         serverDisconnectTasks[serverId] = task
+    }
+
+    func setTerminalConnectionClientFactoryForTesting(
+        _ factory: @escaping @MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient
+    ) {
+        testingTerminalConnectionClientFactory = factory
+    }
+
+    func setRejectedShellCleanupOperationForTesting(
+        _ operation: (@MainActor @Sendable () async -> Void)?
+    ) {
+        rejectedShellCleanupOperationForTesting = operation
+    }
+
+    func setTmuxKillOperationForTesting(
+        _ operation: (@MainActor @Sendable () async -> Void)?
+    ) {
+        tmuxKillOperationForTesting = operation
+    }
+
+    func setTmuxInstallOperationForTesting(
+        _ operation: (@MainActor (UUID) async -> Void)?
+    ) {
+        tmuxInstallOperationForTesting = operation
+    }
+
+    func setMoshInstallAndReconnectOperationForTesting(
+        _ operation: (@MainActor (ConnectionSession) async throws -> Void)?
+    ) {
+        moshInstallAndReconnectOperationForTesting = operation
+    }
+
+    func setSessionRetryOperationForTesting(
+        _ operation: (@MainActor (ConnectionSession, Server?) async -> TerminalReconnectRequestResult)?
+    ) {
+        sessionRetryOperationForTesting = operation
+    }
+
+    func setActiveConnectionOpenReconnectOperationForTesting(
+        _ operation: (@MainActor (ConnectionSession) async -> Bool)?
+    ) {
+        activeConnectionOpenReconnectOperationForTesting = operation
+    }
+
+    func cancelActiveConnectionOpenRequestForTesting(_ requestID: UUID) {
+        activeConnectionOpenRequests[requestID]?.task?.cancel()
+    }
+
+    func setForegroundReconnectOperationForTesting(
+        _ operation: (@MainActor (ConnectionSession) async -> Bool)?
+    ) {
+        foregroundReconnectOperationForTesting = operation
+    }
+
+    func setSessionHostRetrustOperationForTesting(
+        _ operation: (@MainActor (ConnectionSession, Server) async -> Bool)?
+    ) {
+        sessionHostRetrustOperationForTesting = operation
+    }
+
+    func setCredentialsProviderForTesting(
+        _ provider: @escaping @MainActor (Server) async throws -> ServerCredentials
+    ) {
+        credentialsProvider = provider
+    }
+
+    func registerTerminalForTesting(sessionId: UUID) {
+        evictOldTerminalsIfNeeded()
+        terminalSurfaceRegistry.registerForTesting(
+            entityId: .session(sessionId),
+            pause: {},
+            cleanup: {}
+        )
+    }
+
+    func beginShellStartForTesting(
+        sessionId: UUID,
+        serverId: UUID,
+        client: SSHClient
+    ) -> SSHShellRegistry.Generation {
+        shellRegistry.tryBeginStart(
+            for: sessionId,
+            serverId: serverId,
+            client: client
+        ).generation
+    }
+
+    func closeShellRegistrationForTesting(sessionId: UUID) {
+        _ = shellRegistry.closeEntity(sessionId)
+    }
+
+    func hasTerminalConnectionRuntimeForTesting(_ entityId: TerminalEntityID) -> Bool {
+        terminalConnectionRegistry.runtime(for: entityId) != nil
+    }
+
+    func setRuntimeShellTaskForTesting(
+        sessionId: UUID,
+        _ task: Task<Void, Never>
+    ) async {
+        guard let runtime = sessionRuntimes[sessionId] else { return }
+        await runtime.runtime.setShellTask(task)
+        registerShellCancelHandler({ [weak self] mode in
+            await self?.cancelRuntime(for: sessionId, mode: mode, cleanupTerminal: false)
+        }, for: sessionId)
+    }
+
+    func completeRuntimeShellStartForTesting(
+        sessionId: UUID,
+        client: SSHClient,
+        shellId: UUID,
+        serverId: UUID,
+        generation: SSHShellRegistry.Generation
+    ) -> Bool {
+        let accepted = registerSSHClient(
+            client,
+            shellId: shellId,
+            for: sessionId,
+            serverId: serverId,
+            generation: generation,
+            skipTmuxLifecycle: true
+        )
+        guard accepted else { return false }
+        updateSessionState(sessionId, to: .connected)
+        return true
+    }
+
+    func startRuntimeForTesting(sessionId: UUID) async {
+        guard let session = sessionWithID(sessionId) else {
+            return
+        }
+
+        let server = ServerManager.shared.servers.first { $0.id == session.serverId }
+        let entityId = session.terminalEntityId
+        let runtime: TerminalConnectionRuntime
+        if let existing = terminalConnectionRegistry.runtime(for: entityId) {
+            runtime = existing
+        } else {
+            runtime = makeTerminalConnectionRuntime(entityId: entityId, server: server)
+            terminalConnectionRegistry.register(runtime, for: entityId, serverId: session.serverId)
+        }
+        await runtime.open(configuration: .testing)
+        if await runtime.state == .streaming {
+            updateSessionState(sessionId, to: .connected)
+        }
+    }
+
+    func restorePersistedSnapshotForTesting() {
+        restoreSnapshot()
     }
 }
 #endif

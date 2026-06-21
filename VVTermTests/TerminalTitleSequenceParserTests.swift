@@ -7,6 +7,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect parsing of terminal title escape sequences from remote
+// output streams. They use byte/string fixtures and no terminal renderer; update only
+// when supported title-sequence parsing intentionally changes.
+
 struct TerminalTitleSequenceParserTests {
     @Test
     func parsesBellTerminatedWindowTitle() {

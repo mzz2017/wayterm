@@ -1,0 +1,308 @@
+import Foundation
+import Testing
+@testable import VVTerm
+
+// Test Context:
+// These tests protect app delegate and root app lifecycle ownership. Platform
+// delegates may send launch, foreground, remote-notification, background, and
+// termination intent, but they must not own lifecycle-critical terminal
+// teardown, background suspension, app-lock, or sync task orchestration. The
+// fake closures record ordering and use gates so failures distinguish broken
+// application-layer lifecycle ownership from CloudKit, UIKit, AppKit, or real
+// terminal manager behavior. Update this context only when app lifecycle
+// orchestration intentionally moves to another App/Application owner.
+@Suite(.serialized)
+@MainActor
+struct AppLifecycleCoordinatorTests {
+    @Test
+    func backgroundLockRequestTracksLockUntilCompletion() async {
+        // Given app background lock work is asynchronous at the application
+        // lifecycle boundary.
+        let probe = AppLifecycleProbe()
+        let releaseLock = AsyncLifecycleGate()
+        let coordinator = AppLifecycleCoordinator.makeForTesting(
+            lockAppIfNeededForBackground: {
+                await probe.record("lock-start")
+                await releaseLock.wait()
+                await probe.record("lock-end")
+            }
+        )
+
+        // When the platform delegate sends background-lock intent.
+        let requestID = coordinator.requestBackgroundLock()
+        await probe.waitForCount(1)
+
+        // Then the application owner tracks the lock request until the work
+        // finishes.
+        #expect(
+            coordinator.pendingBackgroundLockRequestIDs.contains(requestID),
+            "Background lock should stay tracked while app-lock work is in flight."
+        )
+        #expect(await probe.events() == ["lock-start"])
+
+        await releaseLock.open()
+        await coordinator.waitForBackgroundLockRequest(requestID)
+
+        #expect(
+            await probe.events() == ["lock-start", "lock-end"],
+            "Background lock request should wait for app-lock work to finish."
+        )
+        #expect(
+            !coordinator.pendingBackgroundLockRequestIDs.contains(requestID),
+            "Background lock tracking should clear only after app-lock work completes."
+        )
+    }
+
+    @Test
+    func backgroundSuspensionRequestTracksSuspendUntilLockCompletes() async {
+        // Given app background suspension is blocked inside the terminal
+        // session manager boundary.
+        let probe = AppLifecycleProbe()
+        let releaseSuspend = AsyncLifecycleGate()
+        let coordinator = AppLifecycleCoordinator.makeForTesting(
+            suspendTerminalSessionsForBackground: {
+                await probe.record("suspend-start")
+                await releaseSuspend.wait()
+                await probe.record("suspend-end")
+            },
+            lockAppIfNeededForBackground: {
+                await probe.record("lock")
+            }
+        )
+
+        // When the platform delegate sends background intent.
+        let requestID = coordinator.requestBackgroundSuspension()
+        await probe.waitForCount(1)
+
+        // Then the application-layer owner tracks the request until suspend
+        // finishes and lock intent has been sent.
+        #expect(
+            coordinator.pendingBackgroundSuspensionRequestIDs.contains(requestID),
+            "Background suspension should stay tracked while terminal suspension is in flight."
+        )
+        #expect(await probe.events() == ["suspend-start"])
+
+        await releaseSuspend.open()
+        await coordinator.waitForBackgroundSuspensionRequest(requestID)
+
+        #expect(
+            await probe.events() == ["suspend-start", "suspend-end", "lock"],
+            "App lock should run after terminal suspension completes."
+        )
+        #expect(
+            !coordinator.pendingBackgroundSuspensionRequestIDs.contains(requestID),
+            "Background suspension tracking should clear only after the lifecycle work completes."
+        )
+    }
+
+    @Test
+    func terminationTeardownRequestTracksBothTerminalManagersUntilCompletion() async {
+        // Given terminal teardown dependencies are injected into the app
+        // lifecycle owner.
+        let probe = AppLifecycleProbe()
+        let coordinator = AppLifecycleCoordinator.makeForTesting(
+            disconnectConnectionSessionsBeforeExit: {
+                await probe.record("sessions")
+            },
+            disconnectTerminalTabsBeforeExit: {
+                await probe.record("tabs")
+            }
+        )
+
+        // When the platform delegate sends termination intent.
+        let requestID = coordinator.requestTerminationTeardown()
+        await coordinator.waitForTerminationTeardownRequest(requestID)
+
+        // Then both awaitable terminal teardown paths complete before the
+        // tracked termination request clears.
+        #expect(
+            await probe.events() == ["sessions", "tabs"],
+            "Termination should run both terminal manager teardown paths before completing the request."
+        )
+        #expect(
+            !coordinator.pendingTerminationTeardownRequestIDs.contains(requestID),
+            "Termination teardown tracking should clear only after both managers finish."
+        )
+    }
+
+    @Test
+    func terminationTeardownRequestCompletesAfterTimeoutWhenDisconnectDoesNotFinish() async {
+        // Given terminal teardown starts but the first terminal manager does
+        // not finish before the app termination timeout.
+        let probe = AppLifecycleProbe()
+        let releaseDisconnect = AsyncLifecycleGate()
+        let releaseTimeout = AsyncLifecycleGate()
+        var completionWasCalled = false
+        let coordinator = AppLifecycleCoordinator.makeForTesting(
+            disconnectConnectionSessionsBeforeExit: {
+                await probe.record("sessions-start")
+                await releaseDisconnect.wait()
+                await probe.record("sessions-end")
+            },
+            disconnectTerminalTabsBeforeExit: {
+                await probe.record("tabs")
+            },
+            terminationTeardownTimeout: .milliseconds(20),
+            sleepForTerminationTimeout: { _ in
+                await releaseTimeout.wait()
+            }
+        )
+
+        // When termination intent arrives and the timeout fires before the
+        // first manager finishes.
+        let requestID = coordinator.requestTerminationTeardown {
+            completionWasCalled = true
+        }
+        await probe.waitForCount(1)
+        await releaseTimeout.open()
+        await coordinator.waitForTerminationTeardownRequest(requestID)
+
+        // Then the application termination reply can continue without waiting
+        // forever or starting later teardown work after cancellation.
+        #expect(
+            await probe.events() == ["sessions-start"],
+            "Termination timeout should stop waiting before the second terminal manager teardown starts."
+        )
+        #expect(
+            completionWasCalled,
+            "Termination completion should be invoked after the timeout releases the tracked request."
+        )
+        #expect(
+            !coordinator.pendingTerminationTeardownRequestIDs.contains(requestID),
+            "Termination teardown tracking should clear after timeout completion."
+        )
+
+        await releaseDisconnect.open()
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(
+            !(await probe.events()).contains("tabs"),
+            "Canceled timeout teardown should not continue into the second terminal manager after release."
+        )
+    }
+
+    @Test
+    func foregroundRefreshRespectsSyncDisabledAndMinimumInterval() async {
+        // Given foreground refresh policy is owned by the app lifecycle
+        // coordinator.
+        let probe = AppLifecycleProbe()
+        var isSyncEnabled = false
+        var currentDate = Date(timeIntervalSince1970: 100)
+        let coordinator = AppLifecycleCoordinator.makeForTesting(
+            refreshServerData: { reason in
+                Task { await probe.record("refresh:\(reason)") }
+            },
+            isSyncEnabled: { isSyncEnabled },
+            now: { currentDate }
+        )
+
+        // When sync is disabled, foreground intent arrives, then two enabled
+        // foreground intents arrive inside the throttle interval.
+        coordinator.requestForegroundRefresh()
+        isSyncEnabled = true
+        coordinator.requestForegroundRefresh()
+        currentDate = Date(timeIntervalSince1970: 110)
+        coordinator.requestForegroundRefresh()
+        await probe.waitForCount(1)
+
+        // Then only the enabled, unthrottled foreground refresh reaches the
+        // sync coordinator.
+        #expect(
+            await probe.events() == ["refresh:foreground"],
+            "Foreground refresh should respect sync-disabled and minimum-interval policy."
+        )
+    }
+
+    @Test
+    func remoteNotificationCompletionDelegatesToTrackedSyncRefresh() async {
+        // Given remote notification refresh is still controlled by the existing
+        // app sync coordinator boundary.
+        let probe = AppLifecycleProbe()
+        let releaseRefresh = AsyncLifecycleGate()
+        let coordinator = AppLifecycleCoordinator.makeForTesting(
+            refreshServerDataAfterRemoteNotification: {
+                await probe.record("refresh-start")
+                await releaseRefresh.wait()
+                await probe.record("refresh-end")
+                return true
+            }
+        )
+
+        // When remote notification intent arrives.
+        let requestID = coordinator.requestRemoteNotificationRefresh { didRefresh in
+            await probe.record("completion:\(didRefresh)")
+        }
+        await probe.waitForCount(1)
+
+        // Then the system completion callback is not invoked until the sync
+        // coordinator's tracked refresh completes.
+        #expect(
+            coordinator.pendingRemoteNotificationRefreshRequestIDs.contains(requestID),
+            "Remote notification refresh should stay tracked until sync refresh and completion finish."
+        )
+        #expect(await probe.events() == ["refresh-start"])
+        await releaseRefresh.open()
+        await coordinator.waitForRemoteNotificationRefreshRequest(requestID)
+        await probe.waitForCount(3)
+        #expect(
+            await probe.events() == ["refresh-start", "refresh-end", "completion:true"],
+            "Remote notification completion should remain behind the tracked sync refresh boundary."
+        )
+        #expect(
+            !coordinator.pendingRemoteNotificationRefreshRequestIDs.contains(requestID),
+            "Remote notification tracking should clear only after completion is invoked."
+        )
+    }
+}
+
+private actor AppLifecycleProbe {
+    private var recordedEvents: [String] = []
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func record(_ event: String) {
+        recordedEvents.append(event)
+        resumeReadyContinuations()
+    }
+
+    func events() -> [String] {
+        recordedEvents
+    }
+
+    func waitForCount(_ count: Int) async {
+        if recordedEvents.count >= count { return }
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+        if recordedEvents.count < count {
+            await waitForCount(count)
+        }
+    }
+
+    private func resumeReadyContinuations() {
+        let ready = continuations
+        continuations.removeAll()
+        for continuation in ready {
+            continuation.resume()
+        }
+    }
+}
+
+private actor AsyncLifecycleGate {
+    private var isOpen = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func open() {
+        isOpen = true
+        let ready = continuations
+        continuations.removeAll()
+        for continuation in ready {
+            continuation.resume()
+        }
+    }
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+}

@@ -1,6 +1,11 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect terminal split tree domain behavior for panes and layouts.
+// They use pure split-node values and no terminal surface; update only when split
+// layout semantics intentionally change.
+
 final class TerminalSplitNodeTests: XCTestCase {
     func testAllPaneIdsPreservesLeafOrder() {
         let left = UUID()

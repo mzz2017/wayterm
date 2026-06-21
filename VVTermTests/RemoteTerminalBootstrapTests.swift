@@ -1,6 +1,11 @@
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect remote terminal bootstrap command generation for POSIX,
+// PowerShell, cmd, startup commands, and directory changes. They use pure command
+// builders and no remote shell; update only when bootstrap syntax support changes.
+
 struct RemoteTerminalBootstrapTests {
     private let posixEnvironment = RemoteEnvironment(
         platform: .linux,

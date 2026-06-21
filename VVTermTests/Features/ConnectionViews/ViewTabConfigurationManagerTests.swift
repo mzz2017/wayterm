@@ -1,6 +1,11 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect view-tab configuration persistence and ordering. Fakes use
+// isolated configuration storage and no live connection views; update only when
+// configuration semantics intentionally change.
+
 @MainActor
 final class ViewTabConfigurationManagerTests: XCTestCase {
     private func makeDefaults(testName: String = #function) -> UserDefaults {

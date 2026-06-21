@@ -111,7 +111,7 @@ struct ProSettingsView: View {
 
             Section {
                 Button("Restore Purchases") {
-                    Task { await storeManager.restorePurchases() }
+                    storeManager.requestRestorePurchases()
                 }
             }
         }

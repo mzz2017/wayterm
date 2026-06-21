@@ -234,8 +234,8 @@ struct ConnectionTerminalContainer: View {
                 server: server,
                 isVisible: selectedView == "stats",
                 backgroundColor: liveTerminalBackgroundColor,
-                sharedClientProvider: { tabManager.sharedStatsClient(for: server.id) },
-                statsCollector: ServerStatsCollector()
+                borrowedLeaseProvider: { tabManager.sharedStatsLease(for: server.id) },
+                statsCollector: ServerStatsCollector(connectionProvider: StatsSSHConnectionProvider.makeProvider())
             )
                 .opacity(selectedView == "stats" ? 1 : 0)
                 .allowsHitTesting(selectedView == "stats")
@@ -324,21 +324,17 @@ struct ConnectionTerminalContainer: View {
             return
         }
 
-        Task {
-            do {
-                let tab = try await tabManager.openTab(for: server)
-                await MainActor.run {
-                    if selectTerminalViewOnSuccess {
-                        tabManager.selectedViewByServer[server.id] = viewTabConfig.isTabVisible(ConnectionViewTab.terminal.id)
-                            ? ConnectionViewTab.terminal.id
-                            : viewTabConfig.effectiveDefaultTab()
-                    }
-                    selectedTabIdBinding.wrappedValue = tab.id
+        tabManager.requestTabOpen(
+            for: server,
+            onOpened: { tab in
+                if selectTerminalViewOnSuccess {
+                    tabManager.selectedViewByServer[server.id] = viewTabConfig.isTabVisible(ConnectionViewTab.terminal.id)
+                        ? ConnectionViewTab.terminal.id
+                        : viewTabConfig.effectiveDefaultTab()
                 }
-            } catch {
-                // No-op: user cancelled biometric auth or open failed.
+                selectedTabIdBinding.wrappedValue = tab.id
             }
-        }
+        )
     }
 
     private func openNewFileTab(selectFilesViewOnSuccess: Bool = false) {
@@ -644,7 +640,7 @@ struct ConnectionTerminalContainer: View {
         return Menu {
             Button {
                 guard let selectedFileTab else { return }
-                Task { await fileBrowser.goUp(in: selectedFileTab, server: server) }
+                fileBrowser.requestNavigation(.goUp, in: selectedFileTab, server: server)
             } label: {
                 Label("Parent", systemImage: "arrow.turn.up.left")
             }
@@ -652,7 +648,7 @@ struct ConnectionTerminalContainer: View {
 
             Button {
                 guard let selectedFileTab else { return }
-                Task { await fileBrowser.refresh(server: server, tab: selectedFileTab) }
+                fileBrowser.requestNavigation(.refresh, in: selectedFileTab, server: server)
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
@@ -819,11 +815,11 @@ struct ConnectionTerminalContainer: View {
                 ),
                 onFilesGoUp: {
                     guard let selectedFileTab else { return }
-                    Task { await fileBrowser.goUp(in: selectedFileTab, server: server) }
+                    fileBrowser.requestNavigation(.goUp, in: selectedFileTab, server: server)
                 },
                 onFilesRefresh: {
                     guard let selectedFileTab else { return }
-                    Task { await fileBrowser.refresh(server: server, tab: selectedFileTab) }
+                    fileBrowser.requestNavigation(.refresh, in: selectedFileTab, server: server)
                 },
                 onExitZen: {
                     showingZenPanel = false
@@ -836,10 +832,16 @@ struct ConnectionTerminalContainer: View {
     }
 
     private func disconnectFromServer() {
-        tabManager.closeAllTabs(for: server.id)
-        fileBrowser.disconnect(serverId: server.id)
-        fileTabManager.disconnect(serverId: server.id)
-        tabManager.connectedServerIds.remove(server.id)
+        ServerConnectionLifecycleCoordinator.shared.requestServerDisconnect(
+            serverId: server.id,
+            disconnectRemoteFiles: { serverId in
+                fileBrowser.disconnect(serverId: serverId)
+            },
+            disconnectFileTabs: { serverId in
+                fileTabManager.disconnect(serverId: serverId)
+            },
+            disconnectTerminals: tabManager.disconnectServerAndWait
+        )
     }
 
     private func splitFocusedPane(_ direction: TerminalSplitDirection) {

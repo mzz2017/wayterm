@@ -3,6 +3,11 @@ import Testing
 import UIKit
 @testable import VVTerm
 
+// Test Context:
+// These tests protect native find state and match-navigation behavior for
+// terminal surfaces. They use in-memory search state instead of Ghostty views;
+// update only when terminal find UX semantics intentionally change.
+
 struct TerminalNativeFindTests {
     @Test
     func findsRepeatedVisibleMatchesAcrossLines() {

@@ -1,6 +1,11 @@
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect hardware keyboard routing and focus policy for terminal
+// input. They use pure routing decisions and no real keyboard events; update only
+// when terminal hardware input behavior intentionally changes.
+
 struct TerminalHardwareTextInputRoutingPolicyTests {
     @Test
     func routesPrintableHardwareTextToSystemTextInput() {

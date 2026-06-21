@@ -59,6 +59,10 @@ struct TerminalTab: Identifiable, Equatable, Codable {
     var hasSplits: Bool {
         layout != nil && (layout?.leafCount ?? 1) > 1
     }
+
+    var rootEntityId: TerminalEntityID {
+        .pane(rootPaneId)
+    }
 }
 
 // MARK: - Terminal Pane State
@@ -91,5 +95,13 @@ struct TerminalPaneState {
         self.seedPaneId = nil
         self.activeTransport = .ssh
         self.moshFallbackReason = nil
+    }
+
+    var terminalEntityId: TerminalEntityID {
+        .pane(paneId)
+    }
+
+    var terminalEntityConnectionState: TerminalEntityConnectionState {
+        TerminalEntityConnectionState(connectionState: connectionState)
     }
 }

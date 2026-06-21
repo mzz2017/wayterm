@@ -12,9 +12,9 @@ actor RemoteClipboardTransferService {
 
     func uploadImage(
         _ image: ClipboardImagePayload,
-        using sshClient: SSHClient
+        using client: any RemoteConnectionLeaseClient
     ) async throws -> RemoteClipboardUpload {
-        let environment = await sshClient.remoteEnvironment()
+        let environment = await client.remoteEnvironment()
         logger.info(
             "Preparing remote upload [session: \(self.sessionId.uuidString, privacy: .public)] [platform: \(environment.platform.rawValue, privacy: .public)] [shell: \(environment.shellProfile.family.rawValue, privacy: .public)] [bytes: \(image.sizeBytes)]"
         )
@@ -29,7 +29,7 @@ actor RemoteClipboardTransferService {
         do {
             remotePath = try await createRemoteTemporaryPath(
                 extension: image.suggestedExtension,
-                using: sshClient
+                using: client
             )
         } catch {
             logger.error(
@@ -53,7 +53,7 @@ actor RemoteClipboardTransferService {
         )
 
         do {
-            try await sshClient.upload(
+            try await client.upload(
                 image.data,
                 to: remotePath,
                 permissions: Int32(0o600),
@@ -62,7 +62,7 @@ actor RemoteClipboardTransferService {
             logger.info(
                 "Remote upload completed [session: \(self.sessionId.uuidString, privacy: .public)] [path: \(remotePath, privacy: .public)]"
             )
-            scheduleStaleFileSweepIfNeeded(using: sshClient)
+            await sweepStaleFilesIfNeeded(using: client)
             return RemoteClipboardUpload(
                 remotePath: remotePath,
                 mimeType: image.mimeType,
@@ -72,7 +72,7 @@ actor RemoteClipboardTransferService {
             logger.error(
                 "Remote upload failed [session: \(self.sessionId.uuidString, privacy: .public)] [path: \(remotePath, privacy: .public)] [error: \(error.localizedDescription, privacy: .public)]"
             )
-            await deleteRemoteFileIfNeeded(at: remotePath, using: sshClient)
+            await deleteRemoteFileIfNeeded(at: remotePath, using: client)
             if let sshError = error as? SSHError, case .timeout = sshError {
                 throw TerminalRichPasteError.remoteUploadFailed(String(localized: "timed out while uploading image bytes"))
             }
@@ -82,7 +82,7 @@ actor RemoteClipboardTransferService {
 
     private func createRemoteTemporaryPath(
         extension fileExtension: String,
-        using sshClient: SSHClient
+        using client: any RemoteConnectionLeaseClient
     ) async throws -> String {
         let sanitizedExtension = sanitizeExtension(fileExtension)
         let mktempCommand = RemoteTerminalBootstrap.wrapPOSIXShellCommand(
@@ -98,7 +98,7 @@ actor RemoteClipboardTransferService {
             """
         )
 
-        let output = try await sshClient.execute(mktempCommand)
+        let output = try await client.execute(mktempCommand)
         let path = output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !path.isEmpty, path.hasPrefix("/") else {
             throw TerminalRichPasteError.remoteTempFileCreationFailed
@@ -117,7 +117,7 @@ actor RemoteClipboardTransferService {
         return sanitized.isEmpty ? "bin" : sanitized.lowercased()
     }
 
-    private func scheduleStaleFileSweepIfNeeded(using sshClient: SSHClient) {
+    private func sweepStaleFilesIfNeeded(using client: any RemoteConnectionLeaseClient) async {
         guard !didSweepStaleFiles else { return }
         didSweepStaleFiles = true
 
@@ -131,28 +131,20 @@ actor RemoteClipboardTransferService {
             """
         )
 
-        let sessionId = self.sessionId
-        logger.debug("Scheduling stale clipboard temp file sweep [session: \(self.sessionId.uuidString, privacy: .public)]")
-
-        Task(priority: .utility) {
-            let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "RemoteClipboardTransfer")
-            try? await Task.sleep(for: .seconds(10))
-            guard !Task.isCancelled else { return }
-            logger.debug("Sweeping stale clipboard temp files [session: \(sessionId.uuidString, privacy: .public)]")
-            do {
-                _ = try await sshClient.execute(command, timeout: .seconds(2))
-                logger.debug("Finished stale clipboard temp file sweep [session: \(sessionId.uuidString, privacy: .public)]")
-            } catch {
-                logger.debug(
-                    "Skipping stale clipboard temp file sweep result [session: \(sessionId.uuidString, privacy: .public)] [error: \(error.localizedDescription, privacy: .public)]"
-                )
-            }
+        logger.debug("Sweeping stale clipboard temp files [session: \(self.sessionId.uuidString, privacy: .public)]")
+        do {
+            _ = try await client.execute(command, timeout: .seconds(2))
+            logger.debug("Finished stale clipboard temp file sweep [session: \(self.sessionId.uuidString, privacy: .public)]")
+        } catch {
+            logger.debug(
+                "Skipping stale clipboard temp file sweep result [session: \(self.sessionId.uuidString, privacy: .public)] [error: \(error.localizedDescription, privacy: .public)]"
+            )
         }
     }
 
     private func deleteRemoteFileIfNeeded(
         at path: String,
-        using sshClient: SSHClient
+        using client: any RemoteConnectionLeaseClient
     ) async {
         guard !path.isEmpty else { return }
         let quotedPath = RemoteTerminalBootstrap.shellQuoted(path)
@@ -160,6 +152,6 @@ actor RemoteClipboardTransferService {
         logger.debug(
             "Deleting remote clipboard temp file [session: \(self.sessionId.uuidString, privacy: .public)] [path: \(path, privacy: .public)]"
         )
-        _ = try? await sshClient.execute(command)
+        _ = try? await client.execute(command)
     }
 }

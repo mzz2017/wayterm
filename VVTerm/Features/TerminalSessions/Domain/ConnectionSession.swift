@@ -100,6 +100,14 @@ struct ConnectionSession: Identifiable, Hashable {
         connectionState.isConnected
     }
 
+    var terminalEntityId: TerminalEntityID {
+        .session(id)
+    }
+
+    var terminalEntityConnectionState: TerminalEntityConnectionState {
+        TerminalEntityConnectionState(connectionState: connectionState)
+    }
+
     mutating func updateLastActivity() {
         lastActivity = Date()
     }

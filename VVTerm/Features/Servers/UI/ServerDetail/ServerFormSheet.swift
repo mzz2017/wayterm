@@ -125,7 +125,10 @@ struct ServerFormCredentialBuilder {
 struct ServerFormSheet: View {
     @ObservedObject var serverManager: ServerManager
     @ObservedObject private var storeManager = StoreManager.shared
+    @ObservedObject private var sshKeyStore = SSHKeySettingsStore.shared
     @EnvironmentObject private var appLockManager: AppLockManager
+    private let credentialProvider: ServerFormCredentialProvider
+    private let connectionTester: ServerConnectionTester
     let workspace: Workspace?
     let server: Server?
     let prefill: ServerFormPrefill?
@@ -168,6 +171,7 @@ struct ServerFormSheet: View {
     @State private var connectionTestError: String?
     @State private var connectionTestSucceeded = false
     @State private var lastTestSnapshot: ConnectionTestSnapshot?
+    @State private var activeConnectionTestRequestID: UUID?
     @State private var showingLocalDiscoverySheet = false
 
     private var isEditing: Bool { server != nil }
@@ -177,12 +181,16 @@ struct ServerFormSheet: View {
         workspace: Workspace?,
         server: Server? = nil,
         prefill: ServerFormPrefill? = nil,
+        credentialProvider: ServerFormCredentialProvider = .shared,
+        connectionTester: ServerConnectionTester = .shared,
         onSave: @escaping (Server) -> Void
     ) {
         self.serverManager = serverManager
         self.workspace = workspace
         self.server = server
         self.prefill = prefill
+        self.credentialProvider = credentialProvider
+        self.connectionTester = connectionTester
         self.onSave = onSave
 
         let initialWorkspaceId = server?.workspaceId ?? workspace?.id
@@ -369,99 +377,23 @@ struct ServerFormSheet: View {
         #endif
         .interactiveDismissDisabled(isSaving)
         .task {
-            storedKeys = KeychainManager.shared.getStoredSSHKeys()
-
-            // Load credentials from keychain when editing
-            guard let server = server else { return }
-            isLoadingCredentials = true
-            defer { isLoadingCredentials = false }
-
-            do {
-                let credentials = try KeychainManager.shared.getCredentials(for: server)
-
-                if server.connectionMode != .tailscale {
-                    switch server.authMethod {
-                    case .password:
-                        if let pwd = credentials.password {
-                            password = pwd
-                        }
-                    case .sshKey:
-                        if let keyData = credentials.privateKey,
-                           let keyString = String(data: keyData, encoding: .utf8) {
-                            sshKey = keyString
-                        }
-                    case .sshKeyWithPassphrase:
-                        if let keyData = credentials.privateKey,
-                           let keyString = String(data: keyData, encoding: .utf8) {
-                            sshKey = keyString
-                        }
-                        if let phrase = credentials.passphrase {
-                            sshPassphrase = phrase
-                        }
-                    }
-                }
-                if let publicKeyData = credentials.publicKey,
-                   let publicKeyString = String(data: publicKeyData, encoding: .utf8) {
-                    sshPublicKey = publicKeyString
-                } else {
-                    sshPublicKey = ""
-                }
-
-                cloudflareClientID = credentials.cloudflareClientID ?? ""
-                cloudflareClientSecret = credentials.cloudflareClientSecret ?? ""
-                selectMatchingStoredKeyIfAvailable()
-            } catch {
-                self.error = String(format: String(localized: "Failed to load credentials: %@"), error.localizedDescription)
-            }
-
+            await loadInitialFormData()
         }
         #if os(iOS)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .disabled(isSaving)
-                        .tint(.secondary)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        saveServer()
-                    } label: {
-                        if isSaving {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Text(isEditing ? String(localized: "Save") : String(localized: "Add"))
-                        }
-                    }
-                    .disabled(saveButtonDisabled)
-                }
-            }
+            .toolbar { serverFormToolbar }
         #endif
             .sheet(isPresented: $showingAddKeySheet) {
-                AddSSHKeySheet(onSave: { entry in
-                    storedKeys = KeychainManager.shared.getStoredSSHKeys()
-                    selectedStoredKey = entry
-                    loadStoredKey(entry)
-                })
+                addSSHKeySheet
             }
             .sheet(isPresented: $showingCreateWorkspace) {
-                WorkspaceFormSheet(
-                    serverManager: serverManager,
-                    onSave: { workspace in
-                        selectedWorkspaceId = workspace.id
-                    }
-                )
+                createWorkspaceSheet
             }
             .sheet(isPresented: $showingLocalDiscoverySheet) {
-                LocalDeviceDiscoverySheet(manager: LocalSSHDiscoveryManager()) { discoveredHost in
-                    applyPrefill(ServerFormPrefill(discoveredHost: discoveredHost))
-                }
+                localDiscoverySheet
             }
             .limitReachedAlert(.servers, isPresented: $showingServerLimitAlert)
             .onAppear {
-                storedKeys = KeychainManager.shared.getStoredSSHKeys()
-                selectMatchingStoredKeyIfAvailable()
-                reconcileAssignmentWorkspace()
+                handleFormAppear()
             }
             .onChange(of: host) { _ in resetConnectionTestState() }
             .onChange(of: port) { _ in resetConnectionTestState() }
@@ -469,19 +401,11 @@ struct ServerFormSheet: View {
             .onChange(of: transportSelection) { _ in resetConnectionTestState() }
             .onChange(of: selectedAuthMethod) { _ in resetConnectionTestState() }
             .onChange(of: selectedWorkspaceId) { _ in
-                reconcileAssignmentWorkspace()
-                resetConnectionTestState()
+                handleWorkspaceSelectionChanged()
             }
             .onChange(of: password) { _ in resetConnectionTestState() }
             .onChange(of: sshKey) { _ in
-                if let programmaticSSHKeyValue,
-                   sshKey == programmaticSSHKeyValue {
-                    self.programmaticSSHKeyValue = nil
-                } else if !isLoadingCredentials {
-                    selectedStoredKey = nil
-                    sshPublicKey = ""
-                }
-                resetConnectionTestState()
+                handleSSHKeyChanged()
             }
             .onChange(of: sshPassphrase) { _ in resetConnectionTestState() }
             .onChange(of: sshPublicKey) { _ in resetConnectionTestState() }
@@ -490,6 +414,128 @@ struct ServerFormSheet: View {
             .onChange(of: cloudflareClientSecret) { _ in resetConnectionTestState() }
             .onChange(of: cloudflareTeamDomainOverride) { _ in resetConnectionTestState() }
     }
+
+    private var addSSHKeySheet: some View {
+        AddSSHKeySheet(keyStore: sshKeyStore, onSave: handleStoredKeyAdded)
+    }
+
+    private var createWorkspaceSheet: some View {
+        WorkspaceFormSheet(
+            serverManager: serverManager,
+            onSave: { workspace in
+                selectedWorkspaceId = workspace.id
+            }
+        )
+    }
+
+    private var localDiscoverySheet: some View {
+        LocalDeviceDiscoverySheet(manager: LocalSSHDiscoveryManager()) { discoveredHost in
+            applyPrefill(ServerFormPrefill(discoveredHost: discoveredHost))
+        }
+    }
+
+    private func loadInitialFormData() async {
+        storedKeys = credentialProvider.storedSSHKeys()
+
+        // Load credentials from keychain when editing.
+        guard let server = server else { return }
+        isLoadingCredentials = true
+        defer { isLoadingCredentials = false }
+
+        do {
+            let credentials = try credentialProvider.credentials(for: server)
+            applyLoadedCredentials(credentials, for: server)
+            selectMatchingStoredKeyIfAvailable()
+        } catch {
+            self.error = String(format: String(localized: "Failed to load credentials: %@"), error.localizedDescription)
+        }
+    }
+
+    private func applyLoadedCredentials(_ credentials: ServerCredentials, for server: Server) {
+        if server.connectionMode != .tailscale {
+            switch server.authMethod {
+            case .password:
+                if let pwd = credentials.password {
+                    password = pwd
+                }
+            case .sshKey:
+                if let keyData = credentials.privateKey,
+                   let keyString = String(data: keyData, encoding: .utf8) {
+                    sshKey = keyString
+                }
+            case .sshKeyWithPassphrase:
+                if let keyData = credentials.privateKey,
+                   let keyString = String(data: keyData, encoding: .utf8) {
+                    sshKey = keyString
+                }
+                if let phrase = credentials.passphrase {
+                    sshPassphrase = phrase
+                }
+            }
+        }
+
+        if let publicKeyData = credentials.publicKey,
+           let publicKeyString = String(data: publicKeyData, encoding: .utf8) {
+            sshPublicKey = publicKeyString
+        } else {
+            sshPublicKey = ""
+        }
+
+        cloudflareClientID = credentials.cloudflareClientID ?? ""
+        cloudflareClientSecret = credentials.cloudflareClientSecret ?? ""
+    }
+
+    private func handleStoredKeyAdded(_ entry: SSHKeyEntry) {
+        storedKeys = credentialProvider.storedSSHKeys()
+        selectedStoredKey = entry
+        loadStoredKey(entry)
+    }
+
+    private func handleFormAppear() {
+        storedKeys = credentialProvider.storedSSHKeys()
+        selectMatchingStoredKeyIfAvailable()
+        reconcileAssignmentWorkspace()
+    }
+
+    private func handleWorkspaceSelectionChanged() {
+        reconcileAssignmentWorkspace()
+        resetConnectionTestState()
+    }
+
+    private func handleSSHKeyChanged() {
+        if let programmaticSSHKeyValue,
+           sshKey == programmaticSSHKeyValue {
+            self.programmaticSSHKeyValue = nil
+        } else if !isLoadingCredentials {
+            selectedStoredKey = nil
+            sshPublicKey = ""
+        }
+        resetConnectionTestState()
+    }
+
+    #if os(iOS)
+    @ToolbarContentBuilder
+    private var serverFormToolbar: some ToolbarContent {
+        ToolbarItem(placement: .cancellationAction) {
+            Button("Cancel") { dismiss() }
+                .disabled(isSaving)
+                .tint(.secondary)
+        }
+        ToolbarItem(placement: .confirmationAction) {
+            Button {
+                saveServer()
+            } label: {
+                if isSaving {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Text(isEditing ? String(localized: "Save") : String(localized: "Add"))
+                }
+            }
+            .disabled(saveButtonDisabled)
+        }
+    }
+    #endif
 
     #if os(macOS)
     private var macActionRow: some View {
@@ -752,9 +798,7 @@ struct ServerFormSheet: View {
     private var connectionSection: some View {
         Section {
             Button {
-                Task {
-                    await runConnectionTest(force: true)
-                }
+                requestConnectionTest(force: true)
             } label: {
                 Text(String(localized: "Test Connection"))
                     .opacity(isTestingConnection ? 0 : 1)
@@ -914,18 +958,19 @@ struct ServerFormSheet: View {
 
     private func loadStoredKey(_ entry: SSHKeyEntry) {
         do {
-            if let keyData = try KeychainManager.shared.getStoredSSHKeyData(for: entry.id) {
-                if let keyString = String(data: keyData.key, encoding: .utf8) {
-                    if sshKey != keyString {
-                        programmaticSSHKeyValue = keyString
-                    }
-                    sshKey = keyString
-                }
-                if let passphrase = keyData.passphrase {
-                    sshPassphrase = passphrase
-                }
+            guard let material = try credentialProvider.storedSSHKeyMaterial(for: entry) else {
+                sshPublicKey = entry.publicKey ?? ""
+                return
             }
-            sshPublicKey = entry.publicKey ?? ""
+
+            if sshKey != material.privateKey {
+                programmaticSSHKeyValue = material.privateKey
+            }
+            sshKey = material.privateKey
+            if let passphrase = material.passphrase {
+                sshPassphrase = passphrase
+            }
+            sshPublicKey = material.publicKey ?? ""
         } catch {
             self.error = String(format: String(localized: "Failed to load key: %@"), error.localizedDescription)
         }
@@ -939,22 +984,12 @@ struct ServerFormSheet: View {
             return
         }
 
-        for key in storedKeys {
-            guard let keyData = try? KeychainManager.shared.getStoredSSHKeyData(for: key.id),
-                  let keyString = String(data: keyData.key, encoding: .utf8),
-                  keyString == sshKey else {
-                continue
-            }
-
-            if let storedPassphrase = keyData.passphrase,
-               !storedPassphrase.isEmpty,
-               storedPassphrase != sshPassphrase {
-                continue
-            }
-
-            selectedStoredKey = key
-            return
-        }
+        selectedStoredKey = credentialProvider.matchingStoredSSHKey(
+            in: storedKeys,
+            privateKey: sshKey,
+            passphrase: sshPassphrase,
+            authMethod: selectedAuthMethod
+        )
     }
 
     // MARK: - Validation
@@ -996,9 +1031,17 @@ struct ServerFormSheet: View {
     // MARK: - Connection Test
 
     private func resetConnectionTestState() {
+        cancelActiveConnectionTest()
         connectionTestError = nil
         connectionTestSucceeded = false
         lastTestSnapshot = nil
+    }
+
+    private func cancelActiveConnectionTest() {
+        guard let requestID = activeConnectionTestRequestID else { return }
+        activeConnectionTestRequestID = nil
+        isTestingConnection = false
+        connectionTester.cancelConnectionTestRequest(requestID)
     }
 
     private func buildServer(id: UUID, createdAt: Date) -> Server {
@@ -1104,147 +1147,96 @@ struct ServerFormSheet: View {
         )
     }
 
-    private func runConnectionTest(force: Bool) async -> Bool {
-        let snapshot = await MainActor.run { connectionSnapshot }
-        let shouldSkip = await MainActor.run { !force && hasValidConnectionTest }
+    private func requestConnectionTest(force: Bool) {
+        let snapshot = connectionSnapshot
+        let shouldSkip = !force && hasValidConnectionTest
         if shouldSkip {
-            return true
+            return
         }
 
-        let (testServer, credentials) = await MainActor.run { () -> (Server, ServerCredentials) in
-            isTestingConnection = true
-            connectionTestError = nil
-            connectionTestSucceeded = false
+        cancelActiveConnectionTest()
+        isTestingConnection = true
+        connectionTestError = nil
+        connectionTestSucceeded = false
 
-            let serverId = server?.id ?? UUID()
-            let server = buildServer(id: serverId, createdAt: server?.createdAt ?? Date())
-            let credentials = buildCredentials(for: serverId)
-            return (server, credentials)
-        }
+        let serverId = server?.id ?? UUID()
+        let testServer = buildServer(id: serverId, createdAt: server?.createdAt ?? Date())
+        let credentials = buildCredentials(for: serverId)
+        let requestID = UUID()
+        activeConnectionTestRequestID = requestID
 
-        let result = await Task.detached(priority: .userInitiated) { () -> Result<Void, Error> in
-            do {
-                try await SSHConnectionOperationService.shared.withTemporaryConnection(
-                    server: testServer,
-                    credentials: credentials
-                ) { client in
-                    if testServer.connectionMode == .mosh {
-                        _ = try await RemoteMoshManager.shared.bootstrapConnectInfo(
-                            using: client,
-                            startCommand: "exec true",
-                            portRange: 60001...61000
-                        )
-                    }
-                }
-                return .success(())
-            } catch {
-                return .failure(error)
-            }
-        }.value
-
-        var success = false
-        await MainActor.run {
-            isTestingConnection = false
-            lastTestSnapshot = snapshot
-
-            switch result {
-            case .success:
+        connectionTester.requestConnectionTest(
+            id: requestID,
+            server: testServer,
+            credentials: credentials,
+            onSucceeded: {
+                guard activeConnectionTestRequestID == requestID,
+                      connectionSnapshot == snapshot else { return }
+                lastTestSnapshot = snapshot
                 connectionTestSucceeded = true
-                success = true
-            case .failure(let error):
-                let baseMessage = error.localizedDescription
-                if testServer.connectionMode == .tailscale {
-                    let reminder = String(localized: "This app currently supports direct tailnet connections only (no userspace proxy fallback).")
-                    if baseMessage.contains(reminder) {
-                        connectionTestError = baseMessage
-                    } else {
-                        connectionTestError = "\(baseMessage)\n\(reminder)"
-                    }
-                } else {
-                    connectionTestError = baseMessage
-                }
-                if let sshError = error as? SSHError, case .cloudflareConfigurationRequired = sshError {
-                    showCloudflareOverrides = true
-                }
-                connectionTestSucceeded = false
-                success = false
+            },
+            onFailed: { error in
+                guard activeConnectionTestRequestID == requestID,
+                      connectionSnapshot == snapshot else { return }
+                applyConnectionTestFailure(error, testServer: testServer, snapshot: snapshot)
+            },
+            onCompleted: {
+                guard activeConnectionTestRequestID == requestID else { return }
+                activeConnectionTestRequestID = nil
+                isTestingConnection = false
             }
-        }
+        )
+    }
 
-        return success
+    private func applyConnectionTestFailure(
+        _ error: Error,
+        testServer: Server,
+        snapshot: ConnectionTestSnapshot
+    ) {
+        lastTestSnapshot = snapshot
+        let baseMessage = error.localizedDescription
+        if testServer.connectionMode == .tailscale {
+            let reminder = String(localized: "This app currently supports direct tailnet connections only (no userspace proxy fallback).")
+            if baseMessage.contains(reminder) {
+                connectionTestError = baseMessage
+            } else {
+                connectionTestError = "\(baseMessage)\n\(reminder)"
+            }
+        } else {
+            connectionTestError = baseMessage
+        }
+        if let sshError = error as? SSHError, case .cloudflareConfigurationRequired = sshError {
+            showCloudflareOverrides = true
+        }
+        connectionTestSucceeded = false
     }
 
     private func saveServer() {
         isSaving = true
         error = nil
 
-        Task {
-            do {
-                let (newServer, credentials) = await MainActor.run { () -> (Server, ServerCredentials) in
-                    let serverId = server?.id ?? UUID()
-                    let server = buildServer(id: serverId, createdAt: server?.createdAt ?? Date())
-                    let credentials = buildCredentials(for: serverId)
-                    return (server, credentials)
-                }
+        let serverId = server?.id ?? UUID()
+        let newServer = buildServer(id: serverId, createdAt: server?.createdAt ?? Date())
+        let credentials = buildCredentials(for: serverId)
 
-                if isEditing {
-                    try await serverManager.updateServer(newServer)
-                    // Store credentials based on auth method
-                    let publicKeyData = ServerFormCredentialBuilder.resolvedPublicKeyData(
-                        sshPublicKey: sshPublicKey,
-                        sshKey: sshKey,
-                        passphrase: sshPassphrase.isEmpty ? nil : sshPassphrase)
-                    if transportSelection != .tailscale {
-                        switch selectedAuthMethod {
-                        case .password:
-                            if !password.isEmpty {
-                                try KeychainManager.shared.storePassword(for: newServer.id, password: password)
-                            }
-                        case .sshKey:
-                            if !sshKey.isEmpty, let keyData = sshKey.data(using: .utf8) {
-                                try KeychainManager.shared.storeSSHKey(for: newServer.id, privateKey: keyData, passphrase: nil, publicKey: publicKeyData)
-                            }
-                        case .sshKeyWithPassphrase:
-                            if !sshKey.isEmpty, let keyData = sshKey.data(using: .utf8) {
-                                try KeychainManager.shared.storeSSHKey(for: newServer.id, privateKey: keyData, passphrase: sshPassphrase.isEmpty ? nil : sshPassphrase, publicKey: publicKeyData)
-                            }
-                        }
-                    }
-
-                    if transportSelection == .cloudflare, selectedCloudflareAccessMode == .serviceToken {
-                        try KeychainManager.shared.storeCloudflareServiceToken(
-                            for: newServer.id,
-                            clientID: cloudflareClientID,
-                            clientSecret: cloudflareClientSecret
-                        )
-                    } else {
-                        KeychainManager.shared.deleteCloudflareServiceToken(for: newServer.id)
-                    }
-                } else {
-                    try await serverManager.addServer(newServer, credentials: credentials)
-                }
-
-                await MainActor.run {
-                    isSaving = false
-                    onSave(newServer)
-                    dismiss()
-                }
-            } catch let error as VVTermError {
-                await MainActor.run {
-                    if case .proRequired = error {
-                        self.showingServerLimitAlert = true
-                    } else {
-                        self.error = error.localizedDescription
-                    }
-                    self.isSaving = false
-                }
-            } catch {
-                await MainActor.run {
-                    self.error = error.localizedDescription
-                    self.isSaving = false
-                }
+        serverManager.requestServerSave(
+            newServer,
+            credentials: credentials,
+            mode: isEditing ? .update : .create,
+            onSaved: { savedServer in
+                isSaving = false
+                onSave(savedServer)
+                dismiss()
+            },
+            onProRequired: {
+                showingServerLimitAlert = true
+                isSaving = false
+            },
+            onFailed: { message in
+                error = message
+                isSaving = false
             }
-        }
+        )
     }
 }
 
@@ -1532,35 +1524,24 @@ struct MoveServerSheet: View {
         isMoving = true
         error = nil
 
-        Task {
-            do {
-                let updatedServer = try await serverManager.moveServer(
-                    server,
-                    to: destination,
-                    preferredEnvironment: selectedEnvironment
-                )
-
-                await MainActor.run {
-                    isMoving = false
-                    onMove(updatedServer)
-                    dismiss()
-                }
-            } catch let error as VVTermError {
-                await MainActor.run {
-                    isMoving = false
-                    if case .proRequired = error {
-                        showingUpgrade = true
-                    } else {
-                        self.error = error.localizedDescription
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    isMoving = false
-                    self.error = error.localizedDescription
-                }
+        serverManager.requestServerMove(
+            server,
+            to: destination,
+            preferredEnvironment: selectedEnvironment,
+            onMoved: { updatedServer in
+                isMoving = false
+                onMove(updatedServer)
+                dismiss()
+            },
+            onProRequired: {
+                isMoving = false
+                showingUpgrade = true
+            },
+            onFailed: { message in
+                isMoving = false
+                error = message
             }
-        }
+        )
     }
 
     private func sectionHeader(_ title: LocalizedStringKey) -> some View {

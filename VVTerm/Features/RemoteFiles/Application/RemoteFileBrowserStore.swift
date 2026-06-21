@@ -99,6 +99,46 @@ final class RemoteFileBrowserStore: ObservableObject {
         let filesystemStatus: RemoteFileFilesystemStatus?
     }
 
+    private struct PendingDisconnect {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
+
+    struct PreviewLoadRequest {
+        let entryPath: String
+        let allowLargeDownloads: Bool
+        let task: Task<Void, Never>
+    }
+
+    struct NavigationRequest {
+        let tabId: UUID
+        let serverId: UUID
+        let task: Task<Void, Never>
+    }
+
+    private struct MutationRequest {
+        let serverId: UUID?
+        let task: Task<Void, Never>
+        var isCancelled: Bool
+    }
+
+    private struct TransferRequest {
+        let serverId: UUID?
+        let task: Task<Void, Never>
+        var isCancelled: Bool
+    }
+
+    private struct MoveDestinationLoadRequest {
+        let key: MoveDestinationLoadRequestKey
+        var task: Task<Void, Never>?
+        var onCompleted: [@MainActor (Result<[RemoteFileEntry], Error>) -> Void]
+    }
+
+    private struct MoveDestinationLoadRequestKey: Hashable {
+        let serverId: UUID
+        let path: String
+    }
+
     @Published private(set) var states: [UUID: BrowserState] = [:]
     @Published var pendingToolbarCommand: ToolbarCommand?
 
@@ -116,12 +156,48 @@ final class RemoteFileBrowserStore: ObservableObject {
     var persistedStates: [String: RemoteFileBrowserPersistedState] = [:]
     var directoryRequestIDs: [UUID: UUID] = [:]
     var viewerRequestIDs: [UUID: UUID] = [:]
+    var previewLoadRequests: [UUID: PreviewLoadRequest] = [:]
+    var previewLoadRequestByTab: [UUID: UUID] = [:]
+    var navigationRequests: [UUID: NavigationRequest] = [:]
+    var navigationRequestByTab: [UUID: UUID] = [:]
+    private var moveDestinationLoadRequests: [UUID: MoveDestinationLoadRequest] = [:]
+    private var moveDestinationLoadRequestByKey: [MoveDestinationLoadRequestKey: UUID] = [:]
+    private var mutationRequests: [UUID: MutationRequest] = [:]
+    private var transferRequests: [UUID: TransferRequest] = [:]
+    private var pendingDisconnects: [UUID: PendingDisconnect] = [:]
+    #if DEBUG
+    private var pendingDisconnectWaitDidFinishForTesting: (@MainActor (UUID) async -> Void)?
+    #endif
 
     static let directoryEntryLimit = 2_000
     static let defaultPreviewBytes = 512 * 1_024
     static let hardPreviewBytes = 2 * 1_024 * 1_024
     static let previewConfirmationBytes = 1 * 1_024 * 1_024
     static let maxMediaPreviewBytes = 64 * 1_024 * 1_024
+
+    var pendingMutationRequestIDs: Set<UUID> {
+        Set(mutationRequests.compactMap { requestID, request in
+            request.isCancelled ? nil : requestID
+        })
+    }
+
+    var pendingTransferRequestIDs: Set<UUID> {
+        Set(transferRequests.compactMap { requestID, request in
+            request.isCancelled ? nil : requestID
+        })
+    }
+
+    var pendingPreviewLoadRequestIDs: Set<UUID> {
+        Set(previewLoadRequestByTab.values)
+    }
+
+    var pendingNavigationRequestIDs: Set<UUID> {
+        Set(navigationRequestByTab.values)
+    }
+
+    var pendingMoveDestinationLoadRequestIDs: Set<UUID> {
+        Set(moveDestinationLoadRequestByKey.values)
+    }
 
     init(
         defaults: UserDefaults = .standard,
@@ -132,29 +208,7 @@ final class RemoteFileBrowserStore: ObservableObject {
         serverProvider: @escaping ServerProvider = { serverId in
             ServerManager.shared.servers.first { $0.id == serverId }
         },
-        workingDirectoryProvider: @escaping WorkingDirectoryProvider = { serverId in
-            if let selectedSessionId = ConnectionSessionManager.shared.selectedSessionByServer[serverId],
-               let path = ConnectionSessionManager.shared.workingDirectory(for: selectedSessionId) {
-                return path
-            }
-
-            if let anySession = ConnectionSessionManager.shared.sessions.first(where: { $0.serverId == serverId }),
-               let path = ConnectionSessionManager.shared.workingDirectory(for: anySession.id) {
-                return path
-            }
-
-            if let selectedTab = TerminalTabManager.shared.selectedTab(for: serverId),
-               let path = TerminalTabManager.shared.workingDirectory(for: selectedTab.focusedPaneId) {
-                return path
-            }
-
-            if let anyPane = TerminalTabManager.shared.paneStates.values.first(where: { $0.serverId == serverId }),
-               let path = TerminalTabManager.shared.workingDirectory(for: anyPane.paneId) {
-                return path
-            }
-
-            return nil
-        }
+        workingDirectoryProvider: @escaping WorkingDirectoryProvider = { _ in nil }
     ) {
         self.defaults = defaults
         self.remoteFileServiceAdapter = remoteFileServiceAdapter ?? SSHSFTPAdapter()
@@ -196,6 +250,163 @@ final class RemoteFileBrowserStore: ObservableObject {
 
     func state(for tab: RemoteFileTab) -> BrowserState {
         states[tab.id] ?? BrowserState(serverId: tab.serverId, persisted: persistedState(for: tab.id))
+    }
+
+    @discardableResult
+    func requestMutation(
+        serverId: UUID? = nil,
+        operation: @escaping @MainActor () async throws -> Void,
+        onSuccess: @escaping @MainActor () -> Void = {},
+        onFailure: @escaping @MainActor (Error) -> Void = { _ in }
+    ) -> UUID {
+        requestMutation(
+            serverId: serverId,
+            operation: {
+                try await operation()
+                return ()
+            },
+            onSuccess: { _ in
+                onSuccess()
+            },
+            onFailure: onFailure
+        )
+    }
+
+    @discardableResult
+    func requestMutation<Result>(
+        serverId: UUID? = nil,
+        operation: @escaping @MainActor () async throws -> Result,
+        onSuccess: @escaping @MainActor (Result) -> Void,
+        onFailure: @escaping @MainActor (Error) -> Void = { _ in }
+    ) -> UUID {
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.mutationRequests.removeValue(forKey: requestID)
+            }
+
+            do {
+                let result = try await operation()
+                guard !Task.isCancelled, !isMutationRequestCancelled(requestID) else { return }
+                onSuccess(result)
+            } catch is CancellationError {
+                // Disconnect-driven cancellation is lifecycle state, not a user-facing mutation failure.
+            } catch {
+                guard !Task.isCancelled, !isMutationRequestCancelled(requestID) else { return }
+                onFailure(error)
+            }
+        }
+
+        mutationRequests[requestID] = MutationRequest(serverId: serverId, task: task, isCancelled: false)
+        return requestID
+    }
+
+    func waitForMutationRequest(_ requestID: UUID) async {
+        await mutationRequests[requestID]?.task.value
+    }
+
+    @discardableResult
+    func requestTransfer<Result>(
+        serverId: UUID? = nil,
+        operation: @escaping @MainActor @Sendable (@escaping @MainActor @Sendable (TransferProgress) -> Void) async throws -> Result,
+        onProgress: @escaping @MainActor @Sendable (TransferProgress) -> Void = { _ in },
+        onSuccess: @escaping @MainActor @Sendable (Result) -> Void,
+        onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in }
+    ) -> UUID {
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.transferRequests.removeValue(forKey: requestID)
+            }
+
+            do {
+                let result = try await operation { progress in
+                    guard !Task.isCancelled, !self.isTransferRequestCancelled(requestID) else { return }
+                    onProgress(progress)
+                }
+                guard !Task.isCancelled, !isTransferRequestCancelled(requestID) else { return }
+                onSuccess(result)
+            } catch is CancellationError {
+                // Disconnect-driven cancellation is lifecycle state, not a user-facing transfer failure.
+            } catch {
+                guard !Task.isCancelled, !isTransferRequestCancelled(requestID) else { return }
+                onFailure(error)
+            }
+        }
+
+        transferRequests[requestID] = TransferRequest(serverId: serverId, task: task, isCancelled: false)
+        return requestID
+    }
+
+    func waitForTransferRequest(_ requestID: UUID) async {
+        await transferRequests[requestID]?.task.value
+    }
+
+    func waitForPreviewLoadRequest(_ requestID: UUID) async {
+        await previewLoadRequests[requestID]?.task.value
+    }
+
+    func waitForNavigationRequest(_ requestID: UUID) async {
+        await navigationRequests[requestID]?.task.value
+    }
+
+    func waitForMoveDestinationLoadRequest(_ requestID: UUID) async {
+        await moveDestinationLoadRequests[requestID]?.task?.value
+    }
+
+    @discardableResult
+    func requestMoveDestinationLoad(
+        path: String,
+        server: Server,
+        onCompleted: @escaping @MainActor (Result<[RemoteFileEntry], Error>) -> Void
+    ) -> UUID {
+        let normalizedPath = RemoteFilePath.normalize(path)
+        let key = MoveDestinationLoadRequestKey(serverId: server.id, path: normalizedPath)
+
+        if let requestID = moveDestinationLoadRequestByKey[key] {
+            moveDestinationLoadRequests[requestID]?.onCompleted.append(onCompleted)
+            return requestID
+        }
+
+        let requestID = UUID()
+        moveDestinationLoadRequests[requestID] = MoveDestinationLoadRequest(
+            key: key,
+            task: nil,
+            onCompleted: [onCompleted]
+        )
+        moveDestinationLoadRequestByKey[key] = requestID
+
+        let task = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.moveDestinationLoadRequests.removeValue(forKey: requestID)
+                if self.moveDestinationLoadRequestByKey[key] == requestID {
+                    self.moveDestinationLoadRequestByKey.removeValue(forKey: key)
+                }
+            }
+
+            let result: Result<[RemoteFileEntry], Error>
+            do {
+                let entries = try await self.listDirectories(at: normalizedPath, server: server)
+                result = .success(entries)
+            } catch {
+                result = .failure(error)
+            }
+
+            guard !Task.isCancelled else { return }
+            guard self.moveDestinationLoadRequestByKey[key] == requestID else { return }
+
+            let callbacks = self.moveDestinationLoadRequests[requestID]?.onCompleted ?? []
+            callbacks.forEach { $0(result) }
+        }
+
+        if moveDestinationLoadRequests[requestID]?.key == key {
+            moveDestinationLoadRequests[requestID]?.task = task
+        }
+
+        return requestID
     }
 
     func currentPathValue(for tab: RemoteFileTab) -> String? {
@@ -345,6 +556,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     func focus(_ entry: RemoteFileEntry, in tab: RemoteFileTab) {
+        cancelPreviewLoadRequest(for: tab.id)
         viewerRequestIDs[tab.id] = UUID()
         cleanupPreviewArtifact(for: state(for: tab).viewerPayload)
         updateState(for: tab) { state in
@@ -382,6 +594,8 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     func removeRuntimeState(for tabId: UUID) {
+        cancelNavigationRequest(for: tabId)
+        cancelPreviewLoadRequest(for: tabId)
         directoryRequestIDs.removeValue(forKey: tabId)
         viewerRequestIDs.removeValue(forKey: tabId)
         temporaryStorage.removePreviewArtifact(for: states[tabId]?.viewerPayload)
@@ -392,10 +606,20 @@ final class RemoteFileBrowserStore: ObservableObject {
         }
     }
 
-    func disconnect(serverId: UUID) {
-        let affectedTabIDs = Set(
+    @discardableResult
+    func disconnect(serverId: UUID) -> Task<Void, Never> {
+        cancelMutationRequests(for: serverId)
+        cancelTransferRequests(for: serverId)
+        cancelMoveDestinationLoadRequests(for: serverId)
+
+        var affectedTabIDs = Set(
             states.compactMap { tabId, state in
                 state.serverId == serverId ? tabId : nil
+            }
+        )
+        affectedTabIDs.formUnion(
+            navigationRequests.values.compactMap { request in
+                request.serverId == serverId ? request.tabId : nil
             }
         )
 
@@ -403,7 +627,60 @@ final class RemoteFileBrowserStore: ObservableObject {
             removeRuntimeState(for: tabId)
         }
 
-        remoteFileServiceAdapter.disconnect(serverId: serverId)
+        if let pending = pendingDisconnects[serverId] {
+            return pending.task
+        }
+
+        let disconnectID = UUID()
+        let task = Task { @MainActor [weak self, remoteFileServiceAdapter] in
+            await remoteFileServiceAdapter.disconnect(serverId: serverId)
+            if self?.pendingDisconnects[serverId]?.id == disconnectID {
+                self?.pendingDisconnects.removeValue(forKey: serverId)
+            }
+        }
+        pendingDisconnects[serverId] = PendingDisconnect(id: disconnectID, task: task)
+        return task
+    }
+
+    func cancelPreviewLoadRequest(for tabId: UUID) {
+        guard let requestID = previewLoadRequestByTab.removeValue(forKey: tabId) else { return }
+        viewerRequestIDs.removeValue(forKey: tabId)
+        previewLoadRequests[requestID]?.task.cancel()
+    }
+
+    func cancelMutationRequests(for serverId: UUID) {
+        for (requestID, request) in mutationRequests where request.serverId == serverId {
+            var canceledRequest = request
+            canceledRequest.isCancelled = true
+            mutationRequests[requestID] = canceledRequest
+            request.task.cancel()
+        }
+    }
+
+    func cancelTransferRequests(for serverId: UUID) {
+        for (requestID, request) in transferRequests where request.serverId == serverId {
+            var canceledRequest = request
+            canceledRequest.isCancelled = true
+            transferRequests[requestID] = canceledRequest
+            request.task.cancel()
+        }
+    }
+
+    private func isMutationRequestCancelled(_ requestID: UUID) -> Bool {
+        mutationRequests[requestID]?.isCancelled ?? true
+    }
+
+    private func isTransferRequestCancelled(_ requestID: UUID) -> Bool {
+        transferRequests[requestID]?.isCancelled ?? true
+    }
+
+    private func cancelMoveDestinationLoadRequests(for serverId: UUID) {
+        for (requestID, request) in moveDestinationLoadRequests where request.key.serverId == serverId {
+            if moveDestinationLoadRequestByKey[request.key] == requestID {
+                moveDestinationLoadRequestByKey.removeValue(forKey: request.key)
+            }
+            request.task?.cancel()
+        }
     }
 
     func goUp(in tab: RemoteFileTab, server: Server) async {
@@ -418,6 +695,7 @@ final class RemoteFileBrowserStore: ObservableObject {
         guard tab.serverId == server.id else { return }
 
         let normalizedPath = RemoteFilePath.normalize(path)
+        cancelPreviewLoadRequest(for: tab.id)
         let requestID = UUID()
         directoryRequestIDs[tab.id] = requestID
         cleanupPreviewArtifact(for: state(for: tab).viewerPayload)
@@ -428,6 +706,7 @@ final class RemoteFileBrowserStore: ObservableObject {
             state.viewerError = nil
             state.viewerPayload = nil
             state.selectedEntryPath = nil
+            state.isLoadingViewer = false
         }
         viewerRequestIDs.removeValue(forKey: tab.id)
 
@@ -523,8 +802,37 @@ final class RemoteFileBrowserStore: ObservableObject {
         for server: Server,
         operation: @escaping (any RemoteFileService) async throws -> T
     ) async throws -> T {
-        try await remoteFileServiceAdapter.withService(for: server, operation: operation)
+        await waitForPendingDisconnect(serverId: server.id)
+        return try await remoteFileServiceAdapter.withService(for: server, operation: operation)
     }
+
+    private func waitForPendingDisconnect(serverId: UUID) async {
+        while let pending = pendingDisconnects[serverId] {
+            await pending.task.value
+            if pendingDisconnects[serverId]?.id == pending.id {
+                pendingDisconnects.removeValue(forKey: serverId)
+            }
+            #if DEBUG
+            await pendingDisconnectWaitDidFinishForTesting?(serverId)
+            #endif
+        }
+    }
+
+    #if DEBUG
+    func setPendingDisconnectWaitDidFinishForTesting(
+        _ action: (@MainActor (UUID) async -> Void)?
+    ) {
+        pendingDisconnectWaitDidFinishForTesting = action
+    }
+
+    func cancelMoveDestinationLoadRequestForTesting(_ requestID: UUID) {
+        guard let request = moveDestinationLoadRequests[requestID] else { return }
+        if moveDestinationLoadRequestByKey[request.key] == requestID {
+            moveDestinationLoadRequestByKey.removeValue(forKey: request.key)
+        }
+        moveDestinationLoadRequests[requestID]?.task?.cancel()
+    }
+    #endif
 
     func bestWorkingDirectory(for serverId: UUID) -> String? {
         workingDirectoryProvider(serverId)

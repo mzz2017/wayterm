@@ -12,20 +12,20 @@ actor RemoteMoshManager {
 
     private init() {}
 
-    func isMoshServerAvailable(using client: SSHClient) async -> Bool {
+    func isMoshServerAvailable(using executor: any RemoteCommandExecuting) async -> Bool {
         let okMarker = "__VVTERM_MOSH_OK__"
         let body = "\(RemoteTerminalBootstrap.shellPathExport()); if command -v mosh-server >/dev/null 2>&1; then printf '\(okMarker)'; else printf '__VVTERM_MOSH_NO__'; fi"
         let command = "sh -lc \(RemoteTerminalBootstrap.shellQuoted(body))"
-        let output = try? await client.execute(command, timeout: availabilityTimeout)
+        let output = try? await executor.execute(command, timeout: availabilityTimeout)
         return output?.contains(okMarker) == true
     }
 
     func bootstrapConnectInfo(
-        using client: SSHClient,
+        using executor: any RemoteCommandExecuting,
         startCommand: String?,
         portRange: ClosedRange<Int> = 60001...61000
     ) async throws -> MoshServerConnectInfo {
-        let terminalType = await client.remoteTerminalType()
+        let terminalType = await executor.remoteTerminalType(forceRefresh: false)
         let resolvedStartup = moshChildStartupScript(
             startCommand: startCommand,
             terminalType: terminalType
@@ -38,13 +38,13 @@ actor RemoteMoshManager {
         """
         let command = "sh -lc \(RemoteTerminalBootstrap.shellQuoted(body))"
         logger.info("Mosh bootstrap startup: \(resolvedStartup.prefix(300))")
-        let output = try await client.execute(command, timeout: bootstrapTimeout)
+        let output = try await executor.execute(command, timeout: bootstrapTimeout)
         return try parseConnectInfo(from: output)
     }
 
-    func installMoshServer(using client: SSHClient) async throws {
+    func installMoshServer(using executor: any RemoteCommandExecuting) async throws {
         let command = "sh -lc \(RemoteTerminalBootstrap.shellQuoted(installScript()))"
-        let output = try await client.execute(command, timeout: installTimeout)
+        let output = try await executor.execute(command, timeout: installTimeout)
         guard output.contains(Self.installSuccessMarker) else {
             let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty {

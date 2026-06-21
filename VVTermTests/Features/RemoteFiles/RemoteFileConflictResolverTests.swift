@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect remote-file conflict resolution for uploads and renames.
+// Fakes use in-memory remote file services and no SFTP connection; update only
+// when conflict-resolution behavior intentionally changes.
+
 @MainActor
 struct RemoteFileConflictResolverTests {
     @Test

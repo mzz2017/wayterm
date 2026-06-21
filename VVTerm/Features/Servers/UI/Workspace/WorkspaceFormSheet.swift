@@ -151,65 +151,49 @@ struct WorkspaceFormSheet: View {
         isSaving = true
         error = nil
 
-        Task {
-            do {
-                let colorHex = selectedColor.toHex()
+        let colorHex = selectedColor.toHex()
+        let newWorkspace = Workspace(
+            id: workspace?.id ?? UUID(),
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            colorHex: colorHex,
+            icon: workspace?.icon,
+            order: workspace?.order ?? serverManager.workspaces.count,
+            environments: workspace?.environments ?? ServerEnvironment.builtInEnvironments,
+            lastSelectedEnvironmentId: workspace?.lastSelectedEnvironmentId,
+            lastSelectedServerId: workspace?.lastSelectedServerId,
+            createdAt: workspace?.createdAt ?? Date()
+        )
 
-                let newWorkspace = Workspace(
-                    id: workspace?.id ?? UUID(),
-                    name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                    colorHex: colorHex,
-                    icon: workspace?.icon,
-                    order: workspace?.order ?? serverManager.workspaces.count,
-                    environments: workspace?.environments ?? ServerEnvironment.builtInEnvironments,
-                    lastSelectedEnvironmentId: workspace?.lastSelectedEnvironmentId,
-                    lastSelectedServerId: workspace?.lastSelectedServerId,
-                    createdAt: workspace?.createdAt ?? Date()
-                )
-
-                if isEditing {
-                    try await serverManager.updateWorkspace(newWorkspace)
-                } else {
-                    try await serverManager.addWorkspace(newWorkspace)
-                }
-
-                await MainActor.run {
-                    onSave(newWorkspace)
-                    dismiss()
-                }
-            } catch let error as VVTermError {
-                await MainActor.run {
-                    if case .proRequired = error {
-                        self.showingUpgradeSheet = true
-                    } else {
-                        self.error = error.localizedDescription
-                    }
-                    self.isSaving = false
-                }
-            } catch {
-                await MainActor.run {
-                    self.error = error.localizedDescription
-                    self.isSaving = false
-                }
+        serverManager.requestWorkspaceSave(
+            newWorkspace,
+            mode: isEditing ? .update : .create,
+            onSaved: { savedWorkspace in
+                onSave(savedWorkspace)
+                dismiss()
+            },
+            onProRequired: {
+                showingUpgradeSheet = true
+                isSaving = false
+            },
+            onFailed: { message in
+                error = message
+                isSaving = false
             }
-        }
+        )
     }
 
     private func deleteWorkspace() {
         guard let workspace = workspace else { return }
 
-        Task {
-            do {
-                try await serverManager.deleteWorkspace(workspace)
-                await MainActor.run {
-                    dismiss()
-                }
-            } catch {
-                await MainActor.run {
-                    self.error = error.localizedDescription
-                }
+        serverManager.requestWorkspaceDeletion(
+            workspace,
+            onDeleted: {
+                dismiss()
+            },
+            onFailed: { message in
+                error = message
             }
-        }
+        )
     }
 
     private func deleteWarningText(for workspace: Workspace?) -> String {

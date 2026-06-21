@@ -48,7 +48,7 @@ struct ServerStatsView: View {
     let server: Server
     let isVisible: Bool
     let backgroundColor: Color
-    var sharedClientProvider: () -> SSHClient? = { nil }
+    var borrowedLeaseProvider: () -> RemoteConnectionLease? = { nil }
 
     @StateObject private var statsCollector: ServerStatsCollector
 
@@ -56,13 +56,13 @@ struct ServerStatsView: View {
         server: Server,
         isVisible: Bool,
         backgroundColor: Color,
-        sharedClientProvider: @escaping () -> SSHClient? = { nil },
+        borrowedLeaseProvider: @escaping () -> RemoteConnectionLease? = { nil },
         statsCollector: ServerStatsCollector
     ) {
         self.server = server
         self.isVisible = isVisible
         self.backgroundColor = backgroundColor
-        self.sharedClientProvider = sharedClientProvider
+        self.borrowedLeaseProvider = borrowedLeaseProvider
         _statsCollector = StateObject(wrappedValue: statsCollector)
     }
 
@@ -134,9 +134,7 @@ struct ServerStatsView: View {
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                     Button("Retry") {
-                        Task {
-                            await statsCollector.startCollecting(for: server, using: sharedClientProvider())
-                        }
+                        statsCollector.requestStartCollecting(for: server, using: borrowedLeaseProvider())
                     }
                     .buttonStyle(.bordered)
                 }
@@ -147,22 +145,27 @@ struct ServerStatsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(cardSurfaceStyle.pageBackground)
-        .task(id: makeTaskKey()) {
-            // Start/stop collection based on visibility
-            if isVisible {
-                await statsCollector.startCollecting(for: server, using: sharedClientProvider())
-            } else {
-                statsCollector.stopCollecting()
-            }
+        .onAppear {
+            requestCollectionForCurrentVisibility()
+        }
+        .onChange(of: makeTaskKey()) { _ in
+            requestCollectionForCurrentVisibility()
         }
         .onDisappear {
-            statsCollector.stopCollecting()
+            statsCollector.requestStopCollecting()
         }
     }
 
     private func makeTaskKey() -> String {
-        let clientId = sharedClientProvider().map { ObjectIdentifier($0).hashValue } ?? 0
-        return "\(server.id.uuidString)-\(isVisible)-\(clientId)"
+        "\(server.id.uuidString)-\(isVisible)"
+    }
+
+    private func requestCollectionForCurrentVisibility() {
+        if isVisible {
+            statsCollector.requestStartCollecting(for: server, using: borrowedLeaseProvider())
+        } else {
+            statsCollector.requestStopCollecting()
+        }
     }
 }
 

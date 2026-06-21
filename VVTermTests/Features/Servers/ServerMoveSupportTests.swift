@@ -1,6 +1,11 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect server move support inside the Servers feature boundary.
+// They use in-memory server/workspace fixtures and no CloudKit sync; update only
+// when server move semantics intentionally change.
+
 final class ServersFeatureMoveSupportTests: XCTestCase {
     func testAllowedDestinationIDsForFreeLockedWorkspaceReturnsUnlockedTargetsOnly() {
         let source = Workspace(name: "Source")

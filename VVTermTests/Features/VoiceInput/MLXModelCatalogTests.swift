@@ -1,6 +1,11 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect the MLX model catalog used by on-device voice input. They
+// use static catalog metadata and do not download models; update only when the
+// supported model catalog intentionally changes.
+
 final class MLXModelCatalogTests: XCTestCase {
     func testOptionLookupTrimsWhitespace() {
         let option = MLXModelCatalog.option(

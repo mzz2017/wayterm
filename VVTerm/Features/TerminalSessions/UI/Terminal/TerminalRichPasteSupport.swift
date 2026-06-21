@@ -206,9 +206,14 @@ protocol TerminalRichPasteContext: AnyObject {
     var sessionId: UUID { get }
     var uiModel: TerminalRichPasteUIModel { get }
 
-    func resolveConnectedSSHClient() async -> SSHClient?
+    @discardableResult
+    func requestRichPasteUpload(
+        image: ClipboardImagePayload,
+        settings: RichClipboardSettings,
+        onProgress: @escaping @MainActor (String?) -> Void,
+        onCompleted: @escaping @MainActor (TerminalRichPasteUploadRequestResult) -> Void
+    ) -> UUID?
     func pasteTextFromClipboard()
-    func sendText(_ text: String)
 }
 
 @MainActor
@@ -216,80 +221,74 @@ final class TerminalRichPasteRuntime: TerminalRichPasteContext {
     let sessionId: UUID
     let uiModel: TerminalRichPasteUIModel
 
-    private let resolveConnectedSSHClientHandler: @MainActor () async -> SSHClient?
+    private let requestRichPasteUploadHandler: @MainActor (
+        ClipboardImagePayload,
+        RichClipboardSettings,
+        @escaping @MainActor (String?) -> Void,
+        @escaping @MainActor (TerminalRichPasteUploadRequestResult) -> Void
+    ) -> UUID?
     private let pasteTextFromClipboardHandler: @MainActor () -> Void
-    private let sendTextHandler: @MainActor (String) -> Void
-    private lazy var controller = TerminalRichPasteController(
-        context: self,
-        coordinator: TerminalRichPasteCoordinator(sessionId: sessionId)
-    )
+    private lazy var controller = TerminalRichPasteController(context: self)
 
     init(
         sessionId: UUID,
         uiModel: TerminalRichPasteUIModel,
-        resolveConnectedSSHClient: @escaping @MainActor () async -> SSHClient?,
-        pasteTextFromClipboard: @escaping @MainActor () -> Void,
-        sendText: @escaping @MainActor (String) -> Void
+        requestRichPasteUpload: @escaping @MainActor (
+            ClipboardImagePayload,
+            RichClipboardSettings,
+            @escaping @MainActor (String?) -> Void,
+            @escaping @MainActor (TerminalRichPasteUploadRequestResult) -> Void
+        ) -> UUID?,
+        pasteTextFromClipboard: @escaping @MainActor () -> Void
     ) {
         self.sessionId = sessionId
         self.uiModel = uiModel
-        self.resolveConnectedSSHClientHandler = resolveConnectedSSHClient
+        self.requestRichPasteUploadHandler = requestRichPasteUpload
         self.pasteTextFromClipboardHandler = pasteTextFromClipboard
-        self.sendTextHandler = sendText
     }
 
     static func connectionSession(
         sessionId: UUID,
-        sshClient: SSHClient,
-        uiModel: TerminalRichPasteUIModel
+        uiModel: TerminalRichPasteUIModel,
+        sessionManager: ConnectionSessionManager
     ) -> TerminalRichPasteRuntime {
         TerminalRichPasteRuntime(
             sessionId: sessionId,
             uiModel: uiModel,
-            resolveConnectedSSHClient: {
-                if let registeredClient = ConnectionSessionManager.shared.sshClient(forSessionId: sessionId) {
-                    return registeredClient
-                }
-
-                if await sshClient.isConnected {
-                    return sshClient
-                }
-
-                return nil
+            requestRichPasteUpload: { image, settings, onProgress, onCompleted in
+                sessionManager.requestSessionRichPasteUpload(
+                    image: image,
+                    settings: settings,
+                    for: sessionId,
+                    onProgress: onProgress,
+                    onCompleted: onCompleted
+                )
             },
             pasteTextFromClipboard: {
-                ConnectionSessionManager.shared.peekTerminal(for: sessionId)?.pasteTextFromClipboard()
-            },
-            sendText: { text in
-                ConnectionSessionManager.shared.sendText(text, to: sessionId)
+                sessionManager.peekTerminal(for: sessionId)?.pasteTextFromClipboard()
             }
         )
     }
 
     static func terminalPane(
         paneId: UUID,
-        sshClient: SSHClient,
-        uiModel: TerminalRichPasteUIModel
+        uiModel: TerminalRichPasteUIModel,
+        tabManager: TerminalTabManager
     ) -> TerminalRichPasteRuntime {
         TerminalRichPasteRuntime(
             sessionId: paneId,
             uiModel: uiModel,
-            resolveConnectedSSHClient: {
-                if let registeredClient = TerminalTabManager.shared.getSSHClient(for: paneId) {
-                    return registeredClient
-                }
-
-                if await sshClient.isConnected {
-                    return sshClient
-                }
-
-                return nil
+            requestRichPasteUpload: { image, settings, onProgress, onCompleted in
+                tabManager.requestPaneRichPasteUpload(
+                    image: image,
+                    settings: settings,
+                    forPane: paneId,
+                    onProgress: onProgress,
+                    onCompleted: onCompleted
+                )
             },
             pasteTextFromClipboard: {
-                TerminalTabManager.shared.getTerminal(for: paneId)?.pasteTextFromClipboard()
-            },
-            sendText: { text in
-                TerminalTabManager.shared.getTerminal(for: paneId)?.sendText(text)
+                tabManager.getTerminal(for: paneId)?.pasteTextFromClipboard()
             }
         )
     }
@@ -300,16 +299,17 @@ final class TerminalRichPasteRuntime: TerminalRichPasteContext {
         }
     }
 
-    func resolveConnectedSSHClient() async -> SSHClient? {
-        await resolveConnectedSSHClientHandler()
+    func requestRichPasteUpload(
+        image: ClipboardImagePayload,
+        settings: RichClipboardSettings,
+        onProgress: @escaping @MainActor (String?) -> Void,
+        onCompleted: @escaping @MainActor (TerminalRichPasteUploadRequestResult) -> Void
+    ) -> UUID? {
+        requestRichPasteUploadHandler(image, settings, onProgress, onCompleted)
     }
 
     func pasteTextFromClipboard() {
         pasteTextFromClipboardHandler()
-    }
-
-    func sendText(_ text: String) {
-        sendTextHandler(text)
     }
 }
 
@@ -317,16 +317,9 @@ final class TerminalRichPasteRuntime: TerminalRichPasteContext {
 final class TerminalRichPasteController {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "TerminalRichPaste")
     private unowned let context: any TerminalRichPasteContext
-    private let coordinator: TerminalRichPasteCoordinator
-    private var activePasteTask: Task<Void, Never>?
-    private var activePasteTaskID: UUID?
 
-    init(
-        context: any TerminalRichPasteContext,
-        coordinator: TerminalRichPasteCoordinator
-    ) {
+    init(context: any TerminalRichPasteContext) {
         self.context = context
-        self.coordinator = coordinator
     }
 
     func interceptPaste() -> Bool {
@@ -399,17 +392,27 @@ final class TerminalRichPasteController {
 
         self.context.uiModel.dismissPrompt()
         self.context.uiModel.dismissBanner()
-        activePasteTask?.cancel()
-        let taskID = UUID()
-        activePasteTaskID = taskID
-        activePasteTask = Task { @MainActor [weak self] in
-            defer {
-                if let self, self.activePasteTaskID == taskID {
-                    self.activePasteTask = nil
-                    self.activePasteTaskID = nil
-                }
+
+        let requestID = self.context.requestRichPasteUpload(
+            image: image,
+            settings: settings,
+            onProgress: { [weak self] message in
+                self?.context.uiModel.setProgress(message)
+            },
+            onCompleted: { [weak self] result in
+                self?.handleUploadCompletion(result)
             }
-            await self?.performRichPaste(image: image, settings: settings)
+        )
+
+        if requestID == nil {
+            logger.warning(
+                "Rich paste skipped because no terminal session is available [session: \(self.context.sessionId.uuidString, privacy: .public)]"
+            )
+            self.context.uiModel.showBanner(
+                kind: .error,
+                message: String(localized: "Reconnect the terminal before uploading images."),
+                autoDismissAfter: .seconds(6)
+            )
         }
     }
 
@@ -419,12 +422,13 @@ final class TerminalRichPasteController {
         self.context.pasteTextFromClipboard()
     }
 
-    private func performRichPaste(image: ClipboardImagePayload, settings: RichClipboardSettings) async {
-        logger.info(
-            "Uploading clipboard image [session: \(self.context.sessionId.uuidString, privacy: .public)] [bytes: \(image.sizeBytes)] [format: \(image.suggestedExtension, privacy: .public)]"
-        )
-
-        guard let activeSSHClient = await self.context.resolveConnectedSSHClient() else {
+    private func handleUploadCompletion(_ result: TerminalRichPasteUploadRequestResult) {
+        switch result {
+        case .uploaded(let remotePath, let seededRemoteClipboard):
+            logger.info(
+                "Rich paste uploaded remote path [session: \(self.context.sessionId.uuidString, privacy: .public)] [path: \(remotePath, privacy: .public)] [seeded: \(seededRemoteClipboard)]"
+            )
+        case .skippedNoConnection:
             logger.warning(
                 "Rich paste skipped because no active SSH client is available [session: \(self.context.sessionId.uuidString, privacy: .public)]"
             )
@@ -433,51 +437,18 @@ final class TerminalRichPasteController {
                 message: String(localized: "Reconnect the terminal before uploading images."),
                 autoDismissAfter: .seconds(6)
             )
-            return
-        }
-
-        self.context.uiModel.setProgress(String(localized: "Uploading image to remote host..."))
-        defer { self.context.uiModel.setProgress(nil) }
-
-        do {
-            let result = try await self.coordinator.performRichPaste(
-                image: image,
-                settings: settings,
-                sshClient: activeSSHClient
-            )
-            self.handleResult(result)
-        } catch is CancellationError {
+        case .cancelled:
             logger.info("Rich paste cancelled [session: \(self.context.sessionId.uuidString, privacy: .public)]")
-            return
-        } catch {
+        case .failed(let message):
             logger.error(
-                "Rich paste failed [session: \(self.context.sessionId.uuidString, privacy: .public)] [error: \(error.localizedDescription, privacy: .public)]"
+                "Rich paste failed [session: \(self.context.sessionId.uuidString, privacy: .public)] [error: \(message, privacy: .public)]"
             )
-            let bannerMessage: String
-            if let sshError = error as? SSHError, case .notConnected = sshError {
-                bannerMessage = String(localized: "Reconnect the terminal before uploading images.")
-            } else {
-                bannerMessage = error.localizedDescription
-            }
             self.context.uiModel.showBanner(
                 kind: .error,
-                message: bannerMessage,
+                message: message,
                 autoDismissAfter: .seconds(6)
             )
         }
-    }
-
-    private func handleResult(_ result: RichPasteUploadResult) {
-        logger.info(
-            "Rich paste uploaded remote path [session: \(self.context.sessionId.uuidString, privacy: .public)] [path: \(result.remotePath, privacy: .public)] [seeded: \(result.seededRemoteClipboard)]"
-        )
-        // Paste the remote file as one POSIX shell token so TMPDIR spaces do not break the command line.
-        self.context.sendText(RemoteTerminalBootstrap.posixPastedPath(result.remotePath))
-    }
-
-    deinit {
-        activePasteTask?.cancel()
-        activePasteTaskID = nil
     }
 }
 

@@ -13,6 +13,90 @@ import AppKit
 #endif
 
 @MainActor
+protocol TerminalThemeCustomThemeStoring {
+    func loadThemes() throws -> [TerminalTheme]
+    func saveThemes(_ themes: [TerminalTheme]) throws
+}
+
+@MainActor
+protocol TerminalThemeCloudStoring {
+    func fetchTerminalThemes() async throws -> [TerminalTheme]
+    func fetchTerminalThemePreference() async throws -> TerminalThemePreference?
+}
+
+@MainActor
+protocol TerminalThemeSyncCoordinating {
+    func enqueueTerminalThemeUpsert(_ theme: TerminalTheme)
+    func enqueueTerminalThemePreferenceUpsert(_ preference: TerminalThemePreference)
+    func drainPendingMutations() async
+}
+
+extension CloudKitManager: TerminalThemeCloudStoring {}
+
+extension CloudKitSyncCoordinator: TerminalThemeSyncCoordinating {}
+
+@MainActor
+final class UserDefaultsTerminalThemeCustomThemeStore: TerminalThemeCustomThemeStoring {
+    private let defaults: UserDefaults
+    private let customThemesKey: String
+    private let fileManager: FileManager
+    private let customThemesDirectoryURL: () -> URL
+    private let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "app.vivy.vvterm",
+        category: "TerminalThemeStore"
+    )
+
+    init(
+        defaults: UserDefaults,
+        customThemesKey: String,
+        fileManager: FileManager = .default,
+        customThemesDirectoryURL: @escaping () -> URL = TerminalThemeStoragePaths.customThemesDirectoryURL
+    ) {
+        self.defaults = defaults
+        self.customThemesKey = customThemesKey
+        self.fileManager = fileManager
+        self.customThemesDirectoryURL = customThemesDirectoryURL
+    }
+
+    func loadThemes() throws -> [TerminalTheme] {
+        guard let data = defaults.data(forKey: customThemesKey) else {
+            return []
+        }
+        return try JSONDecoder().decode([TerminalTheme].self, from: data)
+    }
+
+    func saveThemes(_ themes: [TerminalTheme]) throws {
+        let data = try JSONEncoder().encode(themes)
+        try syncCustomThemeFiles(themes)
+        defaults.set(data, forKey: customThemesKey)
+    }
+
+    private func syncCustomThemeFiles(_ themes: [TerminalTheme]) throws {
+        let directoryURL = customThemesDirectoryURL()
+        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+
+        let visibleThemes = themes.filter { !$0.isDeleted }
+        let visibleNames = Set(visibleThemes.map(\.name))
+
+        let existingFiles = try fileManager.contentsOfDirectory(at: directoryURL, includingPropertiesForKeys: nil)
+        for file in existingFiles {
+            guard !visibleNames.contains(file.lastPathComponent) else { continue }
+            do {
+                try fileManager.removeItem(at: file)
+            } catch {
+                logger.error("Failed to remove stale custom theme file \(file.lastPathComponent): \(error.localizedDescription)")
+                throw error
+            }
+        }
+
+        for theme in visibleThemes {
+            let fileURL = directoryURL.appendingPathComponent(theme.name)
+            try theme.content.write(to: fileURL, atomically: true, encoding: .utf8)
+        }
+    }
+}
+
+@MainActor
 final class TerminalThemeManager: ObservableObject {
     static let shared = TerminalThemeManager()
 
@@ -25,11 +109,11 @@ final class TerminalThemeManager: ObservableObject {
     }
 
     private let defaults: UserDefaults
-    private let cloudKit: CloudKitManager
-    private let syncCoordinator = CloudKitSyncCoordinator.shared
+    private let cloudStore: any TerminalThemeCloudStoring
+    private let syncCoordinator: any TerminalThemeSyncCoordinating
+    private let customThemeStore: any TerminalThemeCustomThemeStoring
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "app.vivy.vvterm", category: "TerminalThemeManager")
 
-    private let customThemesKey = CloudKitSyncConstants.terminalCustomThemesStorageKey
     private let darkThemeKey = CloudKitSyncConstants.terminalThemeNameKey
     private let lightThemeKey = CloudKitSyncConstants.terminalThemeNameLightKey
     private let perAppearanceThemeKey = CloudKitSyncConstants.terminalUsePerAppearanceThemeKey
@@ -41,11 +125,28 @@ final class TerminalThemeManager: ObservableObject {
     private var lastForegroundSyncAt: Date = .distantPast
     private var isApplyingRemotePreference = false
     private var pendingPreferenceSyncTask: Task<Void, Never>?
+    private var pendingCloudSyncTasks: [UUID: Task<Void, Never>] = [:]
     private let foregroundSyncMinimumInterval: TimeInterval = 20
 
-    private init(defaults: UserDefaults = .standard, cloudKit: CloudKitManager? = nil) {
+    var pendingCloudSyncRequestIDs: Set<UUID> {
+        Set(pendingCloudSyncTasks.keys)
+    }
+
+    init(
+        defaults: UserDefaults = .standard,
+        cloudStore: (any TerminalThemeCloudStoring)? = nil,
+        syncCoordinator: (any TerminalThemeSyncCoordinating)? = nil,
+        customThemeStore: (any TerminalThemeCustomThemeStoring)? = nil,
+        startsCloudSyncOnInitialization: Bool = true,
+        observesSystemNotifications: Bool = true
+    ) {
         self.defaults = defaults
-        self.cloudKit = cloudKit ?? .shared
+        self.cloudStore = cloudStore ?? CloudKitManager.shared
+        self.syncCoordinator = syncCoordinator ?? CloudKitSyncCoordinator.shared
+        self.customThemeStore = customThemeStore ?? UserDefaultsTerminalThemeCustomThemeStore(
+            defaults: defaults,
+            customThemesKey: CloudKitSyncConstants.terminalCustomThemesStorageKey
+        )
         self.lastKnownPreferenceSnapshot = PreferenceSnapshot(
             darkThemeName: defaults.string(forKey: darkThemeKey) ?? "Aizen Dark",
             lightThemeName: defaults.string(forKey: lightThemeKey) ?? "Aizen Light",
@@ -53,14 +154,19 @@ final class TerminalThemeManager: ObservableObject {
         )
 
         loadThemes()
-        syncCustomThemeFiles()
+        syncLoadedCustomThemeFiles()
         ensureThemeSelectionIsValid()
-        observeThemePreferenceChanges()
-        observeForegroundSync()
 
-        Task {
-            await syncFromCloud()
-            await syncCoordinator.drainPendingMutations()
+        if observesSystemNotifications {
+            observeThemePreferenceChanges()
+            observeForegroundSync()
+        }
+
+        if startsCloudSyncOnInitialization {
+            requestCloudSync {
+                await self.syncFromCloud()
+                await self.syncCoordinator.drainPendingMutations()
+            }
         }
     }
 
@@ -72,6 +178,7 @@ final class TerminalThemeManager: ObservableObject {
             NotificationCenter.default.removeObserver(foregroundObserver)
         }
         pendingPreferenceSyncTask?.cancel()
+        pendingCloudSyncTasks.values.forEach { $0.cancel() }
     }
 
     var customThemeNames: [String] {
@@ -141,11 +248,10 @@ final class TerminalThemeManager: ObservableObject {
             deletedAt: nil
         )
 
-        customThemes.append(theme)
-        saveThemes()
-        syncCustomThemeFiles()
+        let updatedThemes = customThemes + [theme]
+        try persistCustomThemes(updatedThemes)
         ensureThemeSelectionIsValid()
-        pushThemeToCloud(theme)
+        requestThemeCloudSync(theme)
         return theme
     }
 
@@ -166,89 +272,69 @@ final class TerminalThemeManager: ObservableObject {
         let finalName = uniqueThemeName(from: sanitized, excludingThemeID: id)
         let now = Date()
 
-        customThemes[index].name = finalName
-        customThemes[index].content = normalizedContent
-        customThemes[index].updatedAt = now
-        customThemes[index].deletedAt = nil
+        var updatedThemes = customThemes
+        updatedThemes[index].name = finalName
+        updatedThemes[index].content = normalizedContent
+        updatedThemes[index].updatedAt = now
+        updatedThemes[index].deletedAt = nil
 
+        try persistCustomThemes(updatedThemes)
         migrateSelectionsForRenamedTheme(from: previousName, to: finalName)
-        saveThemes()
-        syncCustomThemeFiles()
         ensureThemeSelectionIsValid()
         pushThemeToCloud(customThemes[index])
 
         return customThemes[index]
     }
 
-    func deleteCustomTheme(named name: String) {
+    func deleteCustomTheme(named name: String) throws {
         guard let index = customThemes.firstIndex(where: { $0.name == name && !$0.isDeleted }) else {
             return
         }
 
-        deleteTheme(at: index)
+        try deleteTheme(at: index)
     }
 
-    func deleteCustomTheme(id: UUID) {
+    func deleteCustomTheme(id: UUID) throws {
         guard let index = customThemes.firstIndex(where: { $0.id == id && !$0.isDeleted }) else {
             return
         }
 
-        deleteTheme(at: index)
+        try deleteTheme(at: index)
     }
 
-    private func deleteTheme(at index: Int) {
-        customThemes[index].deletedAt = Date()
-        customThemes[index].updatedAt = Date()
-        saveThemes()
-        syncCustomThemeFiles()
+    private func deleteTheme(at index: Int) throws {
+        var updatedThemes = customThemes
+        updatedThemes[index].deletedAt = Date()
+        updatedThemes[index].updatedAt = Date()
+        try persistCustomThemes(updatedThemes)
         ensureThemeSelectionIsValid()
         pushThemeToCloud(customThemes[index])
     }
 
     private func loadThemes() {
-        guard let data = defaults.data(forKey: customThemesKey) else {
-            customThemes = []
-            return
-        }
         do {
-            customThemes = try JSONDecoder().decode([TerminalTheme].self, from: data)
+            customThemes = try customThemeStore.loadThemes()
         } catch {
             customThemes = []
-            logger.error("Failed to decode custom themes: \(error.localizedDescription)")
+            logger.error("Failed to load custom themes: \(error.localizedDescription)")
         }
     }
 
-    private func saveThemes() {
+    private func syncLoadedCustomThemeFiles() {
         do {
-            let data = try JSONEncoder().encode(customThemes)
-            defaults.set(data, forKey: customThemesKey)
+            try customThemeStore.saveThemes(customThemes)
         } catch {
-            logger.error("Failed to encode custom themes: \(error.localizedDescription)")
+            logger.error("Failed to sync loaded custom theme files: \(error.localizedDescription)")
         }
     }
 
-    private func syncCustomThemeFiles() {
-        let fm = FileManager.default
-        let directoryURL = TerminalThemeStoragePaths.customThemesDirectoryURL()
-
+    private func persistCustomThemes(_ themes: [TerminalTheme]) throws {
         do {
-            try fm.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-
-            let visibleThemes = customThemes.filter { !$0.isDeleted }
-            let visibleNames = Set(visibleThemes.map(\.name))
-
-            let existingFiles = try fm.contentsOfDirectory(at: directoryURL, includingPropertiesForKeys: nil)
-            for file in existingFiles {
-                guard !visibleNames.contains(file.lastPathComponent) else { continue }
-                try? fm.removeItem(at: file)
-            }
-
-            for theme in visibleThemes {
-                let fileURL = directoryURL.appendingPathComponent(theme.name)
-                try theme.content.write(to: fileURL, atomically: true, encoding: .utf8)
-            }
+            try customThemeStore.saveThemes(themes)
+            customThemes = themes
         } catch {
-            logger.error("Failed to sync custom theme files: \(error.localizedDescription)")
+            logger.error("Failed to save custom themes: \(error.localizedDescription)")
+            throw error
         }
     }
 
@@ -360,20 +446,22 @@ final class TerminalThemeManager: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                await self?.syncFromCloudIfNeededForForeground()
+                self?.requestForegroundCloudSyncIfNeeded()
             }
         }
     }
 
-    private func syncFromCloudIfNeededForForeground() async {
+    private func requestForegroundCloudSyncIfNeeded() {
         let now = Date()
         guard now.timeIntervalSince(lastForegroundSyncAt) >= foregroundSyncMinimumInterval else {
             return
         }
 
         lastForegroundSyncAt = now
-        await syncFromCloud()
-        await syncCoordinator.drainPendingMutations()
+        requestCloudSync {
+            await self.syncFromCloud()
+            await self.syncCoordinator.drainPendingMutations()
+        }
     }
 
     private func handleThemePreferenceChange() {
@@ -410,26 +498,50 @@ final class TerminalThemeManager: ObservableObject {
 
     private func schedulePreferenceCloudSync(_ preference: TerminalThemePreference) {
         pendingPreferenceSyncTask?.cancel()
-        pendingPreferenceSyncTask = Task { [weak self] in
+        pendingPreferenceSyncTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 600_000_000)
             guard !Task.isCancelled else { return }
-            await self?.pushPreferenceToCloud(preference)
+            self?.requestPreferenceCloudSync(preference)
         }
     }
 
     private func pushThemeToCloud(_ theme: TerminalTheme) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            guard SyncSettings.isEnabled else { return }
+        requestThemeCloudSync(theme)
+    }
+
+    @discardableResult
+    private func requestThemeCloudSync(_ theme: TerminalTheme) -> UUID? {
+        guard SyncSettings.isEnabled else { return nil }
+        return requestCloudSync {
             self.syncCoordinator.enqueueTerminalThemeUpsert(theme)
             await self.syncCoordinator.drainPendingMutations()
         }
     }
 
-    private func pushPreferenceToCloud(_ preference: TerminalThemePreference) async {
-        guard SyncSettings.isEnabled else { return }
-        syncCoordinator.enqueueTerminalThemePreferenceUpsert(preference)
-        await syncCoordinator.drainPendingMutations()
+    @discardableResult
+    private func requestPreferenceCloudSync(_ preference: TerminalThemePreference) -> UUID? {
+        guard SyncSettings.isEnabled else { return nil }
+        return requestCloudSync {
+            self.syncCoordinator.enqueueTerminalThemePreferenceUpsert(preference)
+            await self.syncCoordinator.drainPendingMutations()
+        }
+    }
+
+    @discardableResult
+    private func requestCloudSync(_ operation: @escaping @MainActor @Sendable () async -> Void) -> UUID {
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            defer {
+                self?.pendingCloudSyncTasks.removeValue(forKey: requestID)
+            }
+            await operation()
+        }
+        pendingCloudSyncTasks[requestID] = task
+        return requestID
+    }
+
+    func waitForCloudSyncRequest(_ requestID: UUID) async {
+        await pendingCloudSyncTasks[requestID]?.value
     }
 
     private func syncFromCloud() async {
@@ -437,7 +549,7 @@ final class TerminalThemeManager: ObservableObject {
 
         do {
             let localSnapshot = customThemes
-            let remoteThemes = try await cloudKit.fetchTerminalThemes()
+            let remoteThemes = try await cloudStore.fetchTerminalThemes()
             let remoteByID = Dictionary(uniqueKeysWithValues: remoteThemes.map { ($0.id, $0) })
 
             mergeRemoteThemes(remoteThemes)
@@ -450,7 +562,7 @@ final class TerminalThemeManager: ObservableObject {
                 pushThemeToCloud(localTheme)
             }
 
-            if let remotePreference = try await cloudKit.fetchTerminalThemePreference() {
+            if let remotePreference = try await cloudStore.fetchTerminalThemePreference() {
                 applyRemotePreferenceIfNewer(remotePreference)
             } else {
                 let localUpdatedAt = localPreferenceUpdatedAt()
@@ -468,7 +580,7 @@ final class TerminalThemeManager: ObservableObject {
                     usePerAppearanceTheme: currentPreferenceSnapshot().usePerAppearanceTheme,
                     updatedAt: seedUpdatedAt
                 )
-                await pushPreferenceToCloud(localPreference)
+                requestPreferenceCloudSync(localPreference)
             }
         } catch {
             logger.warning("Custom theme CloudKit sync failed: \(error.localizedDescription)")
@@ -488,9 +600,12 @@ final class TerminalThemeManager: ObservableObject {
             }
         }
 
-        customThemes = Array(localByID.values)
-        saveThemes()
-        syncCustomThemeFiles()
+        let mergedThemes = Array(localByID.values)
+        do {
+            try persistCustomThemes(mergedThemes)
+        } catch {
+            logger.error("Failed to persist merged custom themes: \(error.localizedDescription)")
+        }
         ensureThemeSelectionIsValid()
     }
 

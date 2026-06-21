@@ -2,28 +2,52 @@ import Foundation
 
 @MainActor
 final class SSHSFTPAdapter {
-    typealias BorrowedClientProvider = @MainActor (UUID) -> SSHClient?
-
-    private enum ClientOwnership {
-        case borrowed
-        case owned
-    }
+    typealias BorrowedLeaseProvider = @MainActor (UUID) -> RemoteConnectionLease?
+    typealias CredentialsProvider = @MainActor (Server) throws -> ServerCredentials
+    typealias OwnedClientFactory = @MainActor () -> any SFTPRemoteFileClient
 
     private struct ClientRegistration {
-        let client: SSHClient
-        let ownership: ClientOwnership
+        let client: any SFTPRemoteFileClient
+        let lease: RemoteConnectionLease
+
+        var clientID: ObjectIdentifier {
+            ObjectIdentifier(client)
+        }
     }
 
     private var clients: [UUID: ClientRegistration] = [:]
-    private let borrowedClientProvider: BorrowedClientProvider
+    private let remoteConnectionLeaseProvider: RemoteConnectionLeaseProvider
+    private let credentialsProvider: CredentialsProvider
+    private let ownedClientFactory: OwnedClientFactory
 
     init(
-        borrowedClientProvider: @escaping BorrowedClientProvider = { serverId in
-            ConnectionSessionManager.shared.sharedStatsClient(for: serverId)
-                ?? TerminalTabManager.shared.sharedStatsClient(for: serverId)
+        remoteConnectionLeaseProvider: RemoteConnectionLeaseProvider = .none,
+        credentialsProvider: @escaping CredentialsProvider = { server in
+            try KeychainManager.shared.getCredentials(for: server)
+        },
+        ownedClientFactory: @escaping OwnedClientFactory = {
+            SSHClient()
         }
     ) {
-        self.borrowedClientProvider = borrowedClientProvider
+        self.remoteConnectionLeaseProvider = remoteConnectionLeaseProvider
+        self.credentialsProvider = credentialsProvider
+        self.ownedClientFactory = ownedClientFactory
+    }
+
+    convenience init(
+        borrowedLeaseProvider: @escaping BorrowedLeaseProvider,
+        credentialsProvider: @escaping CredentialsProvider = { server in
+            try KeychainManager.shared.getCredentials(for: server)
+        },
+        ownedClientFactory: @escaping OwnedClientFactory = {
+            SSHClient()
+        }
+    ) {
+        self.init(
+            remoteConnectionLeaseProvider: RemoteConnectionLeaseProvider(borrowedLeaseProvider),
+            credentialsProvider: credentialsProvider,
+            ownedClientFactory: ownedClientFactory
+        )
     }
 
     func withService<T>(
@@ -31,54 +55,58 @@ final class SSHSFTPAdapter {
         operation: @escaping (any RemoteFileService) async throws -> T
     ) async throws -> T {
         let registration = clientRegistration(for: server)
-        let credentials = try KeychainManager.shared.getCredentials(for: server)
+        let credentials = try credentialsProvider(server)
 
         do {
-            return try await SSHConnectionOperationService.shared.runWithConnection(
-                using: registration.client,
-                server: server,
-                credentials: credentials,
-                disconnectWhenDone: false
-            ) { client in
-                try await operation(SFTPRemoteFileService(client: client))
+            return try await registration.lease.withExclusiveClient { _ in
+                try await registration.client.connectForRemoteFileLease(
+                    to: server,
+                    credentials: credentials
+                )
+                return try await operation(SFTPRemoteFileService(client: registration.client))
             }
         } catch {
-            if registration.ownership == .borrowed {
+            if registration.lease.ownership == .borrowed {
                 clients.removeValue(forKey: server.id)
             }
             throw error
         }
     }
 
-    func disconnect(serverId: UUID) {
+    func disconnect(serverId: UUID) async {
         guard let registration = clients.removeValue(forKey: serverId) else { return }
-        guard registration.ownership == .owned else { return }
-
-        Task.detached(priority: .utility) {
-            await registration.client.disconnect()
-        }
+        await registration.lease.close()
     }
 
-    private func borrowedClient(for serverId: UUID) -> SSHClient? {
-        borrowedClientProvider(serverId)
+    private func borrowedLease(for serverId: UUID) -> RemoteConnectionLease? {
+        remoteConnectionLeaseProvider.lease(for: serverId)
     }
 
     private func clientRegistration(for server: Server) -> ClientRegistration {
-        if let borrowedClient = borrowedClient(for: server.id) {
-            if let existing = clients[server.id], existing.client === borrowedClient {
+        if let borrowedLease = borrowedLease(for: server.id),
+           let borrowedClient = borrowedLease.client as? any SFTPRemoteFileClient {
+            if let existing = clients[server.id],
+               existing.clientID == ObjectIdentifier(borrowedClient) {
                 return existing
             }
 
-            let registration = ClientRegistration(client: borrowedClient, ownership: .borrowed)
+            let registration = ClientRegistration(
+                client: borrowedClient,
+                lease: borrowedLease
+            )
             clients[server.id] = registration
             return registration
         }
 
-        if let existing = clients[server.id], existing.ownership == .owned {
+        if let existing = clients[server.id], existing.lease.ownership == .owned {
             return existing
         }
 
-        let registration = ClientRegistration(client: SSHClient(), ownership: .owned)
+        let client = ownedClientFactory()
+        let registration = ClientRegistration(
+            client: client,
+            lease: RemoteConnectionLease(client: client, ownership: .owned)
+        )
         clients[server.id] = registration
         return registration
     }

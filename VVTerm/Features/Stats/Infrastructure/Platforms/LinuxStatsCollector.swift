@@ -10,9 +10,9 @@ struct LinuxStatsCollector: PlatformStatsCollector {
     private let bytesPerTiB: UInt64 = 1_099_511_627_776
     private let bytesPerPiB: UInt64 = 1_125_899_906_842_624
 
-    func getSystemInfo(client: SSHClient) async throws -> (hostname: String, osInfo: String, cpuCores: Int) {
+    func getSystemInfo(executor: any RemoteCommandExecuting) async throws -> (hostname: String, osInfo: String, cpuCores: Int) {
         let cmd = "uname -srm; echo '---SEP---'; hostname; echo '---SEP---'; nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 1"
-        let output = try await client.execute(cmd)
+        let output = try await executor.execute(cmd)
         let parts = output.components(separatedBy: "---SEP---")
 
         let osInfo = parts.count > 0 ? parts[0].trimmingCharacters(in: .whitespacesAndNewlines) : ""
@@ -22,7 +22,7 @@ struct LinuxStatsCollector: PlatformStatsCollector {
         return (hostname, osInfo, cpuCores)
     }
 
-    func collectStats(client: SSHClient, context: StatsCollectionContext) async throws -> ServerStats {
+    func collectStats(executor: any RemoteCommandExecuting, context: StatsCollectionContext) async throws -> ServerStats {
         var stats = ServerStats()
 
         // Batch multiple /proc reads in one command
@@ -34,7 +34,7 @@ struct LinuxStatsCollector: PlatformStatsCollector {
             cat /proc/uptime; echo '---SEP---'; \
             ls -d /proc/[0-9]* 2>/dev/null | wc -l
             """
-        let batchOutput = try await client.execute(batchCmd)
+        let batchOutput = try await executor.execute(batchCmd)
         let sections = batchOutput.components(separatedBy: "---SEP---")
 
         var missingCpu = true
@@ -145,7 +145,7 @@ struct LinuxStatsCollector: PlatformStatsCollector {
                 (ps aux --sort=-%cpu 2>/dev/null | head -6 || ps aux | head -6); echo '---SEP---'; \
                 (ps -e 2>/dev/null | wc -l)
                 """
-            let fallbackOutput = try await client.execute(fallbackCmd)
+            let fallbackOutput = try await executor.execute(fallbackCmd)
             fallbackSections = fallbackOutput.components(separatedBy: "---SEP---")
 
             let topOutput = fallbackSections.count > 0 ? fallbackSections[0] : ""
@@ -217,18 +217,18 @@ struct LinuxStatsCollector: PlatformStatsCollector {
         }
 
         // Volumes (separate command for reliability)
-        let dfOutput = try await client.execute("df -BM -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2")
+        let dfOutput = try await executor.execute("df -BM -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null | tail -n +2")
         stats.volumes = parseDfVolumes(dfOutput)
 
         // Top processes
         if stats.topProcesses.isEmpty {
-            let psOutput = try await client.execute("ps aux --sort=-%cpu 2>/dev/null | head -6 || ps aux | head -6")
+            let psOutput = try await executor.execute("ps aux --sort=-%cpu 2>/dev/null | head -6 || ps aux | head -6")
             stats.topProcesses = parsePs(psOutput)
         }
 
         // Process count fallback if still missing
         if stats.processCount == 0 {
-            let procCount = try await client.execute("ps -e 2>/dev/null | wc -l")
+            let procCount = try await executor.execute("ps -e 2>/dev/null | wc -l")
             stats.processCount = Int(procCount.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
         }
 

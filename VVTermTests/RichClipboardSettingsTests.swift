@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect rich clipboard preference persistence and defaults used by
+// terminal paste workflows. They use isolated in-memory settings assumptions;
+// update only when the intended rich clipboard defaults or keys change.
+
 struct RichClipboardSettingsTests {
     @Test
     func settingsFallbackToAskOnceWhenUnsetOrInvalid() {

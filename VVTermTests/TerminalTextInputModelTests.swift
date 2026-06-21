@@ -2,6 +2,11 @@ import Foundation
 import Testing
 @testable import VVTerm
 
+// Test Context:
+// These tests protect terminal text input modeling for composed text, marked
+// ranges, and committed input. Fakes are pure values with no keyboard hardware;
+// update only when VVTerm intentionally changes text input semantics.
+
 struct TerminalTextInputModelTests {
     @Test
     func setMarkedTextStoresCompositionInLocalBuffer() {

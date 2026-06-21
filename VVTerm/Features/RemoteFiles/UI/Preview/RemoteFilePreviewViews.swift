@@ -7,6 +7,13 @@ import AppKit
 import UIKit
 #endif
 
+struct RemoteFileTextSaveRequest {
+    let entry: RemoteFileEntry
+    let text: String
+    let onSaved: @MainActor () -> Void
+    let onFailure: @MainActor (Error) -> Void
+}
+
 struct RemoteFileInspectorView: View {
     enum Chrome {
         case sidebar
@@ -47,7 +54,7 @@ struct RemoteFileInspectorView: View {
     let onEditPermissions: ((RemoteFileEntry) -> Void)?
     let onDelete: ((RemoteFileEntry) -> Void)?
     let onClose: (() -> Void)?
-    let onSaveText: ((RemoteFileEntry, String) async throws -> Void)?
+    let onSaveText: ((RemoteFileTextSaveRequest) -> Void)?
 
     @State private var selectedTab: InspectorTab = .metadata
     @State private var editableText = ""
@@ -356,9 +363,7 @@ struct RemoteFileInspectorView: View {
                 .buttonStyle(.bordered)
 
                 Button(String(localized: "Save")) {
-                    Task {
-                        await saveEditedText(for: entry)
-                    }
+                    saveEditedText(for: entry)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isSavingText || editableText == originalText)
@@ -928,18 +933,23 @@ struct RemoteFileInspectorView: View {
         )
     }
 
-    private func saveEditedText(for entry: RemoteFileEntry) async {
+    private func saveEditedText(for entry: RemoteFileEntry) {
         guard let onSaveText else { return }
 
         isSavingText = true
-        do {
-            try await onSaveText(entry, editableText)
-            isEditingText = false
-            textSaveErrorMessage = nil
-        } catch {
-            textSaveErrorMessage = error.localizedDescription
-        }
-        isSavingText = false
+        onSaveText(RemoteFileTextSaveRequest(
+            entry: entry,
+            text: editableText,
+            onSaved: {
+                isEditingText = false
+                textSaveErrorMessage = nil
+                isSavingText = false
+            },
+            onFailure: { error in
+                textSaveErrorMessage = error.localizedDescription
+                isSavingText = false
+            }
+        ))
     }
 
     private func inspectorStatusMessage(title: String, message: String, systemImage: String) -> some View {

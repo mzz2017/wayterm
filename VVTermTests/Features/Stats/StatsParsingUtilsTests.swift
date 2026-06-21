@@ -1,6 +1,11 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect pure Stats parsing helpers used by platform collectors.
+// They intentionally avoid network, clocks beyond explicit Date inputs, and
+// platform-specific command execution. Update these tests when the parsing
+// contract changes, not when a remote command string changes shape.
 final class StatsParsingUtilsTests: XCTestCase {
     func testCalculateNetworkSpeedReturnsZeroWithoutPreviousTimestamp() {
         let now = Date()

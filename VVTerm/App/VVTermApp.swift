@@ -115,11 +115,11 @@ struct VVTermApp: App {
                     .environment(\.privacyModeEnabled, privacyModeEnabled)
                     .onAppear {
                         AppLanguage.applySelection(appLanguage)
-                        ServerManager.shared.handleAppLanguageChange()
+                        AppLifecycleCoordinator.shared.handleAppLanguageChange(appLanguage)
                     }
                     .onChange(of: appLanguage) { newValue in
                         AppLanguage.applySelection(newValue)
-                        ServerManager.shared.handleAppLanguageChange()
+                        AppLifecycleCoordinator.shared.handleAppLanguageChange(newValue)
                     }
                 }
             }
@@ -138,10 +138,12 @@ struct VVTermApp: App {
 
 private extension VVTermApp {
     static func makeRemoteFileBrowserStore() -> RemoteFileBrowserStore {
-        let adapter = SSHSFTPAdapter(borrowedClientProvider: { serverId in
-            ConnectionSessionManager.shared.sharedStatsClient(for: serverId)
-                ?? TerminalTabManager.shared.sharedStatsClient(for: serverId)
-        })
+        let adapter = SSHSFTPAdapter(
+            remoteConnectionLeaseProvider: RemoteConnectionLeaseProvider { serverId in
+                ConnectionSessionManager.shared.sharedStatsLease(for: serverId)
+                    ?? TerminalTabManager.shared.sharedStatsLease(for: serverId)
+            }
+        )
 
         return RemoteFileBrowserStore(
             remoteFileServiceAdapter: adapter,
@@ -187,7 +189,9 @@ struct VVTermCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
             Button("About VVTerm") {
-                AboutWindowController.shared.show()
+                AboutWindowPresenter.shared.show {
+                    AboutView()
+                }
             }
         }
 
@@ -246,44 +250,24 @@ struct VVTermCommands: Commands {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    private var lastForegroundSyncAt: Date = .distantPast
-    private let foregroundSyncMinimumInterval: TimeInterval = 20
-
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Subscribe to CloudKit changes
-        Task {
-            await CloudKitManager.shared.subscribeToChanges()
-        }
+        AppLifecycleCoordinator.shared.requestLaunch()
         NSApplication.shared.registerForRemoteNotifications()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        guard SyncSettings.isEnabled else { return }
-
-        let now = Date()
-        guard now.timeIntervalSince(lastForegroundSyncAt) >= foregroundSyncMinimumInterval else { return }
-        lastForegroundSyncAt = now
-
-        Task {
-            await ServerManager.shared.loadData()
-        }
+        AppLifecycleCoordinator.shared.requestForegroundRefresh()
     }
 
     func applicationDidResignActive(_ notification: Notification) {
-        Task { @MainActor in
-            AppLockManager.shared.lockIfNeededForBackground()
-        }
+        AppLifecycleCoordinator.shared.requestBackgroundLock()
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        // Close all connections synchronously to ensure cleanup before exit
-        let semaphore = DispatchSemaphore(value: 0)
-        Task {
-            ConnectionSessionManager.shared.disconnectAll()
-            semaphore.signal()
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        AppLifecycleCoordinator.shared.requestTerminationTeardown {
+            sender.reply(toApplicationShouldTerminate: true)
         }
-        // Wait up to 2 seconds for cleanup
-        _ = semaphore.wait(timeout: .now() + 2)
+        return .terminateLater
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -291,42 +275,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, didReceiveRemoteNotification userInfo: [String: Any]) {
-        guard SyncSettings.isEnabled else { return }
-        Task {
-            await ServerManager.shared.loadData()
-        }
+        AppLifecycleCoordinator.shared.requestRemoteNotificationRefresh()
     }
 }
 #else
 // MARK: - iOS App Delegate
 
 class AppDelegate: NSObject, UIApplicationDelegate {
-    private var lastForegroundSyncAt: Date = .distantPast
-    private let foregroundSyncMinimumInterval: TimeInterval = 20
-
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        // Subscribe to CloudKit changes
-        Task {
-            await CloudKitManager.shared.subscribeToChanges()
-        }
+        AppLifecycleCoordinator.shared.requestLaunch()
         application.registerForRemoteNotifications()
 
         return true
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        guard SyncSettings.isEnabled else { return }
-
-        let now = Date()
-        guard now.timeIntervalSince(lastForegroundSyncAt) >= foregroundSyncMinimumInterval else { return }
-        lastForegroundSyncAt = now
-
-        Task {
-            await ServerManager.shared.loadData()
-        }
+        AppLifecycleCoordinator.shared.requestForegroundRefresh()
     }
 
     func application(
@@ -334,34 +301,18 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
-        guard SyncSettings.isEnabled else {
-            completionHandler(.noData)
-            return
-        }
-
-        Task {
-            await ServerManager.shared.loadData()
-            completionHandler(.newData)
+        AppLifecycleCoordinator.shared.requestRemoteNotificationRefresh { didRefresh in
+            completionHandler(didRefresh ? .newData : .noData)
         }
     }
 
     func applicationWillTerminate(_ application: UIApplication) {
-        // Close all connections synchronously to ensure cleanup before exit
-        let semaphore = DispatchSemaphore(value: 0)
-        Task {
-            ConnectionSessionManager.shared.disconnectAll()
-            semaphore.signal()
-        }
-        // Wait up to 2 seconds for cleanup
-        _ = semaphore.wait(timeout: .now() + 2)
+        AppLifecycleCoordinator.shared.requestTerminationTeardown()
     }
 
     // Handle app going to background - suspend connections to save resources
     func applicationDidEnterBackground(_ application: UIApplication) {
-        Task { @MainActor in
-            await ConnectionSessionManager.shared.suspendAllForBackground()
-            AppLockManager.shared.lockIfNeededForBackground()
-        }
+        AppLifecycleCoordinator.shared.requestBackgroundSuspension()
     }
 }
 #endif

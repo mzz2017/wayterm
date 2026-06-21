@@ -51,29 +51,39 @@ actor RemoteTmuxManager {
         using client: SSHClient,
         preferred: TerminalMultiplexer = .tmux
     ) async -> RemoteTmuxBackend? {
-        let environment = await client.remoteEnvironment()
+        try? await availableBackend(using: client, preferred: preferred)
+    }
+
+    func availableBackend(
+        using executor: any RemoteCommandExecuting,
+        preferred: TerminalMultiplexer = .tmux
+    ) async throws -> RemoteTmuxBackend? {
+        let environment = await executor.remoteEnvironment(forceRefresh: false)
         guard environment.supportsTmuxRuntime else { return nil }
 
         if environment.platform == .windows {
             // zmx is POSIX-only; Windows always uses psmux.
-            return await windowsPsmuxBackend(for: environment, using: client)
+            return try await windowsPsmuxBackend(for: environment, using: executor)
         }
 
         if preferred == .zmx {
             let okMarker = "__VVTERM_ZMX_OK__"
             let command = zmxBuilder.availabilityProbeCommand(okMarker: okMarker)
-            let output = try? await client.execute(command, timeout: availabilityTimeout)
+            let output = try await availabilityProbeOutput(command, using: executor)
             return output?.contains(okMarker) == true ? .zmx(commandName: "zmx") : nil
         }
 
         let okMarker = "__VVTERM_TMUX_OK__"
         let command = tmuxAvailabilityProbeCommand(okMarker: okMarker)
-        let output = try? await client.execute(command, timeout: availabilityTimeout)
+        let output = try await availabilityProbeOutput(command, using: executor)
         return output?.contains(okMarker) == true ? .unixTmux : nil
     }
 
-    func tmuxInstallBackend(using client: SSHClient, preferred: TerminalMultiplexer = .tmux) async -> RemoteTmuxBackend? {
-        let environment = await client.remoteEnvironment()
+    func tmuxInstallBackend(
+        using executor: any RemoteCommandExecuting,
+        preferred: TerminalMultiplexer = .tmux
+    ) async -> RemoteTmuxBackend? {
+        let environment = await executor.remoteEnvironment(forceRefresh: false)
         guard environment.supportsTmuxRuntime else { return nil }
 
         if environment.platform == .windows {
@@ -92,25 +102,31 @@ actor RemoteTmuxManager {
         return .unixTmux
     }
 
-    func isTmuxAvailable(using client: SSHClient, preferred: TerminalMultiplexer = .tmux) async -> Bool {
-        await tmuxBackend(using: client, preferred: preferred) != nil
+    func isTmuxAvailable(
+        using executor: any RemoteCommandExecuting,
+        preferred: TerminalMultiplexer = .tmux
+    ) async -> Bool {
+        (try? await availableBackend(using: executor, preferred: preferred)) != nil
     }
 
-    func listSessions(using client: SSHClient) async -> [RemoteTmuxSession] {
-        guard let backend = await tmuxBackend(using: client) else { return [] }
-        return await listSessions(using: client, backend: backend)
+    func listSessions(using executor: any RemoteCommandExecuting) async -> [RemoteTmuxSession] {
+        guard let backend = try? await availableBackend(using: executor) else { return [] }
+        return await listSessions(using: executor, backend: backend)
     }
 
-    func listSessions(using client: SSHClient, backend: RemoteTmuxBackend) async -> [RemoteTmuxSession] {
+    func listSessions(
+        using executor: any RemoteCommandExecuting,
+        backend: RemoteTmuxBackend
+    ) async -> [RemoteTmuxSession] {
         if case .zmx = backend {
-            guard let output = try? await client.execute(zmxBuilder.listSessionsCommand(), timeout: listTimeout) else { return [] }
+            guard let output = try? await executor.execute(zmxBuilder.listSessionsCommand(), timeout: listTimeout) else { return [] }
             return zmxBuilder.parseSessionList(output)
         }
 
         let candidates = listSessionCommands(backend: backend)
 
         for (index, command) in candidates.enumerated() {
-            guard let output = try? await client.execute(command, timeout: listTimeout) else { continue }
+            guard let output = try? await executor.execute(command, timeout: listTimeout) else { continue }
             let sessions = parseSessionListOutput(output, allowLegacy: index == candidates.count - 1)
 
             if !sessions.isEmpty {
@@ -122,7 +138,7 @@ actor RemoteTmuxManager {
     }
 
     func prepareConfig(
-        using client: SSHClient,
+        using executor: any RemoteCommandExecuting,
         terminalType: RemoteTerminalType,
         backend explicitBackend: RemoteTmuxBackend? = nil
     ) async {
@@ -130,12 +146,12 @@ actor RemoteTmuxManager {
         if let explicitBackend {
             backend = explicitBackend
         } else {
-            backend = await tmuxBackend(using: client)
+            backend = try? await availableBackend(using: executor)
         }
         guard let backend else { return }
         if backend.isZmx { return }   // zmx has no config file
         let command = configWriteExecutionCommand(terminalType: terminalType, backend: backend)
-        _ = try? await client.execute(command, timeout: configTimeout)
+        _ = try? await executor.execute(command, timeout: configTimeout)
     }
 
     nonisolated func configWriteExecutionCommand(
@@ -286,14 +302,18 @@ actor RemoteTmuxManager {
         try? await client.write(data, to: shellId)
     }
 
-    func killSession(named sessionName: String, using client: SSHClient, preferred: TerminalMultiplexer = .tmux) async {
-        guard let backend = await tmuxBackend(using: client, preferred: preferred) else { return }
+    func killSession(
+        named sessionName: String,
+        using executor: any RemoteCommandExecuting,
+        preferred: TerminalMultiplexer = .tmux
+    ) async {
+        guard let backend = try? await availableBackend(using: executor, preferred: preferred) else { return }
         let command = killSessionCommand(named: sessionName, backend: backend)
-        _ = try? await client.execute(command, timeout: killTimeout)
+        _ = try? await executor.execute(command, timeout: killTimeout)
     }
 
-    func cleanupLegacySessions(using client: SSHClient) async {
-        guard let backend = await tmuxBackend(using: client) else { return }
+    func cleanupLegacySessions(using executor: any RemoteCommandExecuting) async {
+        guard let backend = try? await availableBackend(using: executor) else { return }
         guard backend == .unixTmux else { return }
         let body = """
         \(RemoteTerminalBootstrap.shellPathExport());
@@ -304,28 +324,33 @@ actor RemoteTmuxManager {
         fi
         """
         let command = "sh -lc \(RemoteTerminalBootstrap.shellQuoted(body))"
-        _ = try? await client.execute(command, timeout: cleanupTimeout)
+        _ = try? await executor.execute(command, timeout: cleanupTimeout)
     }
 
-    func cleanupDetachedSessions(deviceId: String, keeping sessionNames: Set<String>, using client: SSHClient, preferred: TerminalMultiplexer = .tmux) async {
+    func cleanupDetachedSessions(
+        deviceId: String,
+        keeping sessionNames: Set<String>,
+        using executor: any RemoteCommandExecuting,
+        preferred: TerminalMultiplexer = .tmux
+    ) async {
         let prefix = "vvterm_\(deviceId)_"
         let keep = sessionNames
-        guard let backend = await tmuxBackend(using: client, preferred: preferred) else { return }
-        let sessions = await listSessions(using: client, backend: backend)
+        guard let backend = try? await availableBackend(using: executor, preferred: preferred) else { return }
+        let sessions = await listSessions(using: executor, backend: backend)
 
         for session in sessions {
             guard session.name.hasPrefix(prefix) else { continue }
             guard session.attachedClients == 0 else { continue }
             guard !keep.contains(session.name) else { continue }
-            await killSession(named: session.name, using: client, preferred: preferred)
+            await killSession(named: session.name, using: executor, preferred: preferred)
         }
     }
 
-    func currentPath(sessionName: String, using client: SSHClient) async -> String? {
-        guard let backend = await tmuxBackend(using: client) else { return nil }
+    func currentPath(sessionName: String, using executor: any RemoteCommandExecuting) async -> String? {
+        guard let backend = try? await availableBackend(using: executor) else { return nil }
         if backend.isZmx { return nil }   // zmx has no list-panes equivalent
         let command = currentPathCommand(sessionName: sessionName, backend: backend)
-        guard let output = try? await client.execute(command, timeout: pathTimeout) else { return nil }
+        guard let output = try? await executor.execute(command, timeout: pathTimeout) else { return nil }
         let trimmed = output
             .split(separator: "\n", omittingEmptySubsequences: false)
             .first
@@ -502,8 +527,8 @@ actor RemoteTmuxManager {
 
     private func windowsPsmuxBackend(
         for environment: RemoteEnvironment,
-        using client: SSHClient
-    ) async -> RemoteTmuxBackend? {
+        using executor: any RemoteCommandExecuting
+    ) async throws -> RemoteTmuxBackend? {
         let shellFamily = environment.shellProfile.family
         let powerShellExecutable = environment.powerShellExecutable ?? environment.shellProfile.executableName
 
@@ -513,9 +538,9 @@ actor RemoteTmuxManager {
                 shellFamily: shellFamily,
                 powerShellExecutable: powerShellExecutable
             )
-            let output = try? await client.execute(
+            let output = try await availabilityProbeOutput(
                 windowsPsmuxAvailabilityProbeCommand(commandName: commandName, backend: backend, requirePsmuxExtension: false),
-                timeout: availabilityTimeout
+                using: executor
             )
             if output?.contains("__VVTERM_TMUX_OK__:\(commandName)") == true {
                 return backend
@@ -527,15 +552,28 @@ actor RemoteTmuxManager {
             shellFamily: shellFamily,
             powerShellExecutable: powerShellExecutable
         )
-        let output = try? await client.execute(
+        let output = try await availabilityProbeOutput(
             windowsPsmuxAvailabilityProbeCommand(commandName: "tmux", backend: tmuxBackend, requirePsmuxExtension: true),
-            timeout: availabilityTimeout
+            using: executor
         )
         if output?.contains("__VVTERM_TMUX_OK__:tmux") == true {
             return tmuxBackend
         }
 
         return nil
+    }
+
+    private func availabilityProbeOutput(
+        _ command: String,
+        using executor: any RemoteCommandExecuting
+    ) async throws -> String? {
+        do {
+            return try await executor.execute(command, timeout: availabilityTimeout)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return nil
+        }
     }
 
     nonisolated func windowsPsmuxAvailabilityProbeCommand(

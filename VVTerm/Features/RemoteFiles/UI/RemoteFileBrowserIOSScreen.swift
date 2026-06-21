@@ -33,7 +33,7 @@ extension RemoteFileBrowserScreen {
                     }
                 }
                 .refreshable {
-                    await browser.refresh(server: server, tab: fileTab)
+                    browser.requestNavigation(.refresh, in: fileTab, server: server)
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
@@ -72,12 +72,10 @@ extension RemoteFileBrowserScreen {
                 previewBackgroundColor: Color(UIColor.secondarySystemGroupedBackground),
                 sectionBackgroundColor: Color(UIColor.secondarySystemGroupedBackground),
                 onLoadPreview: { entry in
-                    Task { await browser.loadPreview(for: entry, in: fileTab, server: server) }
+                    browser.requestPreviewLoad(for: entry, in: fileTab, server: server)
                 },
                 onDownloadPreview: { entry in
-                    Task {
-                        await browser.loadPreview(for: entry, in: fileTab, server: server, allowLargeDownloads: true)
-                    }
+                    browser.requestPreviewLoad(for: entry, in: fileTab, server: server, allowLargeDownloads: true)
                 },
                 onDownload: { entry in
                     beginDownload(entry)
@@ -99,8 +97,15 @@ extension RemoteFileBrowserScreen {
                     deleteTargetEntry = entry
                 },
                 onClose: nil,
-                onSaveText: { entry, text in
-                    try await browser.saveTextPreview(text, for: entry, in: fileTab, server: server)
+                onSaveText: { request in
+                    browser.requestTextPreviewSave(
+                        request.text,
+                        for: request.entry,
+                        in: fileTab,
+                        server: server,
+                        onSaved: request.onSaved,
+                        onFailure: request.onFailure
+                    )
                 }
             )
             .navigationTitle(snapshot.selectedEntry?.name ?? snapshot.viewerPayload?.entry.name ?? String(localized: "Preview"))
@@ -123,7 +128,7 @@ extension RemoteFileBrowserScreen {
                     systemName: "arrow.turn.up.left",
                     isDisabled: snapshot.currentPath == "/"
                 ) {
-                    Task { await browser.goUp(in: fileTab, server: server) }
+                    browser.requestNavigation(.goUp, in: fileTab, server: server)
                 }
             }
 
@@ -174,12 +179,9 @@ extension RemoteFileBrowserScreen {
     }
 
     func handleIOSEntryTap(_ entry: RemoteFileEntry) {
-        Task {
-            await browser.activate(entry, in: fileTab, server: server)
-            if browser.selectedEntryPath(for: fileTab) == entry.path {
-                await MainActor.run {
-                    presentedPreviewPath = entry.path
-                }
+        browser.requestNavigation(.activate(entry), in: fileTab, server: server) { result in
+            if result == .selectedFile(entry) {
+                presentedPreviewPath = entry.path
             }
         }
     }

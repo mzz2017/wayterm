@@ -12,6 +12,13 @@ final class AppLockManager: ObservableObject {
         static let authGraceSeconds = "security.authGraceSeconds"
     }
 
+    private struct ServerUnlockRequest {
+        let requestID: UUID
+        var task: Task<Void, Never>?
+        var onUnlockedCallbacks: [@MainActor () -> Void]
+        var onDeniedCallbacks: [@MainActor () -> Void]
+    }
+
     @Published private(set) var isAppLocked: Bool
     @Published private(set) var isAuthenticating = false
     @Published private(set) var lastErrorMessage: String?
@@ -54,6 +61,16 @@ final class AppLockManager: ObservableObject {
     private let authService: any BiometricAuthServing
     private var lastAppUnlockAt: Date?
     private var unlockedServers: [UUID: Date] = [:]
+    private var appLockRequestTasks: [UUID: Task<Void, Never>] = [:]
+    private var serverUnlockRequestsByServerID: [UUID: ServerUnlockRequest] = [:]
+
+    var pendingAppLockRequestIDs: Set<UUID> {
+        Set(appLockRequestTasks.keys)
+    }
+
+    var pendingServerUnlockRequestIDs: Set<UUID> {
+        Set(serverUnlockRequestsByServerID.values.map(\.requestID))
+    }
 
     init(defaults: UserDefaults, authService: any BiometricAuthServing) {
         self.defaults = defaults
@@ -73,6 +90,11 @@ final class AppLockManager: ObservableObject {
         self.init(defaults: .standard, authService: BiometricAuthService.shared)
     }
 
+    deinit {
+        appLockRequestTasks.values.forEach { $0.cancel() }
+        serverUnlockRequestsByServerID.values.compactMap(\.task).forEach { $0.cancel() }
+    }
+
     func refreshBiometryAvailability() {
         switch authService.availability() {
         case .available(let kind):
@@ -84,6 +106,72 @@ final class AppLockManager: ObservableObject {
             biometryKind = .none
             biometryAvailabilityMessage = message
         }
+    }
+
+    @discardableResult
+    func requestFullAppLockChange(_ enabled: Bool) -> UUID {
+        trackAppLockRequest { manager in
+            await manager.requestSetFullAppLockEnabled(enabled)
+        }
+    }
+
+    @discardableResult
+    func requestAppUnlock() -> UUID {
+        trackAppLockRequest { manager in
+            _ = await manager.ensureAppUnlocked()
+        }
+    }
+
+    @discardableResult
+    func requestServerUnlock(
+        _ server: Server,
+        onUnlocked: @escaping @MainActor () -> Void = {},
+        onDenied: @escaping @MainActor () -> Void = {}
+    ) -> UUID {
+        if var request = serverUnlockRequestsByServerID[server.id] {
+            request.onUnlockedCallbacks.append(onUnlocked)
+            request.onDeniedCallbacks.append(onDenied)
+            serverUnlockRequestsByServerID[server.id] = request
+            return request.requestID
+        }
+
+        let requestID = UUID()
+        serverUnlockRequestsByServerID[server.id] = ServerUnlockRequest(
+            requestID: requestID,
+            task: nil,
+            onUnlockedCallbacks: [onUnlocked],
+            onDeniedCallbacks: [onDenied]
+        )
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.serverUnlockRequestsByServerID[server.id]?.requestID == requestID {
+                    self.serverUnlockRequestsByServerID.removeValue(forKey: server.id)
+                }
+                self.appLockRequestTasks.removeValue(forKey: requestID)
+            }
+
+            let unlocked = await self.ensureServerUnlocked(server)
+            guard !Task.isCancelled else { return }
+            guard let request = self.serverUnlockRequestsByServerID[server.id],
+                  request.requestID == requestID
+            else { return }
+
+            let callbacks = unlocked ? request.onUnlockedCallbacks : request.onDeniedCallbacks
+            callbacks.forEach { $0() }
+        }
+
+        if serverUnlockRequestsByServerID[server.id]?.requestID == requestID {
+            serverUnlockRequestsByServerID[server.id]?.task = task
+            appLockRequestTasks[requestID] = task
+        }
+
+        return requestID
+    }
+
+    func waitForAppLockRequest(_ requestID: UUID) async {
+        await appLockRequestTasks[requestID]?.value
     }
 
     func requestSetFullAppLockEnabled(_ enabled: Bool) async {
@@ -116,6 +204,7 @@ final class AppLockManager: ObservableObject {
 
         let reason = String(format: String(localized: "Unlock VVTerm with %@"), biometryDisplayName)
         guard await authenticate(reason: reason) else { return false }
+        guard !Task.isCancelled else { return false }
 
         isAppLocked = false
         lastAppUnlockAt = Date()
@@ -136,9 +225,11 @@ final class AppLockManager: ObservableObject {
 
     func ensureServerUnlocked(_ server: Server) async -> Bool {
         guard server.requiresBiometricUnlock else { return true }
+        guard !Task.isCancelled else { return false }
 
         if fullAppLockEnabled, isAppLocked {
             guard await ensureAppUnlocked() else { return false }
+            guard !Task.isCancelled else { return false }
         }
 
         if canAccessServerWithoutPrompt(server) {
@@ -147,6 +238,7 @@ final class AppLockManager: ObservableObject {
 
         let reason = String(format: String(localized: "Unlock server %@"), server.name)
         guard await authenticate(reason: reason) else { return false }
+        guard !Task.isCancelled else { return false }
 
         unlockedServers[server.id] = Date()
         lastErrorMessage = nil
@@ -198,6 +290,20 @@ final class AppLockManager: ObservableObject {
         unlockedServers = unlockedServers.filter { $0.value >= threshold }
     }
 
+    private func trackAppLockRequest(_ operation: @escaping @MainActor (AppLockManager) async -> Void) -> UUID {
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                appLockRequestTasks.removeValue(forKey: requestID)
+            }
+
+            await operation(self)
+        }
+        appLockRequestTasks[requestID] = task
+        return requestID
+    }
+
     private func authenticate(reason: String) async -> Bool {
         guard !isAuthenticating else { return false }
 
@@ -207,6 +313,8 @@ final class AppLockManager: ObservableObject {
         do {
             try await authService.authenticate(localizedReason: reason, allowPasscodeFallback: true)
             return true
+        } catch is CancellationError {
+            return false
         } catch let error as BiometricAuthError {
             if !error.isCancellation {
                 lastErrorMessage = error.localizedDescription
@@ -218,3 +326,14 @@ final class AppLockManager: ObservableObject {
         }
     }
 }
+
+#if DEBUG
+extension AppLockManager {
+    func cancelServerUnlockRequestForTesting(_ requestID: UUID) {
+        guard let request = serverUnlockRequestsByServerID.values.first(where: { $0.requestID == requestID }) else {
+            return
+        }
+        request.task?.cancel()
+    }
+}
+#endif

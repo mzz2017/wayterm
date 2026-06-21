@@ -1,6 +1,11 @@
 import XCTest
 @testable import VVTerm
 
+// Test Context:
+// These tests protect voice-input transcription settings persistence and defaults.
+// Fakes use isolated settings storage and no microphone or ML model; update only
+// when transcription settings behavior intentionally changes.
+
 final class TranscriptionSettingsStoreTests: XCTestCase {
     override func setUp() {
         super.setUp()

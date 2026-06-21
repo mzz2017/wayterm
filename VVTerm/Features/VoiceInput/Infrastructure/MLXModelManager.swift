@@ -180,9 +180,23 @@ final class MLXModelManager: NSObject, ObservableObject {
 
             state = .ready
             refreshStorageUsage()
+        } catch is CancellationError {
+            state = .idle
+            refreshStorageUsage()
         } catch {
             logger.error("Failed to download MLX model: \(error.localizedDescription)")
             state = .failed(error.localizedDescription)
+        }
+    }
+
+    func cancelDownload() {
+        activeTask?.cancel()
+        activeContinuation?.resume(throwing: CancellationError())
+        activeContinuation = nil
+        activeTask = nil
+        activeItem = nil
+        if case .downloading = state {
+            state = .idle
         }
     }
 
@@ -454,6 +468,7 @@ extension MLXModelManager: @preconcurrency URLSessionDownloadDelegate {
         downloadTask: URLSessionDownloadTask,
         didFinishDownloadingTo location: URL
     ) {
+        guard activeTask === downloadTask else { return }
         guard let item = activeItem else { return }
         if let response = downloadTask.response as? HTTPURLResponse,
            !(200..<300).contains(response.statusCode) {
@@ -490,9 +505,8 @@ extension MLXModelManager: @preconcurrency URLSessionDownloadDelegate {
         totalBytesWritten: Int64,
         totalBytesExpectedToWrite: Int64
     ) {
-        Task { @MainActor in
-            self.updateProgress(currentBytes: totalBytesWritten, currentTotalBytes: totalBytesExpectedToWrite)
-        }
+        guard activeTask === downloadTask else { return }
+        updateProgress(currentBytes: totalBytesWritten, currentTotalBytes: totalBytesExpectedToWrite)
     }
 
     @MainActor
@@ -501,6 +515,7 @@ extension MLXModelManager: @preconcurrency URLSessionDownloadDelegate {
         task: URLSessionTask,
         didCompleteWithError error: Error?
     ) {
+        guard activeTask === task else { return }
         if let error {
             activeContinuation?.resume(throwing: error)
             activeContinuation = nil

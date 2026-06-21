@@ -37,17 +37,13 @@ struct AppLockContainer<Content: View>: View {
         .onAppear {
             appLockManager.handleScenePhaseChange(scenePhase)
             if appLockManager.fullAppLockEnabled {
-                Task {
-                    _ = await appLockManager.ensureAppUnlocked()
-                }
+                appLockManager.requestAppUnlock()
             }
         }
         .onChange(of: scenePhase) { newPhase in
             appLockManager.handleScenePhaseChange(newPhase)
             if newPhase == .active, appLockManager.fullAppLockEnabled {
-                Task {
-                    _ = await appLockManager.ensureAppUnlocked()
-                }
+                appLockManager.requestAppUnlock()
             }
         }
     }
@@ -89,9 +85,7 @@ struct AppLockGateView: View {
                 }
 
                 Button {
-                    Task {
-                        _ = await appLockManager.ensureAppUnlocked()
-                    }
+                    appLockManager.requestAppUnlock()
                 } label: {
                     if appLockManager.isAuthenticating {
                         ProgressView()
