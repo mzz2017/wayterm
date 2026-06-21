@@ -1060,19 +1060,19 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
-        let paneStillExists = TerminalTabManager.shared.paneStates[coordinator.paneId] != nil
+        let paneStillExists = coordinator.tabManager.paneStates[coordinator.paneId] != nil
 
         if paneStillExists {
             if let scrollView = nsView as? TerminalScrollView {
                 scrollView.surfaceView.pauseRendering()
             }
             coordinator.isReusingTerminal = true
-            TerminalTabManager.shared.detachSurfaceForPaneViewDisappeared(coordinator.paneId)
+            coordinator.tabManager.detachSurfaceForPaneViewDisappeared(coordinator.paneId)
             return
         }
 
         coordinator.terminal = nil
-        TerminalTabManager.shared.detachSurfaceForClosedPane(coordinator.paneId)
+        coordinator.tabManager.detachSurfaceForClosedPane(coordinator.paneId)
     }
 
     func makeCoordinator() -> Coordinator {
