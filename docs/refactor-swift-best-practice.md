@@ -3994,8 +3994,85 @@ Request code review for Task 53. Fix Critical and Important findings, update the
 
 Actual review result: local lifecycle review found no Critical issues. Important findings were that macOS delayed termination could wait forever if terminal teardown never completed, and remote-notification completion still had an untracked disabled-sync callback task; both were fixed with a timeout race plus tracked remote-notification request IDs before final verification.
 
+## Task 54: Terminal Install Intent Boundary
+
+**Files:**
+- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `VVTermTests/TerminalInstallIntentBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - `ConnectionSessionManager.startTmuxInstall(for:)`
+  - `ConnectionSessionManager.installMoshServerAndReconnect(session:)`
+  - `TerminalTabManager.startTmuxInstall(for:)`
+  - `TerminalTabManager.installMoshServerAndReconnect(for:)`
+  - `RemoteTmuxManager.shared.tmuxInstallBackend(...)`
+  - `RemoteTmuxManager.shared.isTmuxAvailable(...)`
+  - `RemoteMoshManager.shared.installMoshServer(...)`
+- Produces:
+  - `ConnectionSessionManager.requestTmuxInstall(for:onCompleted:) -> UUID`: tracked session tmux install request API that coalesces duplicate request intent for the same session.
+  - `ConnectionSessionManager.waitForTmuxInstallRequest(_:)` and `pendingTmuxInstallRequestIDs` for awaitable lifecycle ordering tests.
+  - `ConnectionSessionManager.requestMoshInstallAndReconnect(session:onCompleted:onFailed:) -> UUID`: tracked session mosh install-then-reconnect request API that coalesces duplicate request intent for the same session and keeps cancellation separate from ordinary failure.
+  - `ConnectionSessionManager.waitForMoshInstallRequest(_:)`, `pendingMoshInstallRequestIDs`, and `lastMoshInstallFailure` for awaitable lifecycle ordering and failure tests.
+  - `TerminalTabManager.requestTmuxInstall(for:onCompleted:) -> UUID`: tracked pane tmux install request API that coalesces duplicate request intent for the same pane.
+  - `TerminalTabManager.waitForTmuxInstallRequest(_:)` and `pendingTmuxInstallRequestIDs` for awaitable pane lifecycle ordering tests.
+  - `TerminalTabManager.requestMoshInstallAndReconnect(for:onCompleted:onFailed:) -> UUID`: tracked pane mosh install-then-reconnect request API that coalesces duplicate request intent for the same pane and keeps cancellation separate from ordinary failure.
+  - `TerminalTabManager.waitForMoshInstallRequest(_:)`, `pendingMoshInstallRequestIDs`, and `lastMoshInstallFailure` for awaitable pane lifecycle ordering and failure tests.
+  - DEBUG-only injected install operations so tests can block tmux/mosh install work without real SSH, tmux, or mosh.
+
+- [ ] **Step 1: Add RED install request and source-boundary tests**
+
+Extend `ConnectionLifecycleIntegrationTests` with request-ordering coverage for session and pane install intent. Use delayed fake install closures to prove `requestTmuxInstall` stays pending until the whole install operation completes, `requestMoshInstallAndReconnect` calls `onCompleted` only after install/reconnect work finishes, duplicate request intent for the same session/pane reuses the in-flight request, and ordinary mosh install failure records `lastMoshInstallFailure` plus calls `onFailed` without invoking success. Add `TerminalInstallIntentBoundaryTests` with a Test Context header that reads `TerminalContainerView.swift` and `TerminalView.swift`, then fails while install alert buttons contain UI-owned `Task { ... startTmuxInstall ... }`, UI-owned `Task { ... installMoshServerAndReconnect ... }`, or direct calls to the old async install helpers instead of request APIs.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalInstallIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails to compile because `requestTmuxInstall`, `pendingTmuxInstallRequestIDs`, `waitForTmuxInstallRequest(_:)`, `requestMoshInstallAndReconnect`, `pendingMoshInstallRequestIDs`, `waitForMoshInstallRequest(_:)`, `lastMoshInstallFailure`, and DEBUG install-operation injection hooks do not exist. If those compile unexpectedly, `TerminalInstallIntentBoundaryTests` fails because terminal UI install buttons still launch install work inside SwiftUI-owned `Task` blocks.
+
+- [ ] **Step 2: Add manager-owned install request tracking**
+
+In `ConnectionSessionManager`, add request dictionaries for tmux install and mosh install keyed by request ID plus per-session in-flight indexes for duplicate coalescing. In `TerminalTabManager`, add the same structure keyed by pane ID. Each request API should return the existing in-flight request ID for duplicate same-entity intent, clear both the request dictionary and the per-entity index in `defer`, and expose await hooks for tests. Mosh install requests should record `lastMoshInstallFailure` and call `onFailed(error)` for ordinary errors, ignore `CancellationError` as lifecycle cancellation, and call `onCompleted()` only after install plus reconnect completes.
+
+- [ ] **Step 3: Make tmux install await the install poll instead of scheduling a detached follow-up**
+
+Change `startTmuxInstall(for:)` in both managers so the availability polling loop is awaited by the request task rather than launched as an untracked `Task`. Preserve behavior: set `.installing`, send the install-and-attach script, poll up to six times with the existing two-second interval, bind the managed session/pane on success, and set the unavailable status on failure. Use the DEBUG injected tmux install operation in tests so the focused suite does not wait real seconds or contact a server.
+
+- [ ] **Step 4: Route terminal UI install buttons through request APIs**
+
+Update `TerminalContainerView` and split `TerminalView` install alerts so buttons only send synchronous intent to the manager request APIs. UI may keep presentation-only state such as `isInstallingMosh`, `operationNotice`, and `reconnectToken`, but it must not start or await the install task itself. The request callbacks update presentation state after the application-layer owner finishes or fails. Remove private UI helpers that only existed to orchestrate async install/reconnect flows if they become dead code.
+
+- [ ] **Step 5: Run focused verification**
+
+Run focused tests, source scans, and whitespace check:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalInstallIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{[^\\n]*(startTmuxInstall|installMoshServerAndReconnect)|startTmuxInstall\\(|installMoshServerAndReconnect\\(" VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift
+rg -n "Task \\{ \\[weak self\\] in|Task\\.detached" VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; terminal UI scans show no UI-owned install `Task` wrappers or direct calls to the old async install helpers; manager task scans show install tasks are stored request tasks or previously classified runtime tasks, not untracked tmux install polling.
+
+- [ ] **Step 6: API and boundary cleanup**
+
+Before review, verify request API names are consistent between session and pane managers, install request state lives in TerminalSessions Application rather than UI, UI install callbacks are presentation-only, duplicate request coalescing is manager-owned, cancellation is not surfaced as a user-facing failure, tmux poll tracking is awaitable, and touched tests include Test Context plus Given / When / Then comments and assertion messages.
+
+- [ ] **Step 7: Request review and commit**
+
+Request code review for Task 54. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-53 scan selected Task 54 as the next executable lifecycle slice. Current plan checkboxes were complete, so the codebase was rescanned for remaining SwiftUI-owned `Task` work and deferred ledger hits. The clearest focused TerminalSessions gap is terminal install intent: `TerminalContainerView` and split `TerminalView` launch tmux and mosh install work from alert buttons, while both managers expose only awaitable low-level install helpers rather than tracked request APIs. The tmux install helpers also schedule an internal untracked poll task after sending the install script, so the UI-owned task can return before install lifecycle state settles. Task 54 should add manager-owned tracked request APIs for session and pane tmux/mosh install intent, make tmux install polling awaitable, and leave broader retry, voice recording, mosh fallback banner timing, and RemoteFiles navigation tasks deferred to later slices.
 - 2026-06-21: Task 53 RED/GREEN completed with review fixes. `VVTermApp.swift` and both AppDelegate implementations no longer directly orchestrate terminal teardown, background suspension, app-lock, app-sync refresh, or server-language side effects; they send intent to `AppLifecycleCoordinator`. `AppLifecycleCoordinator` owns tracked request tasks for background lock, background suspension, remote-notification refresh completion, and termination teardown, with await hooks for ordering tests. The old blocking termination semaphore bridge was removed after it proved unsafe on MainActor; macOS termination now uses `applicationShouldTerminate(_:)` / `.terminateLater` with a timeout-bounded tracked teardown request, and iOS termination sends a tracked best-effort request. RED failed to compile until the coordinator APIs existed, review-cycle RED exposed missing background lock tracking, and a focused timeout regression test prevented a hanging termination request. Final focused tests passed 7 Swift Testing tests; source scans showed `VVTermApp.swift` only sends coordinator intent; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment / AppIntents metadata warnings.
 - 2026-06-21: Post-Task-52 scan selected Task 53 as the next executable lifecycle slice. Current plan checkboxes were complete, so the codebase was rescanned for remaining SwiftUI/App-owned lifecycle `Task` work, direct app lifecycle singleton orchestration, and deferred ledger hits. The clearest focused App-layer gap is `VVTermApp.swift`: AppDelegate termination owns the semaphore bridge plus a `Task` that awaits terminal manager teardown, iOS background owns a `Task` that suspends sessions and locks the app, foreground/remote notification delegates directly call `AppSyncCoordinator.shared`, and root locale hooks call `ServerManager.shared.handleAppLanguageChange()` directly. Existing `AppSyncCoordinatorTests` already cover sync task coalescing, so Task 53 should not replace that owner; it should introduce an App Application lifecycle coordinator that receives delegate/root intent and delegates to the existing sync, terminal, app-lock, and server-language owners. Broader remaining hits in terminal UI retry/tmux/voice flows, RemoteFiles navigation/preview view tasks, and low-level Application/Core internally tracked tasks remain deferred to later slices.
 - 2026-06-21: Task 52 RED/GREEN completed with review fixes. `AppLockContainer`, `AppLockGateView`, and `GeneralSettingsView` no longer own biometric authentication `Task` work; they send synchronous intent to `AppLockManager.requestAppUnlock()` or `requestFullAppLockChange(_:)`. `AppLockManager` owns tracked request tasks, exposes pending request IDs plus `waitForAppLockRequest(_:)`, preserves existing async behavior boundaries, and treats `CancellationError` as lifecycle completion rather than a user-facing auth failure. RED failed to compile until the request APIs and tracking state existed; review-fix RED proved cancellation still polluted `lastErrorMessage`. Final focused tests passed 6 XCTest tests plus 2 Swift Testing tests; the source scan showed only manager-owned app-lock tasks; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings / AppIntents metadata skip warning. Broader SwiftUI task hits in terminal, RemoteFiles, Settings language change, App sync, and low-level Application/Core paths remain deferred to later slices.
