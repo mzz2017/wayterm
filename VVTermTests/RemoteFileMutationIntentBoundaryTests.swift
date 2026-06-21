@@ -3,12 +3,13 @@ import Testing
 
 // Test Context:
 // These tests protect RemoteFiles UI/Application ownership for user-triggered
-// browser mutations such as create folder, rename, move, delete, and permission
-// changes. The UI may adapt inputs and present errors, but the application
-// store must own the lifecycle of mutation tasks so later tests can await them
-// and failures remain ordered. The test inspects source placement only; update
-// it only when mutation request ownership intentionally moves to another
-// application-layer owner.
+// browser mutations and transfers such as create folder, rename, move, delete,
+// permission changes, uploads, downloads, drops, and file promises. The UI may
+// adapt inputs and present errors, but the application store must own the
+// lifecycle of mutation/transfer tasks so later tests can await them and
+// failures remain ordered. The test inspects source placement only; update it
+// only when request ownership intentionally moves to another application-layer
+// owner.
 @Suite
 struct RemoteFileMutationIntentBoundaryTests {
     @Test
@@ -68,6 +69,42 @@ struct RemoteFileMutationIntentBoundaryTests {
         #expect(
             !platformSources.contains("try await browser.saveTextPreview"),
             "Platform preview UI should not call the async preview-save implementation directly."
+        )
+    }
+
+    @Test
+    func transferAndDropDelegatesTaskOwnershipToStore() throws {
+        // Given shared RemoteFiles browser UI plus the macOS file-promise
+        // support source.
+        let root = try sourceRoot()
+        let browserSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
+        )
+        let macOSSupportSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Platform/RemoteFileBrowserSupport.swift")
+        )
+
+        // Then transfer UI should send intent to the application store instead
+        // of owning transfer/drop/file-promise async Tasks.
+        #expect(
+            browserSource.contains("browser.requestTransfer("),
+            "RemoteFileBrowserScreen.performTransfer should delegate transfer task ownership to RemoteFileBrowserStore."
+        )
+        #expect(
+            !browserSource.contains("Task {\n            do {\n                try await operation { progress in"),
+            "RemoteFileBrowserScreen should not own the transfer Task in performTransfer."
+        )
+        #expect(
+            !browserSource.contains("func beginUploadFlow(urls: [URL], to destinationPath: String, initialMessage: String) {\n        Task {"),
+            "RemoteFileBrowserScreen should not own the upload planning Task before starting a transfer request."
+        )
+        #expect(
+            !browserSource.contains("Task {\n                do {\n                    let temporaryURL = try preparedTemporaryURL.get()"),
+            "Remote drag file representations should not download through a UI-owned Task."
+        )
+        #expect(
+            !macOSSupportSource.contains("Task { @MainActor in\n                do {\n                    try await export(entry, url)"),
+            "FilePromiseDelegate should complete through an application-owned request instead of starting its own Task."
         )
     }
 

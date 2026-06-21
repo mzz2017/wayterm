@@ -84,8 +84,18 @@ extension RemoteFileBrowserScreen {
             menuForBackground: {
                 appKitBackgroundMenu(currentPath: snapshot.currentPath)
             },
-            exportEntry: { entry, destinationURL in
-                try await browser.downloadItem(entry, to: destinationURL, server: server)
+            exportEntry: { entry, destinationURL, completion in
+                browser.requestTransfer(
+                    operation: { _ in
+                        try await browser.downloadItem(entry, to: destinationURL, server: server)
+                    },
+                    onSuccess: {
+                        completion(nil)
+                    },
+                    onFailure: { error in
+                        completion(error)
+                    }
+                )
             },
             fileTypeIdentifier: { entry in
                 dragFileTypeIdentifier(for: entry)

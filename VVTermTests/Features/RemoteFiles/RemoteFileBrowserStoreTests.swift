@@ -5,11 +5,11 @@ import Testing
 // Test Context:
 // These tests protect RemoteFiles browser state rules: entry filtering,
 // per-tab persistence, initial path selection, directory/viewer request
-// ordering, and user mutation task ownership. Fakes use in-memory UserDefaults
-// suites, injected providers, and small ordering probes, so failures usually
-// indicate a browser-state or lifecycle ownership regression unless the
-// persisted snapshot model, path-precedence product rule, or application-layer
-// mutation request owner intentionally changes.
+// ordering, user mutation task ownership, and transfer task ownership. Fakes
+// use in-memory UserDefaults suites, injected providers, and small ordering
+// probes, so failures usually indicate a browser-state or lifecycle ownership
+// regression unless the persisted snapshot model, path-precedence product rule,
+// or application-layer request owner intentionally changes.
 @MainActor
 struct RemoteFileBrowserStoreTests {
     @Test
@@ -267,6 +267,54 @@ struct RemoteFileBrowserStoreTests {
         // the tracked request only after the failure handler runs.
         #expect(!store.pendingMutationRequestIDs.contains(requestID))
         #expect(events == ["operation-started", "failure-RemoteFileMutationIntentFailure"])
+    }
+
+    @Test
+    func transferRequestTracksTaskProgressAndSuccessAfterOperation() async throws {
+        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let gate = RemoteFileMutationGate()
+        var events: [String] = []
+
+        // Given a RemoteFiles transfer launched from synchronous UI intent.
+        let requestID = store.requestTransfer(
+            operation: { onProgress in
+                events.append("operation-started")
+                onProgress(RemoteFileBrowserStore.TransferProgress(
+                    completedUnitCount: 1,
+                    totalUnitCount: 2,
+                    currentItemName: "logs.txt"
+                ))
+                await gate.wait()
+                events.append("operation-finished")
+                return "exported"
+            },
+            onProgress: { progress in
+                events.append("progress-\(progress.completedUnitCount)-\(progress.totalUnitCount)-\(progress.currentItemName)")
+            },
+            onSuccess: { result in
+                events.append("success-\(result)")
+            },
+            onFailure: { _ in
+                events.append("failure")
+            }
+        )
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then the application store owns the transfer task until the async
+        // operation and success continuation finish.
+        #expect(store.pendingTransferRequestIDs.contains(requestID))
+        #expect(events == ["operation-started", "progress-1-2-logs.txt"])
+
+        await gate.release()
+        await store.waitForTransferRequest(requestID)
+
+        #expect(!store.pendingTransferRequestIDs.contains(requestID))
+        #expect(events == [
+            "operation-started",
+            "progress-1-2-logs.txt",
+            "operation-finished",
+            "success-exported"
+        ])
     }
 
     private func makeEntry(name: String, path: String, type: RemoteFileType) -> RemoteFileEntry {

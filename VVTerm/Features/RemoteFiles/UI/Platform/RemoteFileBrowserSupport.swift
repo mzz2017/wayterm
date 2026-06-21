@@ -392,7 +392,7 @@ struct MacOSRemoteFileTableView: NSViewRepresentable {
     let onDropRemotePayload: @MainActor (RemoteFileDragPayload, String) -> Void
     let menuForEntry: @MainActor (RemoteFileEntry) -> NSMenu
     let menuForBackground: @MainActor () -> NSMenu
-    let exportEntry: @MainActor (RemoteFileEntry, URL) async throws -> Void
+    let exportEntry: @MainActor (RemoteFileEntry, URL, @escaping (Error?) -> Void) -> Void
     let fileTypeIdentifier: (RemoteFileEntry) -> String
     let kindLabel: (RemoteFileEntry) -> String
     let onSubmitInlineEdit: @MainActor (String) -> Void
@@ -1351,12 +1351,12 @@ struct MacOSRemoteFileTableView: NSViewRepresentable {
         let id = UUID()
         private let entry: RemoteFileEntry
         private let fileTypeIdentifier: String
-        private let export: @MainActor (RemoteFileEntry, URL) async throws -> Void
+        private let export: @MainActor (RemoteFileEntry, URL, @escaping (Error?) -> Void) -> Void
 
         init(
             entry: RemoteFileEntry,
             fileTypeIdentifier: String,
-            export: @escaping @MainActor (RemoteFileEntry, URL) async throws -> Void
+            export: @escaping @MainActor (RemoteFileEntry, URL, @escaping (Error?) -> Void) -> Void
         ) {
             self.entry = entry
             self.fileTypeIdentifier = fileTypeIdentifier
@@ -1382,13 +1382,8 @@ struct MacOSRemoteFileTableView: NSViewRepresentable {
         }
 
         func filePromiseProvider(_ filePromiseProvider: NSFilePromiseProvider, writePromiseTo url: URL, completionHandler: @escaping (Error?) -> Void) {
-            Task { @MainActor in
-                do {
-                    try await export(entry, url)
-                    completionHandler(nil)
-                } catch {
-                    completionHandler(error)
-                }
+            MainActor.assumeIsolated {
+                export(entry, url, completionHandler)
             }
         }
     }

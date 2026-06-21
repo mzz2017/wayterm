@@ -122,6 +122,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     var directoryRequestIDs: [UUID: UUID] = [:]
     var viewerRequestIDs: [UUID: UUID] = [:]
     private var mutationRequests: [UUID: Task<Void, Never>] = [:]
+    private var transferRequests: [UUID: Task<Void, Never>] = [:]
     private var pendingDisconnects: [UUID: PendingDisconnect] = [:]
     #if DEBUG
     private var pendingDisconnectWaitDidFinishForTesting: (@MainActor (UUID) async -> Void)?
@@ -135,6 +136,10 @@ final class RemoteFileBrowserStore: ObservableObject {
 
     var pendingMutationRequestIDs: Set<UUID> {
         Set(mutationRequests.keys)
+    }
+
+    var pendingTransferRequestIDs: Set<UUID> {
+        Set(transferRequests.keys)
     }
 
     init(
@@ -232,6 +237,35 @@ final class RemoteFileBrowserStore: ObservableObject {
 
     func waitForMutationRequest(_ requestID: UUID) async {
         await mutationRequests[requestID]?.value
+    }
+
+    @discardableResult
+    func requestTransfer<Result>(
+        operation: @escaping @MainActor @Sendable (@escaping @MainActor @Sendable (TransferProgress) -> Void) async throws -> Result,
+        onProgress: @escaping @MainActor @Sendable (TransferProgress) -> Void = { _ in },
+        onSuccess: @escaping @MainActor @Sendable (Result) -> Void,
+        onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in }
+    ) -> UUID {
+        let requestID = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await operation { progress in
+                    onProgress(progress)
+                }
+                onSuccess(result)
+            } catch {
+                onFailure(error)
+            }
+            self.transferRequests.removeValue(forKey: requestID)
+        }
+
+        transferRequests[requestID] = task
+        return requestID
+    }
+
+    func waitForTransferRequest(_ requestID: UUID) async {
+        await transferRequests[requestID]?.value
     }
 
     func currentPathValue(for tab: RemoteFileTab) -> String? {

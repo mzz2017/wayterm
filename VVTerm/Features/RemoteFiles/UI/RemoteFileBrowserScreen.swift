@@ -655,68 +655,63 @@ struct RemoteFileBrowserScreen: View {
         successFileURL: URL? = nil,
         successFileName: String? = nil,
         successFilePath: String? = nil,
-        operation: @escaping (@escaping @MainActor (RemoteFileBrowserStore.TransferProgress) -> Void) async throws -> Void
+        operation: @escaping @Sendable (@escaping @MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void) async throws -> Void
     ) {
         let transferID = UUID()
 
-        Task { @MainActor in
-            withAnimation(.easeInOut(duration: 0.2)) {
-                beginTransferStatus(
+        withAnimation(.easeInOut(duration: 0.2)) {
+            beginTransferStatus(
+                id: transferID,
+                title: title,
+                message: initialMessage
+            )
+        }
+
+        browser.requestTransfer(
+            operation: operation,
+            onProgress: { progress in
+                let itemName = progress.currentItemName.isEmpty
+                    ? String(localized: "item")
+                    : progress.currentItemName
+                updateTransferStatus(
                     id: transferID,
                     title: title,
-                    message: initialMessage
+                    message: String(
+                        format: String(localized: "%lld of %lld: %@"),
+                        Int64(progress.completedUnitCount),
+                        Int64(progress.totalUnitCount),
+                        itemName
+                    ),
+                    completedUnitCount: progress.completedUnitCount,
+                    totalUnitCount: progress.totalUnitCount
                 )
-            }
-        }
-
-        Task {
-            do {
-                try await operation { progress in
-                    let itemName = progress.currentItemName.isEmpty
-                        ? String(localized: "item")
-                        : progress.currentItemName
-                    updateTransferStatus(
+            },
+            onSuccess: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    completeTransferStatus(
                         id: transferID,
                         title: title,
-                        message: String(
-                            format: String(localized: "%lld of %lld: %@"),
-                            Int64(progress.completedUnitCount),
-                            Int64(progress.totalUnitCount),
-                            itemName
-                        ),
-                        completedUnitCount: progress.completedUnitCount,
-                        totalUnitCount: progress.totalUnitCount
+                        message: successMessage,
+                        fileURL: successFileURL,
+                        fileName: successFileName,
+                        filePath: successFilePath
                     )
                 }
-
-                await MainActor.run {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        completeTransferStatus(
-                            id: transferID,
-                            title: title,
-                            message: successMessage,
-                            fileURL: successFileURL,
-                            fileName: successFileName,
-                            filePath: successFilePath
-                        )
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    noticeHost.show(
-                        NoticeItem(
-                            id: transferID.uuidString,
-                            lane: .bottomOperation,
-                            level: .error,
-                            leading: .icon("xmark.octagon.fill"),
-                            title: title,
-                            message: remoteOperationErrorMessage(for: error),
-                            dismissAction: { noticeHost.dismiss(id: transferID.uuidString) }
-                        )
+            },
+            onFailure: { error in
+                noticeHost.show(
+                    NoticeItem(
+                        id: transferID.uuidString,
+                        lane: .bottomOperation,
+                        level: .error,
+                        leading: .icon("xmark.octagon.fill"),
+                        title: title,
+                        message: remoteOperationErrorMessage(for: error),
+                        dismissAction: { noticeHost.dismiss(id: transferID.uuidString) }
                     )
-                }
+                )
             }
-        }
+        )
     }
 
     func performTransfer(
@@ -726,7 +721,7 @@ struct RemoteFileBrowserScreen: View {
         successFileURL: URL? = nil,
         successFileName: String? = nil,
         successFilePath: String? = nil,
-        operation: @escaping () async throws -> Void
+        operation: @escaping @Sendable () async throws -> Void
     ) {
         performTransfer(
             title: title,
@@ -1154,40 +1149,68 @@ struct RemoteFileBrowserScreen: View {
     }
 
     func beginUploadFlow(urls: [URL], to destinationPath: String, initialMessage: String) {
-        Task {
-            do {
-                let candidates = try await browser.prepareLocalUploadPlan(
-                    at: urls,
-                    to: destinationPath,
-                    server: server
-                )
-                let plans = candidates.map { candidate in
-                    RemoteFileBrowserStore.LocalUploadPlanItem(
-                        sourceURL: candidate.sourceURL,
-                        remoteName: candidate.suggestedName ?? candidate.originalName
-                    )
+        performTransfer(
+            title: String(localized: "Uploading"),
+            initialMessage: initialMessage,
+            successMessage: String(localized: "Upload complete.")
+        ) { onProgress in
+            try await uploadResolvedLocalURLs(urls, to: destinationPath, onProgress: onProgress)
+        }
+    }
+
+    func uploadResolvedLocalURLs(
+        _ urls: [URL],
+        to destinationPath: String,
+        onProgress: @escaping @MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void
+    ) async throws {
+        let candidates = try await browser.prepareLocalUploadPlan(
+            at: urls,
+            to: destinationPath,
+            server: server
+        )
+        let plans = candidates.map { candidate in
+            RemoteFileBrowserStore.LocalUploadPlanItem(
+                sourceURL: candidate.sourceURL,
+                remoteName: candidate.suggestedName ?? candidate.originalName
+            )
+        }
+        try await browser.uploadFiles(
+            plans: plans,
+            to: destinationPath,
+            in: fileTab,
+            server: server,
+            onProgress: onProgress
+        )
+    }
+
+    func requestFileRepresentationExport(
+        entry: RemoteFileEntry,
+        preparedTemporaryURL: Result<URL, Error>,
+        progress: Progress,
+        completion: @escaping (URL?, Bool, Error?) -> Void
+    ) {
+        browser.requestTransfer(
+            operation: { _ in
+                let temporaryURL = try preparedTemporaryURL.get()
+                try await browser.downloadItem(entry, to: temporaryURL, server: server)
+                try Task.checkCancellation()
+                guard !progress.isCancelled else {
+                    throw CancellationError()
                 }
-                await MainActor.run {
-                    performTransfer(
-                        title: String(localized: "Uploading"),
-                        initialMessage: initialMessage,
-                        successMessage: String(localized: "Upload complete.")
-                    ) { onProgress in
-                        try await browser.uploadFiles(
-                            plans: plans,
-                            to: destinationPath,
-                            in: fileTab,
-                            server: server,
-                            onProgress: onProgress
-                        )
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    presentOperationError(error)
+                return temporaryURL
+            },
+            onSuccess: { temporaryURL in
+                completion(temporaryURL, false, nil)
+                progress.completedUnitCount = 1
+            },
+            onFailure: { error in
+                if error is CancellationError {
+                    completion(nil, false, CancellationError())
+                } else {
+                    completion(nil, false, error)
                 }
             }
-        }
+        )
     }
 
     func handleCurrentDirectoryDrop(_ providers: [NSItemProvider], to destinationPath: String) -> Bool {
@@ -1204,21 +1227,13 @@ struct RemoteFileBrowserScreen: View {
         }
         guard !fileURLProviders.isEmpty else { return false }
 
-        Task {
-            do {
-                let urls = try await loadDroppedURLs(from: fileURLProviders)
-                await MainActor.run {
-                    beginUploadFlow(
-                        urls: urls,
-                        to: destinationPath,
-                        initialMessage: String(localized: "Preparing dropped files.")
-                    )
-                }
-            } catch {
-                await MainActor.run {
-                    presentOperationError(error)
-                }
-            }
+        performTransfer(
+            title: String(localized: "Uploading"),
+            initialMessage: String(localized: "Preparing dropped files."),
+            successMessage: String(localized: "Upload complete.")
+        ) { onProgress in
+            let urls = try await loadDroppedURLs(from: fileURLProviders)
+            try await uploadResolvedLocalURLs(urls, to: destinationPath, onProgress: onProgress)
         }
 
         return true
@@ -1288,20 +1303,13 @@ struct RemoteFileBrowserScreen: View {
             visibility: .all
         ) { completion in
             let progress = Progress(totalUnitCount: 1)
-
-            Task {
-                do {
-                    let temporaryURL = try preparedTemporaryURL.get()
-                    try await browser.downloadItem(entry, to: temporaryURL, server: server)
-                    guard !progress.isCancelled else {
-                        completion(nil, false, CancellationError())
-                        return
-                    }
-                    completion(temporaryURL, false, nil)
-                    progress.completedUnitCount = 1
-                } catch {
-                    completion(nil, false, error)
-                }
+            Task { @MainActor in
+                requestFileRepresentationExport(
+                    entry: entry,
+                    preparedTemporaryURL: preparedTemporaryURL,
+                    progress: progress,
+                    completion: completion
+                )
             }
 
             return progress
@@ -1444,7 +1452,7 @@ struct RemoteFileBrowserScreen: View {
     func moveDroppedRemoteItems(
         _ payloads: [RemoteFileDragPayload],
         to destinationDirectoryPath: String,
-        onProgress: (@MainActor (RemoteFileBrowserStore.TransferProgress) -> Void)? = nil
+        onProgress: (@MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void)? = nil
     ) async throws {
         let uniqueEntries = payloads
             .flatMap(\.entries)
@@ -1488,7 +1496,7 @@ struct RemoteFileBrowserScreen: View {
     func transferDroppedRemoteItems(
         _ payloads: [RemoteFileDragPayload],
         to destinationDirectoryPath: String,
-        onProgress: (@MainActor (RemoteFileBrowserStore.TransferProgress) -> Void)? = nil
+        onProgress: (@MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void)? = nil
     ) async throws {
         let sourceServerIDs = Set(payloads.map(\.serverId))
         guard sourceServerIDs.count == 1, let sourceServerId = sourceServerIDs.first else {
