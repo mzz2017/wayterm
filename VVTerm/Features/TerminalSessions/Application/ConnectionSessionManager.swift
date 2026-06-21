@@ -30,6 +30,15 @@ struct TerminalSurfaceAttachContext: Equatable, Sendable {
     )
 }
 
+struct TerminalResizeRequestSize: Equatable, Sendable {
+    let cols: Int
+    let rows: Int
+
+    var isValid: Bool {
+        cols > 0 && rows > 0
+    }
+}
+
 @MainActor
 final class ConnectionSessionManager: ObservableObject {
     static let shared = ConnectionSessionManager()
@@ -79,6 +88,12 @@ final class ConnectionSessionManager: ObservableObject {
 
     private struct InputRequest {
         let sessionId: UUID
+        let task: Task<Void, Never>
+    }
+
+    private struct ResizeRequest {
+        let sessionId: UUID
+        var size: TerminalResizeRequestSize
         let task: Task<Void, Never>
     }
 
@@ -276,6 +291,9 @@ final class ConnectionSessionManager: ObservableObject {
     private var inputRequestBySession: [UUID: UUID] = [:]
     private var lastInputTaskBySession: [UUID: Task<Void, Never>] = [:]
     var pendingInputRequestIDs: Set<UUID> { Set(inputRequests.keys) }
+    private var resizeRequests: [UUID: ResizeRequest] = [:]
+    private var resizeRequestBySession: [UUID: UUID] = [:]
+    var pendingResizeRequestIDs: Set<UUID> { Set(resizeRequests.keys) }
     private var sessionReconnectsInFlight: Set<UUID> = []
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
     private var serverDisconnectTasks: [UUID: Task<Void, Never>] = [:]
@@ -300,6 +318,7 @@ final class ConnectionSessionManager: ObservableObject {
     private var sessionHostRetrustOperationForTesting: (@MainActor (ConnectionSession, Server) async -> Bool)?
     private var surfaceAttachOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
     private var inputOperationForTesting: (@MainActor (Data, TerminalEntityID) async -> Void)?
+    private var resizeOperationForTesting: (@MainActor (TerminalResizeRequestSize, TerminalEntityID) async -> Void)?
     #endif
     @Published private(set) var isSuspendingForBackground = false
 
@@ -503,6 +522,10 @@ final class ConnectionSessionManager: ObservableObject {
 
     func waitForInputRequest(_ requestID: UUID) async {
         await inputRequests[requestID]?.task.value
+    }
+
+    func waitForResizeRequest(_ requestID: UUID) async {
+        await resizeRequests[requestID]?.task.value
     }
 
     /// Opens a connection to a server
@@ -896,6 +919,7 @@ final class ConnectionSessionManager: ObservableObject {
         cancelSessionRetryRequest(for: sessionId)
         cancelSessionHostRetrustRequest(for: sessionId)
         cancelInputRequests(for: sessionId)
+        cancelResizeRequests(for: sessionId)
         let shellTeardownTask = cancelAndClearShellHandlers(for: sessionId)
         terminalsNeedingReconnectReset.remove(sessionId)
         terminalBrowseModeBySession.removeValue(forKey: sessionId)
@@ -929,6 +953,18 @@ final class ConnectionSessionManager: ObservableObject {
 
         inputRequestBySession.removeValue(forKey: sessionId)
         lastInputTaskBySession.removeValue(forKey: sessionId)
+    }
+
+    private func cancelResizeRequests(for sessionId: UUID) {
+        let requestIDs = resizeRequests.compactMap { requestID, request in
+            request.sessionId == sessionId ? requestID : nil
+        }
+
+        for requestID in requestIDs {
+            resizeRequests.removeValue(forKey: requestID)?.task.cancel()
+        }
+
+        resizeRequestBySession.removeValue(forKey: sessionId)
     }
 
     private func cancelSessionRetryRequest(for sessionId: UUID) {
@@ -1935,6 +1971,54 @@ final class ConnectionSessionManager: ObservableObject {
         } catch {
             logger.warning("Failed to resize PTY: \(error.localizedDescription)")
         }
+    }
+
+    @discardableResult
+    func requestSessionResize(_ size: TerminalResizeRequestSize, for sessionId: UUID) -> UUID? {
+        guard size.isValid else { return nil }
+        guard sessionWithID(sessionId) != nil else { return nil }
+
+        if let existingRequestID = resizeRequestBySession[sessionId],
+           var request = resizeRequests[existingRequestID] {
+            request.size = size
+            resizeRequests[existingRequestID] = request
+            return existingRequestID
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.resizeRequests.removeValue(forKey: requestID)
+                if self.resizeRequestBySession[sessionId] == requestID {
+                    self.resizeRequestBySession.removeValue(forKey: sessionId)
+                }
+            }
+
+            var appliedSize: TerminalResizeRequestSize?
+            while !Task.isCancelled {
+                guard self.sessionWithID(sessionId) != nil else { return }
+                guard let request = self.resizeRequests[requestID] else { return }
+                let size = request.size
+                guard size != appliedSize else { return }
+
+                #if DEBUG
+                if let resizeOperationForTesting = self.resizeOperationForTesting {
+                    await resizeOperationForTesting(size, .session(sessionId))
+                } else {
+                    await self.resizeSession(sessionId, cols: size.cols, rows: size.rows)
+                }
+                #else
+                await self.resizeSession(sessionId, cols: size.cols, rows: size.rows)
+                #endif
+
+                appliedSize = size
+            }
+        }
+
+        resizeRequests[requestID] = ResizeRequest(sessionId: sessionId, size: size, task: task)
+        resizeRequestBySession[sessionId] = requestID
+        return requestID
     }
 
     private func startRuntimeIfNeeded(for sessionId: UUID, terminal: GhosttyTerminalView) async {
@@ -3040,6 +3124,9 @@ extension ConnectionSessionManager {
         inputRequests.removeAll()
         inputRequestBySession.removeAll()
         lastInputTaskBySession.removeAll()
+        resizeRequests.values.forEach { $0.task.cancel() }
+        resizeRequests.removeAll()
+        resizeRequestBySession.removeAll()
         sessionReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
@@ -3062,6 +3149,7 @@ extension ConnectionSessionManager {
         sessionHostRetrustOperationForTesting = nil
         surfaceAttachOperationForTesting = nil
         inputOperationForTesting = nil
+        resizeOperationForTesting = nil
         isRestoring = false
 
         UserDefaults.standard.removeObject(forKey: persistenceKey)
@@ -3087,6 +3175,12 @@ extension ConnectionSessionManager {
         _ operation: (@MainActor (Data, TerminalEntityID) async -> Void)?
     ) {
         inputOperationForTesting = operation
+    }
+
+    func setResizeOperationForTesting(
+        _ operation: (@MainActor (TerminalResizeRequestSize, TerminalEntityID) async -> Void)?
+    ) {
+        resizeOperationForTesting = operation
     }
 
     @discardableResult

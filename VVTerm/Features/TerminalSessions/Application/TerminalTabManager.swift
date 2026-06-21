@@ -67,6 +67,12 @@ final class TerminalTabManager: ObservableObject {
         let task: Task<Void, Never>
     }
 
+    private struct ResizeRequest {
+        let paneId: UUID
+        var size: TerminalResizeRequestSize
+        let task: Task<Void, Never>
+    }
+
     private final class PaneRuntimeState {
         let paneId: UUID
         var server: Server
@@ -190,6 +196,9 @@ final class TerminalTabManager: ObservableObject {
     private var inputRequestByPane: [UUID: UUID] = [:]
     private var lastInputTaskByPane: [UUID: Task<Void, Never>] = [:]
     var pendingInputRequestIDs: Set<UUID> { Set(inputRequests.keys) }
+    private var resizeRequests: [UUID: ResizeRequest] = [:]
+    private var resizeRequestByPane: [UUID: UUID] = [:]
+    var pendingResizeRequestIDs: Set<UUID> { Set(resizeRequests.keys) }
     private var serverUnlocker: @MainActor (Server) async -> Bool = { server in
         await AppLockManager.shared.ensureServerUnlocked(server)
     }
@@ -218,6 +227,7 @@ final class TerminalTabManager: ObservableObject {
     private var paneHostRetrustOperationForTesting: (@MainActor (UUID, Server) async -> Bool)?
     private var surfaceAttachOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
     private var inputOperationForTesting: (@MainActor (Data, TerminalEntityID) async -> Void)?
+    private var resizeOperationForTesting: (@MainActor (TerminalResizeRequestSize, TerminalEntityID) async -> Void)?
     #endif
 
     /// Pane state keyed by pane ID
@@ -406,6 +416,10 @@ final class TerminalTabManager: ObservableObject {
 
     func waitForInputRequest(_ requestID: UUID) async {
         await inputRequests[requestID]?.task.value
+    }
+
+    func waitForResizeRequest(_ requestID: UUID) async {
+        await resizeRequests[requestID]?.task.value
     }
 
     /// Open a new tab for a server
@@ -970,6 +984,54 @@ final class TerminalTabManager: ObservableObject {
         } catch {
             logger.warning("Failed to resize pane PTY: \(error.localizedDescription)")
         }
+    }
+
+    @discardableResult
+    func requestPaneResize(_ size: TerminalResizeRequestSize, forPane paneId: UUID) -> UUID? {
+        guard size.isValid else { return nil }
+        guard paneStates[paneId] != nil else { return nil }
+
+        if let existingRequestID = resizeRequestByPane[paneId],
+           var request = resizeRequests[existingRequestID] {
+            request.size = size
+            resizeRequests[existingRequestID] = request
+            return existingRequestID
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.resizeRequests.removeValue(forKey: requestID)
+                if self.resizeRequestByPane[paneId] == requestID {
+                    self.resizeRequestByPane.removeValue(forKey: paneId)
+                }
+            }
+
+            var appliedSize: TerminalResizeRequestSize?
+            while !Task.isCancelled {
+                guard self.paneStates[paneId] != nil else { return }
+                guard let request = self.resizeRequests[requestID] else { return }
+                let size = request.size
+                guard size != appliedSize else { return }
+
+                #if DEBUG
+                if let resizeOperationForTesting = self.resizeOperationForTesting {
+                    await resizeOperationForTesting(size, .pane(paneId))
+                } else {
+                    await self.resizePane(paneId, cols: size.cols, rows: size.rows)
+                }
+                #else
+                await self.resizePane(paneId, cols: size.cols, rows: size.rows)
+                #endif
+
+                appliedSize = size
+            }
+        }
+
+        resizeRequests[requestID] = ResizeRequest(paneId: paneId, size: size, task: task)
+        resizeRequestByPane[paneId] = requestID
+        return requestID
     }
 
     private func startRuntimeIfNeeded(forPane paneId: UUID, terminal: GhosttyTerminalView) async {
@@ -1870,6 +1932,7 @@ final class TerminalTabManager: ObservableObject {
         cancelPaneRetryRequest(for: paneId)
         cancelPaneHostRetrustRequest(for: paneId)
         cancelInputRequests(for: paneId)
+        cancelResizeRequests(for: paneId)
         clearTmuxRuntimeState(for: paneId)
         unregisterTerminal(for: paneId)
         paneStates.removeValue(forKey: paneId)
@@ -1906,6 +1969,18 @@ final class TerminalTabManager: ObservableObject {
 
         inputRequestByPane.removeValue(forKey: paneId)
         lastInputTaskByPane.removeValue(forKey: paneId)
+    }
+
+    private func cancelResizeRequests(for paneId: UUID) {
+        let requestIDs = resizeRequests.compactMap { requestID, request in
+            request.paneId == paneId ? requestID : nil
+        }
+
+        for requestID in requestIDs {
+            resizeRequests.removeValue(forKey: requestID)?.task.cancel()
+        }
+
+        resizeRequestByPane.removeValue(forKey: paneId)
     }
 
     private func cancelPaneRetryRequest(for paneId: UUID) {
@@ -2686,6 +2761,9 @@ extension TerminalTabManager {
         inputRequests.removeAll()
         inputRequestByPane.removeAll()
         lastInputTaskByPane.removeAll()
+        resizeRequests.values.forEach { $0.task.cancel() }
+        resizeRequests.removeAll()
+        resizeRequestByPane.removeAll()
         paneReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
@@ -2708,6 +2786,7 @@ extension TerminalTabManager {
         paneHostRetrustOperationForTesting = nil
         surfaceAttachOperationForTesting = nil
         inputOperationForTesting = nil
+        resizeOperationForTesting = nil
         tmuxCleanupServers.removeAll()
         isRestoring = false
 
@@ -2736,6 +2815,12 @@ extension TerminalTabManager {
         _ operation: (@MainActor (Data, TerminalEntityID) async -> Void)?
     ) {
         inputOperationForTesting = operation
+    }
+
+    func setResizeOperationForTesting(
+        _ operation: (@MainActor (TerminalResizeRequestSize, TerminalEntityID) async -> Void)?
+    ) {
+        resizeOperationForTesting = operation
     }
 
     @discardableResult

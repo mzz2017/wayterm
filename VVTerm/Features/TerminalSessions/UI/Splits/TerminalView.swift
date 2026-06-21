@@ -946,10 +946,10 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
             coordinator.terminal = existingTerminal
 
             existingTerminal.onResize = { [paneId] cols, rows in
-                guard cols > 0 && rows > 0 else { return }
-                Task {
-                    await TerminalTabManager.shared.resizePane(paneId, cols: cols, rows: rows)
-                }
+                TerminalTabManager.shared.requestPaneResize(
+                    TerminalResizeRequestSize(cols: cols, rows: rows),
+                    forPane: paneId
+                )
             }
             existingTerminal.onPwdChange = { [paneId] rawDirectory in
                 TerminalTabManager.shared.updatePaneWorkingDirectory(paneId, rawDirectory: rawDirectory)
@@ -1020,9 +1020,10 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
 
         // Setup resize callback to notify SSH of terminal size changes
         terminalView.onResize = { [paneId] cols, rows in
-            Task {
-                await TerminalTabManager.shared.resizePane(paneId, cols: cols, rows: rows)
-            }
+            TerminalTabManager.shared.requestPaneResize(
+                TerminalResizeRequestSize(cols: cols, rows: rows),
+                forPane: paneId
+            )
         }
 
         // Wrap in scroll view

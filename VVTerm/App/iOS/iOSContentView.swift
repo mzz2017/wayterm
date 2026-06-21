@@ -1904,13 +1904,13 @@ struct iOSTerminalView: View {
 
             // Send resize to force server to redraw prompt
             if let size = terminal.terminalSize() {
-                Task {
-                    await ConnectionSessionManager.shared.resizeSession(
-                        session.id,
+                ConnectionSessionManager.shared.requestSessionResize(
+                    TerminalResizeRequestSize(
                         cols: Int(size.columns),
                         rows: Int(size.rows)
-                    )
-                }
+                    ),
+                    for: session.id
+                )
             }
         }
     }

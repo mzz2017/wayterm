@@ -100,10 +100,10 @@ struct SSHTerminalWrapper: NSViewRepresentable {
             // Update callbacks because the SwiftUI coordinator can be recreated
             // while the application-owned runtime stays alive.
             existingTerminal.onResize = { [session] cols, rows in
-                guard cols > 0 && rows > 0 else { return }
-                Task {
-                    await ConnectionSessionManager.shared.resizeSession(session.id, cols: cols, rows: rows)
-                }
+                ConnectionSessionManager.shared.requestSessionResize(
+                    TerminalResizeRequestSize(cols: cols, rows: rows),
+                    for: session.id
+                )
             }
             existingTerminal.onPwdChange = { [sessionId = session.id] rawDirectory in
                 ConnectionSessionManager.shared.updateSessionWorkingDirectory(sessionId, rawDirectory: rawDirectory)
@@ -185,10 +185,10 @@ struct SSHTerminalWrapper: NSViewRepresentable {
 
         // Setup resize callback to notify SSH of terminal size changes
         terminalView.onResize = { [sessionId = session.id] cols, rows in
-            guard cols > 0 && rows > 0 else { return }
-            Task {
-                await ConnectionSessionManager.shared.resizeSession(sessionId, cols: cols, rows: rows)
-            }
+            ConnectionSessionManager.shared.requestSessionResize(
+                TerminalResizeRequestSize(cols: cols, rows: rows),
+                for: sessionId
+            )
         }
 
         // Wrap in scroll view
@@ -391,10 +391,10 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             }
             coordinator.installRichPasteInterception(on: existingTerminal)
             existingTerminal.onResize = { [session] cols, rows in
-                guard cols > 0 && rows > 0 else { return }
-                Task {
-                    await ConnectionSessionManager.shared.resizeSession(session.id, cols: cols, rows: rows)
-                }
+                ConnectionSessionManager.shared.requestSessionResize(
+                    TerminalResizeRequestSize(cols: cols, rows: rows),
+                    for: session.id
+                )
             }
 
             if size.width > 0 && size.height > 0 {
@@ -458,10 +458,10 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             coordinator?.sendToSSH(data)
         }
         terminalView.onResize = { [session] cols, rows in
-            guard cols > 0 && rows > 0 else { return }
-            Task {
-                await ConnectionSessionManager.shared.resizeSession(session.id, cols: cols, rows: rows)
-            }
+            ConnectionSessionManager.shared.requestSessionResize(
+                TerminalResizeRequestSize(cols: cols, rows: rows),
+                for: session.id
+            )
         }
 
         coordinator.lastReportedSize = initialSize
