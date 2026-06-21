@@ -4474,8 +4474,98 @@ Before review, verify request API names match the previous `requestSessionRetry`
 
 Request code review for Task 59. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
 
+## Task 60: Terminal Resize Intent Boundary
+
+**Files:**
+- Create: `VVTermTests/TerminalResizeIntentTests.swift`
+- Create: `VVTermTests/TerminalResizeBoundaryTests.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
+- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing low-level async runtime resize APIs: `ConnectionSessionManager.resizeSession(_:cols:rows:)` and `TerminalTabManager.resizePane(_:cols:rows:)`.
+  - Existing terminal surface callbacks `GhosttyTerminalView.onResize`.
+  - Existing manager reset hooks and DEBUG runtime test seams.
+- Produces:
+  - `ConnectionSessionManager.requestSessionResize(sessionId:cols:rows:) -> UUID?`: validates dimensions, coalesces or supersedes pending resize intent for the session, stores the resize task, and calls `resizeSession(_:cols:rows:)` from manager-owned request work.
+  - `TerminalTabManager.requestPaneResize(paneId:cols:rows:) -> UUID?`: same request boundary for split panes.
+  - `pendingResizeRequestIDs` and `waitForResizeRequest(_:)` on both managers for lifecycle tests.
+  - DEBUG-only resize operation seams that let tests prove resize/no-resize decisions without constructing `GhosttyTerminalView` or opening SSH.
+
+- [ ] **Step 1: Add RED resize request and boundary tests**
+
+Add `TerminalResizeIntentTests` with the required Test Context. Cover:
+- a root session resize request rejects non-positive `cols` or `rows` without creating a task;
+- a root session resize request stays tracked until the resize operation finishes;
+- duplicate root resize intent for the same session does not create unbounded concurrent resize tasks and the latest accepted size is the one applied;
+- a split-pane resize request rejects non-positive sizes and stays tracked until completion;
+- duplicate split-pane resize intent for the same pane uses the latest accepted size.
+
+Add `TerminalResizeBoundaryTests` with a Test Context header. Source-scan:
+- `SSHTerminalWrapper.swift` must call `requestSessionResize(...)` from resize callbacks and must not directly create `Task { await ConnectionSessionManager.shared.resizeSession(...) }`;
+- `TerminalView.swift` split wrapper must call `TerminalTabManager.shared.requestPaneResize(...)` from resize callbacks and must not directly create `Task { await TerminalTabManager.shared.resizePane(...) }`.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalResizeIntentTests -only-testing:VVTermTests/TerminalResizeBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: the focused suite fails to compile because `requestSessionResize(...)`, `requestPaneResize(...)`, pending resize request IDs, wait hooks, and DEBUG resize seams do not exist. If it compiles unexpectedly, boundary tests fail because representables still own resize `Task` wrappers.
+
+- [ ] **Step 2: Add manager-owned root session resize requests**
+
+Implement root-session resize request tracking in `ConnectionSessionManager`. The request should:
+1. reject non-positive `cols` or `rows` without creating a task;
+2. reject missing sessions without creating a task;
+3. if a resize request is already pending for the session, update the pending request's latest dimensions and return the existing request ID;
+4. run the resize from a stored task and clear tracking in `defer`;
+5. read the latest dimensions immediately before calling `resizeSession(_:cols:rows:)`;
+6. expose `pendingResizeRequestIDs` and `waitForResizeRequest(_:)` for tests.
+
+Use a DEBUG resize-operation seam so tests can count resize attempts without real SSH. Keep existing `resizeSession(_:cols:rows:)` as the low-level async boundary used by the request task.
+
+- [ ] **Step 3: Add split-pane resize requests**
+
+Add equivalent request tracking to `TerminalTabManager` for pane resize. It should reject missing pane state and non-positive sizes, coalesce duplicate pending pane resize intent by keeping the latest dimensions, expose pending IDs and a wait hook, and keep existing `resizePane(_:cols:rows:)` as the low-level async boundary.
+
+- [ ] **Step 4: Route representable resize callbacks through request APIs**
+
+Update `SSHTerminalWrapper` macOS and iOS resize callbacks:
+- reused-terminal and newly-created-terminal paths should call `ConnectionSessionManager.shared.requestSessionResize(sessionId:cols:rows:)`;
+- remove direct `Task { await ConnectionSessionManager.shared.resizeSession(...) }` wrappers from resize callbacks.
+
+Update `SSHTerminalPaneWrapper` in `TerminalView.swift`:
+- reused and newly-created pane resize callbacks should call `TerminalTabManager.shared.requestPaneResize(paneId:cols:rows:)`;
+- remove direct `Task { await TerminalTabManager.shared.resizePane(...) }` wrappers from resize callbacks.
+
+This task deliberately leaves input, rich-paste, title/background parsing, and RemoteFiles navigation `Task` bridges for later slices.
+
+- [ ] **Step 5: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalResizeIntentTests -only-testing:VVTermTests/TerminalResizeBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "resizeSession\\(|resizePane\\(|requestSessionResize|requestPaneResize|Task \\{[^\\n]*resize" VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows resize callbacks use request APIs and representables no longer own resize `Task` wrappers. Remaining `Task` hits for send input, rich paste, title/background parsing, process exit, and file navigation must be named in the Progress Ledger as deferred slices.
+
+- [ ] **Step 6: API and boundary cleanup**
+
+Before review, verify request API names match the previous `requestSurfaceAttach`, `requestSessionRetry`, and `requestPaneRetry` style; UI supplies only dimensions; managers own request tracking and low-level resize invocation; DEBUG seams are reset in test cleanup; tests include the required Test Context and Given / When / Then comments.
+
+- [ ] **Step 7: Request review and commit**
+
+Request code review for Task 60. Fix Critical and Important findings, update the Progress Ledger with RED/GREEN evidence, verification, and cleanup notes, then commit atomically.
+
 ## Progress Ledger
 
+- 2026-06-21: Post-Task-59 scan selected Task 60 as the next executable lifecycle slice. Task 59 moved terminal surface attach/start decisions into TerminalSessions managers, and the working tree was clean after commit `79d18e7`. A follow-up scan found the same root/split representables still launch UI-owned resize `Task` wrappers from `GhosttyTerminalView.onResize`: root macOS/iOS callbacks call `ConnectionSessionManager.shared.resizeSession(...)`, and split pane callbacks call `TerminalTabManager.shared.resizePane(...)`. The low-level async resize APIs already live in the application managers and route through manager-owned runtime state, so the next minimal boundary is to add tracked resize request APIs and route callbacks through them. Task 60 should not widen into send input, rich paste, title/background parsing, process-exit, or RemoteFiles navigation tasks.
 - 2026-06-21: Task 59 RED/GREEN completed with review fixes. `SSHTerminalWrapper` and split `SSHTerminalPaneWrapper` no longer decide shell-missing, shell-start-in-flight, reconnect-reset, app-active, or background-suspend attach policy before starting runtime work. They now pass value-only `TerminalSurfaceAttachContext` plus the concrete `GhosttyTerminalView` to `ConnectionSessionManager.requestSurfaceAttach(...)` or `TerminalTabManager.requestSurfaceAttach(...)`. The managers own tracked surface attach request tasks, revalidate duplicate pending intent against the latest UI context, store that latest context for the task to recheck before attaching, reject existing shell/shell-start-in-flight cases, expose pending request IDs plus wait hooks, and reset DEBUG attach seams during test cleanup. Root-session requests consume reconnect reset only after an accepted attach decision and require app active, view active, no background suspension, and auto-reconnect for disconnected sessions; macOS and iOS root wrappers both pass the `sshAutoReconnect` preference. Split-pane requests use the same active-context and shell guards without adding root-only reconnect-reset behavior. Initial RED failed to compile because `TerminalSurfaceAttachContext`, request APIs, pending IDs, wait hooks, and DEBUG attach seams did not exist. Review found two Important issues: inactive duplicate context was being treated as accepted, and macOS root context hard-coded auto-reconnect. Both were fixed, and narrow re-review reported no remaining findings. GREEN focused verification passed 7 Swift Testing tests in 2 suites with `ENABLE_DEBUG_DYLIB=NO`. The boundary scan showed no forbidden root wrapper references to `shellId(for:)`, `isShellStartInFlight`, `consumeTerminalReconnectReset`, `isSuspendingForBackground`, or direct `Task { await ConnectionSessionManager.shared.attachSurface... }`, and no forbidden split wrapper references to `shellId(for:)`, `isShellStartInFlight`, or direct `Task { await TerminalTabManager.shared.attachSurface... }`. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. Remaining `Task {}` hits in terminal wrapper/split files are existing credential reload, process-exit/pane lifecycle, file navigation, resize/input/rich-paste/title/background parsing paths and remain deferred to later slices.
 - 2026-06-21: Post-Task-58 scan selected Task 59 as the next executable lifecycle slice. The working tree was clean after Task 58, so remaining SwiftUI lifecycle hotspots were rescanned. A read-only explorer and local scan found the clearest next TerminalSessions gap in terminal surface attach/start policy: `SSHTerminalWrapper` and split `SSHTerminalPaneWrapper` still create untracked attach `Task` wrappers and let representables decide shell-missing, shell-start-in-flight, reconnect-reset, app-active, and background-suspend policy before calling application managers. This can start runtime work from SwiftUI/representable callbacks and still relies on stale display `connectionState` in the iOS update path. Task 59 should move attach/start policy into `ConnectionSessionManager` and `TerminalTabManager` request APIs, keep UI limited to surface/presentation context, and defer resize/input/rich-paste callback task bridges to later slices.
 - 2026-06-21: Task 58 RED/GREEN completed with review fix. `iOSContentView.disconnectActiveConnection(_:)`, `iOSContentView.disconnectCurrentServerSessions()`, and `ConnectionTabsView.disconnectFromServer()` now synchronously send server-disconnect intent to `ServerConnectionLifecycleCoordinator.shared.requestServerDisconnect(...)` instead of launching SwiftUI-owned `Task` blocks that manually await terminal manager teardown. `ServerConnectionLifecycleCoordinator` lives in App/Application as the cross-feature owner for server-scoped disconnect request ordering; it tracks request tasks by request ID, coalesces duplicate same-server intent, awaits RemoteFiles teardown before file-tab cleanup and terminal disconnect, then drains queued presentation callbacks after teardown completes. Initial RED focused tests failed to compile because `ServerConnectionLifecycleCoordinator` did not exist. An intermediate GREEN attempt exposed boundary-test failures where UI closure literals still contained direct `await sessionManager.disconnectServerAndWait` / `await tabManager.disconnectServerAndWait`; passing the async manager methods as side-effectful actions fixed the boundary. Review found no Critical issues and one Important callback-coalescing edge: completion callbacks appended by synchronous same-server reentry during completion delivery were appended after the old snapshot and then dropped. Review-fix RED reproduced the missing `complete-2` callback; GREEN drains completion callbacks by index until no newly appended callbacks remain, preserving one teardown chain for reentrant duplicate intent. Narrow re-review found no remaining Critical, Important, or Minor issues. Final focused tests passed 6 Swift Testing tests in 2 suites. The scoped source scan shows the three disconnect helpers call `requestServerDisconnect(...)` and contain no helper-local `Task {}` wrappers or direct old await calls; remaining `Task {}` hits in the scanned files are existing non-disconnect file navigation, Active Connection open, terminal-state recovery, and deferred UI paths. `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`.
