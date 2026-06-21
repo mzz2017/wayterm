@@ -88,7 +88,7 @@ preserved in the archive.
 - [x] 2. Split terminal UI injected-manager boundary. Completed by Task 78.
 - [x] 3. Rich paste runtime manager injection. Completed by Task 79.
 - [x] 4. iOS foreground reconnect request tracking. Completed by Task 80.
-- [ ] 5. Server connection-test cancellation and stale callbacks.
+- [x] 5. Server connection-test cancellation and stale callbacks.
   - Evidence: `ServerConnectionTester` stores request tasks and exposes wait,
     but `ServerFormSheet` starts tests without retaining/canceling the request;
     field changes reset UI state only.
@@ -229,6 +229,110 @@ Before review, verify `cancelConnectionTestRequest(_:)` naming matches other man
 - [x] **Step 6: Review and commit**
 
 Perform local lifecycle review against the Swift checklist unless the user explicitly authorizes new subagents. Fix Critical and Important findings, update Must-Fix 5 status plus Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
+
+## Task 82: RemoteFiles Transfer and Mutation Disconnect Cancellation
+
+**Files:**
+- Modify: `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
+- Modify: `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift`
+- Modify: `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift`
+- Test: `VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
+- Test: `VVTermTests/RemoteFileMutationIntentBoundaryTests.swift`
+- Modify: `docs/refactor-swift-best-practice.md`
+
+**Interfaces:**
+- Consumes:
+  - Existing `RemoteFileBrowserStore.requestMutation(...)`.
+  - Existing `RemoteFileBrowserStore.requestTransfer(...)`.
+  - Existing `pendingMutationRequestIDs`, `pendingTransferRequestIDs`, `waitForMutationRequest(_:)`, and `waitForTransferRequest(_:)`.
+  - Existing `RemoteFileBrowserScreen.performOperation(...)` and `performTransfer(...)`.
+- Produces:
+  - `RemoteFileBrowserStore.requestMutation(serverId:operation:onSuccess:onFailure:) -> UUID`.
+  - `RemoteFileBrowserStore.requestTransfer(serverId:operation:onProgress:onSuccess:onFailure:) -> UUID`.
+  - `RemoteFileBrowserStore.cancelMutationRequests(for:)`.
+  - `RemoteFileBrowserStore.cancelTransferRequests(for:)`.
+  - `disconnect(serverId:)` cancels same-server visible mutation and transfer requests while keeping wait hooks awaitable until blocked operations exit.
+  - RemoteFiles UI helpers pass `server.id` into mutation/transfer requests.
+
+- [ ] **Step 1: Add RED disconnect cancellation tests**
+
+Extend `RemoteFileBrowserStoreTests`:
+- `disconnectCancelsVisibleMutationRequestsForServerAndSkipsLateSuccess`
+  - Start `requestMutation(serverId: server.id, operation:)` with a blocked `RemoteFileMutationGate`.
+  - Assert `pendingMutationRequestIDs` contains the request ID.
+  - Call `disconnect(serverId: server.id)`.
+  - Assert visible pending mutation state clears immediately.
+  - Release the gate and await `waitForMutationRequest(_:)`.
+  - Assert success/failure callbacks did not run after cancellation.
+- `disconnectCancelsVisibleTransferRequestsForServerAndSkipsLateProgressAndSuccess`
+  - Start `requestTransfer(serverId: server.id, operation:)` with a blocked gate.
+  - Call `disconnect(serverId: server.id)` before the operation emits progress.
+  - Assert visible pending transfer state clears immediately.
+  - Release the gate and await `waitForTransferRequest(_:)`.
+  - Assert progress, success, and failure callbacks did not run after cancellation.
+- `disconnectLeavesOtherServerMutationAndTransferRequestsPending`
+  - Start one mutation and one transfer for a different server.
+  - Disconnect `server.id`.
+  - Assert the other server's request IDs remain visible until their gates release.
+
+Extend `RemoteFileMutationIntentBoundaryTests`:
+- Update `browserScreenDelegatesMutationTaskOwnershipToStore` to assert mutation helpers call `browser.requestMutation(serverId: server.id, ...)`.
+- Update `transferAndDropDelegatesTaskOwnershipToStore` to assert transfer helpers call `browser.requestTransfer(serverId: server.id, ...)`.
+- Add a macOS export assertion that direct `browser.requestTransfer(...)` in `RemoteFileBrowserMacScreen` also passes `serverId: server.id`.
+
+Expected RED command:
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+```
+
+Expected RED result: tests fail because mutation/transfer request APIs do not accept `serverId`, disconnect does not cancel mutation/transfer requests, and UI helpers do not pass server identity.
+
+- [ ] **Step 2: Add server-scoped mutation and transfer request records**
+
+Update `RemoteFileBrowserStore.swift`:
+- Replace mutation and transfer task dictionaries with private records containing `serverId: UUID?`, `task`, and cancellation state.
+- Keep existing overloads source-compatible by adding default `serverId: UUID? = nil`.
+- Add `cancelMutationRequests(for serverId: UUID)` and `cancelTransferRequests(for serverId: UUID)` that mark matching requests canceled, remove them from visible pending IDs, and cancel their tasks.
+- Update `pendingMutationRequestIDs` and `pendingTransferRequestIDs` to expose only non-canceled request IDs.
+- Keep `waitForMutationRequest(_:)` and `waitForTransferRequest(_:)` awaitable for canceled-but-running tasks until the operation exits.
+- Guard mutation success/failure callbacks, transfer progress callbacks, and transfer success/failure callbacks with request cancellation and `Task.isCancelled`.
+- Treat cancellation as lifecycle state, not a user-facing transfer/mutation failure.
+
+- [ ] **Step 3: Cancel same-server requests from disconnect**
+
+Update `disconnect(serverId:)`:
+- Call `cancelMutationRequests(for: serverId)` and `cancelTransferRequests(for: serverId)` before adapter disconnect.
+- Keep existing move-destination/navigation/preview cancellation behavior unchanged.
+- Do not await mutation/transfer requests in `disconnect`; only keep their wait hooks available for tests and later lifecycle callers.
+
+- [ ] **Step 4: Pass server identity from UI helpers**
+
+Update `RemoteFileBrowserScreen.swift`:
+- In both `performOperation` overloads, call `browser.requestMutation(serverId: server.id, ...)`.
+- In both `performTransfer` paths, call `browser.requestTransfer(serverId: server.id, ...)`.
+- Keep error presentation, transfer progress, upload planning, and user-facing copy unchanged.
+
+Update `RemoteFileBrowserMacScreen.swift`:
+- In AppKit file export, call `browser.requestTransfer(serverId: server.id, ...)`.
+
+- [ ] **Step 5: Run focused verification**
+
+```bash
+xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "requestMutation\\(serverId:|requestTransfer\\(serverId:|cancelMutationRequests|cancelTransferRequests|pendingMutationRequestIDs|pendingTransferRequestIDs|waitForMutationRequest|waitForTransferRequest" VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift VVTermTests/RemoteFileMutationIntentBoundaryTests.swift
+git diff --check
+```
+
+Expected GREEN result: focused tests pass; source scan shows UI passes server identity and disconnect cancels same-server mutation/transfer requests without stale progress/success/failure callbacks.
+
+- [ ] **Step 6: API and boundary cleanup**
+
+Before review, verify mutation/transfer request API naming remains source-compatible and grammatical, RemoteFiles UI still sends intent only, canceled visible pending state is distinct from awaitable running work, no temporary test-only production helpers were added, and disconnect ordering still waits for pending adapter teardown before new same-server SFTP operations.
+
+- [ ] **Step 7: Review and commit**
+
+Perform local lifecycle review against the Swift checklist unless the user explicitly authorizes new subagents. Fix Critical and Important findings, update Must-Fix 6 status plus Progress Ledger with RED/GREEN evidence, verification, review outcome, and cleanup notes, then commit atomically.
 
 ## Verification Template
 
