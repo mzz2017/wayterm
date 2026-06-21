@@ -6,8 +6,8 @@ import Testing
 // persistence and cleanup actions. Settings views may send user intent, but they
 // must not own destructive cleanup tasks or call lower-level stores directly.
 // The tests inspect source placement only; update them only when the trusted
-// host or reusable SSH key settings owner intentionally moves to another
-// application-layer type.
+// host, reusable SSH key, or custom terminal theme settings owner intentionally
+// moves to another application-layer type.
 @Suite
 struct SettingsLifecycleBoundaryTests {
     @Test
@@ -51,6 +51,27 @@ struct SettingsLifecycleBoundaryTests {
         #expect(
             !source.contains("Task {"),
             "KeychainSettingsView should not own SSH key generation Task state."
+        )
+    }
+
+    @Test
+    func terminalSettingsDoesNotSwallowCustomThemePersistenceFailures() throws {
+        // Given the terminal settings SwiftUI source.
+        let root = try sourceRoot()
+        let source = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/UI/TerminalSettingsView.swift")
+        )
+
+        // Then custom theme deletion must keep using the throwing
+        // TerminalThemeManager intent so persistence failure can be surfaced to
+        // the sheet instead of being swallowed by UI code.
+        #expect(
+            !source.contains("try? terminalThemeManager.deleteCustomTheme"),
+            "TerminalSettingsView should not swallow custom theme delete failures with try?."
+        )
+        #expect(
+            source.contains("let onDelete: (UUID) throws -> Void"),
+            "ManageCustomThemesSheet should keep custom theme deletion as a throwing intent."
         )
     }
 
