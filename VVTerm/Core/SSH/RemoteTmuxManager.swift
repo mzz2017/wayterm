@@ -1,12 +1,12 @@
 import Foundation
 
-struct RemoteTmuxSession: Hashable {
+nonisolated struct RemoteTmuxSession: Hashable {
     let name: String
     let attachedClients: Int
     let windowCount: Int
 }
 
-enum RemoteTmuxBackend: Hashable, Sendable {
+nonisolated enum RemoteTmuxBackend: Hashable, Sendable {
     case unixTmux
     case windowsPsmux(commandName: String, shellFamily: RemoteShellFamily, powerShellExecutable: String?)
     case zmx(commandName: String)
