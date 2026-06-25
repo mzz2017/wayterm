@@ -5,7 +5,7 @@ import MoshBootstrap
 
 // MARK: - SSH Client using libssh2
 
-struct ShellHandle {
+nonisolated struct ShellHandle {
     let id: UUID
     let stream: AsyncStream<Data>
     let transport: ShellTransport
@@ -24,7 +24,7 @@ struct ShellHandle {
     }
 }
 
-enum SSHUploadStrategy: Sendable {
+nonisolated enum SSHUploadStrategy: Sendable {
     case automatic
     case execPreferred
 }
@@ -901,7 +901,7 @@ nonisolated actor SSHClient {
     }
 }
 
-nonisolated actor SSHConnectionOperationService {
+actor SSHConnectionOperationService {
     static let shared = SSHConnectionOperationService()
 
     private init() {}
@@ -1419,7 +1419,7 @@ nonisolated actor SSHSession {
         let sftp = try await ensureSFTPSession()
         let normalizedPath = RemoteFilePath.normalize(path)
         let handle = try await openDirectoryHandle(at: normalizedPath, sftp: sftp)
-        defer { driver.closeSFTPHandle(handle) }
+        defer { closeSFTPHandle(handle, after: "list directory") }
 
         let limit = maxEntries ?? .max
         var entries: [RemoteFileEntry] = []
@@ -1496,7 +1496,7 @@ nonisolated actor SSHSession {
             flags: UInt32(LIBSSH2_FXF_READ),
             mode: 0
         )
-        defer { driver.closeSFTPHandle(handle) }
+        defer { closeSFTPHandle(handle, after: "read file") }
 
         if offset > 0 {
             driver.seekSFTPFile(handle: handle, offset: offset)
@@ -1545,7 +1545,7 @@ nonisolated actor SSHSession {
             flags: UInt32(LIBSSH2_FXF_READ),
             mode: 0
         )
-        defer { driver.closeSFTPHandle(handle) }
+        defer { closeSFTPHandle(handle, after: "download file") }
 
         let fileManager = FileManager.default
         let destinationDirectory = localURL.deletingLastPathComponent()
@@ -1600,7 +1600,7 @@ nonisolated actor SSHSession {
             mode: permissions,
             operation: "write file"
         )
-        defer { driver.closeSFTPHandle(handle) }
+        defer { closeSFTPHandle(handle, after: "write file") }
 
         var totalBytesWritten = 0
         while totalBytesWritten < data.count {
@@ -1625,6 +1625,26 @@ nonisolated actor SSHSession {
 
             throw remoteFileError(from: sftp, operation: "write file", path: normalizedPath)
         }
+    }
+
+    private func closeSFTPHandle(_ handle: OpaquePointer, after operation: String) {
+        let closeResult = driver.closeSFTPHandle(handle)
+        guard closeResult != 0 else { return }
+        guard let session = libssh2Session else {
+            logger.debug(
+                "libssh2 sftp handle close after \(operation, privacy: .public) returned \(closeResult) [message: no active session]"
+            )
+            return
+        }
+
+        let rawError = driver.lastError(
+            session: session,
+            operation: .sftpCloseHandle,
+            fallbackCode: closeResult
+        )
+        logger.debug(
+            "libssh2 sftp handle close after \(operation, privacy: .public) returned \(rawError.code) [message: \(rawError.message ?? "none", privacy: .public)]"
+        )
     }
 
     func resolveHomeDirectory() async throws -> String {
@@ -2857,7 +2877,7 @@ nonisolated actor SSHSession {
 
 // MARK: - SSH Session Config
 
-struct SSHSessionConfig {
+nonisolated struct SSHSessionConfig {
     let host: String
     let port: Int
     let dialHost: String

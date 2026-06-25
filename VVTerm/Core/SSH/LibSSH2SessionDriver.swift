@@ -5,7 +5,7 @@ import Foundation
 /// libssh2 has process-global lifecycle (`libssh2_init`/`libssh2_exit`).
 /// Initialize once and keep alive for the app lifetime to avoid tearing down
 /// the library while other SSH sessions are still active.
-private enum LibSSH2Runtime {
+nonisolated private enum LibSSH2Runtime {
     private static let lock = NSLock()
     private static var initialized = false
 
@@ -204,7 +204,7 @@ protocol LibSSH2SessionDriving: Sendable {
     nonisolated func free(session: OpaquePointer) -> Int32
 }
 
-struct LibSSH2SessionDriver: LibSSH2SessionDriving {
+nonisolated struct LibSSH2SessionDriver: LibSSH2SessionDriving {
     nonisolated func ensureRuntimeInitialized() throws {
         try LibSSH2Runtime.ensureInitialized()
     }
