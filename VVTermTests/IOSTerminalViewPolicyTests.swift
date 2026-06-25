@@ -83,6 +83,60 @@ struct IOSTerminalViewPolicyTests {
     }
 
     @Test
+    func selectedSessionRecoveryKeepsValidSelection() {
+        let currentServerId = UUID()
+        let selectedSessionId = UUID()
+
+        // Given the selected session still belongs to the current server.
+        let recovery = IOSTerminalViewPolicy.recoveredSelectedSessionId(
+            currentServerId: currentServerId,
+            selectedSessionId: selectedSessionId,
+            serverSessionIds: [selectedSessionId, UUID()]
+        )
+
+        // Then no mutation is needed.
+        #expect(recovery == nil)
+    }
+
+    @Test
+    func selectedSessionRecoveryFallsBackWhenSelectionLeavesCurrentServer() {
+        let currentServerId = UUID()
+        let fallbackSessionId = UUID()
+
+        // Given a stale selected session no longer belongs to the current server.
+        let recovery = IOSTerminalViewPolicy.recoveredSelectedSessionId(
+            currentServerId: currentServerId,
+            selectedSessionId: UUID(),
+            serverSessionIds: [fallbackSessionId, UUID()]
+        )
+
+        // Then the first current-server session becomes the replacement.
+        #expect(recovery == fallbackSessionId)
+    }
+
+    @Test
+    func selectedSessionRecoveryDoesNotMutateWithoutCurrentServerOrFallback() {
+        // Given there is no current server context, selection recovery should
+        // wait until the view has enough context to avoid cross-server jumps.
+        #expect(
+            IOSTerminalViewPolicy.recoveredSelectedSessionId(
+                currentServerId: nil,
+                selectedSessionId: UUID(),
+                serverSessionIds: [UUID()]
+            ) == nil
+        )
+
+        // Given the current server has no sessions, there is no valid fallback.
+        #expect(
+            IOSTerminalViewPolicy.recoveredSelectedSessionId(
+                currentServerId: UUID(),
+                selectedSessionId: UUID(),
+                serverSessionIds: []
+            ) == nil
+        )
+    }
+
+    @Test
     func floatingControlsShowOnlyForPhoneTerminalBrowseModeWithoutBlockingOverlays() {
         // Given the iOS terminal is on a phone, the terminal tab is selected,
         // browse mode is active, and no find or voice overlay is occupying the

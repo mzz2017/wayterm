@@ -1048,6 +1048,17 @@ struct iOSTerminalView: View {
         }
     }
 
+    private func recoverSelectedSessionIfNeeded() {
+        guard let fallbackId = IOSTerminalViewPolicy.recoveredSelectedSessionId(
+            currentServerId: currentServerId,
+            selectedSessionId: sessionManager.selectedSessionId,
+            serverSessionIds: serverSessions.map(\.id)
+        ) else {
+            return
+        }
+        sessionManager.selectedSessionId = fallbackId
+    }
+
     var body: some View {
         alertContent
             .onAppear {
@@ -1055,12 +1066,7 @@ struct iOSTerminalView: View {
                 if currentServerId == nil {
                     currentServerId = connectingServer?.id ?? sessionManager.selectedSession?.serverId
                 }
-                if currentServerId != nil,
-                   let selectedId = sessionManager.selectedSessionId,
-                   !serverSessions.contains(where: { $0.id == selectedId }),
-                   let fallbackId = serverSessions.first?.id {
-                    sessionManager.selectedSessionId = fallbackId
-                }
+                recoverSelectedSessionIfNeeded()
                 synchronizeRecoveredTerminalState()
                 ensureInitialFileTabIfNeeded()
                 attemptForegroundReconnectIfNeeded(refreshTerminal: true)
@@ -1129,12 +1135,7 @@ struct iOSTerminalView: View {
                 reconnectTokenBySession = reconnectTokenBySession.filter { activeIds.contains($0.key) }
                 voiceRecordingBySession = voiceRecordingBySession.filter { activeIds.contains($0.key) }
                 pendingVoiceReturnBySession = pendingVoiceReturnBySession.filter { activeIds.contains($0.key) }
-                if currentServerId != nil,
-                   let selectedId = sessionManager.selectedSessionId,
-                   !serverSessions.contains(where: { $0.id == selectedId }),
-                   let fallbackId = serverSessions.first?.id {
-                    sessionManager.selectedSessionId = fallbackId
-                }
+                recoverSelectedSessionIfNeeded()
                 if selectedView == "terminal",
                    let selectedId = effectiveSelectedSessionId,
                    let session = serverSessions.first(where: { $0.id == selectedId }) {

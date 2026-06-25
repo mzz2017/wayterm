@@ -56,6 +56,19 @@ enum IOSTerminalViewPolicy {
         return serverSessionIds.first
     }
 
+    static func recoveredSelectedSessionId(
+        currentServerId: UUID?,
+        selectedSessionId: UUID?,
+        serverSessionIds: [UUID]
+    ) -> UUID? {
+        guard currentServerId != nil,
+              let selectedSessionId,
+              !serverSessionIds.contains(selectedSessionId) else {
+            return nil
+        }
+        return serverSessionIds.first
+    }
+
     static func terminalPreparation(
         sessionId: UUID,
         selectedViewId: String,
