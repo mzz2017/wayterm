@@ -42,7 +42,7 @@ enum TerminalThemeValidationError: LocalizedError {
 }
 
 enum TerminalThemeValidator {
-    private static let colorKeys = Set([
+    nonisolated private static let colorKeys = Set([
         "background",
         "foreground",
         "cursor-color",
