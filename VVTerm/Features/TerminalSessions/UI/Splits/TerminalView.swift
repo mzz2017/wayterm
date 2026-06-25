@@ -876,20 +876,21 @@ struct TerminalPaneView: View {
     }
 
     private func updateTerminalBackgroundColor() {
-        let themeName = effectiveThemeName
-        Task.detached(priority: .utility) {
-            let resolved = ThemeColorParser.backgroundColor(for: themeName)!
-            await MainActor.run {
-                terminalBackgroundColor = resolved
-                UserDefaults.standard.set(resolved.toHex(), forKey: "terminalBackgroundColor")
-            }
-        }
+        let resolved = TerminalThemeBackgroundResolver.resolve(
+            themeName: effectiveThemeName,
+            fallbackHex: terminalBackgroundFallbackHex
+        )
+        terminalBackgroundColor = resolved.usedFallback ? Self.platformFallbackBackgroundColor() : resolved.color
+        UserDefaults.standard.set(
+            resolved.storageHex,
+            forKey: TerminalThemeBackgroundResolver.cacheKey
+        )
     }
 
     private static func initialTerminalBackgroundColor() -> Color {
         let defaults = UserDefaults.standard
 
-        if let cachedHex = defaults.string(forKey: "terminalBackgroundColor") {
+        if let cachedHex = defaults.string(forKey: TerminalThemeBackgroundResolver.cacheKey) {
             return Color.fromHex(cachedHex)
         }
 
@@ -899,7 +900,25 @@ struct TerminalPaneView: View {
         let isDarkAppearance = NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let themeName = usePerAppearanceTheme ? (isDarkAppearance ? darkThemeName : lightThemeName) : darkThemeName
 
-        return ThemeColorParser.backgroundColor(for: themeName)!
+        let resolved = TerminalThemeBackgroundResolver.resolve(
+            themeName: themeName,
+            fallbackHex: isDarkAppearance ? "#000000" : "#FFFFFF"
+        )
+        return resolved.usedFallback ? platformFallbackBackgroundColor() : resolved.color
+    }
+
+    private var terminalBackgroundFallbackHex: String {
+        colorScheme == .dark ? "#000000" : "#FFFFFF"
+    }
+
+    private static func platformFallbackBackgroundColor() -> Color {
+        #if os(iOS)
+        return Color(UIColor.systemBackground)
+        #elseif os(macOS)
+        return Color(NSColor.windowBackgroundColor)
+        #else
+        return .black
+        #endif
     }
 
     private var voiceTriggerButton: some View {

@@ -155,7 +155,25 @@ struct ConnectionTerminalContainer: View {
     }
 
     private var liveTerminalBackgroundColor: Color {
-        ThemeColorParser.backgroundColor(for: effectiveThemeName)!
+        let resolved = TerminalThemeBackgroundResolver.resolve(
+            themeName: effectiveThemeName,
+            fallbackHex: terminalBackgroundFallbackHex
+        )
+        return resolved.usedFallback ? platformFallbackBackgroundColor : resolved.color
+    }
+
+    private var terminalBackgroundFallbackHex: String {
+        colorScheme == .dark ? "#000000" : "#FFFFFF"
+    }
+
+    private var platformFallbackBackgroundColor: Color {
+        #if os(iOS)
+        return Color(UIColor.systemBackground)
+        #elseif os(macOS)
+        return Color(NSColor.windowBackgroundColor)
+        #else
+        return .black
+        #endif
     }
 
     private var sharedBody: some View {
@@ -456,13 +474,14 @@ struct ConnectionTerminalContainer: View {
     }
 
     private func updateTerminalBackgroundColor() {
-        let themeName = effectiveThemeName
-        Task.detached(priority: .utility) {
-            let resolved = ThemeColorParser.backgroundColor(for: themeName)!
-            await MainActor.run {
-                UserDefaults.standard.set(resolved.toHex(), forKey: "terminalBackgroundColor")
-            }
-        }
+        let resolved = TerminalThemeBackgroundResolver.resolve(
+            themeName: effectiveThemeName,
+            fallbackHex: terminalBackgroundFallbackHex
+        )
+        UserDefaults.standard.set(
+            resolved.storageHex,
+            forKey: TerminalThemeBackgroundResolver.cacheKey
+        )
     }
 
     // MARK: - Toolbar Items (macOS)

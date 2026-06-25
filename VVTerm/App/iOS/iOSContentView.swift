@@ -993,19 +993,17 @@ struct iOSTerminalView: View {
     }
 
     private func updateTerminalBackgroundColor() {
-        let themeName = effectiveThemeName
         let fallback = colorScheme == .dark ? Color.black : Color(UIColor.systemBackground)
-        Task.detached(priority: .utility) {
-            let resolved = ThemeColorParser.backgroundColor(for: themeName)
-            await MainActor.run {
-                let color = resolved ?? fallback
-                terminalBackgroundColor = color
-
-                let fallbackHex = colorScheme == .dark ? "#000000" : "#FFFFFF"
-                let hex = resolved?.toHex() ?? fallbackHex
-                UserDefaults.standard.set(hex, forKey: "terminalBackgroundColor")
-            }
-        }
+        let fallbackHex = colorScheme == .dark ? "#000000" : "#FFFFFF"
+        let resolved = TerminalThemeBackgroundResolver.resolve(
+            themeName: effectiveThemeName,
+            fallbackHex: fallbackHex
+        )
+        terminalBackgroundColor = resolved.usedFallback ? fallback : resolved.color
+        UserDefaults.standard.set(
+            resolved.storageHex,
+            forKey: TerminalThemeBackgroundResolver.cacheKey
+        )
     }
 
     private func attemptForegroundReconnectIfNeeded(refreshTerminal: Bool = false) {

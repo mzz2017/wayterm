@@ -167,11 +167,16 @@ struct RemoteFileBrowserScreen: View {
     }
 
     var terminalThemeBackgroundColor: Color {
-        if let color = ThemeColorParser.backgroundColor(for: effectiveThemeName) {
-            return color
+        let fallbackHex = colorScheme == .dark ? "#000000" : "#FFFFFF"
+        let resolved = TerminalThemeBackgroundResolver.resolve(
+            themeName: effectiveThemeName,
+            fallbackHex: fallbackHex
+        )
+        if !resolved.usedFallback {
+            return resolved.color
         }
 
-        if let cachedHex = UserDefaults.standard.string(forKey: "terminalBackgroundColor") {
+        if let cachedHex = UserDefaults.standard.string(forKey: TerminalThemeBackgroundResolver.cacheKey) {
             return Color.fromHex(cachedHex)
         }
 

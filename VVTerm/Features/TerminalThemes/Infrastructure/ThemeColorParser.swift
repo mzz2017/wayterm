@@ -26,12 +26,20 @@ struct ThemeColorParser {
     /// - Parameter themeName: The name of the theme (e.g., "Aizen Dark")
     /// - Returns: The background Color if found, nil otherwise
     nonisolated static func backgroundColor(for themeName: String) -> Color? {
+        guard let colorHex = backgroundColorHex(for: themeName) else {
+            return nil
+        }
+
+        return Color.fromHex(colorHex)
+    }
+
+    nonisolated static func backgroundColorHex(for themeName: String) -> String? {
         guard let content = themeContent(for: themeName),
               let colorHex = value(for: "background", in: content) else {
             return nil
         }
 
-        return Color.fromHex(colorHex)
+        return normalizedStorageHex(colorHex)
     }
 
     nonisolated static func previewPalette(for themeName: String) -> TerminalThemePreviewPalette {
@@ -165,5 +173,9 @@ struct ThemeColorParser {
             return String(trimmed.dropFirst())
         }
         return trimmed
+    }
+
+    private nonisolated static func normalizedStorageHex(_ value: String) -> String {
+        "#\(normalizeHex(value).uppercased())"
     }
 }

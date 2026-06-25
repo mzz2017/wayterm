@@ -53,7 +53,20 @@ struct ContentView: View {
     }
 
     private var macOSWindowBackgroundColor: Color {
-        ThemeColorParser.backgroundColor(for: effectiveTerminalThemeName)!
+        let fallbackHex = colorScheme == .dark ? "#000000" : "#FFFFFF"
+        let resolved = TerminalThemeBackgroundResolver.resolve(
+            themeName: effectiveTerminalThemeName,
+            fallbackHex: fallbackHex
+        )
+        if !resolved.usedFallback {
+            return resolved.color
+        }
+
+        #if os(macOS)
+        return Color(NSColor.windowBackgroundColor)
+        #else
+        return colorScheme == .dark ? .black : .white
+        #endif
     }
 
     #if os(macOS)

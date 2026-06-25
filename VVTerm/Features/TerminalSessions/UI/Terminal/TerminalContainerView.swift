@@ -634,19 +634,26 @@ struct TerminalContainerView: View {
     }
 
     private func updateTerminalBackgroundColor() {
-        if let color = ThemeColorParser.backgroundColor(for: effectiveThemeName) {
-            terminalBackgroundColor = color
-            UserDefaults.standard.set(color.toHex(), forKey: "terminalBackgroundColor")
-        } else {
-            terminalBackgroundColor = Self.platformFallbackBackgroundColor()
-        }
+        let resolved = TerminalThemeBackgroundResolver.resolve(
+            themeName: effectiveThemeName,
+            fallbackHex: terminalBackgroundFallbackHex
+        )
+        terminalBackgroundColor = resolved.usedFallback ? Self.platformFallbackBackgroundColor() : resolved.color
+        UserDefaults.standard.set(
+            resolved.storageHex,
+            forKey: TerminalThemeBackgroundResolver.cacheKey
+        )
     }
 
     private static func initialTerminalBackgroundColor() -> Color {
-        if let cachedHex = UserDefaults.standard.string(forKey: "terminalBackgroundColor") {
+        if let cachedHex = UserDefaults.standard.string(forKey: TerminalThemeBackgroundResolver.cacheKey) {
             return Color.fromHex(cachedHex)
         }
         return platformFallbackBackgroundColor()
+    }
+
+    private var terminalBackgroundFallbackHex: String {
+        colorScheme == .dark ? "#000000" : "#FFFFFF"
     }
 
     private static func platformFallbackBackgroundColor() -> Color {
