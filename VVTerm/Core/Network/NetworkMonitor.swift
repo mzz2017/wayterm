@@ -102,7 +102,12 @@ final class NetworkMonitor: ObservableObject {
     /// Check if a specific host is reachable
     func checkHostReachability(_ host: String, port: UInt16 = 22) async -> Bool {
         return await withCheckedContinuation { continuation in
-            let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!)
+            guard let nwPort = NWEndpoint.Port(rawValue: port) else {
+                continuation.resume(returning: false)
+                return
+            }
+
+            let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: nwPort)
             let connection = NWConnection(to: endpoint, using: .tcp)
             let completionState = ReachabilityCompletionState()
 

@@ -997,7 +997,7 @@ struct ServerFormSheet: View {
     private var isValid: Bool {
         !name.isEmpty &&
         !host.isEmpty &&
-        Int(port) != nil &&
+        ServerPortValidator.normalizedPort(from: port) != nil &&
         hasValidCredentials
     }
 
@@ -1045,7 +1045,7 @@ struct ServerFormSheet: View {
     }
 
     private func buildServer(id: UUID, createdAt: Date) -> Server {
-        let portNum = Int(port) ?? 22
+        let portNum = ServerPortValidator.normalizedPort(from: port) ?? 22
         return Server(
             id: id,
             workspaceId: selectedWorkspace?.id ?? assignmentWorkspaces.first?.id ?? serverManager.workspaces.first?.id ?? UUID(),
