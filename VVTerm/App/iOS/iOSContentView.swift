@@ -573,11 +573,12 @@ struct iOSServerListView: View {
     }
 
     private var listRefreshIdentity: String {
-        let workspaceID = selectedWorkspace?.id.uuidString ?? "all-workspaces"
-        let environmentID = selectedEnvironment?.id.uuidString ?? "all-environments"
-        let serverIDs = filteredServers.map { $0.id.uuidString }.joined(separator: ",")
-        let activeConnectionIDs = activeConnections.map { $0.id.uuidString }.joined(separator: ",")
-        return [workspaceID, environmentID, serverIDs, activeConnectionIDs].joined(separator: "|")
+        IOSServerListPolicy.listRefreshIdentity(
+            selectedWorkspaceId: selectedWorkspace?.id,
+            selectedEnvironmentId: selectedEnvironment?.id,
+            filteredServerIds: filteredServers.map(\.id),
+            activeConnectionIds: activeConnections.map(\.id)
+        )
     }
 
     private var serverCountsByEnvironment: [UUID: Int] {

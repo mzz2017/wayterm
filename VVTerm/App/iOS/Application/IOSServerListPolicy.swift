@@ -90,6 +90,19 @@ enum IOSServerListPolicy {
         return counts
     }
 
+    static func listRefreshIdentity(
+        selectedWorkspaceId: UUID?,
+        selectedEnvironmentId: UUID?,
+        filteredServerIds: [UUID],
+        activeConnectionIds: [UUID]
+    ) -> String {
+        let workspaceID = selectedWorkspaceId?.uuidString ?? "all-workspaces"
+        let environmentID = selectedEnvironmentId?.uuidString ?? "all-environments"
+        let serverIDs = filteredServerIds.map(\.uuidString).joined(separator: ",")
+        let activeConnectionIDs = activeConnectionIds.map(\.uuidString).joined(separator: ",")
+        return [workspaceID, environmentID, serverIDs, activeConnectionIDs].joined(separator: "|")
+    }
+
     private static func representativeSession(
         for sessions: [IOSActiveConnectionSessionSnapshot],
         selectedSessionId: UUID?

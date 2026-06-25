@@ -27,4 +27,45 @@ final class IOSServerListPolicyTests: XCTestCase {
             "Opening an Active Connection should reuse the existing terminal when the registry is opening or streaming."
         )
     }
+
+    func testListRefreshIdentityIncludesSelectionAndVisibleRowsInStableOrder() {
+        let workspaceId = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let environmentId = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        let firstServerId = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+        let secondServerId = UUID(uuidString: "00000000-0000-0000-0000-000000000004")!
+        let activeConnectionId = UUID(uuidString: "00000000-0000-0000-0000-000000000005")!
+
+        let identity = IOSServerListPolicy.listRefreshIdentity(
+            selectedWorkspaceId: workspaceId,
+            selectedEnvironmentId: environmentId,
+            filteredServerIds: [firstServerId, secondServerId],
+            activeConnectionIds: [activeConnectionId]
+        )
+
+        XCTAssertEqual(
+            identity,
+            [
+                workspaceId.uuidString,
+                environmentId.uuidString,
+                [firstServerId.uuidString, secondServerId.uuidString].joined(separator: ","),
+                activeConnectionId.uuidString
+            ].joined(separator: "|"),
+            "The iOS list refresh identity should change when workspace, environment, visible servers, or Active Connections change."
+        )
+    }
+
+    func testListRefreshIdentityUsesAllSentinelsWhenNoSelectionOrRowsExist() {
+        let identity = IOSServerListPolicy.listRefreshIdentity(
+            selectedWorkspaceId: nil,
+            selectedEnvironmentId: nil,
+            filteredServerIds: [],
+            activeConnectionIds: []
+        )
+
+        XCTAssertEqual(
+            identity,
+            "all-workspaces|all-environments||",
+            "The iOS list refresh identity should remain deterministic for the all-workspaces/all-environments empty-list state."
+        )
+    }
 }
