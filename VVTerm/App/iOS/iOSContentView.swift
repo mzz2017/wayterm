@@ -610,14 +610,14 @@ struct iOSServerListView: View {
         let targetViewId = preferredConnectViewId
         guard let server = server(for: connection.id) else { return }
 
-        AppLockManager.shared.requestServerUnlock(server) {
+        AppLockManager.shared.requestServerUnlock(server, onUnlocked: {
             sessionManager.requestActiveConnectionOpen(
                 session: connection.session,
                 preferredViewId: targetViewId
             ) {
                 showingTerminal = true
             }
-        }
+        })
     }
 
     private func disconnectActiveConnection(_ connection: ActiveConnection) {

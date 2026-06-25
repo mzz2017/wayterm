@@ -621,9 +621,9 @@ struct ServerSidebarView: View {
     // MARK: - Empty States
 
     private func selectServer(_ server: Server) {
-        AppLockManager.shared.requestServerUnlock(server) {
+        AppLockManager.shared.requestServerUnlock(server, onUnlocked: {
             selectedServer = server
-        }
+        })
     }
 
     private func connectToServer(_ server: Server) {
