@@ -294,7 +294,6 @@ final class MLXModelManager: NSObject, ObservableObject {
 
     private func resolveDownloadItems() async throws -> [DownloadItem] {
         let modelId = normalizedModelId
-        let base = "https://huggingface.co/\(modelId)/resolve/main"
         var configPath: String?
         var weightPaths: [String] = []
         let allowedExtensions = Self.allowedWeightExtensions(for: kind)
@@ -303,7 +302,10 @@ final class MLXModelManager: NSObject, ObservableObject {
             configPath = files.first { $0.hasSuffix("config.json") }
 
             if let indexPath = files.first(where: { $0.hasSuffix(".safetensors.index.json") }) {
-                let indexURL = URL(string: "\(base)/\(indexPath)")!
+                let indexURL = try MLXModelRepositoryURLBuilder.resolveURL(
+                    modelId: modelId,
+                    filePath: indexPath
+                )
                 let (data, _) = try await session.data(from: indexURL)
                 let index = try JSONDecoder().decode(SafetensorsIndex.self, from: data)
                 weightPaths = Array(Set(index.weightMap.values)).sorted()
@@ -323,7 +325,7 @@ final class MLXModelManager: NSObject, ObservableObject {
         }
 
         if weightPaths.isEmpty {
-            if let indexed = try await resolveWeightsFromIndex(base: base) {
+            if let indexed = try await resolveWeightsFromIndex(modelId: modelId) {
                 weightPaths = indexed
             }
         }
@@ -339,20 +341,26 @@ final class MLXModelManager: NSObject, ObservableObject {
         }
 
         if weightPaths.isEmpty {
-            weightPaths = try await resolveWeightsFallback(base: base, allowedExtensions: allowedExtensions)
+            weightPaths = try await resolveWeightsFallback(
+                modelId: modelId,
+                allowedExtensions: allowedExtensions
+            )
         }
 
         guard !weightPaths.isEmpty else {
             throw NSError(domain: "MLXModelManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "No compatible weights found for this model"])
         }
 
-        let configURL = URL(string: "\(base)/\(configPath!)")!
+        let configURL = try MLXModelRepositoryURLBuilder.resolveURL(
+            modelId: modelId,
+            filePath: configPath ?? "config.json"
+        )
         var items: [DownloadItem] = [
             DownloadItem(url: configURL, destination: modelDirectory.appendingPathComponent("config.json"))
         ]
 
         for path in weightPaths {
-            let url = URL(string: "\(base)/\(path)")!
+            let url = try MLXModelRepositoryURLBuilder.resolveURL(modelId: modelId, filePath: path)
             items.append(DownloadItem(url: url, destination: modelDirectory.appendingPathComponent((path as NSString).lastPathComponent)))
         }
 
@@ -370,18 +378,18 @@ final class MLXModelManager: NSObject, ObservableObject {
     }
 
     private func fetchModelFiles() async throws -> [String] {
-        let url = URL(string: "https://huggingface.co/api/models/\(normalizedModelId)")!
+        let url = try MLXModelRepositoryURLBuilder.modelInfoURL(modelId: normalizedModelId)
         let (data, _) = try await session.data(from: url)
         let info = try JSONDecoder().decode(HFModelInfo.self, from: data)
         return info.siblings.map(\.rfilename)
     }
 
-    private func resolveWeightsFallback(base: String, allowedExtensions: Set<String>) async throws -> [String] {
+    private func resolveWeightsFallback(modelId: String, allowedExtensions: Set<String>) async throws -> [String] {
         let candidates = ["model.safetensors", "weights.safetensors", "weights.npz", "model.npz"]
         for name in candidates {
             let ext = (name as NSString).pathExtension.lowercased()
             guard allowedExtensions.contains(ext) else { continue }
-            let url = URL(string: "\(base)/\(name)")!
+            let url = try MLXModelRepositoryURLBuilder.resolveURL(modelId: modelId, filePath: name)
             var request = URLRequest(url: url)
             request.httpMethod = "HEAD"
             do {
@@ -396,10 +404,10 @@ final class MLXModelManager: NSObject, ObservableObject {
         return []
     }
 
-    private func resolveWeightsFromIndex(base: String) async throws -> [String]? {
+    private func resolveWeightsFromIndex(modelId: String) async throws -> [String]? {
         let indexNames = ["model.safetensors.index.json", "weights.safetensors.index.json"]
         for name in indexNames {
-            let url = URL(string: "\(base)/\(name)")!
+            let url = try MLXModelRepositoryURLBuilder.resolveURL(modelId: modelId, filePath: name)
             do {
                 let (data, _) = try await session.data(from: url)
                 let index = try JSONDecoder().decode(SafetensorsIndex.self, from: data)

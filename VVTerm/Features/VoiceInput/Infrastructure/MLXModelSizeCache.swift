@@ -17,7 +17,7 @@ actor MLXModelSizeCache {
         if failed.contains(normalized) { return nil }
 
         do {
-            let url = URL(string: "https://huggingface.co/api/models/\(normalized)")!
+            let url = try MLXModelRepositoryURLBuilder.modelInfoURL(modelId: normalized)
             let (data, _) = try await URLSession.shared.data(from: url)
             let info = try JSONDecoder().decode(HFModelSizeInfo.self, from: data)
             if let size = info.usedStorage {
