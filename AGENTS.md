@@ -203,6 +203,23 @@ Output: `Vendor/libssh2/{macos,ios,ios-simulator}/`
 
 ## Testing Notes
 
+### iOS CLI tests
+- For full iOS CLI verification, prefer the repo wrapper. It serializes testing, disables Xcode's debug dylib layout, preboots the target simulator, and retries only simulator preflight launch failures:
+
+```bash
+./scripts/test-ios.sh
+```
+
+- Pass normal `xcodebuild test` filters after the script name for focused runs:
+
+```bash
+./scripts/test-ios.sh \
+  -skip-testing:VVTermUITests \
+  -only-testing:VVTermTests/<TestClass>
+```
+
+- The default destination is `iPhone 17`. Override with `IOS_TEST_DEVICE_NAME` or `IOS_TEST_DESTINATION_ID` when needed.
+
 ### iOS simulator tests
 - On macOS 26.5.1 / Xcode 26.5, app-hosted iOS unit tests can hang before XCTest output when Xcode's debug dylib layout is enabled (`ENABLE_DEBUG_DYLIB=YES`, the default app-debug layout). The app launches, but the host process has no `XCTestConfigurationFilePath` and no `DYLD_INSERT_LIBRARIES=...libXCTestBundleInject...`, so XCTest never injects the test bundle.
 - For focused CLI iOS unit tests, use `ENABLE_DEBUG_DYLIB=NO`, disable parallel testing, and skip UI tests:
