@@ -342,7 +342,7 @@ final class ServerStatsCollector: ObservableObject {
                 await connection.lease.close()
                 return
             }
-            var collectionError: Error?
+            let collectionFailure: Error?
 
             do {
                 try await connection.run(
@@ -351,12 +351,14 @@ final class ServerStatsCollector: ObservableObject {
                 ) { executor in
                     try await collector.collectStatsUntilStopped(executor: executor)
                 }
+                collectionFailure = nil
             } catch {
                 if error is CancellationError {
                     // User-driven stop is normal lifecycle, not a connection error.
+                    collectionFailure = nil
                 } else {
                     collector.logger.error("Failed to collect stats: \(error.localizedDescription)")
-                    collectionError = error
+                    collectionFailure = error
                     await MainActor.run {
                         collector.beginCollectionTeardown()
                     }
@@ -366,8 +368,8 @@ final class ServerStatsCollector: ObservableObject {
             await connection.lease.close()
             await MainActor.run {
                 collector.collectTask = nil
-                if let collectionError {
-                    collector.recordCollectionFailure(collectionError)
+                if let collectionFailure {
+                    collector.recordCollectionFailure(collectionFailure)
                 } else {
                     collector.recordCollectionFinished()
                 }
