@@ -1059,6 +1059,26 @@ struct iOSTerminalView: View {
         sessionManager.selectedSessionId = fallbackId
     }
 
+    private func pruneSessionScopedState() {
+        let activeIds = Set(serverSessions.map(\.id))
+        shouldShowTerminalBySession = IOSTerminalViewPolicy.prunedSessionState(
+            shouldShowTerminalBySession,
+            activeSessionIds: activeIds
+        )
+        reconnectTokenBySession = IOSTerminalViewPolicy.prunedSessionState(
+            reconnectTokenBySession,
+            activeSessionIds: activeIds
+        )
+        voiceRecordingBySession = IOSTerminalViewPolicy.prunedSessionState(
+            voiceRecordingBySession,
+            activeSessionIds: activeIds
+        )
+        pendingVoiceReturnBySession = IOSTerminalViewPolicy.prunedSessionState(
+            pendingVoiceReturnBySession,
+            activeSessionIds: activeIds
+        )
+    }
+
     var body: some View {
         alertContent
             .onAppear {
@@ -1130,11 +1150,7 @@ struct iOSTerminalView: View {
                 if currentServerId == nil, let selected = sessionManager.selectedSession {
                     currentServerId = selected.serverId
                 }
-                let activeIds = Set(serverSessions.map { $0.id })
-                shouldShowTerminalBySession = shouldShowTerminalBySession.filter { activeIds.contains($0.key) }
-                reconnectTokenBySession = reconnectTokenBySession.filter { activeIds.contains($0.key) }
-                voiceRecordingBySession = voiceRecordingBySession.filter { activeIds.contains($0.key) }
-                pendingVoiceReturnBySession = pendingVoiceReturnBySession.filter { activeIds.contains($0.key) }
+                pruneSessionScopedState()
                 recoverSelectedSessionIfNeeded()
                 if selectedView == "terminal",
                    let selectedId = effectiveSelectedSessionId,

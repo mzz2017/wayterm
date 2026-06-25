@@ -69,6 +69,13 @@ enum IOSTerminalViewPolicy {
         return serverSessionIds.first
     }
 
+    static func prunedSessionState<Value>(
+        _ stateBySession: [UUID: Value],
+        activeSessionIds: Set<UUID>
+    ) -> [UUID: Value] {
+        stateBySession.filter { activeSessionIds.contains($0.key) }
+    }
+
     static func terminalPreparation(
         sessionId: UUID,
         selectedViewId: String,

@@ -137,6 +137,46 @@ struct IOSTerminalViewPolicyTests {
     }
 
     @Test
+    func prunedSessionStateKeepsOnlyActiveSessionKeys() {
+        let activeSessionId = UUID()
+        let removedSessionId = UUID()
+
+        // Given per-session UI state includes entries for current and stale sessions.
+        let state = [
+            activeSessionId: true,
+            removedSessionId: false
+        ]
+
+        // When the terminal view reconciles state against the active sessions.
+        let pruned = IOSTerminalViewPolicy.prunedSessionState(
+            state,
+            activeSessionIds: [activeSessionId]
+        )
+
+        // Then stale session entries are removed without changing live state.
+        #expect(pruned == [activeSessionId: true])
+    }
+
+    @Test
+    func prunedSessionStateSupportsNonBooleanStateValues() {
+        let activeSessionId = UUID()
+        let activeToken = UUID()
+
+        // Given reconnect tokens use the same session-scoped pruning rule as
+        // terminal visibility and voice state.
+        let pruned = IOSTerminalViewPolicy.prunedSessionState(
+            [
+                activeSessionId: activeToken,
+                UUID(): UUID()
+            ],
+            activeSessionIds: [activeSessionId]
+        )
+
+        // Then the shared rule preserves the value type unchanged.
+        #expect(pruned == [activeSessionId: activeToken])
+    }
+
+    @Test
     func floatingControlsShowOnlyForPhoneTerminalBrowseModeWithoutBlockingOverlays() {
         // Given the iOS terminal is on a phone, the terminal tab is selected,
         // browse mode is active, and no find or voice overlay is occupying the
