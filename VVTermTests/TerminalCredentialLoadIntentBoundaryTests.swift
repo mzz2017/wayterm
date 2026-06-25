@@ -21,8 +21,8 @@ struct TerminalCredentialLoadIntentBoundaryTests {
         // Given the root terminal SwiftUI source needs credentials before
         // rendering the SSH terminal wrapper.
         #expect(
-            source.contains("ConnectionSessionManager.shared.requestSessionCredentialLoad"),
-            "Root terminal UI should send credential-load intent to ConnectionSessionManager."
+            source.contains("sessionManager.requestSessionCredentialLoad"),
+            "Root terminal UI should send credential-load intent to the injected session manager."
         )
 
         // Then SwiftUI should not own a credential-load task or directly await
@@ -34,6 +34,10 @@ struct TerminalCredentialLoadIntentBoundaryTests {
         #expect(
             !source.contains("await ConnectionSessionManager.shared.loadCredentials"),
             "Root terminal UI should not call the low-level credential-load helper directly."
+        )
+        #expect(
+            !source.contains("ConnectionSessionManager.shared.requestSessionCredentialLoad"),
+            "Root terminal UI should not bypass the injected session manager for credential-load intent."
         )
         #expect(
             !source.contains("private func loadCredentialsIfNeeded(force: Bool) async"),

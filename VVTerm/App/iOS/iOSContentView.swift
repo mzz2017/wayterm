@@ -1420,14 +1420,14 @@ struct iOSTerminalView: View {
 
     private func dismissKeyboardForCurrentSession() {
         guard let selectedId = effectiveSelectedSessionId,
-              let terminal = ConnectionSessionManager.shared.peekTerminal(for: selectedId) else { return }
+              let terminal = sessionManager.peekTerminal(for: selectedId) else { return }
         terminal.dismissKeyboardForUser()
     }
 
     private func showKeyboardForCurrentSession() {
         guard selectedView == ConnectionViewTab.terminal.id,
               let selectedId = effectiveSelectedSessionId,
-              let terminal = ConnectionSessionManager.shared.peekTerminal(for: selectedId) else { return }
+              let terminal = sessionManager.peekTerminal(for: selectedId) else { return }
         clearPendingVoiceReturn(for: selectedId)
         terminal.requestKeyboardFocus(for: .explicitUserRequest)
     }
@@ -1437,7 +1437,7 @@ struct iOSTerminalView: View {
               terminalVoiceButtonEnabled,
               !isSelectedTerminalVoiceRecording,
               let selectedId = effectiveSelectedSessionId,
-              let terminal = ConnectionSessionManager.shared.peekTerminal(for: selectedId) else { return }
+              let terminal = sessionManager.peekTerminal(for: selectedId) else { return }
         clearPendingVoiceReturn(for: selectedId)
         if terminal.triggerVoiceInput() {
             voiceRecordingBySession[selectedId] = true
@@ -1447,7 +1447,7 @@ struct iOSTerminalView: View {
     private func sendReturnForCurrentSession() {
         guard selectedView == ConnectionViewTab.terminal.id,
               let selectedId = effectiveSelectedSessionId,
-              let terminal = ConnectionSessionManager.shared.peekTerminal(for: selectedId) else { return }
+              let terminal = sessionManager.peekTerminal(for: selectedId) else { return }
         if terminal.sendReturnKey() {
             clearPendingVoiceReturn(for: selectedId)
         }
@@ -1465,7 +1465,7 @@ struct iOSTerminalView: View {
     private func showFindNavigatorForCurrentSession() {
         guard selectedView == ConnectionViewTab.terminal.id,
               let selectedId = effectiveSelectedSessionId,
-              let terminal = ConnectionSessionManager.shared.peekTerminal(for: selectedId) else { return }
+              let terminal = sessionManager.peekTerminal(for: selectedId) else { return }
         terminal.showFindNavigator()
     }
 
@@ -1599,7 +1599,7 @@ struct iOSTerminalView: View {
         let server = serverManager.servers.first { $0.id == session.serverId }
         let viewSelection = sessionManager.selectedViewByServer[session.serverId] ?? viewTabConfig.effectiveDefaultTab()
         let effectiveViewSelection = viewTabConfig.effectiveView(for: viewSelection)
-        let terminalAlreadyExists = ConnectionSessionManager.shared.hasTerminal(for: session.id)
+        let terminalAlreadyExists = sessionManager.hasTerminal(for: session.id)
         let shouldShowTerminal = shouldShowTerminalBySession[session.id] ?? false
         let reconnectToken = reconnectTokenBySession[session.id] ?? session.id
 
@@ -1608,6 +1608,7 @@ struct iOSTerminalView: View {
                 TerminalContainerView(
                     session: session,
                     server: server,
+                    sessionManager: sessionManager,
                     isActive: effectiveViewSelection == "terminal",
                     onVoiceRecordingChange: { isRecording in
                         if isRecording {
@@ -1684,7 +1685,7 @@ struct iOSTerminalView: View {
     }
 
     private func activateTerminal(_ session: ConnectionSession) {
-        let terminalAlreadyExists = ConnectionSessionManager.shared.hasTerminal(for: session.id)
+        let terminalAlreadyExists = sessionManager.hasTerminal(for: session.id)
         prepareTerminal(session: session, viewSelection: selectedView, terminalAlreadyExists: terminalAlreadyExists)
         guard selectedView == "terminal" else { return }
         focusTerminal(for: session)
@@ -1862,8 +1863,8 @@ struct iOSTerminalView: View {
     /// Refresh terminal display and trigger server redraw
     private func refreshTerminal(for session: ConnectionSession) {
         guard scenePhase == .active else { return }
-        guard let terminal = ConnectionSessionManager.shared.peekTerminal(for: session.id) else { return }
-        ConnectionSessionManager.shared.markTerminalUsed(for: session.id)
+        guard let terminal = sessionManager.peekTerminal(for: session.id) else { return }
+        sessionManager.markTerminalUsed(for: session.id)
 
         // Resume rendering if paused
         terminal.resumeRendering()
@@ -1872,8 +1873,8 @@ struct iOSTerminalView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak terminal] in
             guard let terminal else { return }
             guard scenePhase == .active else { return }
-            guard ConnectionSessionManager.shared.sessions.contains(where: { $0.id == session.id }) else { return }
-            guard ConnectionSessionManager.shared.peekTerminal(for: session.id) === terminal else { return }
+            guard sessionManager.sessions.contains(where: { $0.id == session.id }) else { return }
+            guard sessionManager.peekTerminal(for: session.id) === terminal else { return }
             guard terminal.window != nil else { return }
 
             if let nativeScrollContainer = TerminalNativeScrollContainerView.nativeScrollContainer(containing: terminal) {
@@ -1899,7 +1900,7 @@ struct iOSTerminalView: View {
 
             // Send resize to force server to redraw prompt
             if let size = terminal.terminalSize() {
-                ConnectionSessionManager.shared.requestSessionResize(
+                sessionManager.requestSessionResize(
                     TerminalResizeRequestSize(
                         cols: Int(size.columns),
                         rows: Int(size.rows)
@@ -1912,8 +1913,8 @@ struct iOSTerminalView: View {
 
     private func focusTerminal(for session: ConnectionSession) {
         guard scenePhase == .active else { return }
-        guard let terminal = ConnectionSessionManager.shared.peekTerminal(for: session.id) else { return }
-        ConnectionSessionManager.shared.markTerminalUsed(for: session.id)
+        guard let terminal = sessionManager.peekTerminal(for: session.id) else { return }
+        sessionManager.markTerminalUsed(for: session.id)
 
         let attemptFocus = { [weak terminal] in
             guard let terminal = terminal else { return }

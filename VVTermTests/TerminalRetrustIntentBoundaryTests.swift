@@ -25,12 +25,13 @@ struct TerminalRetrustIntentBoundaryTests {
 
         // Given the single-session terminal host-retrust SwiftUI helper.
         #expect(
-            retrustSlice.contains("ConnectionSessionManager.shared.requestSessionHostRetrust"),
-            "The retrust helper should send request intent to the session manager."
+            retrustSlice.contains("sessionManager.requestSessionHostRetrust"),
+            "The retrust helper should send request intent to the injected session manager."
         )
 
         // Then SwiftUI must not own trusted-host mutation or reconnect work.
         #expect(!retrustSlice.containsRegex(#"Task\s*\{"#))
+        #expect(!retrustSlice.contains("ConnectionSessionManager.shared.requestSessionHostRetrust"))
         #expect(!retrustSlice.containsRegex(#"await\s+ConnectionSessionManager\.shared\.retrustHostAndReconnect\s*\("#))
         #expect(!retrustSlice.containsRegex(#"ConnectionSessionManager\.shared\.retrustHostAndReconnect\s*\("#))
     }

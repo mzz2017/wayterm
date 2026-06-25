@@ -18,7 +18,7 @@ struct TerminalContainerView: View {
     var isActive: Bool = true
     var onVoiceRecordingChange: ((Bool) -> Void)? = nil
     var onVoiceTranscriptionSent: (() -> Void)? = nil
-    private let sessionManager = ConnectionSessionManager.shared
+    private let sessionManager: ConnectionSessionManager
     @EnvironmentObject var ghosttyApp: Ghostty.App
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
@@ -65,6 +65,22 @@ struct TerminalContainerView: View {
     @AppStorage(CloudKitSyncConstants.terminalThemeNameKey) private var terminalThemeName = "Aizen Dark"
     @AppStorage(CloudKitSyncConstants.terminalThemeNameLightKey) private var terminalThemeNameLight = "Aizen Light"
     @AppStorage(CloudKitSyncConstants.terminalUsePerAppearanceThemeKey) private var usePerAppearanceTheme = true
+
+    init(
+        session: ConnectionSession,
+        server: Server?,
+        sessionManager: ConnectionSessionManager = ConnectionSessionManager.shared,
+        isActive: Bool = true,
+        onVoiceRecordingChange: ((Bool) -> Void)? = nil,
+        onVoiceTranscriptionSent: (() -> Void)? = nil
+    ) {
+        self.session = session
+        self.server = server
+        self.sessionManager = sessionManager
+        self.isActive = isActive
+        self.onVoiceRecordingChange = onVoiceRecordingChange
+        self.onVoiceTranscriptionSent = onVoiceTranscriptionSent
+    }
 
     private var effectiveThemeName: String {
         guard usePerAppearanceTheme else { return terminalThemeName }
@@ -329,7 +345,7 @@ struct TerminalContainerView: View {
         #endif
         .alert("Install tmux?", isPresented: $showingTmuxInstallPrompt) {
             Button("Install") {
-                ConnectionSessionManager.shared.requestTmuxInstall(for: session.id)
+                sessionManager.requestTmuxInstall(for: session.id)
             }
             Button("Continue without persistence", role: .cancel) {
                 disableTmuxForServer()
@@ -402,12 +418,12 @@ struct TerminalContainerView: View {
                             isReady = true
                         }
                         #if os(macOS)
-                        ConnectionSessionManager.shared.peekTerminal(for: session.id)?.resumeRendering()
+                        sessionManager.peekTerminal(for: session.id)?.resumeRendering()
                         #endif
                     }
                     #if os(macOS)
                     .onDisappear {
-                        ConnectionSessionManager.shared.peekTerminal(for: session.id)?.pauseRendering()
+                        sessionManager.peekTerminal(for: session.id)?.pauseRendering()
                     }
                     #endif
                 }
@@ -429,7 +445,7 @@ struct TerminalContainerView: View {
             isActive: isActive,
             shouldPreserveKeyboardDuringReconnect: true,
             onProcessExit: {
-                ConnectionSessionManager.shared.requestSessionProcessExit(forSession: session.id)
+                sessionManager.requestSessionProcessExit(forSession: session.id)
             },
             onReady: {
                 isReady = true
@@ -445,7 +461,7 @@ struct TerminalContainerView: View {
             sessionManager: sessionManager,
             isActive: isActive,
             onProcessExit: {
-                ConnectionSessionManager.shared.requestSessionProcessExit(forSession: session.id)
+                sessionManager.requestSessionProcessExit(forSession: session.id)
             },
             onReady: {
                 isReady = true
@@ -645,12 +661,12 @@ struct TerminalContainerView: View {
 
     private func disableTmuxForServer() {
         guard let server else { return }
-        ConnectionSessionManager.shared.disableTmux(for: server.id)
+        sessionManager.disableTmux(for: server.id)
     }
 
     private func retrustHostAndRetry() {
         guard let server else { return }
-        ConnectionSessionManager.shared.requestSessionHostRetrust(
+        sessionManager.requestSessionHostRetrust(
             session: session,
             server: server,
             onCompleted: { didReconnect in
@@ -661,7 +677,7 @@ struct TerminalContainerView: View {
     }
 
     private func attemptAutoReconnectIfNeeded() {
-        guard ConnectionSessionManager.shared.shouldAutoReconnectSession(
+        guard sessionManager.shouldAutoReconnectSession(
             session.id,
             isSceneActive: scenePhase == .active,
             autoReconnectEnabled: autoReconnectEnabled
@@ -670,7 +686,7 @@ struct TerminalContainerView: View {
     }
 
     private func startConnectWatchdog() {
-        ConnectionSessionManager.shared.scheduleConnectWatchdog(
+        sessionManager.scheduleConnectWatchdog(
             forSessionId: session.id,
             isReady: isReady,
             terminalExists: terminalAlreadyExists,
@@ -683,7 +699,7 @@ struct TerminalContainerView: View {
     private func retryConnection() {
         isReady = false
         operationNotice = nil
-        ConnectionSessionManager.shared.requestSessionRetry(
+        sessionManager.requestSessionRetry(
             session: session,
             server: server,
             onCompleted: { result in
@@ -710,7 +726,7 @@ struct TerminalContainerView: View {
         isInstallingMosh = true
         operationNotice = nil
 
-        ConnectionSessionManager.shared.requestMoshInstallAndReconnect(
+        sessionManager.requestMoshInstallAndReconnect(
             session: session,
             onCompleted: {
                 isInstallingMosh = false
@@ -737,7 +753,7 @@ struct TerminalContainerView: View {
         guard let server else { return }
         if !force, credentials != nil { return }
         let serverId = server.id
-        ConnectionSessionManager.shared.requestSessionCredentialLoad(
+        sessionManager.requestSessionCredentialLoad(
             session: session,
             server: server,
             onCompleted: { result in
@@ -892,7 +908,7 @@ struct TerminalContainerView: View {
     private func sendTranscriptionToTerminal(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
-        ConnectionSessionManager.shared.sendText(trimmed, to: session.id)
+        sessionManager.sendText(trimmed, to: session.id)
         return true
     }
 

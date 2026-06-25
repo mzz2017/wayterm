@@ -24,14 +24,15 @@ struct TerminalRetryIntentBoundaryTests {
         )
         // Given the single-session terminal SwiftUI retry source.
         #expect(
-            retrySlice.contains("ConnectionSessionManager.shared.requestSessionRetry"),
-            "The retry helper should send request intent to the session manager."
+            retrySlice.contains("sessionManager.requestSessionRetry"),
+            "The retry helper should send request intent to the injected session manager."
         )
 
         // Then SwiftUI must not own retry tasks or call the old async retry
         // helper directly.
         #expect(!source.containsRegex(#"(?s)Task\s*\{[^}]*retryConnection\s*\("#))
         #expect(!source.containsRegex(#"await\s+retryConnection\s*\("#))
+        #expect(!retrySlice.contains("ConnectionSessionManager.shared.requestSessionRetry"))
         #expect(!source.containsRegex(#"ConnectionSessionManager\.shared\.retrySessionConnection\s*\("#))
         #expect(!retrySlice.contains("async"))
     }

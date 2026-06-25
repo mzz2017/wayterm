@@ -30,22 +30,24 @@ struct TerminalInstallIntentBoundaryTests {
 
         // Given the single-session terminal SwiftUI install prompt source.
         #expect(
-            installAlerts.contains("ConnectionSessionManager.shared.requestTmuxInstall"),
-            "The tmux install button should send request intent to the session manager."
+            installAlerts.contains("sessionManager.requestTmuxInstall"),
+            "The tmux install button should send request intent to the injected session manager."
         )
         #expect(
             installAlerts.contains("requestMoshInstallAndReconnect()"),
             "The mosh install button should call the presentation helper synchronously."
         )
         #expect(
-            moshRequestHelper.contains("ConnectionSessionManager.shared.requestMoshInstallAndReconnect"),
-            "The mosh helper should send request intent to the session manager."
+            moshRequestHelper.contains("sessionManager.requestMoshInstallAndReconnect"),
+            "The mosh helper should send request intent to the injected session manager."
         )
 
         // Then SwiftUI must not own the install task or call the old async
         // helper directly.
         #expect(!installAlerts.contains("Task {"))
         #expect(!moshRequestHelper.contains("try await"))
+        #expect(!installAlerts.contains("ConnectionSessionManager.shared.requestTmuxInstall"))
+        #expect(!moshRequestHelper.contains("ConnectionSessionManager.shared.requestMoshInstallAndReconnect"))
         #expect(!installAlerts.contains("await ConnectionSessionManager.shared.startTmuxInstall"))
         #expect(!installAlerts.contains("await installMoshServerAndReconnect()"))
         #expect(!moshRequestHelper.contains("ConnectionSessionManager.shared.installMoshServerAndReconnect"))
