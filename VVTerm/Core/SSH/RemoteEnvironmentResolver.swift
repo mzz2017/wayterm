@@ -186,7 +186,7 @@ enum RemoteEnvironmentResolver {
         return .unknown
     }
 
-    private static func normalizedPowerShellExecutableName(_ value: String?) -> String? {
+    nonisolated private static func normalizedPowerShellExecutableName(_ value: String?) -> String? {
         guard let value else { return nil }
         let normalized = value
             .lowercased()

@@ -1,6 +1,6 @@
 import Foundation
 
-enum PurchaseState: Equatable {
+nonisolated enum PurchaseState: Equatable {
     case idle
     case purchasing
     case purchased
@@ -18,7 +18,7 @@ enum PurchaseState: Equatable {
     }
 }
 
-enum RestoreState: Equatable {
+nonisolated enum RestoreState: Equatable {
     case idle
     case restoring
     case restored(hasAccess: Bool)
