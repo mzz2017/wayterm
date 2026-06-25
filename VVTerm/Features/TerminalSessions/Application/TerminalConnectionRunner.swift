@@ -31,7 +31,7 @@ enum TerminalConnectionRunner {
             logger: logger,
             onAttempt: { attempt in
                 logger.info("Connecting to \(server.host)... (attempt \(attempt))")
-                await onAttempt(attempt)
+                onAttempt(attempt)
             },
             connect: {
                 _ = try await sshClient.connect(to: server, credentials: credentials)
@@ -95,7 +95,7 @@ enum TerminalConnectionRunner {
                 try await connect()
                 try Task.checkCancellation()
 
-                let size = await terminal.connectionSurfaceSize()
+                let size = terminal.connectionSurfaceSize()
                 let cols = size?.columns ?? 80
                 let rows = size?.rows ?? 24
 
@@ -116,21 +116,21 @@ enum TerminalConnectionRunner {
                 for await data in shell.stream {
                     guard !Task.isCancelled else { break }
                     for title in titleParser.parse(data) {
-                        await onTitleChange(title)
+                        onTitleChange(title)
                     }
-                    let shouldContinue = await shouldContinueStreaming(data, terminal)
+                    let shouldContinue = shouldContinueStreaming(data, terminal)
                     if !shouldContinue { break }
                 }
 
                 try Task.checkCancellation()
                 logger?.info("SSH shell ended")
-                await terminal.connectionSurfaceExited(0)
+                terminal.connectionSurfaceExited(0)
                 await onProcessExit()
             },
             shouldResetClient: shouldResetClient,
             resetClient: resetConnection,
             onFailure: { error in
-                await onFailure(error, terminal)
+                onFailure(error, terminal)
             }
         )
     }
