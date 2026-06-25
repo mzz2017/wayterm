@@ -29,7 +29,7 @@ enum SSHUploadStrategy: Sendable {
     case execPreferred
 }
 
-private final class SSHClientAbortState: @unchecked Sendable {
+private nonisolated final class SSHClientAbortState: @unchecked Sendable {
     private let lock = NSLock()
     private var aborted = false
     private var sessionForAbort: SSHSession?
@@ -64,7 +64,7 @@ private final class SSHClientAbortState: @unchecked Sendable {
 // Mosh stream termination is a synchronous callback outside SSHClient actor
 // isolation; this registry lets the client own and await teardown tasks without
 // exposing actor-isolated mosh runtime state.
-private final class SSHMoshTeardownTaskRegistry: @unchecked Sendable {
+private nonisolated final class SSHMoshTeardownTaskRegistry: @unchecked Sendable {
     private final class Record {
         var task: Task<Void, Never>?
     }
@@ -1012,7 +1012,7 @@ nonisolated(unsafe) private let kbdintCallback: @convention(c) (
 // AsyncStream termination and cancellation handlers are synchronous,
 // nonisolated callbacks, so this tiny registry uses a lock to let SSHSession
 // own and later await channel cleanup tasks without escaping actor state.
-private final class SSHChannelCleanupTaskRegistry: @unchecked Sendable {
+private nonisolated final class SSHChannelCleanupTaskRegistry: @unchecked Sendable {
     private final class Record {
         var task: Task<Void, Never>?
     }
