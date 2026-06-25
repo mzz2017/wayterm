@@ -4,7 +4,7 @@ import os.log
 final class KnownHostsManager: @unchecked Sendable {
     static let shared = KnownHostsManager()
 
-    struct Entry: Codable, Equatable, Sendable {
+    nonisolated struct Entry: Codable, Equatable, Sendable {
         let host: String
         let port: Int
         let fingerprint: String
@@ -171,13 +171,13 @@ actor KnownHostsStore {
     }
 }
 
-enum KnownHostVerificationResult: Equatable, Sendable {
+nonisolated enum KnownHostVerificationResult: Equatable, Sendable {
     case trusted(fingerprint: String)
     case newHost(fingerprint: String)
     case changed(knownFingerprint: String, presentedFingerprint: String)
 }
 
-struct KnownHostVerificationService: Sendable {
+nonisolated struct KnownHostVerificationService: Sendable {
     let store: KnownHostsStore
 
     init(store: KnownHostsStore = .shared) {
