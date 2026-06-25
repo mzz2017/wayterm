@@ -1,10 +1,10 @@
 import Foundation
 
-final class RemoteFileTemporaryStorage {
+nonisolated final class RemoteFileTemporaryStorage {
     private let fileManager: FileManager
     private let rootDirectory: URL
 
-    nonisolated init(
+    init(
         fileManager: FileManager = .default,
         rootDirectory: URL = FileManager.default.temporaryDirectory.appendingPathComponent("VVTermRemoteFiles", isDirectory: true)
     ) {
