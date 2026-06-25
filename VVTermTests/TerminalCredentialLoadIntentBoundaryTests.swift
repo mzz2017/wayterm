@@ -51,14 +51,14 @@ struct TerminalCredentialLoadIntentBoundaryTests {
         // Given the split terminal SwiftUI source needs credentials before
         // rendering the SSH pane wrapper.
         #expect(
-            source.contains("TerminalTabManager.shared.requestPaneCredentialLoad"),
+            source.contains("tabManager.requestPaneCredentialLoad"),
             "Split terminal UI should send credential-load intent to TerminalTabManager."
         )
 
         // Then SwiftUI should not directly await the low-level application
         // credential helper from its view task.
         #expect(
-            !source.contains("await TerminalTabManager.shared.loadCredentials"),
+            !source.contains("await tabManager.loadCredentials"),
             "Split terminal UI should not call the low-level credential-load helper directly."
         )
     }

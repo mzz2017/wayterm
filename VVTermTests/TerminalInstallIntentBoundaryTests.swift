@@ -24,7 +24,7 @@ struct TerminalInstallIntentBoundaryTests {
         )
         let moshRequestHelper = try slice(
             startingAt: "private func requestMoshInstallAndReconnect()",
-            endingBefore: "private func loadCredentialsIfNeeded",
+            endingBefore: "private func requestCredentialLoadIfNeeded",
             in: source
         )
 
@@ -70,16 +70,16 @@ struct TerminalInstallIntentBoundaryTests {
 
         // Given the split terminal SwiftUI install prompt source.
         #expect(
-            installAlerts.contains("TerminalTabManager.shared.requestTmuxInstall"),
-            "The tmux install button should send request intent to the tab manager."
+            installAlerts.contains("tabManager.requestTmuxInstall"),
+            "The tmux install button should send request intent to the injected tab manager."
         )
         #expect(
             installAlerts.contains("requestMoshInstallAndReconnect()"),
             "The mosh install button should call the presentation helper synchronously."
         )
         #expect(
-            moshRequestHelper.contains("TerminalTabManager.shared.requestMoshInstallAndReconnect"),
-            "The mosh helper should send request intent to the tab manager."
+            moshRequestHelper.contains("tabManager.requestMoshInstallAndReconnect"),
+            "The mosh helper should send request intent to the injected tab manager."
         )
 
         // Then SwiftUI must not own the install task or call the old async

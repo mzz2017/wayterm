@@ -49,8 +49,8 @@ struct TerminalRetrustIntentBoundaryTests {
 
         // Given the split terminal host-retrust SwiftUI helper.
         #expect(
-            retrustSlice.contains("TerminalTabManager.shared.requestPaneHostRetrust"),
-            "The retrust helper should send request intent to the tab manager."
+            retrustSlice.contains("tabManager.requestPaneHostRetrust"),
+            "The retrust helper should send request intent to the injected tab manager."
         )
 
         // Then SwiftUI must not own trusted-host mutation or reconnect work.

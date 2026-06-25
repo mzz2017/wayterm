@@ -49,8 +49,8 @@ struct TerminalRetryIntentBoundaryTests {
         )
         // Given the split terminal SwiftUI retry source.
         #expect(
-            retrySlice.contains("TerminalTabManager.shared.requestPaneRetry"),
-            "The retry helper should send request intent to the tab manager."
+            retrySlice.contains("tabManager.requestPaneRetry"),
+            "The retry helper should send request intent to the injected tab manager."
         )
 
         // Then SwiftUI must not own retry tasks or call the old async retry
