@@ -1,6 +1,6 @@
 import Foundation
 
-enum TerminalEntityConnectionState: Hashable, Sendable {
+nonisolated enum TerminalEntityConnectionState: Hashable, Sendable {
     case idle
     case connecting
     case reconnecting
