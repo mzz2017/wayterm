@@ -1,18 +1,18 @@
 import Foundation
 
-struct TerminalTextInputModel {
-    enum SpecialKey: Equatable {
+nonisolated struct TerminalTextInputModel {
+    nonisolated enum SpecialKey: Equatable {
         case enter
         case tab
         case backspace
     }
 
-    enum InsertOperation: Equatable {
+    nonisolated enum InsertOperation: Equatable {
         case text(String)
         case specialKey(SpecialKey)
     }
 
-    enum Effect: Equatable {
+    nonisolated enum Effect: Equatable {
         case willTextChange
         case willSelectionChange
         case didTextChange
@@ -24,7 +24,7 @@ struct TerminalTextInputModel {
         case sendSpecialKey(SpecialKey)
     }
 
-    struct Range: Equatable {
+    nonisolated struct Range: Equatable {
         var location: Int
         var length: Int
 
@@ -37,7 +37,7 @@ struct TerminalTextInputModel {
         }
     }
 
-    private struct Projection: Equatable {
+    nonisolated private struct Projection: Equatable {
         var text: String
         var cursorCharacterIndex: Int
     }
