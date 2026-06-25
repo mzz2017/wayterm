@@ -1,4 +1,4 @@
-struct TerminalGridPoint: Comparable, Equatable {
+nonisolated struct TerminalGridPoint: Comparable, Equatable {
     var row: Int
     var column: Int
 
@@ -10,7 +10,7 @@ struct TerminalGridPoint: Comparable, Equatable {
     }
 }
 
-struct TerminalGridSelection: Equatable {
+nonisolated struct TerminalGridSelection: Equatable {
     var start: TerminalGridPoint
     var end: TerminalGridPoint
 
