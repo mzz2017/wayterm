@@ -1,6 +1,6 @@
 import Foundation
 
-enum RemoteFileSort: String, Codable, CaseIterable, Identifiable, Sendable {
+nonisolated enum RemoteFileSort: String, Codable, CaseIterable, Identifiable, Sendable {
     case name
     case modifiedAt
     case size
@@ -28,7 +28,7 @@ enum RemoteFileSort: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
-enum RemoteFileSortDirection: String, Codable, Sendable {
+nonisolated enum RemoteFileSortDirection: String, Codable, Sendable {
     case ascending
     case descending
 

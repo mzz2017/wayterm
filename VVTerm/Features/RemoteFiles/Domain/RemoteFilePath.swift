@@ -1,13 +1,13 @@
 import Foundation
 
-public struct RemoteFileBreadcrumb: Identifiable, Hashable, Sendable {
+public nonisolated struct RemoteFileBreadcrumb: Identifiable, Hashable, Sendable {
     public let title: String
     public let path: String
 
     public var id: String { path }
 }
 
-public enum RemoteFilePath {
+public nonisolated enum RemoteFilePath {
     public static func normalize(_ path: String, relativeTo currentPath: String? = nil) -> String {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
