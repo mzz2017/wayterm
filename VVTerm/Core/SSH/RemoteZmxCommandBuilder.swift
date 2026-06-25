@@ -5,7 +5,7 @@ import Foundation
 /// no config file, no has-session, no windows/splits; `zmx ls --short` lists bare
 /// names; `zmx kill <name> --force` removes a session. Detach happens by closing
 /// the connection, so no detach command is needed here.
-struct RemoteZmxCommandBuilder {
+nonisolated struct RemoteZmxCommandBuilder {
     enum CommandContext {
         case startupExec
         case interactiveShell
