@@ -176,13 +176,32 @@ struct ServerFormSheet: View {
 
     private var isEditing: Bool { server != nil }
 
+    @MainActor
     init(
         serverManager: ServerManager,
         workspace: Workspace?,
         server: Server? = nil,
         prefill: ServerFormPrefill? = nil,
-        credentialProvider: ServerFormCredentialProvider = .shared,
-        connectionTester: ServerConnectionTester = .shared,
+        onSave: @escaping (Server) -> Void
+    ) {
+        self.init(
+            serverManager: serverManager,
+            workspace: workspace,
+            server: server,
+            prefill: prefill,
+            credentialProvider: .shared,
+            connectionTester: .shared,
+            onSave: onSave
+        )
+    }
+
+    init(
+        serverManager: ServerManager,
+        workspace: Workspace?,
+        server: Server? = nil,
+        prefill: ServerFormPrefill? = nil,
+        credentialProvider: ServerFormCredentialProvider,
+        connectionTester: ServerConnectionTester,
         onSave: @escaping (Server) -> Void
     ) {
         self.serverManager = serverManager

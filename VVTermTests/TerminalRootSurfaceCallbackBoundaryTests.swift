@@ -31,8 +31,12 @@ struct TerminalRootSurfaceCallbackBoundaryTests {
             "TerminalContainerView should retain an injectable app-owned session manager dependency at the screen boundary."
         )
         #expect(
-            source.contains("sessionManager: ConnectionSessionManager = ConnectionSessionManager.shared"),
-            "TerminalContainerView may default to the shared manager only at its construction boundary."
+            source.contains("sessionManager: ConnectionSessionManager.shared"),
+            "TerminalContainerView may resolve the shared manager only from its construction-boundary delegating initializer."
+        )
+        #expect(
+            source.contains("sessionManager: ConnectionSessionManager,"),
+            "TerminalContainerView should keep an explicit initializer for injected session manager ownership."
         )
 
         // When every root wrapper is constructed for the current terminal session.

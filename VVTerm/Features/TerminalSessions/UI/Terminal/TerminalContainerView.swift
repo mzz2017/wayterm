@@ -66,10 +66,28 @@ struct TerminalContainerView: View {
     @AppStorage(CloudKitSyncConstants.terminalThemeNameLightKey) private var terminalThemeNameLight = "Aizen Light"
     @AppStorage(CloudKitSyncConstants.terminalUsePerAppearanceThemeKey) private var usePerAppearanceTheme = true
 
+    @MainActor
     init(
         session: ConnectionSession,
         server: Server?,
-        sessionManager: ConnectionSessionManager = ConnectionSessionManager.shared,
+        isActive: Bool = true,
+        onVoiceRecordingChange: ((Bool) -> Void)? = nil,
+        onVoiceTranscriptionSent: (() -> Void)? = nil
+    ) {
+        self.init(
+            session: session,
+            server: server,
+            sessionManager: ConnectionSessionManager.shared,
+            isActive: isActive,
+            onVoiceRecordingChange: onVoiceRecordingChange,
+            onVoiceTranscriptionSent: onVoiceTranscriptionSent
+        )
+    }
+
+    init(
+        session: ConnectionSession,
+        server: Server?,
+        sessionManager: ConnectionSessionManager,
         isActive: Bool = true,
         onVoiceRecordingChange: ((Bool) -> Void)? = nil,
         onVoiceTranscriptionSent: (() -> Void)? = nil
