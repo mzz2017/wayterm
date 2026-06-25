@@ -40,7 +40,7 @@ struct TerminalZoomResult: Hashable {
 }
 
 struct TerminalPresentationOverrides: Codable, Hashable {
-    static let empty = TerminalPresentationOverrides()
+    nonisolated static let empty = TerminalPresentationOverrides()
 
     var fontSize: Double?
 
@@ -99,9 +99,9 @@ enum TerminalDefaults {
     static let cursorStyleKey = "terminalCursorStyle"
     static let cursorBlinkKey = "terminalCursorBlink"
     static let legacyDefaultFontName = "JetBrainsMono Nerd Font"
-    static let minimumFontSize = 4.0
-    static let maximumFontSize = 32.0
-    static let fontSizeStep = 1.0
+    nonisolated static let minimumFontSize = 4.0
+    nonisolated static let maximumFontSize = 32.0
+    nonisolated static let fontSizeStep = 1.0
     static let defaultCursorStyle: TerminalCursorStyle = .block
     static let defaultCursorBlink = true
     #if os(macOS)
