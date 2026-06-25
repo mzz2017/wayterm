@@ -51,10 +51,10 @@ struct TerminalRichPasteUploadRequestTests {
                     image: imagePayload(),
                     settings: RichClipboardSettings(),
                     for: session.id,
-                    onProgress: { message in
+                    onProgress: { @Sendable message in
                         Task { await recorder.record("progress-\(message ?? "nil")") }
                     },
-                    onCompleted: { result in
+                    onCompleted: { @Sendable result in
                         Task { await recorder.record("completed-\(result.testDescription)") }
                     }
                 )
@@ -171,7 +171,7 @@ struct TerminalRichPasteUploadRequestTests {
                     image: imagePayload(),
                     settings: RichClipboardSettings(),
                     for: session.id,
-                    onCompleted: { result in
+                    onCompleted: { @Sendable result in
                         Task { await recorder.record("completed-\(result.testDescription)") }
                     }
                 )
@@ -242,7 +242,7 @@ struct TerminalRichPasteUploadRequestTests {
                     image: imagePayload(),
                     settings: RichClipboardSettings(),
                     forPane: tab.rootPaneId,
-                    onCompleted: { result in
+                    onCompleted: { @Sendable result in
                         Task { await recorder.record("pane-completed-\(result.testDescription)") }
                     }
                 )
@@ -378,7 +378,7 @@ struct TerminalRichPasteUploadRequestTests {
                     image: imagePayload(data: Data("first".utf8)),
                     settings: RichClipboardSettings(),
                     for: session.id,
-                    onProgress: { message in
+                    onProgress: { @Sendable message in
                         Task { await recorder.record("first-progress-\(message ?? "nil")") }
                     }
                 )
@@ -391,7 +391,7 @@ struct TerminalRichPasteUploadRequestTests {
                     image: imagePayload(data: Data("second".utf8)),
                     settings: RichClipboardSettings(),
                     for: session.id,
-                    onProgress: { message in
+                    onProgress: { @Sendable message in
                         Task { await recorder.record("second-progress-\(message ?? "nil")") }
                     }
                 )
