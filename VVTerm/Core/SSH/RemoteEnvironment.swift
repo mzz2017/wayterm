@@ -1,13 +1,13 @@
 import Foundation
 
-enum RemoteShellFamily: String, Hashable, Sendable {
+nonisolated enum RemoteShellFamily: String, Hashable, Sendable {
     case posix
     case powershell
     case cmd
     case unknown
 }
 
-struct RemoteShellProfile: Hashable, Sendable {
+nonisolated struct RemoteShellProfile: Hashable, Sendable {
     let family: RemoteShellFamily
     let executableName: String?
     let shellName: String?
@@ -93,7 +93,7 @@ struct RemoteShellProfile: Hashable, Sendable {
     }
 }
 
-struct RemoteEnvironment: Hashable, Sendable {
+nonisolated struct RemoteEnvironment: Hashable, Sendable {
     let platform: RemotePlatform
     let shellProfile: RemoteShellProfile
     let activeShellName: String?
