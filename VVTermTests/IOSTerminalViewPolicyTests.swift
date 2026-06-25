@@ -13,6 +13,88 @@ import Foundation
 
 struct IOSTerminalViewPolicyTests {
     @Test
+    func floatingControlsShowOnlyForPhoneTerminalBrowseModeWithoutBlockingOverlays() {
+        // Given the iOS terminal is on a phone, the terminal tab is selected,
+        // browse mode is active, and no find or voice overlay is occupying the
+        // same floating-control space.
+        let visibility = IOSTerminalViewPolicy.floatingControlsVisibility(
+            isPhone: true,
+            selectedViewId: IOSTerminalViewPolicy.terminalViewId,
+            isBrowseModeEnabled: true,
+            isFindNavigatorVisible: false,
+            isVoiceRecording: false,
+            isVoiceButtonEnabled: true,
+            hasPendingVoiceReturn: true
+        )
+
+        // Then all floating terminal controls are available.
+        #expect(visibility.shouldShowControls)
+        #expect(visibility.shouldShowVoiceButton)
+        #expect(visibility.shouldShowReturnButton)
+    }
+
+    @Test
+    func floatingControlsHideWhenFindNavigatorIsVisible() {
+        // Given the find navigator is visible, it owns the terminal overlay
+        // space even if browse mode would otherwise show floating controls.
+        let visibility = IOSTerminalViewPolicy.floatingControlsVisibility(
+            isPhone: true,
+            selectedViewId: IOSTerminalViewPolicy.terminalViewId,
+            isBrowseModeEnabled: true,
+            isFindNavigatorVisible: true,
+            isVoiceRecording: false,
+            isVoiceButtonEnabled: true,
+            hasPendingVoiceReturn: true
+        )
+
+        // Then every floating terminal control stays hidden.
+        #expect(!visibility.shouldShowControls)
+        #expect(!visibility.shouldShowVoiceButton)
+        #expect(!visibility.shouldShowReturnButton)
+    }
+
+    @Test
+    func floatingControlsHideWhenVoiceRecordingIsActive() {
+        // Given voice recording is active, the recording UI owns the floating
+        // terminal-control space.
+        let visibility = IOSTerminalViewPolicy.floatingControlsVisibility(
+            isPhone: true,
+            selectedViewId: IOSTerminalViewPolicy.terminalViewId,
+            isBrowseModeEnabled: true,
+            isFindNavigatorVisible: false,
+            isVoiceRecording: true,
+            isVoiceButtonEnabled: true,
+            hasPendingVoiceReturn: true
+        )
+
+        // Then every floating terminal control stays hidden.
+        #expect(!visibility.shouldShowControls)
+        #expect(!visibility.shouldShowVoiceButton)
+        #expect(!visibility.shouldShowReturnButton)
+    }
+
+    @Test
+    func floatingControlsRespectVoiceButtonAndPendingReturnFlags() {
+        // Given the base floating controls are visible but optional voice
+        // affordances are disabled by their own state.
+        let visibility = IOSTerminalViewPolicy.floatingControlsVisibility(
+            isPhone: true,
+            selectedViewId: IOSTerminalViewPolicy.terminalViewId,
+            isBrowseModeEnabled: true,
+            isFindNavigatorVisible: false,
+            isVoiceRecording: false,
+            isVoiceButtonEnabled: false,
+            hasPendingVoiceReturn: false
+        )
+
+        // Then keyboard controls remain available while voice-specific buttons
+        // stay hidden.
+        #expect(visibility.shouldShowControls)
+        #expect(!visibility.shouldShowVoiceButton)
+        #expect(!visibility.shouldShowReturnButton)
+    }
+
+    @Test
     func foregroundReconnectsWhenSnapshotLooksConnectedButRuntimeIsInactive() {
         let sessionId = UUID()
         let session = IOSTerminalSessionSnapshot(

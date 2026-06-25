@@ -25,6 +25,12 @@ struct IOSTerminalRecoveredState: Equatable {
     let shouldCallBack: Bool
 }
 
+struct IOSTerminalFloatingControlsVisibility: Equatable {
+    let shouldShowControls: Bool
+    let shouldShowVoiceButton: Bool
+    let shouldShowReturnButton: Bool
+}
+
 enum IOSTerminalViewPolicy {
     static let terminalViewId = "terminal"
 
@@ -95,6 +101,28 @@ enum IOSTerminalViewPolicy {
             isZenModeEnabled: nil,
             requestedTerminalDismissal: false,
             shouldCallBack: false
+        )
+    }
+
+    static func floatingControlsVisibility(
+        isPhone: Bool,
+        selectedViewId: String,
+        isBrowseModeEnabled: Bool,
+        isFindNavigatorVisible: Bool,
+        isVoiceRecording: Bool,
+        isVoiceButtonEnabled: Bool,
+        hasPendingVoiceReturn: Bool
+    ) -> IOSTerminalFloatingControlsVisibility {
+        let shouldShowControls = isPhone
+            && selectedViewId == terminalViewId
+            && isBrowseModeEnabled
+            && !isFindNavigatorVisible
+            && !isVoiceRecording
+
+        return IOSTerminalFloatingControlsVisibility(
+            shouldShowControls: shouldShowControls,
+            shouldShowVoiceButton: shouldShowControls && isVoiceButtonEnabled,
+            shouldShowReturnButton: shouldShowControls && hasPendingVoiceReturn
         )
     }
 }

@@ -890,21 +890,30 @@ struct iOSTerminalView: View {
         return voiceRecordingBySession[sessionId] ?? false
     }
 
+    private var floatingControlsVisibility: IOSTerminalFloatingControlsVisibility {
+        IOSTerminalViewPolicy.floatingControlsVisibility(
+            isPhone: UIDevice.current.userInterfaceIdiom == .phone,
+            selectedViewId: selectedView,
+            isBrowseModeEnabled: isSelectedTerminalInBrowseMode,
+            isFindNavigatorVisible: isSelectedTerminalFindNavigatorVisible,
+            isVoiceRecording: isSelectedTerminalVoiceRecording,
+            isVoiceButtonEnabled: terminalVoiceButtonEnabled,
+            hasPendingVoiceReturn: effectiveSelectedSessionId.map {
+                pendingVoiceReturnBySession[$0] == true
+            } ?? false
+        )
+    }
+
     private var shouldShowFloatingTerminalControls: Bool {
-        UIDevice.current.userInterfaceIdiom == .phone
-            && selectedView == ConnectionViewTab.terminal.id
-            && isSelectedTerminalInBrowseMode
-            && !isSelectedTerminalFindNavigatorVisible
-            && !isSelectedTerminalVoiceRecording
+        floatingControlsVisibility.shouldShowControls
     }
 
     private var shouldShowFloatingVoiceButton: Bool {
-        shouldShowFloatingTerminalControls && terminalVoiceButtonEnabled
+        floatingControlsVisibility.shouldShowVoiceButton
     }
 
     private var shouldShowFloatingReturnButton: Bool {
-        guard let sessionId = effectiveSelectedSessionId else { return false }
-        return shouldShowFloatingTerminalControls && pendingVoiceReturnBySession[sessionId] == true
+        floatingControlsVisibility.shouldShowReturnButton
     }
 
     private var canUseZenMode: Bool {
