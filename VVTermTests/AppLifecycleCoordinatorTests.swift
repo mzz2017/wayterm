@@ -185,22 +185,24 @@ struct AppLifecycleCoordinatorTests {
         // Given foreground refresh policy is owned by the app lifecycle
         // coordinator.
         let probe = AppLifecycleProbe()
-        var isSyncEnabled = false
-        var currentDate = Date(timeIntervalSince1970: 100)
+        let policy = AppLifecycleForegroundRefreshPolicyState(
+            isSyncEnabled: false,
+            currentDate: Date(timeIntervalSince1970: 100)
+        )
         let coordinator = AppLifecycleCoordinator.makeForTesting(
             refreshServerData: { reason in
                 Task { await probe.record("refresh:\(reason)") }
             },
-            isSyncEnabled: { isSyncEnabled },
-            now: { currentDate }
+            isSyncEnabled: { policy.isSyncEnabled },
+            now: { policy.currentDate }
         )
 
         // When sync is disabled, foreground intent arrives, then two enabled
         // foreground intents arrive inside the throttle interval.
         coordinator.requestForegroundRefresh()
-        isSyncEnabled = true
+        policy.isSyncEnabled = true
         coordinator.requestForegroundRefresh()
-        currentDate = Date(timeIntervalSince1970: 110)
+        policy.currentDate = Date(timeIntervalSince1970: 110)
         coordinator.requestForegroundRefresh()
         await probe.waitForCount(1)
 
@@ -251,6 +253,17 @@ struct AppLifecycleCoordinatorTests {
             !coordinator.pendingRemoteNotificationRefreshRequestIDs.contains(requestID),
             "Remote notification tracking should clear only after completion is invoked."
         )
+    }
+}
+
+@MainActor
+private final class AppLifecycleForegroundRefreshPolicyState: @unchecked Sendable {
+    var isSyncEnabled: Bool
+    var currentDate: Date
+
+    init(isSyncEnabled: Bool, currentDate: Date) {
+        self.isSyncEnabled = isSyncEnabled
+        self.currentDate = currentDate
     }
 }
 

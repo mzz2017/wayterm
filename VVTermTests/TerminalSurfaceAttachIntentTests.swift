@@ -29,7 +29,7 @@ struct TerminalSurfaceAttachIntentTests {
 
             let recorder = SurfaceAttachRecorder()
             manager.setSurfaceAttachOperationForTesting { entityId in
-                await recorder.record("attach-\(entityId)")
+                recorder.record("attach-\(entityId)")
             }
 
             // Given the app is inactive and background suspension is also in progress.
@@ -73,9 +73,9 @@ struct TerminalSurfaceAttachIntentTests {
             let recorder = SurfaceAttachRecorder()
             let gate = SurfaceAttachGate()
             manager.setSurfaceAttachOperationForTesting { entityId in
-                await recorder.record("attach-start-\(entityId)")
+                recorder.record("attach-start-\(entityId)")
                 await gate.wait()
-                await recorder.record("attach-end")
+                recorder.record("attach-end")
             }
 
             // When the app-owned manager accepts an active surface attach.
@@ -128,7 +128,7 @@ struct TerminalSurfaceAttachIntentTests {
 
             let recorder = SurfaceAttachRecorder()
             manager.setSurfaceAttachOperationForTesting { entityId in
-                await recorder.record("attach-\(entityId)")
+                recorder.record("attach-\(entityId)")
             }
 
             // Given a shell start is already in flight for this session.
@@ -174,7 +174,7 @@ struct TerminalSurfaceAttachIntentTests {
 
             let recorder = SurfaceAttachRecorder()
             manager.setSurfaceAttachOperationForTesting { entityId in
-                await recorder.record("attach-\(entityId)")
+                recorder.record("attach-\(entityId)")
             }
 
             // Given the session is disconnected.
@@ -226,9 +226,9 @@ struct TerminalSurfaceAttachIntentTests {
             let recorder = SurfaceAttachRecorder()
             let gate = SurfaceAttachGate()
             manager.setSurfaceAttachOperationForTesting { entityId in
-                await recorder.record("attach-start-\(entityId)")
+                recorder.record("attach-start-\(entityId)")
                 await gate.wait()
-                await recorder.record("attach-end")
+                recorder.record("attach-end")
             }
 
             // When the pane surface attach request is accepted.

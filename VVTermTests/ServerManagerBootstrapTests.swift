@@ -293,13 +293,13 @@ struct ServerManagerBootstrapTests {
             username: "root"
         )
         let probe = ServerDeletionOrderProbe()
-        var manager: ServerManager!
-        manager = ServerManager.makeForTesting(
+        let managerHolder = ServerDeletionOrderManagerHolder()
+        let manager = ServerManager.makeForTesting(
             servers: [server],
             workspaces: [workspace],
             deletionTeardown: { server in
                 #expect(
-                    manager.servers.contains { $0.id == server.id },
+                    managerHolder.manager?.servers.contains { $0.id == server.id } == true,
                     "Server metadata must still exist while deletion teardown runs."
                 )
                 await probe.record("teardown:\(server.id.uuidString)")
@@ -308,6 +308,7 @@ struct ServerManagerBootstrapTests {
                 await probe.record("credentials:\(serverId.uuidString)")
             }
         )
+        managerHolder.manager = manager
 
         // When the server is deleted.
         try await manager.deleteServer(server)
@@ -749,13 +750,13 @@ struct ServerManagerBootstrapTests {
             username: "root"
         )
         let probe = ServerDeletionOrderProbe()
-        var manager: ServerManager!
-        manager = ServerManager.makeForTesting(
+        let managerHolder = ServerDeletionOrderManagerHolder()
+        let manager = ServerManager.makeForTesting(
             servers: [firstServer, secondServer],
             workspaces: [workspace],
             deletionTeardown: { server in
                 #expect(
-                    manager.workspaces.contains { $0.id == workspace.id },
+                    managerHolder.manager?.workspaces.contains { $0.id == workspace.id } == true,
                     "Workspace metadata must remain until all server teardown has completed."
                 )
                 await probe.record("teardown:\(server.id.uuidString)")
@@ -764,6 +765,7 @@ struct ServerManagerBootstrapTests {
                 await probe.record("credentials:\(serverId.uuidString)")
             }
         )
+        managerHolder.manager = manager
 
         // When the workspace is deleted.
         try await manager.deleteWorkspace(workspace)
@@ -1115,6 +1117,11 @@ private actor ServerStartupLoadWaitProbe {
     func markReturned() {
         didReturn = true
     }
+}
+
+@MainActor
+private final class ServerDeletionOrderManagerHolder: @unchecked Sendable {
+    var manager: ServerManager?
 }
 
 private actor ServerDeletionOrderProbe {

@@ -230,7 +230,7 @@ struct ServerStatsCollectorLifecycleTests {
             ownedConnectionFactory: factory,
             collectionTaskFactory: { collector, _, _, connection in
                 Task {
-                    await collector.beginCollectionTeardown()
+                    collector.beginCollectionTeardown()
                     await connection.lease.close()
                     await MainActor.run {
                         collector.recordCollectionFailure(StatsCollectorLifecycleTestError.expectedFailure)
@@ -267,7 +267,7 @@ struct ServerStatsCollectorLifecycleTests {
             ]),
             collectionTaskFactory: { collector, _, _, connection in
                 Task {
-                    await collector.recordCollectionFailure(CancellationError())
+                    collector.recordCollectionFailure(CancellationError())
                     await connection.lease.close()
                     await MainActor.run {
                         collector.recordCollectionFinished()
