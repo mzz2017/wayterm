@@ -1,6 +1,6 @@
 import Foundation
 
-struct ConnectionViewTab: Identifiable, Hashable, Codable, Equatable {
+nonisolated struct ConnectionViewTab: Identifiable, Hashable, Codable, Equatable {
     let id: String
     let localizedKey: String
     let icon: String
