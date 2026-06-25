@@ -46,6 +46,7 @@ struct ConnectionLifecycleIntegrationTests {
     ) async rethrows {
         let manager = ConnectionSessionManager.shared
         await manager.resetForTesting()
+        manager.setRejectedShellCleanupOperationForTesting {}
         do {
             try await body(manager)
             await manager.resetForTesting()
@@ -71,6 +72,7 @@ struct ConnectionLifecycleIntegrationTests {
     ) async rethrows {
         let manager = TerminalTabManager.shared
         await manager.resetForTesting()
+        manager.setRejectedShellCleanupOperationForTesting {}
         do {
             try await body(manager)
             await manager.resetForTesting()

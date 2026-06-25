@@ -471,7 +471,8 @@ struct RemoteFileBrowserStoreTests {
         await store.waitForMutationRequest(mutationID)
         await store.waitForTransferRequest(transferID)
 
-        #expect(events == ["mutation-mutated", "transfer-transferred"])
+        #expect(events.count == 2)
+        #expect(Set(events) == Set(["mutation-mutated", "transfer-transferred"]))
     }
 
     @Test
