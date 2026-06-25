@@ -69,9 +69,16 @@ final class SyncSettingsStore: ObservableObject {
         cloudKitStatusRefreshTask?.id
     }
 
+    convenience init() {
+        self.init(
+            statusProvider: CloudKitManager.shared,
+            coordinator: AppSyncCoordinator.shared
+        )
+    }
+
     init(
-        statusProvider: any SyncSettingsCloudStatusProviding = CloudKitManager.shared,
-        coordinator: any SyncSettingsCoordinating = AppSyncCoordinator.shared
+        statusProvider: any SyncSettingsCloudStatusProviding,
+        coordinator: any SyncSettingsCoordinating
     ) {
         self.statusProvider = statusProvider
         self.coordinator = coordinator
