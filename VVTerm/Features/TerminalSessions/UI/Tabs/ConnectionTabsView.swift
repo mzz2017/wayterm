@@ -361,14 +361,16 @@ struct ConnectionTerminalContainer: View {
             return
         }
 
-        let sourceTab = selectedFileTab
-        let seedPath = sourceTab.flatMap { fileBrowser.lastVisitedPath(for: $0) }
-            ?? selectedTab.flatMap { tabManager.workingDirectory(for: $0.focusedPaneId) }
-        let newTab = sourceTab.flatMap { fileTabManager.duplicateTab($0, seedPath: seedPath) }
-            ?? fileTabManager.openTab(for: server, seedPath: seedPath)
+        let plan = RemoteFileTabOpeningPolicy.newTabPlan(
+            selectedFileTab: selectedFileTab,
+            selectedFileTabLastVisitedPath: selectedFileTab.flatMap { fileBrowser.lastVisitedPath(for: $0) },
+            fallbackWorkingDirectory: selectedTab.flatMap { tabManager.workingDirectory(for: $0.focusedPaneId) }
+        )
+        let newTab = plan.sourceTab.flatMap { fileTabManager.duplicateTab($0, seedPath: plan.seedPath) }
+            ?? fileTabManager.openTab(for: server, seedPath: plan.seedPath)
 
         guard let newTab else { return }
-        fileBrowser.prepareNewTab(newTab, duplicating: sourceTab)
+        fileBrowser.prepareNewTab(newTab, duplicating: plan.sourceTab)
 
         if selectFilesViewOnSuccess {
             tabManager.selectedViewByServer[server.id] = viewTabConfig.isTabVisible(ConnectionViewTab.files.id)

@@ -1774,14 +1774,16 @@ struct iOSTerminalView: View {
             return
         }
 
-        let sourceTab = selectedFileTab
-        let seedPath = sourceTab.flatMap { fileBrowser.lastVisitedPath(for: $0) }
-            ?? selectedSession?.workingDirectory
-        let newTab = sourceTab.flatMap { fileTabs.duplicateTab($0, seedPath: seedPath) }
-            ?? fileTabs.openTab(for: server, seedPath: seedPath)
+        let plan = RemoteFileTabOpeningPolicy.newTabPlan(
+            selectedFileTab: selectedFileTab,
+            selectedFileTabLastVisitedPath: selectedFileTab.flatMap { fileBrowser.lastVisitedPath(for: $0) },
+            fallbackWorkingDirectory: selectedSession?.workingDirectory
+        )
+        let newTab = plan.sourceTab.flatMap { fileTabs.duplicateTab($0, seedPath: plan.seedPath) }
+            ?? fileTabs.openTab(for: server, seedPath: plan.seedPath)
 
         guard let newTab else { return }
-        fileBrowser.prepareNewTab(newTab, duplicating: sourceTab)
+        fileBrowser.prepareNewTab(newTab, duplicating: plan.sourceTab)
         sessionManager.selectedViewByServer[server.id] = IOSConnectionViewSelectionPolicy.storedViewId(
             requestedViewId: ConnectionViewTab.files.id,
             isRequestedViewVisible: viewTabConfig.isTabVisible(ConnectionViewTab.files.id),
