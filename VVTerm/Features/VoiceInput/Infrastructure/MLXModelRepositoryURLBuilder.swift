@@ -1,7 +1,7 @@
 import Foundation
 
-enum MLXModelRepositoryURLBuilder {
-    enum URLBuildError: LocalizedError {
+nonisolated enum MLXModelRepositoryURLBuilder {
+    nonisolated enum URLBuildError: LocalizedError {
         case invalidBaseURL
         case emptyModelId
         case emptyFilePath
@@ -64,7 +64,7 @@ enum MLXModelRepositoryURLBuilder {
 }
 
 private extension URL {
-    func appendingPathComponents(_ components: [String]) -> URL {
+    nonisolated func appendingPathComponents(_ components: [String]) -> URL {
         components.reduce(self) { partialURL, component in
             partialURL.appendingPathComponent(component)
         }
