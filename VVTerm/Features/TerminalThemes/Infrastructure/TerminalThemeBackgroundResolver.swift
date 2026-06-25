@@ -1,13 +1,13 @@
 import SwiftUI
 import Foundation
 
-struct TerminalThemeBackgroundResolution {
+nonisolated struct TerminalThemeBackgroundResolution {
     let color: Color
     let storageHex: String
     let usedFallback: Bool
 }
 
-enum TerminalThemeBackgroundResolver {
+nonisolated enum TerminalThemeBackgroundResolver {
     static let cacheKey = "terminalBackgroundColor"
 
     nonisolated static func resolve(

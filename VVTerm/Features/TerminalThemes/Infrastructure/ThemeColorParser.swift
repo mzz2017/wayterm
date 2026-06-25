@@ -6,7 +6,7 @@
 import SwiftUI
 import Foundation
 
-struct TerminalThemePreviewPalette {
+nonisolated struct TerminalThemePreviewPalette {
     let background: Color
     let foreground: Color
     let cursor: Color
@@ -21,7 +21,7 @@ struct TerminalThemePreviewPalette {
 }
 
 /// Parses terminal theme files to extract colors
-struct ThemeColorParser {
+nonisolated struct ThemeColorParser {
     /// Extracts background color from a Ghostty theme file
     /// - Parameter themeName: The name of the theme (e.g., "Aizen Dark")
     /// - Returns: The background Color if found, nil otherwise
