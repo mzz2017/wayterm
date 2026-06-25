@@ -20,7 +20,7 @@ VVTerm is a cross-platform SSH terminal app for Apple platforms. The current cod
 - Main app target: `VVTerm`
 - Companion target: `VVTermLiveActivity`
 - Runtime targets: `macOS 13.3+` and `iOS 16.1+`
-- Hardware targets: Apple Silicon / arm64 only
+- Hardware targets: arm64 iOS devices, plus Apple Silicon and Intel macOS/iOS Simulator development
 - App-owned code is organized under `VVTerm/App`, `VVTerm/Core`, and `VVTerm/Features`
 - The repo also contains tests, native vendor builds, feature specs under `docs/specs`, and the marketing site under `web/`
 

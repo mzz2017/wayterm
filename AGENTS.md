@@ -4,8 +4,8 @@ Cross-platform (iOS/macOS) SSH terminal app with iCloud sync and Keychain creden
 
 ## Target Versions
 
-- **macOS**: 13.3+ (Ventura), arm64 only
-- **iOS**: 16.1+, arm64 only
+- **macOS**: 13.3+ (Ventura), arm64 and x86_64
+- **iOS**: 16.1+, arm64 devices and arm64/x86_64 simulator
 - **Xcode**: 16.0+
 
 ## Architecture
@@ -173,7 +173,7 @@ Safe refactor expectation:
 
 ### Terminal
 - Uses **libghostty** (Ghostty terminal emulator) via xcframework
-- Metal GPU rendering (arm64 only)
+- Metal GPU rendering
 - iOS keyboard toolbar with special keys (Esc, Tab, Ctrl, arrows)
 
 ### SSH

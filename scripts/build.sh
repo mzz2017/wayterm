@@ -16,7 +16,7 @@ MACOS_DEPLOYMENT_TARGET="13.3"
 IOS_DEPLOYMENT_TARGET="16.0"
 
 GHOSTTY_REPO="${GHOSTTY_REPO:-https://github.com/mzz2017/ghostty.git}"
-DEFAULT_GHOSTTY_REF="81cd12521dddf9f017c91ae1c2b23b3d18282cc6"
+DEFAULT_GHOSTTY_REF="b00bb2d91ecfd05fa9ce1f08b9d146b76c7d0041"
 GHOSTTY_REF="${GHOSTTY_REF:-${DEFAULT_GHOSTTY_REF}}"
 GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-}"
 BUNDLE_ID="app.vivy.VivyTerm"
@@ -72,6 +72,7 @@ check_deps_ghostty() {
     require_cmd xcodebuild
     require_cmd perl
     require_cmd rsync
+    require_cmd msgfmt
 }
 
 check_deps_ssh() {
@@ -149,14 +150,6 @@ prepare_ghostty_dependencies() {
 check_ghostty_vendor() {
     log_section "Ghostty vendor ABI check"
 
-    local headers=(
-        "${VENDOR_GHOSTTY}/include/ghostty.h"
-        "${VENDOR_GHOSTTY}/ios/include/ghostty.h"
-        "${VENDOR_GHOSTTY}/ios-simulator/include/ghostty.h"
-        "${VENDOR_GHOSTTY}/GhosttyKit.xcframework/macos-arm64_x86_64/Headers/ghostty.h"
-        "${VENDOR_GHOSTTY}/GhosttyKit.xcframework/ios-arm64/Headers/ghostty.h"
-        "${VENDOR_GHOSTTY}/GhosttyKit.xcframework/ios-arm64-simulator/Headers/ghostty.h"
-    )
     local header_tokens=(
         "GHOSTTY_BACKEND_EXTERNAL"
         "backend_type"
@@ -168,13 +161,27 @@ check_ghostty_vendor() {
         "ghostty_surface_in_alternate_screen"
     )
     local xcframework="${VENDOR_GHOSTTY}/GhosttyKit.xcframework"
+    local macos_header
+    local ios_header
+    local sim_header
+    macos_header=$(find "${xcframework}" -path "*/macos-*/Headers/ghostty.h" -type f -print -quit)
+    ios_header=$(find "${xcframework}" -path "*/ios-arm64/Headers/ghostty.h" -type f -print -quit)
+    sim_header=$(find "${xcframework}" -path "*/ios-*simulator/Headers/ghostty.h" -type f -print -quit)
     local libs=(
         "${VENDOR_GHOSTTY}/lib/libghostty.a"
         "${VENDOR_GHOSTTY}/ios/lib/libghostty.a"
         "${VENDOR_GHOSTTY}/ios-simulator/lib/libghostty.a"
         "$(find_ghostty_xcframework_library "${xcframework}" "macos-*")"
         "$(find_ghostty_xcframework_library "${xcframework}" "ios-arm64")"
-        "$(find_ghostty_xcframework_library "${xcframework}" "ios-arm64-simulator")"
+        "$(find_ghostty_xcframework_library "${xcframework}" "ios-*simulator")"
+    )
+    local headers=(
+        "${VENDOR_GHOSTTY}/include/ghostty.h"
+        "${VENDOR_GHOSTTY}/ios/include/ghostty.h"
+        "${VENDOR_GHOSTTY}/ios-simulator/include/ghostty.h"
+        "${macos_header}"
+        "${ios_header}"
+        "${sim_header}"
     )
     local symbols=(
         "ghostty_surface_write_output"
@@ -341,7 +348,7 @@ PY
     local sim_lib
     macos_lib=$(find_ghostty_xcframework_library "${xcframework}" "macos-*")
     ios_lib=$(find_ghostty_xcframework_library "${xcframework}" "ios-arm64")
-    sim_lib=$(find_ghostty_xcframework_library "${xcframework}" "ios-arm64-simulator")
+    sim_lib=$(find_ghostty_xcframework_library "${xcframework}" "ios-*simulator")
 
     mkdir -p "${VENDOR_GHOSTTY}/lib" "${VENDOR_GHOSTTY}/ios/lib" "${VENDOR_GHOSTTY}/ios-simulator/lib"
     cp "${macos_lib}" "${VENDOR_GHOSTTY}/lib/libghostty.a"
@@ -405,18 +412,35 @@ download_sources() {
 }
 
 build_openssl_macos() {
-    log_info "Building OpenSSL for macOS arm64..."
+    log_info "Building OpenSSL for macOS universal..."
+
+    build_openssl_macos_arch arm64 darwin64-arm64-cc
+    build_openssl_macos_arch x86_64 darwin64-x86_64-cc
+
+    create_universal_openssl \
+        "${BUILD_DIR_SSH}/openssl-macos-arm64" \
+        "${BUILD_DIR_SSH}/openssl-macos-x86_64" \
+        "${BUILD_DIR_SSH}/openssl-macos"
+}
+
+build_openssl_macos_arch() {
+    local arch="$1"
+    local configure_target="$2"
+    local prefix="${BUILD_DIR_SSH}/openssl-macos-${arch}"
+
+    log_info "Building OpenSSL for macOS ${arch}..."
     cd "${BUILD_DIR_SSH}/openssl-${OPENSSL_VERSION}"
 
     make clean 2>/dev/null || true
+    rm -rf "${prefix}"
 
     local mac_sdk
     mac_sdk=$(xcrun --sdk macosx --show-sdk-path)
     export MACOSX_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET}"
-    export CC="$(xcrun --sdk macosx -f clang) -isysroot ${mac_sdk} -mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}"
+    export CC="$(xcrun --sdk macosx -f clang) -arch ${arch} -isysroot ${mac_sdk} -mmacosx-version-min=${MACOS_DEPLOYMENT_TARGET}"
 
-    ./Configure darwin64-arm64-cc \
-        --prefix="${BUILD_DIR_SSH}/openssl-macos" \
+    ./Configure "${configure_target}" \
+        --prefix="${prefix}" \
         no-shared \
         no-tests
 
@@ -452,19 +476,35 @@ build_openssl_ios() {
 }
 
 build_openssl_simulator() {
-    log_info "Building OpenSSL for iOS Simulator arm64..."
+    log_info "Building OpenSSL for iOS Simulator universal..."
+
+    build_openssl_simulator_arch arm64
+    build_openssl_simulator_arch x86_64
+
+    create_universal_openssl \
+        "${BUILD_DIR_SSH}/openssl-simulator-arm64" \
+        "${BUILD_DIR_SSH}/openssl-simulator-x86_64" \
+        "${BUILD_DIR_SSH}/openssl-simulator"
+}
+
+build_openssl_simulator_arch() {
+    local arch="$1"
+    local prefix="${BUILD_DIR_SSH}/openssl-simulator-${arch}"
+
+    log_info "Building OpenSSL for iOS Simulator ${arch}..."
     cd "${BUILD_DIR_SSH}/openssl-${OPENSSL_VERSION}"
 
     make clean 2>/dev/null || true
+    rm -rf "${prefix}"
 
     local sim_sdk
     sim_sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
     export CROSS_TOP="$(xcrun --sdk iphonesimulator --show-sdk-platform-path)/Developer"
     export CROSS_SDK="iPhoneSimulator.sdk"
-    export CC="$(xcrun --sdk iphonesimulator -f clang) -isysroot ${sim_sdk} -arch arm64 -mios-simulator-version-min=${IOS_DEPLOYMENT_TARGET}"
+    export CC="$(xcrun --sdk iphonesimulator -f clang) -arch ${arch} -isysroot ${sim_sdk} -mios-simulator-version-min=${IOS_DEPLOYMENT_TARGET}"
 
     ./Configure iossimulator-xcrun \
-        --prefix="${BUILD_DIR_SSH}/openssl-simulator" \
+        --prefix="${prefix}" \
         -mios-simulator-version-min=${IOS_DEPLOYMENT_TARGET} \
         no-shared \
         no-tests \
@@ -476,29 +516,63 @@ build_openssl_simulator() {
     unset CROSS_TOP CROSS_SDK CC
 }
 
+create_universal_openssl() {
+    local arm64_prefix="$1"
+    local x86_64_prefix="$2"
+    local universal_prefix="$3"
+
+    rm -rf "${universal_prefix}"
+    mkdir -p "${universal_prefix}/lib"
+    rsync -a "${arm64_prefix}/include" "${universal_prefix}/"
+    xcrun lipo -create \
+        "${arm64_prefix}/lib/libssl.a" \
+        "${x86_64_prefix}/lib/libssl.a" \
+        -output "${universal_prefix}/lib/libssl.a"
+    xcrun lipo -create \
+        "${arm64_prefix}/lib/libcrypto.a" \
+        "${x86_64_prefix}/lib/libcrypto.a" \
+        -output "${universal_prefix}/lib/libcrypto.a"
+}
+
 build_libssh2_macos() {
-    log_info "Building libssh2 for macOS arm64..."
+    log_info "Building libssh2 for macOS universal..."
+
+    build_libssh2_macos_arch arm64
+    build_libssh2_macos_arch x86_64
+
+    create_universal_libssh2 \
+        "${BUILD_DIR_SSH}/libssh2-macos-arm64" \
+        "${BUILD_DIR_SSH}/libssh2-macos-x86_64" \
+        "${VENDOR_SSH}/macos" \
+        "${BUILD_DIR_SSH}/openssl-macos"
+}
+
+build_libssh2_macos_arch() {
+    local arch="$1"
+    local install_prefix="${BUILD_DIR_SSH}/libssh2-macos-${arch}"
+
+    log_info "Building libssh2 for macOS ${arch}..."
     cd "${BUILD_DIR_SSH}/libssh2-${LIBSSH2_VERSION}"
 
-    rm -rf build-macos
-    mkdir -p build-macos && cd build-macos
+    rm -rf "build-macos-${arch}" "${install_prefix}"
+    mkdir -p "build-macos-${arch}" && cd "build-macos-${arch}"
 
     cmake .. \
         -Wno-dev \
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-        -DCMAKE_OSX_ARCHITECTURES=arm64 \
+        -DCMAKE_OSX_ARCHITECTURES="${arch}" \
         -DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOS_DEPLOYMENT_TARGET} \
-        -DCMAKE_INSTALL_PREFIX="${VENDOR_SSH}/macos" \
-        -DOPENSSL_ROOT_DIR="${BUILD_DIR_SSH}/openssl-macos" \
+        -DCMAKE_INSTALL_PREFIX="${install_prefix}" \
+        -DOPENSSL_ROOT_DIR="${BUILD_DIR_SSH}/openssl-macos-${arch}" \
+        -DOPENSSL_INCLUDE_DIR="${BUILD_DIR_SSH}/openssl-macos-${arch}/include" \
+        -DOPENSSL_CRYPTO_LIBRARY="${BUILD_DIR_SSH}/openssl-macos-${arch}/lib/libcrypto.a" \
+        -DOPENSSL_SSL_LIBRARY="${BUILD_DIR_SSH}/openssl-macos-${arch}/lib/libssl.a" \
         -DBUILD_SHARED_LIBS=OFF \
         -DBUILD_EXAMPLES=OFF \
         -DBUILD_TESTING=OFF
 
     make -j"$(sysctl -n hw.ncpu)"
     make install
-
-    cp "${BUILD_DIR_SSH}/openssl-macos/lib/libssl.a" "${VENDOR_SSH}/macos/lib/"
-    cp "${BUILD_DIR_SSH}/openssl-macos/lib/libcrypto.a" "${VENDOR_SSH}/macos/lib/"
 }
 
 build_libssh2_ios() {
@@ -535,11 +609,27 @@ build_libssh2_ios() {
 }
 
 build_libssh2_simulator() {
-    log_info "Building libssh2 for iOS Simulator arm64..."
+    log_info "Building libssh2 for iOS Simulator universal..."
+
+    build_libssh2_simulator_arch arm64
+    build_libssh2_simulator_arch x86_64
+
+    create_universal_libssh2 \
+        "${BUILD_DIR_SSH}/libssh2-simulator-arm64" \
+        "${BUILD_DIR_SSH}/libssh2-simulator-x86_64" \
+        "${VENDOR_SSH}/ios-simulator" \
+        "${BUILD_DIR_SSH}/openssl-simulator"
+}
+
+build_libssh2_simulator_arch() {
+    local arch="$1"
+    local install_prefix="${BUILD_DIR_SSH}/libssh2-simulator-${arch}"
+
+    log_info "Building libssh2 for iOS Simulator ${arch}..."
     cd "${BUILD_DIR_SSH}/libssh2-${LIBSSH2_VERSION}"
 
-    rm -rf build-simulator
-    mkdir -p build-simulator && cd build-simulator
+    rm -rf "build-simulator-${arch}" "${install_prefix}"
+    mkdir -p "build-simulator-${arch}" && cd "build-simulator-${arch}"
 
     local sim_sdk
     sim_sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
@@ -549,22 +639,36 @@ build_libssh2_simulator() {
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
         -DCMAKE_SYSTEM_NAME=iOS \
         -DCMAKE_OSX_SYSROOT="${sim_sdk}" \
-        -DCMAKE_OSX_ARCHITECTURES=arm64 \
+        -DCMAKE_OSX_ARCHITECTURES="${arch}" \
         -DCMAKE_OSX_DEPLOYMENT_TARGET=${IOS_DEPLOYMENT_TARGET} \
-        -DCMAKE_INSTALL_PREFIX="${VENDOR_SSH}/ios-simulator" \
-        -DOPENSSL_ROOT_DIR="${BUILD_DIR_SSH}/openssl-simulator" \
-        -DOPENSSL_INCLUDE_DIR="${BUILD_DIR_SSH}/openssl-simulator/include" \
-        -DOPENSSL_CRYPTO_LIBRARY="${BUILD_DIR_SSH}/openssl-simulator/lib/libcrypto.a" \
-        -DOPENSSL_SSL_LIBRARY="${BUILD_DIR_SSH}/openssl-simulator/lib/libssl.a" \
+        -DCMAKE_INSTALL_PREFIX="${install_prefix}" \
+        -DOPENSSL_ROOT_DIR="${BUILD_DIR_SSH}/openssl-simulator-${arch}" \
+        -DOPENSSL_INCLUDE_DIR="${BUILD_DIR_SSH}/openssl-simulator-${arch}/include" \
+        -DOPENSSL_CRYPTO_LIBRARY="${BUILD_DIR_SSH}/openssl-simulator-${arch}/lib/libcrypto.a" \
+        -DOPENSSL_SSL_LIBRARY="${BUILD_DIR_SSH}/openssl-simulator-${arch}/lib/libssl.a" \
         -DBUILD_SHARED_LIBS=OFF \
         -DBUILD_EXAMPLES=OFF \
         -DBUILD_TESTING=OFF
 
     make -j"$(sysctl -n hw.ncpu)"
     make install
+}
 
-    cp "${BUILD_DIR_SSH}/openssl-simulator/lib/libssl.a" "${VENDOR_SSH}/ios-simulator/lib/"
-    cp "${BUILD_DIR_SSH}/openssl-simulator/lib/libcrypto.a" "${VENDOR_SSH}/ios-simulator/lib/"
+create_universal_libssh2() {
+    local arm64_prefix="$1"
+    local x86_64_prefix="$2"
+    local vendor_prefix="$3"
+    local openssl_prefix="$4"
+
+    rm -rf "${vendor_prefix}"
+    mkdir -p "${vendor_prefix}/lib"
+    rsync -a "${arm64_prefix}/include" "${vendor_prefix}/"
+    xcrun lipo -create \
+        "${arm64_prefix}/lib/libssh2.a" \
+        "${x86_64_prefix}/lib/libssh2.a" \
+        -output "${vendor_prefix}/lib/libssh2.a"
+    cp "${openssl_prefix}/lib/libssl.a" "${vendor_prefix}/lib/"
+    cp "${openssl_prefix}/lib/libcrypto.a" "${vendor_prefix}/lib/"
 }
 
 create_modulemap() {
