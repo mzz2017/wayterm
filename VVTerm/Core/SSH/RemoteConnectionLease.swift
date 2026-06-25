@@ -15,7 +15,7 @@ nonisolated protocol RemoteConnectionLeaseClient: AnyObject, RemoteCommandExecut
     func disconnect() async
 }
 
-struct RemoteConnectionLease: Sendable {
+nonisolated struct RemoteConnectionLease: Sendable {
     let client: any RemoteConnectionLeaseClient
     let ownership: RemoteConnectionLeaseOwnership
     private let state: RemoteConnectionLeaseState
@@ -44,14 +44,14 @@ struct RemoteConnectionLease: Sendable {
     }
 }
 
-@MainActor
-struct RemoteConnectionLeaseProvider {
+nonisolated struct RemoteConnectionLeaseProvider {
     private let provider: @MainActor (UUID) -> RemoteConnectionLease?
 
     init(_ provider: @escaping @MainActor (UUID) -> RemoteConnectionLease?) {
         self.provider = provider
     }
 
+    @MainActor
     func lease(for serverId: UUID) -> RemoteConnectionLease? {
         provider(serverId)
     }
