@@ -1,7 +1,7 @@
 import Foundation
 
 /// Which terminal multiplexer a connection uses for session persistence.
-enum TerminalMultiplexer: String, Codable, CaseIterable, Identifiable {
+nonisolated enum TerminalMultiplexer: String, Codable, CaseIterable, Identifiable {
     case none
     case tmux
     case zmx

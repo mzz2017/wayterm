@@ -3,7 +3,7 @@ import SwiftUI
 
 // MARK: - Workspace Model (CloudKit synced)
 
-struct Workspace: Identifiable, Codable, Hashable {
+nonisolated struct Workspace: Identifiable, Codable, Hashable {
     let id: UUID
     var name: String
     var colorHex: String

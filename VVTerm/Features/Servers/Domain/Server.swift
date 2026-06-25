@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Server Model (CloudKit synced)
 
-struct Server: Identifiable, Codable, Hashable {
+nonisolated struct Server: Identifiable, Codable, Hashable {
     let id: UUID
     var workspaceId: UUID
     var environment: ServerEnvironment
@@ -170,7 +170,7 @@ struct Server: Identifiable, Codable, Hashable {
     }
 }
 
-enum SSHConnectionMode: String, Codable, CaseIterable, Identifiable {
+nonisolated enum SSHConnectionMode: String, Codable, CaseIterable, Identifiable {
     case standard
     case tailscale
     case mosh
@@ -190,7 +190,7 @@ enum SSHConnectionMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum CloudflareAccessMode: String, Codable, CaseIterable, Identifiable {
+nonisolated enum CloudflareAccessMode: String, Codable, CaseIterable, Identifiable {
     case oauth
     case serviceToken
 
@@ -208,7 +208,7 @@ enum CloudflareAccessMode: String, Codable, CaseIterable, Identifiable {
 
 // MARK: - Authentication Method
 
-enum AuthMethod: String, Codable, CaseIterable, Identifiable {
+nonisolated enum AuthMethod: String, Codable, CaseIterable, Identifiable {
     case password
     case sshKey
     case sshKeyWithPassphrase
@@ -234,7 +234,7 @@ enum AuthMethod: String, Codable, CaseIterable, Identifiable {
 
 // MARK: - Server Credentials (for authentication)
 
-struct ServerCredentials {
+nonisolated struct ServerCredentials {
     let serverId: UUID
     var password: String?
     var privateKey: Data?
@@ -256,7 +256,7 @@ struct ServerCredentials {
 
 // MARK: - Stored SSH Key Entry (reusable keys in Keychain)
 
-struct SSHKeyEntry: Identifiable, Codable, Hashable {
+nonisolated struct SSHKeyEntry: Identifiable, Codable, Hashable {
     let id: UUID
     var name: String
     var hasPassphrase: Bool

@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-struct ServerEnvironment: Identifiable, Codable, Hashable {
+nonisolated struct ServerEnvironment: Identifiable, Codable, Hashable {
     let id: UUID
     var name: String
     var shortName: String
