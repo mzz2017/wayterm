@@ -12,8 +12,8 @@ extension Notification.Name {
     static let viewTabConfigurationDidChange = Notification.Name("viewTabConfigurationDidChange")
 }
 
-@MainActor
-final class ViewTabConfigurationManager: ObservableObject {
+nonisolated final class ViewTabConfigurationManager: ObservableObject {
+    @MainActor
     static let shared = ViewTabConfigurationManager()
 
     private let defaults: UserDefaults
@@ -24,12 +24,13 @@ final class ViewTabConfigurationManager: ObservableObject {
     private let showFilesKey = "showFilesTab"
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.vivy.vvterm", category: "ViewTabConfigurationManager")
 
-    @Published private(set) var tabOrder: [ConnectionViewTab] = ConnectionViewTab.defaultOrder
-    @Published private(set) var defaultTab: String = "stats"
-    @Published private(set) var showStatsTab: Bool = true
-    @Published private(set) var showTerminalTab: Bool = true
-    @Published private(set) var showFilesTab: Bool = true
+    @MainActor @Published private(set) var tabOrder: [ConnectionViewTab] = ConnectionViewTab.defaultOrder
+    @MainActor @Published private(set) var defaultTab: String = "stats"
+    @MainActor @Published private(set) var showStatsTab: Bool = true
+    @MainActor @Published private(set) var showTerminalTab: Bool = true
+    @MainActor @Published private(set) var showFilesTab: Bool = true
 
+    @MainActor
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         loadConfiguration()
@@ -37,12 +38,14 @@ final class ViewTabConfigurationManager: ObservableObject {
 
     // MARK: - Load/Save
 
+    @MainActor
     private func loadConfiguration() {
         loadTabOrder()
         loadDefaultTab()
         loadVisibility()
     }
 
+    @MainActor
     private func loadTabOrder() {
         guard let data = defaults.data(forKey: orderKey),
               let decoded = try? JSONDecoder().decode([String].self, from: data) else {
@@ -68,6 +71,7 @@ final class ViewTabConfigurationManager: ObservableObject {
         tabOrder = order
     }
 
+    @MainActor
     private func loadDefaultTab() {
         if let stored = defaults.string(forKey: defaultTabKey),
            ConnectionViewTab.from(id: stored) != nil {
@@ -77,6 +81,7 @@ final class ViewTabConfigurationManager: ObservableObject {
         }
     }
 
+    @MainActor
     private func loadVisibility() {
         showStatsTab = defaults.object(forKey: showStatsKey) as? Bool ?? true
         showTerminalTab = defaults.object(forKey: showTerminalKey) as? Bool ?? true
@@ -89,6 +94,7 @@ final class ViewTabConfigurationManager: ObservableObject {
         }
     }
 
+    @MainActor
     private func saveTabOrder() {
         do {
             let ids = tabOrder.map { $0.id }
@@ -100,11 +106,13 @@ final class ViewTabConfigurationManager: ObservableObject {
         }
     }
 
+    @MainActor
     private func saveDefaultTab() {
         defaults.set(defaultTab, forKey: defaultTabKey)
         NotificationCenter.default.post(name: .viewTabConfigurationDidChange, object: nil)
     }
 
+    @MainActor
     private func saveVisibility() {
         defaults.set(showStatsTab, forKey: showStatsKey)
         defaults.set(showTerminalTab, forKey: showTerminalKey)
@@ -114,17 +122,20 @@ final class ViewTabConfigurationManager: ObservableObject {
 
     // MARK: - Public API
 
+    @MainActor
     func moveTab(from source: IndexSet, to destination: Int) {
         tabOrder.move(fromOffsets: source, toOffset: destination)
         saveTabOrder()
     }
 
+    @MainActor
     func setDefaultTab(_ tabId: String) {
         guard ConnectionViewTab.from(id: tabId) != nil else { return }
         defaultTab = tabId
         saveDefaultTab()
     }
 
+    @MainActor
     func setVisibility(for tabId: String, isVisible: Bool) {
         guard ConnectionViewTab.from(id: tabId) != nil else { return }
 
@@ -152,6 +163,7 @@ final class ViewTabConfigurationManager: ObservableObject {
         saveVisibility()
     }
 
+    @MainActor
     func resetToDefaults() {
         tabOrder = ConnectionViewTab.defaultOrder
         defaultTab = "stats"
@@ -164,16 +176,19 @@ final class ViewTabConfigurationManager: ObservableObject {
     }
 
     /// Returns the first tab from the configured order
+    @MainActor
     func firstTab() -> String {
         tabOrder.first?.id ?? "stats"
     }
 
     /// Returns the effective default tab
+    @MainActor
     func effectiveDefaultTab() -> String {
         effectiveDefaultTab(showStats: showStatsTab, showTerminal: showTerminalTab, showFiles: showFilesTab)
     }
 
     /// Returns the effective default tab, accounting for visibility
+    @MainActor
     func effectiveDefaultTab(showStats: Bool, showTerminal: Bool, showFiles: Bool = true) -> String {
         let isVisible: Bool
         switch defaultTab {
@@ -192,6 +207,7 @@ final class ViewTabConfigurationManager: ObservableObject {
     }
 
     /// Returns the first visible tab from the configured order
+    @MainActor
     func firstVisibleTab(showStats: Bool, showTerminal: Bool, showFiles: Bool = true) -> String {
         for tab in tabOrder {
             switch tab.id {
@@ -205,6 +221,7 @@ final class ViewTabConfigurationManager: ObservableObject {
     }
 
     /// Returns only visible tabs in order
+    @MainActor
     func visibleTabs(showStats: Bool, showTerminal: Bool, showFiles: Bool = true) -> [ConnectionViewTab] {
         tabOrder.filter { tab in
             switch tab.id {
@@ -216,10 +233,12 @@ final class ViewTabConfigurationManager: ObservableObject {
         }
     }
 
+    @MainActor
     var currentVisibleTabs: [ConnectionViewTab] {
         visibleTabs(showStats: showStatsTab, showTerminal: showTerminalTab, showFiles: showFilesTab)
     }
 
+    @MainActor
     func isTabVisible(_ tabId: String) -> Bool {
         switch tabId {
         case ConnectionViewTab.stats.id:
@@ -233,6 +252,7 @@ final class ViewTabConfigurationManager: ObservableObject {
         }
     }
 
+    @MainActor
     func effectiveView(for storedView: String?) -> String {
         guard let storedView, ConnectionViewTab.from(id: storedView) != nil else {
             return effectiveDefaultTab()
@@ -245,6 +265,7 @@ final class ViewTabConfigurationManager: ObservableObject {
         return storedView
     }
 
+    @MainActor
     func visibilityBinding(for tabId: String) -> Binding<Bool> {
         Binding(
             get: { [weak self] in
@@ -256,6 +277,7 @@ final class ViewTabConfigurationManager: ObservableObject {
         )
     }
 
+    @MainActor
     func defaultTabBinding() -> Binding<String> {
         Binding(
             get: { [weak self] in

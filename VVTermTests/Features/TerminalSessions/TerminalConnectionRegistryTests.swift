@@ -15,6 +15,19 @@ import XCTest
 // Fakes and assumptions: tests use real SSHClient actor instances only for
 // identity. They do not connect to a network, start libssh2, or open shells.
 final class TerminalConnectionRegistryTests: XCTestCase {
+    // These tests use SSHClient only for ObjectIdentifier identity. Retaining
+    // the clients avoids an x86_64 simulator Swift runtime crash while
+    // deallocating otherwise unused actor instances during XCTest teardown.
+    @MainActor
+    private static var retainedIdentityClients: [SSHClient] = []
+
+    @MainActor
+    private func makeRetainedSSHClient() -> SSHClient {
+        let client = SSHClient()
+        Self.retainedIdentityClients.append(client)
+        return client
+    }
+
     @MainActor
     func testActiveServerIdsOnlyIncludesStreamingEntities() {
         // Given two entities tracked by the application-layer registry.
@@ -94,13 +107,14 @@ final class TerminalConnectionRegistryTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testClosedEntityRejectsLateShellRegistrationFromSameClient() {
         // Given an entity that began starting a shell and then closed before
         // the runner registered its shell.
         var registry = SSHShellRegistry(staleThreshold: 120)
         let entityId = UUID()
         let serverId = UUID()
-        let client = SSHClient()
+        let client = makeRetainedSSHClient()
         let oldStart = registry.tryBeginStart(for: entityId, serverId: serverId, client: client)
 
         _ = registry.closeEntity(entityId)
@@ -125,13 +139,14 @@ final class TerminalConnectionRegistryTests: XCTestCase {
         XCTAssertNil(registry.shellId(for: entityId), "Rejecting the late shell must leave the entity without a registered shell.")
     }
 
+    @MainActor
     func testOlderGenerationCannotReplaceNewerShellForSameEntity() {
         // Given one entity that closed an old start and began a new start.
         var registry = SSHShellRegistry(staleThreshold: 120)
         let entityId = UUID()
         let serverId = UUID()
-        let oldClient = SSHClient()
-        let newClient = SSHClient()
+        let oldClient = makeRetainedSSHClient()
+        let newClient = makeRetainedSSHClient()
         let oldStart = registry.tryBeginStart(for: entityId, serverId: serverId, client: oldClient)
 
         _ = registry.closeEntity(entityId)

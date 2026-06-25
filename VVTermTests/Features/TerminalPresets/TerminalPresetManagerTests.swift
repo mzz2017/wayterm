@@ -6,6 +6,7 @@ import XCTest
 // Fakes use isolated storage and no terminal launch; update only when preset
 // manager behavior intentionally changes.
 
+@MainActor
 final class TerminalPresetManagerTests: XCTestCase {
     private var suiteName: String!
     private var defaults: UserDefaults!

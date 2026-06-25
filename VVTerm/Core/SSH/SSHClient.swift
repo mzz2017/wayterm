@@ -81,7 +81,7 @@ private final class SSHMoshTeardownTaskRegistry: @unchecked Sendable {
         records[requestID] = record
         lock.unlock()
 
-        let task = Task { [weak self] in
+        let task = Task.detached { [weak self] in
             await operation()
             self?.remove(requestID)
         }
@@ -108,7 +108,9 @@ private final class SSHMoshTeardownTaskRegistry: @unchecked Sendable {
     }
 }
 
-actor SSHClient {
+nonisolated actor SSHClient {
+    nonisolated deinit {}
+
     private final class MoshShellRuntime: @unchecked Sendable {
         let session: MoshClientSession
         private let lock = NSLock()
@@ -899,10 +901,11 @@ actor SSHClient {
     }
 }
 
-actor SSHConnectionOperationService {
+nonisolated actor SSHConnectionOperationService {
     static let shared = SSHConnectionOperationService()
 
     private init() {}
+    nonisolated deinit {}
 
     func runWithConnection<T>(
         using client: SSHClient,
@@ -1026,7 +1029,7 @@ private final class SSHChannelCleanupTaskRegistry: @unchecked Sendable {
         records[requestID] = record
         lock.unlock()
 
-        let task = Task { [weak self] in
+        let task = Task.detached { [weak self] in
             await operation()
             self?.remove(requestID)
         }
@@ -1055,7 +1058,9 @@ private final class SSHChannelCleanupTaskRegistry: @unchecked Sendable {
 
 // MARK: - SSH Session using libssh2
 
-actor SSHSession {
+nonisolated actor SSHSession {
+    nonisolated deinit {}
+
     private final class ExecRequest {
         let id: UUID
         let command: String
@@ -2069,6 +2074,7 @@ actor SSHSession {
             state.continuation.yield(state.batchBuffer)
         }
         closeAndFreeChannel(state.channel)
+        state.continuation.onTermination = nil
         state.continuation.finish()
     }
 
@@ -2080,6 +2086,7 @@ actor SSHSession {
                 state.continuation.yield(state.batchBuffer)
             }
             closeAndFreeChannel(state.channel)
+            state.continuation.onTermination = nil
             state.continuation.finish()
         }
     }
