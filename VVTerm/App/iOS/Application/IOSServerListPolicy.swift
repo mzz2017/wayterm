@@ -23,6 +23,11 @@ struct IOSActiveConnectionSnapshot: Equatable, Identifiable {
     var id: UUID { serverId }
 }
 
+struct IOSServerSavedSelectionAction: Equatable {
+    let destinationWorkspaceId: UUID?
+    let shouldClearSelectedEnvironment: Bool
+}
+
 enum IOSServerListPolicy {
     static let shouldForceNewConnectionFromServerList = true
 
@@ -101,6 +106,30 @@ enum IOSServerListPolicy {
         let serverIDs = filteredServerIds.map(\.uuidString).joined(separator: ",")
         let activeConnectionIDs = activeConnectionIds.map(\.uuidString).joined(separator: ",")
         return [workspaceID, environmentID, serverIDs, activeConnectionIDs].joined(separator: "|")
+    }
+
+    static func savedServerSelectionAction(
+        originalWorkspaceId: UUID,
+        savedWorkspaceId: UUID,
+        selectedEnvironmentId: UUID?,
+        savedEnvironmentId: UUID,
+        destinationWorkspaceExists: Bool
+    ) -> IOSServerSavedSelectionAction {
+        if originalWorkspaceId != savedWorkspaceId, destinationWorkspaceExists {
+            return IOSServerSavedSelectionAction(
+                destinationWorkspaceId: savedWorkspaceId,
+                shouldClearSelectedEnvironment: true
+            )
+        }
+
+        let shouldClearEnvironment = selectedEnvironmentId.map {
+            $0 != savedEnvironmentId
+        } ?? false
+
+        return IOSServerSavedSelectionAction(
+            destinationWorkspaceId: nil,
+            shouldClearSelectedEnvironment: shouldClearEnvironment
+        )
     }
 
     private static func representativeSession(

@@ -68,4 +68,58 @@ final class IOSServerListPolicyTests: XCTestCase {
             "The iOS list refresh identity should remain deterministic for the all-workspaces/all-environments empty-list state."
         )
     }
+
+    func testSavedServerSelectionSwitchesWorkspaceAndClearsEnvironmentWhenServerMoves() {
+        let sourceWorkspaceId = UUID()
+        let destinationWorkspaceId = UUID()
+
+        let action = IOSServerListPolicy.savedServerSelectionAction(
+            originalWorkspaceId: sourceWorkspaceId,
+            savedWorkspaceId: destinationWorkspaceId,
+            selectedEnvironmentId: UUID(),
+            savedEnvironmentId: UUID(),
+            destinationWorkspaceExists: true
+        )
+
+        XCTAssertEqual(action.destinationWorkspaceId, destinationWorkspaceId)
+        XCTAssertTrue(
+            action.shouldClearSelectedEnvironment,
+            "Moving a saved server to another workspace should reset the environment filter because filters are workspace-scoped."
+        )
+    }
+
+    func testSavedServerSelectionClearsEnvironmentWhenServerLeavesSelectedEnvironment() {
+        let workspaceId = UUID()
+        let selectedEnvironmentId = UUID()
+
+        let action = IOSServerListPolicy.savedServerSelectionAction(
+            originalWorkspaceId: workspaceId,
+            savedWorkspaceId: workspaceId,
+            selectedEnvironmentId: selectedEnvironmentId,
+            savedEnvironmentId: UUID(),
+            destinationWorkspaceExists: true
+        )
+
+        XCTAssertNil(action.destinationWorkspaceId)
+        XCTAssertTrue(
+            action.shouldClearSelectedEnvironment,
+            "Editing a server out of the currently filtered environment should clear the filter so the saved server remains visible."
+        )
+    }
+
+    func testSavedServerSelectionPreservesSelectionWhenWorkspaceAndEnvironmentStillMatch() {
+        let workspaceId = UUID()
+        let environmentId = UUID()
+
+        let action = IOSServerListPolicy.savedServerSelectionAction(
+            originalWorkspaceId: workspaceId,
+            savedWorkspaceId: workspaceId,
+            selectedEnvironmentId: environmentId,
+            savedEnvironmentId: environmentId,
+            destinationWorkspaceExists: true
+        )
+
+        XCTAssertNil(action.destinationWorkspaceId)
+        XCTAssertFalse(action.shouldClearSelectedEnvironment)
+    }
 }

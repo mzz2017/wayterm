@@ -399,18 +399,21 @@ struct iOSServerListView: View {
     }
 
     private func handleSavedServer(_ server: Server, originalServer: Server) {
-        let movedAcrossWorkspaces = originalServer.workspaceId != server.workspaceId
+        let action = IOSServerListPolicy.savedServerSelectionAction(
+            originalWorkspaceId: originalServer.workspaceId,
+            savedWorkspaceId: server.workspaceId,
+            selectedEnvironmentId: selectedEnvironment?.id,
+            savedEnvironmentId: server.environment.id,
+            destinationWorkspaceExists: serverManager.workspace(withId: server.workspaceId) != nil
+        )
 
-        if movedAcrossWorkspaces,
-           let destinationWorkspace = serverManager.workspace(withId: server.workspaceId) {
+        if let destinationWorkspaceId = action.destinationWorkspaceId,
+           let destinationWorkspace = serverManager.workspace(withId: destinationWorkspaceId) {
             selectedWorkspace = destinationWorkspace
-            selectedEnvironment = nil
-            return
         }
 
-        if let selectedEnvironment,
-           selectedEnvironment.id != server.environment.id {
-            self.selectedEnvironment = nil
+        if action.shouldClearSelectedEnvironment {
+            selectedEnvironment = nil
         }
     }
 
