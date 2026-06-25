@@ -34,6 +34,18 @@ struct IOSTerminalFloatingControlsVisibility: Equatable {
 enum IOSTerminalViewPolicy {
     static let terminalViewId = "terminal"
 
+    static func resolvedServerId(
+        currentServerId: UUID?,
+        selectedSessionServerId: UUID?,
+        selectedServerId: UUID?,
+        connectingServerId: UUID?
+    ) -> UUID? {
+        currentServerId
+            ?? selectedSessionServerId
+            ?? selectedServerId
+            ?? connectingServerId
+    }
+
     static func effectiveSelectedSessionId(
         selectedSessionId: UUID?,
         serverSessionIds: [UUID]

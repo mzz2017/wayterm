@@ -13,6 +13,76 @@ import Foundation
 
 struct IOSTerminalViewPolicyTests {
     @Test
+    func resolvedServerIdPrefersCurrentServerOverDerivedCandidates() {
+        let currentServerId = UUID()
+
+        // Given several possible server context sources are available.
+        let resolved = IOSTerminalViewPolicy.resolvedServerId(
+            currentServerId: currentServerId,
+            selectedSessionServerId: UUID(),
+            selectedServerId: UUID(),
+            connectingServerId: UUID()
+        )
+
+        // Then the explicit current server remains the stable context.
+        #expect(resolved == currentServerId)
+    }
+
+    @Test
+    func resolvedServerIdFallsBackThroughSessionSelectedAndConnectingServers() {
+        let selectedSessionServerId = UUID()
+        let selectedServerId = UUID()
+        let connectingServerId = UUID()
+
+        // Given no explicit current server exists, the selected session is the
+        // next authoritative runtime context.
+        #expect(
+            IOSTerminalViewPolicy.resolvedServerId(
+                currentServerId: nil,
+                selectedSessionServerId: selectedSessionServerId,
+                selectedServerId: selectedServerId,
+                connectingServerId: connectingServerId
+            ) == selectedSessionServerId
+        )
+
+        // Given there is no current server or selected session, the selected
+        // server drives non-terminal tabs such as Files and Stats.
+        #expect(
+            IOSTerminalViewPolicy.resolvedServerId(
+                currentServerId: nil,
+                selectedSessionServerId: nil,
+                selectedServerId: selectedServerId,
+                connectingServerId: connectingServerId
+            ) == selectedServerId
+        )
+
+        // Given only a connecting server is available, it still provides enough
+        // context for toolbar and disconnect actions while connection opens.
+        #expect(
+            IOSTerminalViewPolicy.resolvedServerId(
+                currentServerId: nil,
+                selectedSessionServerId: nil,
+                selectedServerId: nil,
+                connectingServerId: connectingServerId
+            ) == connectingServerId
+        )
+    }
+
+    @Test
+    func resolvedServerIdIsNilWhenNoContextExists() {
+        // Given the iOS terminal has no current, selected, or connecting server.
+        let resolved = IOSTerminalViewPolicy.resolvedServerId(
+            currentServerId: nil,
+            selectedSessionServerId: nil,
+            selectedServerId: nil,
+            connectingServerId: nil
+        )
+
+        // Then callers can fall back to defaults or dismiss safely.
+        #expect(resolved == nil)
+    }
+
+    @Test
     func floatingControlsShowOnlyForPhoneTerminalBrowseModeWithoutBlockingOverlays() {
         // Given the iOS terminal is on a phone, the terminal tab is selected,
         // browse mode is active, and no find or voice overlay is occupying the

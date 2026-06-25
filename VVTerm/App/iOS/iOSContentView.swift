@@ -824,6 +824,15 @@ struct iOSTerminalView: View {
         currentServerId ?? selectedServer?.id ?? connectingServer?.id
     }
 
+    private var resolvedServerId: UUID? {
+        IOSTerminalViewPolicy.resolvedServerId(
+            currentServerId: currentServerId,
+            selectedSessionServerId: selectedSession?.serverId,
+            selectedServerId: selectedServer?.id,
+            connectingServerId: connectingServer?.id
+        )
+    }
+
     private var serverFileTabs: [RemoteFileTab] {
         guard let fileTabServerId else { return [] }
         return fileTabs.tabs(for: fileTabServerId)
@@ -873,7 +882,7 @@ struct iOSTerminalView: View {
     }
 
     private var selectedView: String {
-        guard let serverId = currentServerId ?? selectedSession?.serverId ?? selectedServer?.id ?? connectingServer?.id else {
+        guard let serverId = resolvedServerId else {
             return viewTabConfig.effectiveDefaultTab()
         }
         return viewTabConfig.effectiveView(for: sessionManager.selectedViewByServer[serverId])
@@ -933,7 +942,7 @@ struct iOSTerminalView: View {
     }
 
     private var zenSelectedViewBinding: Binding<String> {
-        guard let serverId = currentServerId ?? selectedSession?.serverId ?? selectedServer?.id ?? connectingServer?.id else {
+        guard let serverId = resolvedServerId else {
             return .constant(viewTabConfig.effectiveDefaultTab())
         }
         return selectedViewBinding(for: serverId)
@@ -1351,7 +1360,7 @@ struct iOSTerminalView: View {
 
         if shouldShowViewSwitcher {
             ToolbarItem(placement: .principal) {
-                if let serverId = currentServerId ?? selectedSession?.serverId ?? selectedServer?.id ?? connectingServer?.id {
+                if let serverId = resolvedServerId {
                     iOSNativeSegmentedPicker(
                         selection: selectedViewBinding(for: serverId),
                         tabs: viewTabConfig.currentVisibleTabs
@@ -1770,7 +1779,7 @@ struct iOSTerminalView: View {
     }
 
     private func disconnectCurrentServerSessions() {
-        guard let serverId = currentServerId ?? selectedSession?.serverId ?? selectedServer?.id ?? connectingServer?.id else {
+        guard let serverId = resolvedServerId else {
             onBack()
             return
         }
