@@ -348,6 +348,53 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func sessionRuntimeLifecycleLivesOutsideConnectionSessionManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let runtimeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Runtime.swift")
+        )
+
+        // Given SSH registration, shell-start gating, runtime startup, and
+        // runtime teardown are long-lived resource lifecycle concerns.
+        #expect(runtimeSource.contains("extension ConnectionSessionManager"))
+        #expect(runtimeSource.contains("func registerSSHClient"))
+        #expect(runtimeSource.contains("func configureRuntime"))
+        #expect(runtimeSource.contains("func startRuntimeIfNeeded"))
+        #expect(runtimeSource.contains("func cancelRuntime"))
+        #expect(runtimeSource.contains("func registeredShellRoute"))
+        #expect(runtimeSource.contains("func beginShellStart"))
+
+        // Then the superfile should not own session runtime/SSH lifecycle directly.
+        #expect(
+            !managerSource.containsRegex(#"func\s+registerSSHClient\s*\("#),
+            "ConnectionSessionManager.swift should not own SSH registration lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+configureRuntime\s*\("#),
+            "ConnectionSessionManager.swift should not own runtime configuration."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+startRuntimeIfNeeded\s*\("#),
+            "ConnectionSessionManager.swift should not own runtime start orchestration."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+cancelRuntime\s*\("#),
+            "ConnectionSessionManager.swift should not own runtime teardown orchestration."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+registeredShellRoute\s*\("#),
+            "ConnectionSessionManager.swift should not own registered shell route lookup."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+beginShellStart\s*\("#),
+            "ConnectionSessionManager.swift should not own shell-start gating."
+        )
+    }
+
+    @Test
     func installRequestIndexingUsesSharedScopedStore() throws {
         let root = try sourceRoot()
         let managerSource = try source(
