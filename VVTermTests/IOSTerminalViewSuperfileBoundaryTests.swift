@@ -4,9 +4,9 @@ import Testing
 // Test Context:
 // These source-boundary tests protect iOSTerminalView superfile control. The
 // iOS terminal root owns top-level composition and intent routing; reusable
-// floating controls, navigation toolbar chrome, zen-mode overlay chrome, and
-// transient connection chrome should live in sibling UI files so the root view
-// does not accumulate presentation subcomponents.
+// floating controls, navigation toolbar chrome, zen-mode overlay chrome,
+// session-page chrome, and transient connection chrome should live in sibling
+// UI files so the root view does not accumulate presentation subcomponents.
 // Update this test only if iOS terminal root composition intentionally changes.
 @Suite
 struct IOSTerminalViewSuperfileBoundaryTests {
@@ -113,6 +113,46 @@ struct IOSTerminalViewSuperfileBoundaryTests {
         #expect(
             overlaySource.contains("IOSZenModePanel("),
             "IOSTerminalZenModeOverlay should own the iOS zen panel composition."
+        )
+    }
+
+    @Test
+    func iosTerminalViewComposesSessionPageWithoutOwningSessionPageChrome() throws {
+        let root = try sourceRoot()
+        let rootSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/iOS/iOSTerminalView.swift")
+        )
+        let sessionPageSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/iOS/IOSTerminalSessionPage.swift")
+        )
+
+        // Given iOSTerminalView owns top-level selected-session routing.
+        #expect(
+            rootSource.contains("IOSTerminalSessionPage("),
+            "iOSTerminalView.swift should compose the iOS terminal session page."
+        )
+
+        // Then the per-session terminal/files/progress page composition should
+        // live in its own sibling UI component rather than the terminal root.
+        #expect(
+            !rootSource.contains("private func sessionPage"),
+            "iOSTerminalView.swift should not define the session page builder."
+        )
+        #expect(
+            !rootSource.contains("TerminalContainerView("),
+            "iOSTerminalView.swift should not directly own terminal container page chrome."
+        )
+        #expect(
+            sessionPageSource.contains("struct IOSTerminalSessionPage: View"),
+            "IOSTerminalSessionPage.swift should define the session page component."
+        )
+        #expect(
+            sessionPageSource.contains("TerminalContainerView("),
+            "IOSTerminalSessionPage should own terminal container page composition."
+        )
+        #expect(
+            sessionPageSource.contains("IOSTerminalViewPolicy.terminalPreparation"),
+            "IOSTerminalSessionPage should preserve terminal preparation policy use."
         )
     }
 

@@ -654,7 +654,23 @@ struct iOSTerminalView: View {
             }
 
             if selectedView == "terminal", let session = selectedSession ?? serverSessions.first {
-                sessionPage(session)
+                IOSTerminalSessionPage(
+                    session: session,
+                    serverManager: serverManager,
+                    sessionManager: sessionManager,
+                    viewTabConfig: viewTabConfig,
+                    fileTabs: fileTabs,
+                    fileBrowser: fileBrowser,
+                    selectedFileTab: selectedFileTab,
+                    shouldShowTerminalBySession: $shouldShowTerminalBySession,
+                    voiceRecordingBySession: $voiceRecordingBySession,
+                    pendingVoiceReturnBySession: $pendingVoiceReturnBySession,
+                    reconnectToken: reconnectTokenBySession[session.id] ?? session.id,
+                    onActivateTerminal: activateTerminal,
+                    onRefreshTerminal: refreshTerminal(for:),
+                    onFocusTerminal: focusTerminal(for:),
+                    onEnsureInitialFileTab: ensureInitialFileTabIfNeeded
+                )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -738,100 +754,22 @@ struct iOSTerminalView: View {
         )
     }
 
-    @ViewBuilder
-    private func sessionPage(_ session: ConnectionSession) -> some View {
-        let server = serverManager.servers.first { $0.id == session.serverId }
-        let viewSelection = sessionManager.selectedViewByServer[session.serverId] ?? viewTabConfig.effectiveDefaultTab()
-        let effectiveViewSelection = viewTabConfig.effectiveView(for: viewSelection)
+    private func activateTerminal(_ session: ConnectionSession) {
         let terminalAlreadyExists = sessionManager.hasTerminal(for: session.id)
-        let shouldShowTerminal = shouldShowTerminalBySession[session.id] ?? false
-        let reconnectToken = reconnectTokenBySession[session.id] ?? session.id
-
-        ZStack {
-            if shouldShowTerminal || terminalAlreadyExists {
-                TerminalContainerView(
-                    session: session,
-                    server: server,
-                    sessionManager: sessionManager,
-                    isActive: effectiveViewSelection == "terminal",
-                    onVoiceRecordingChange: { isRecording in
-                        if isRecording {
-                            clearPendingVoiceReturn(for: session.id)
-                        }
-                        voiceRecordingBySession[session.id] = isRecording
-                    },
-                    onVoiceTranscriptionSent: {
-                        if sessionManager.terminalBrowseModeBySession[session.id] == true {
-                            pendingVoiceReturnBySession[session.id] = true
-                        }
-                    }
-                )
-                .id(reconnectToken)
-            }
-
-            if effectiveViewSelection == "files" {
-                if let server, let selectedFileTab {
-                    RemoteFileBrowserScreen(
-                        browser: fileBrowser,
-                        server: server,
-                        fileTab: selectedFileTab,
-                        initialPath: selectedFileTab.seedPath
-                    ) { currentPath in
-                        fileTabs.updateLastKnownPath(currentPath, for: selectedFileTab.id)
-                    }
-                    .id(selectedFileTab.id)
-                }
-            }
-
-            if effectiveViewSelection == "terminal" && !shouldShowTerminal && !terminalAlreadyExists {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .scaleEffect(1.2)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .id(session.id)
-        .onAppear {
-            prepareTerminal(session: session, viewSelection: effectiveViewSelection, terminalAlreadyExists: terminalAlreadyExists)
-            if effectiveViewSelection == "terminal" {
-                focusTerminal(for: session)
-            }
-        }
-        .onChange(of: session.id) { _ in
-            activateTerminal(session)
-        }
-        .onChange(of: viewSelection) { newValue in
-            let effectiveSelection = viewTabConfig.effectiveView(for: newValue)
-            if effectiveSelection == "terminal" {
-                prepareTerminal(session: session, viewSelection: effectiveSelection, terminalAlreadyExists: terminalAlreadyExists)
-                focusTerminal(for: session)
-            }
-            if effectiveSelection == ConnectionViewTab.files.id {
-                ensureInitialFileTabIfNeeded()
-            }
-        }
-    }
-
-    private func prepareTerminal(session: ConnectionSession, viewSelection: String, terminalAlreadyExists: Bool) {
         switch IOSTerminalViewPolicy.terminalPreparation(
             sessionId: session.id,
-            selectedViewId: viewSelection,
+            selectedViewId: selectedView,
             terminalAlreadyExists: terminalAlreadyExists,
             isTerminalAlreadyScheduled: shouldShowTerminalBySession[session.id] == true
         ) {
         case .none:
-            return
+            break
         case .refreshExisting:
             refreshTerminal(for: session)
         case .markVisible:
             shouldShowTerminalBySession[session.id] = true
         }
-    }
-
-    private func activateTerminal(_ session: ConnectionSession) {
-        let terminalAlreadyExists = sessionManager.hasTerminal(for: session.id)
-        prepareTerminal(session: session, viewSelection: selectedView, terminalAlreadyExists: terminalAlreadyExists)
-        guard selectedView == "terminal" else { return }
+        guard selectedView == ConnectionViewTab.terminal.id else { return }
         focusTerminal(for: session)
     }
 
