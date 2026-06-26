@@ -12,10 +12,10 @@ import Testing
 struct ServerMoveIntentBoundaryTests {
     @Test
     func moveServerSheetSendsMoveIntentToServerManagerRequest() throws {
-        // Given the server form SwiftUI source containing MoveServerSheet.
+        // Given the move-server sheet SwiftUI source.
         let root = try sourceRoot()
         let source = try source(
-            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift")
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/ServerDetail/MoveServerSheet.swift")
         )
 
         // When the test isolates the MoveServerSheet moveServer implementation.

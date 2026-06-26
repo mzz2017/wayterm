@@ -21,7 +21,7 @@ struct ServerFormSaveIntentBoundaryTests {
         // When the test isolates the saveServer implementation.
         let saveServerSource = try functionBody(
             named: "private func saveServer()",
-            endingBefore: "\n    }\n}\n\nstruct MoveServerSheet",
+            endingBefore: "\n}\n\n// MARK: - Preview",
             in: source
         )
 
