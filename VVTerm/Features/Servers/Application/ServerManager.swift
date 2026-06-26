@@ -124,15 +124,15 @@ final class ServerManager: ObservableObject {
     @Published private(set) var serverMoveFailure: ServerMoveFailure?
 
     private let cloudKit = CloudKitManager.shared
-    private let syncCoordinator = CloudKitSyncCoordinator.shared
+    let syncCoordinator = CloudKitSyncCoordinator.shared
     private let deletionTeardown: ServerDeletionTeardown
     private let deleteCredentials: ServerCredentialDeletion
     private let storeCredentials: ServerCredentialStore
     private let startupLoadAction: ServerStartupLoadAction
-    private let persistsLocalData: Bool
+    let persistsLocalData: Bool
     private let recordsSyncMutations: Bool
-    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ServerManager")
-    private var isSyncEnabled: Bool { SyncSettings.isEnabled }
+    let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ServerManager")
+    var isSyncEnabled: Bool { SyncSettings.isEnabled }
     private var startupLoadRequestID: UUID?
     private var startupLoadTask: Task<Void, Never>?
     private var deletionRequests: [UUID: Task<Void, Never>] = [:]
@@ -149,13 +149,6 @@ final class ServerManager: ObservableObject {
     var pendingEnvironmentSaveRequestIDs: Set<UUID> { Set(environmentSaveRequests.keys) }
     var pendingServerSaveRequestIDs: Set<UUID> { Set(serverSaveRequests.keys) }
     var pendingServerMoveRequestIDs: Set<UUID> { Set(serverMoveRequests.keys) }
-
-    // Local storage keys
-    private let serversKey = CloudKitSyncConstants.serverStorageKey
-    private let workspacesKey = CloudKitSyncConstants.workspaceStorageKey
-    private let didBootstrapDefaultWorkspaceKey = CloudKitSyncConstants.didBootstrapDefaultWorkspaceKey
-    private let pendingBootstrapWorkspaceIDKey = CloudKitSyncConstants.pendingBootstrapWorkspaceIDKey
-    private let hasSeenWelcomeKey = "hasSeenWelcome"
 
     private struct FullFetchBackfillResult {
         let changes: CloudKitChanges
@@ -272,172 +265,6 @@ final class ServerManager: ObservableObject {
     }
     #endif
 
-    // MARK: - Local Storage
-
-    private func loadLocalData() {
-        var shouldPersist = false
-
-        if let decoded = loadStoredServers() {
-            servers = decoded
-            logger.info("Loaded \(decoded.count) servers from local storage")
-        }
-
-        if let decoded = loadStoredWorkspaces() {
-            workspaces = decoded
-            logger.info("Loaded \(decoded.count) workspaces from local storage")
-        }
-
-        shouldPersist = reconcilePendingBootstrapWorkspaceState() || shouldPersist
-
-        if Self.shouldCreateBootstrapWorkspace(
-            didBootstrapDefaultWorkspace: didBootstrapDefaultWorkspace,
-            hasSeenWelcome: hasSeenWelcome,
-            hasLocalWorkspaces: !workspaces.isEmpty
-        ) {
-            createBootstrapWorkspace()
-            didBootstrapDefaultWorkspace = true
-            shouldPersist = true
-        }
-
-        if shouldPersist {
-            saveLocalData()
-        }
-    }
-
-    private func saveLocalData() {
-        guard persistsLocalData else { return }
-
-        storeServers(servers)
-        storeWorkspaces(workspaces)
-    }
-
-    private func loadStoredServers() -> [Server]? {
-        guard let data = UserDefaults.standard.data(forKey: serversKey) else {
-            return nil
-        }
-        return try? JSONDecoder().decode([Server].self, from: data)
-    }
-
-    private func loadStoredWorkspaces() -> [Workspace]? {
-        guard let data = UserDefaults.standard.data(forKey: workspacesKey) else {
-            return nil
-        }
-        return try? JSONDecoder().decode([Workspace].self, from: data)
-    }
-
-    private func storeServers(_ servers: [Server]) {
-        guard let data = try? JSONEncoder().encode(servers) else {
-            return
-        }
-        UserDefaults.standard.set(data, forKey: serversKey)
-    }
-
-    private func storeWorkspaces(_ workspaces: [Workspace]) {
-        guard let data = try? JSONEncoder().encode(workspaces) else {
-            return
-        }
-        UserDefaults.standard.set(data, forKey: workspacesKey)
-    }
-
-    private var didBootstrapDefaultWorkspace: Bool {
-        get { UserDefaults.standard.bool(forKey: didBootstrapDefaultWorkspaceKey) }
-        set { UserDefaults.standard.set(newValue, forKey: didBootstrapDefaultWorkspaceKey) }
-    }
-
-    private var hasSeenWelcome: Bool {
-        UserDefaults.standard.bool(forKey: hasSeenWelcomeKey)
-    }
-
-    private var pendingBootstrapWorkspaceID: UUID? {
-        get {
-            guard let rawValue = UserDefaults.standard.string(forKey: pendingBootstrapWorkspaceIDKey) else {
-                return nil
-            }
-            return UUID(uuidString: rawValue)
-        }
-        set {
-            if let newValue {
-                UserDefaults.standard.set(newValue.uuidString, forKey: pendingBootstrapWorkspaceIDKey)
-            } else {
-                UserDefaults.standard.removeObject(forKey: pendingBootstrapWorkspaceIDKey)
-            }
-        }
-    }
-
-    private var transientBootstrapWorkspaceID: UUID? {
-        pendingBootstrapWorkspaceID
-    }
-
-    private func createBootstrapWorkspace() {
-        let workspace = createDefaultWorkspace()
-        workspaces = [workspace]
-
-        if isSyncEnabled {
-            pendingBootstrapWorkspaceID = workspace.id
-            logger.info("Created pending default workspace: \(workspace.name)")
-        } else {
-            pendingBootstrapWorkspaceID = nil
-            logger.info("Created default workspace: \(workspace.name)")
-        }
-    }
-
-    @discardableResult
-    private func reconcilePendingBootstrapWorkspaceState() -> Bool {
-        guard let pendingBootstrapWorkspaceID else {
-            return false
-        }
-
-        guard workspaces.contains(where: { $0.id == pendingBootstrapWorkspaceID }) else {
-            self.pendingBootstrapWorkspaceID = nil
-            return true
-        }
-
-        if servers.contains(where: { $0.workspaceId == pendingBootstrapWorkspaceID }) || workspaces.count > 1 {
-            self.pendingBootstrapWorkspaceID = nil
-            logger.info("Promoted pending bootstrap workspace \(pendingBootstrapWorkspaceID.uuidString) into regular local state")
-            return true
-        }
-
-        return refreshPendingBootstrapWorkspaceLocalizationIfNeeded()
-    }
-
-    @discardableResult
-    private func refreshPendingBootstrapWorkspaceLocalizationIfNeeded() -> Bool {
-        guard let pendingBootstrapWorkspaceID,
-              let index = workspaces.firstIndex(where: { $0.id == pendingBootstrapWorkspaceID }) else {
-            return false
-        }
-
-        let localizedName = AppLanguage.localizedString("My Servers")
-        guard workspaces[index].name != localizedName,
-              Self.isCanonicalDefaultWorkspaceCandidate(workspaces[index]) else {
-            return false
-        }
-
-        workspaces[index].name = localizedName
-        logger.info("Updated pending bootstrap workspace name to match selected app language")
-        return true
-    }
-
-    private func promotePendingBootstrapWorkspaceIfNeeded(for workspaceID: UUID, reason: String) {
-        guard pendingBootstrapWorkspaceID == workspaceID else { return }
-        pendingBootstrapWorkspaceID = nil
-        logger.info("Promoted pending bootstrap workspace after \(reason)")
-    }
-
-    private func resolvePendingBootstrapWorkspaceAgainstAuthoritativeFetch(_ changes: CloudKitChanges) {
-        guard changes.isFullFetch,
-              changes.workspaces.isEmpty,
-              let pendingBootstrapWorkspaceID,
-              let workspace = workspaces.first(where: { $0.id == pendingBootstrapWorkspaceID }) else {
-            return
-        }
-
-        self.pendingBootstrapWorkspaceID = nil
-        enqueuePendingWorkspaceUpsert(workspace)
-        logger.info("Promoted pending bootstrap workspace after authoritative CloudKit fetch returned no workspaces")
-    }
-
     // MARK: - Pending CloudKit Sync
 
     private func enqueuePendingServerUpsert(_ server: Server) {
@@ -450,7 +277,7 @@ final class ServerManager: ObservableObject {
         syncCoordinator.enqueueServerDelete(server)
     }
 
-    private func enqueuePendingWorkspaceUpsert(_ workspace: Workspace) {
+    func enqueuePendingWorkspaceUpsert(_ workspace: Workspace) {
         guard recordsSyncMutations else { return }
         syncCoordinator.enqueueWorkspaceUpsert(workspace)
     }
@@ -629,27 +456,6 @@ final class ServerManager: ObservableObject {
         logger.info("Seeded App Review demo data (\(self.servers.count) servers)")
     }
 
-    /// Clear all local data and re-download from CloudKit
-    func clearLocalDataAndResync() async {
-        logger.info("Clearing local data and re-syncing from CloudKit...")
-
-        // Clear local storage
-        UserDefaults.standard.removeObject(forKey: serversKey)
-        UserDefaults.standard.removeObject(forKey: workspacesKey)
-        pendingBootstrapWorkspaceID = nil
-        syncCoordinator.clearPendingMutations(for: [.server, .workspace])
-
-        // Clear in-memory data
-        servers = []
-        workspaces = []
-        error = nil
-
-        // Re-fetch from CloudKit
-        await loadData()
-
-        logger.info("Clear and re-sync complete: \(self.workspaces.count) workspaces, \(self.servers.count) servers")
-    }
-
     // MARK: - Data Loading
 
     private func startStartupLoad() {
@@ -813,62 +619,6 @@ final class ServerManager: ObservableObject {
             ),
             canReplaceLocalState: backfillCompleted
         )
-    }
-
-    private var localCacheContainsUserData: Bool {
-        if !servers.isEmpty {
-            return true
-        }
-
-        let effectiveWorkspaces = workspaces.filter { $0.id != transientBootstrapWorkspaceID }
-
-        guard !effectiveWorkspaces.isEmpty else {
-            return false
-        }
-
-        if effectiveWorkspaces.count > 1 {
-            return true
-        }
-
-        guard let workspace = effectiveWorkspaces.first else {
-            return false
-        }
-
-        return !isCanonicalDefaultWorkspace(workspace)
-    }
-
-    private var shouldForceCloudKitFullFetchForBootstrap: Bool {
-        pendingBootstrapWorkspaceID != nil
-    }
-
-    private func isCanonicalDefaultWorkspace(_ workspace: Workspace) -> Bool {
-        Self.isCanonicalDefaultWorkspaceCandidate(workspace)
-    }
-
-    private func createDefaultWorkspace() -> Workspace {
-        Workspace(
-            name: AppLanguage.localizedString("My Servers"),
-            colorHex: "#007AFF",
-            order: 0
-        )
-    }
-
-    static func shouldCreateBootstrapWorkspace(
-        didBootstrapDefaultWorkspace: Bool,
-        hasSeenWelcome: Bool,
-        hasLocalWorkspaces: Bool
-    ) -> Bool {
-        !(didBootstrapDefaultWorkspace || hasSeenWelcome) && !hasLocalWorkspaces
-    }
-
-    static func isCanonicalDefaultWorkspaceCandidate(_ workspace: Workspace) -> Bool {
-        AppLanguage.localizedValues(for: "My Servers").contains(workspace.name) &&
-            workspace.colorHex == "#007AFF" &&
-            workspace.icon == nil &&
-            workspace.order == 0 &&
-            workspace.environments == ServerEnvironment.builtInEnvironments &&
-            workspace.lastSelectedEnvironmentId == nil &&
-            workspace.lastSelectedServerId == nil
     }
 
     static func backfillCandidates(
