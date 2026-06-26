@@ -116,13 +116,11 @@ final class TerminalTabManager: ObservableObject {
     private var tabOpenRequests: [UUID: Task<Void, Never>] = [:]
     private(set) var lastTabOpenFailure: Error?
     var pendingTabOpenRequestIDs: Set<UUID> { Set(tabOpenRequests.keys) }
-    private var tmuxInstallRequests: [UUID: TmuxInstallRequest] = [:]
-    private var tmuxInstallRequestByPane: [UUID: UUID] = [:]
-    var pendingTmuxInstallRequestIDs: Set<UUID> { Set(tmuxInstallRequests.keys) }
-    private var moshInstallRequests: [UUID: MoshInstallRequest] = [:]
-    private var moshInstallRequestByPane: [UUID: UUID] = [:]
+    private var tmuxInstallRequestStore = TerminalPaneRequestStore<TmuxInstallRequest>()
+    var pendingTmuxInstallRequestIDs: Set<UUID> { tmuxInstallRequestStore.pendingRequestIDs }
+    private var moshInstallRequestStore = TerminalPaneRequestStore<MoshInstallRequest>()
     private(set) var lastMoshInstallFailure: Error?
-    var pendingMoshInstallRequestIDs: Set<UUID> { Set(moshInstallRequests.keys) }
+    var pendingMoshInstallRequestIDs: Set<UUID> { moshInstallRequestStore.pendingRequestIDs }
     private var paneRetryRequestStore = TerminalPaneRequestStore<PaneRetryRequest>()
     var pendingPaneRetryRequestIDs: Set<UUID> { paneRetryRequestStore.pendingRequestIDs }
     private var paneHostRetrustRequestStore = TerminalPaneRequestStore<PaneHostRetrustRequest>()
@@ -1729,8 +1727,8 @@ final class TerminalTabManager: ObservableObject {
         for paneId: UUID,
         onCompleted: @escaping @MainActor () -> Void = {}
     ) -> UUID {
-        if let requestID = tmuxInstallRequestByPane[paneId] {
-            tmuxInstallRequests[requestID]?.onCompleted.append(onCompleted)
+        if let requestID = tmuxInstallRequestStore.requestID(forPane: paneId) {
+            tmuxInstallRequestStore.update(requestID) { $0.onCompleted.append(onCompleted) }
             return requestID
         }
 
@@ -1738,10 +1736,7 @@ final class TerminalTabManager: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.tmuxInstallRequests.removeValue(forKey: requestID)
-                if self.tmuxInstallRequestByPane[paneId] == requestID {
-                    self.tmuxInstallRequestByPane.removeValue(forKey: paneId)
-                }
+                self.tmuxInstallRequestStore.remove(id: requestID, ifMappedTo: paneId)
             }
 
             #if DEBUG
@@ -1755,20 +1750,23 @@ final class TerminalTabManager: ObservableObject {
             #endif
 
             guard !Task.isCancelled else { return }
-            let callbacks = self.tmuxInstallRequests[requestID]?.onCompleted ?? []
+            let callbacks = self.tmuxInstallRequestStore[requestID]?.onCompleted ?? []
             callbacks.forEach { $0() }
         }
-        tmuxInstallRequests[requestID] = TmuxInstallRequest(
-            paneId: paneId,
-            task: task,
-            onCompleted: [onCompleted]
+        tmuxInstallRequestStore.insert(
+            TmuxInstallRequest(
+                paneId: paneId,
+                task: task,
+                onCompleted: [onCompleted]
+            ),
+            id: requestID,
+            paneId: paneId
         )
-        tmuxInstallRequestByPane[paneId] = requestID
         return requestID
     }
 
     func waitForTmuxInstallRequest(_ requestID: UUID) async {
-        await tmuxInstallRequests[requestID]?.task.value
+        await tmuxInstallRequestStore[requestID]?.task.value
     }
 
     @discardableResult
@@ -1777,9 +1775,11 @@ final class TerminalTabManager: ObservableObject {
         onCompleted: @escaping @MainActor () -> Void = {},
         onFailed: @escaping @MainActor (Error) -> Void = { _ in }
     ) -> UUID {
-        if let requestID = moshInstallRequestByPane[paneId] {
-            moshInstallRequests[requestID]?.onCompleted.append(onCompleted)
-            moshInstallRequests[requestID]?.onFailed.append(onFailed)
+        if let requestID = moshInstallRequestStore.requestID(forPane: paneId) {
+            moshInstallRequestStore.update(requestID) {
+                $0.onCompleted.append(onCompleted)
+                $0.onFailed.append(onFailed)
+            }
             return requestID
         }
 
@@ -1788,10 +1788,7 @@ final class TerminalTabManager: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.moshInstallRequests.removeValue(forKey: requestID)
-                if self.moshInstallRequestByPane[paneId] == requestID {
-                    self.moshInstallRequestByPane.removeValue(forKey: paneId)
-                }
+                self.moshInstallRequestStore.remove(id: requestID, ifMappedTo: paneId)
             }
 
             do {
@@ -1806,30 +1803,33 @@ final class TerminalTabManager: ObservableObject {
                 #endif
 
                 guard !Task.isCancelled else { return }
-                let callbacks = self.moshInstallRequests[requestID]?.onCompleted ?? []
+                let callbacks = self.moshInstallRequestStore[requestID]?.onCompleted ?? []
                 callbacks.forEach { $0() }
             } catch is CancellationError {
-                let callbacks = self.moshInstallRequests[requestID]?.onCompleted ?? []
+                let callbacks = self.moshInstallRequestStore[requestID]?.onCompleted ?? []
                 callbacks.forEach { $0() }
                 return
             } catch {
                 self.lastMoshInstallFailure = error
-                let callbacks = self.moshInstallRequests[requestID]?.onFailed ?? []
+                let callbacks = self.moshInstallRequestStore[requestID]?.onFailed ?? []
                 callbacks.forEach { $0(error) }
             }
         }
-        moshInstallRequests[requestID] = MoshInstallRequest(
-            paneId: paneId,
-            task: task,
-            onCompleted: [onCompleted],
-            onFailed: [onFailed]
+        moshInstallRequestStore.insert(
+            MoshInstallRequest(
+                paneId: paneId,
+                task: task,
+                onCompleted: [onCompleted],
+                onFailed: [onFailed]
+            ),
+            id: requestID,
+            paneId: paneId
         )
-        moshInstallRequestByPane[paneId] = requestID
         return requestID
     }
 
     func waitForMoshInstallRequest(_ requestID: UUID) async {
-        await moshInstallRequests[requestID]?.task.value
+        await moshInstallRequestStore[requestID]?.task.value
     }
 
     func handlePaneExit(for paneId: UUID) async {
@@ -2048,14 +2048,12 @@ final class TerminalTabManager: ObservableObject {
     }
 
     private func cancelInstallRequests(for paneId: UUID) {
-        if let requestID = tmuxInstallRequestByPane.removeValue(forKey: paneId),
-           let request = tmuxInstallRequests.removeValue(forKey: requestID) {
+        if let request = tmuxInstallRequestStore.removeMappedRequest(forPane: paneId) {
             request.task.cancel()
             request.onCompleted.forEach { $0() }
         }
 
-        if let requestID = moshInstallRequestByPane.removeValue(forKey: paneId),
-           let request = moshInstallRequests.removeValue(forKey: requestID) {
+        if let request = moshInstallRequestStore.removeMappedRequest(forPane: paneId) {
             request.task.cancel()
             request.onCompleted.forEach { $0() }
         }
@@ -2785,12 +2783,10 @@ extension TerminalTabManager {
         tabOpenRequests.values.forEach { $0.cancel() }
         tabOpenRequests.removeAll()
         lastTabOpenFailure = nil
-        tmuxInstallRequests.values.forEach { $0.task.cancel() }
-        tmuxInstallRequests.removeAll()
-        tmuxInstallRequestByPane.removeAll()
-        moshInstallRequests.values.forEach { $0.task.cancel() }
-        moshInstallRequests.removeAll()
-        moshInstallRequestByPane.removeAll()
+        tmuxInstallRequestStore.allRequests.forEach { $0.task.cancel() }
+        tmuxInstallRequestStore.removeAll()
+        moshInstallRequestStore.allRequests.forEach { $0.task.cancel() }
+        moshInstallRequestStore.removeAll()
         lastMoshInstallFailure = nil
         paneRetryRequestStore.allRequests.forEach { $0.task.cancel() }
         paneRetryRequestStore.removeAll()

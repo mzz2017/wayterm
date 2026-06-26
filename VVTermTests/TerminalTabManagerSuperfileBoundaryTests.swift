@@ -89,6 +89,32 @@ struct TerminalTabManagerSuperfileBoundaryTests {
         #expect(supportSource.contains("final class PaneRuntimeState"))
     }
 
+    @Test
+    func paneInstallRequestIndexingUsesSharedStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalPaneRequestStore.swift")
+        )
+
+        // Given pane-scoped request indexing has a shared Application helper.
+        #expect(storeSource.contains("struct TerminalPaneRequestStore"))
+
+        // Then install requests should not keep bespoke pane/request double dictionaries in the superfile.
+        #expect(
+            !managerSource.contains("tmuxInstallRequestByPane"),
+            "TerminalTabManager.swift should not own bespoke tmux install request indexing."
+        )
+        #expect(
+            !managerSource.contains("moshInstallRequestByPane"),
+            "TerminalTabManager.swift should not own bespoke mosh install request indexing."
+        )
+        #expect(managerSource.contains("tmuxInstallRequestStore"))
+        #expect(managerSource.contains("moshInstallRequestStore"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
