@@ -21,18 +21,18 @@ import AppKit
 final class TerminalTabManager: ObservableObject {
     static let shared = TerminalTabManager()
 
-    private typealias PaneCloseResult = TerminalTabManagerSupport.PaneCloseResult
-    private typealias TabCloseResult = TerminalTabManagerSupport.TabCloseResult
-    private typealias TmuxInstallRequest = TerminalTabManagerSupport.TmuxInstallRequest
-    private typealias MoshInstallRequest = TerminalTabManagerSupport.MoshInstallRequest
-    private typealias PaneRetryRequest = TerminalTabManagerSupport.PaneRetryRequest
-    private typealias PaneHostRetrustRequest = TerminalTabManagerSupport.PaneHostRetrustRequest
-    private typealias PaneCredentialLoadRequest = TerminalTabManagerSupport.PaneCredentialLoadRequest
+    typealias PaneCloseResult = TerminalTabManagerSupport.PaneCloseResult
+    typealias TabCloseResult = TerminalTabManagerSupport.TabCloseResult
+    typealias TmuxInstallRequest = TerminalTabManagerSupport.TmuxInstallRequest
+    typealias MoshInstallRequest = TerminalTabManagerSupport.MoshInstallRequest
+    typealias PaneRetryRequest = TerminalTabManagerSupport.PaneRetryRequest
+    typealias PaneHostRetrustRequest = TerminalTabManagerSupport.PaneHostRetrustRequest
+    typealias PaneCredentialLoadRequest = TerminalTabManagerSupport.PaneCredentialLoadRequest
     typealias SurfaceAttachRequest = TerminalTabManagerSupport.SurfaceAttachRequest
     typealias InputRequest = TerminalTabManagerSupport.InputRequest
     typealias RichPasteUploadRequest = TerminalTabManagerSupport.RichPasteUploadRequest
     typealias ResizeRequest = TerminalTabManagerSupport.ResizeRequest
-    private typealias ProcessExitRequest = TerminalTabManagerSupport.ProcessExitRequest
+    typealias ProcessExitRequest = TerminalTabManagerSupport.ProcessExitRequest
     typealias PaneRuntimeState = TerminalTabManagerSupport.PaneRuntimeState
 
     // MARK: - Published State
@@ -115,16 +115,16 @@ final class TerminalTabManager: ObservableObject {
     private var tabOpenRequestStore = TerminalOpenRequestStore()
     private(set) var lastTabOpenFailure: Error?
     var pendingTabOpenRequestIDs: Set<UUID> { tabOpenRequestStore.pendingRequestIDs }
-    private var tmuxInstallRequestStore = TerminalScopedRequestStore<TmuxInstallRequest>()
+    var tmuxInstallRequestStore = TerminalScopedRequestStore<TmuxInstallRequest>()
     var pendingTmuxInstallRequestIDs: Set<UUID> { tmuxInstallRequestStore.pendingRequestIDs }
-    private var moshInstallRequestStore = TerminalScopedRequestStore<MoshInstallRequest>()
+    var moshInstallRequestStore = TerminalScopedRequestStore<MoshInstallRequest>()
     private(set) var lastMoshInstallFailure: Error?
     var pendingMoshInstallRequestIDs: Set<UUID> { moshInstallRequestStore.pendingRequestIDs }
-    private var paneRetryRequestStore = TerminalScopedRequestStore<PaneRetryRequest>()
+    var paneRetryRequestStore = TerminalScopedRequestStore<PaneRetryRequest>()
     var pendingPaneRetryRequestIDs: Set<UUID> { paneRetryRequestStore.pendingRequestIDs }
-    private var paneHostRetrustRequestStore = TerminalScopedRequestStore<PaneHostRetrustRequest>()
+    var paneHostRetrustRequestStore = TerminalScopedRequestStore<PaneHostRetrustRequest>()
     var pendingPaneHostRetrustRequestIDs: Set<UUID> { paneHostRetrustRequestStore.pendingRequestIDs }
-    private var paneCredentialLoadRequestStore = TerminalScopedRequestStore<PaneCredentialLoadRequest>()
+    var paneCredentialLoadRequestStore = TerminalScopedRequestStore<PaneCredentialLoadRequest>()
     var pendingPaneCredentialLoadRequestIDs: Set<UUID> { paneCredentialLoadRequestStore.pendingScopedRequestIDs }
     var surfaceAttachRequestStore = TerminalScopedRequestStore<SurfaceAttachRequest>()
     var pendingSurfaceAttachRequestIDs: Set<UUID> { surfaceAttachRequestStore.pendingRequestIDs }
@@ -134,14 +134,14 @@ final class TerminalTabManager: ObservableObject {
     var pendingPaneRichPasteUploadRequestIDs: Set<UUID> { richPasteUploadRequestStore.pendingRequestIDs }
     var resizeRequestStore = TerminalScopedRequestStore<ResizeRequest>()
     var pendingResizeRequestIDs: Set<UUID> { resizeRequestStore.pendingRequestIDs }
-    private var processExitRequestStore = TerminalScopedRequestStore<ProcessExitRequest>()
+    var processExitRequestStore = TerminalScopedRequestStore<ProcessExitRequest>()
     var pendingProcessExitRequestIDs: Set<UUID> { processExitRequestStore.pendingRequestIDs }
     private var serverUnlocker: @MainActor (Server) async -> Bool = { server in
         await AppLockManager.shared.ensureServerUnlocked(server)
     }
     private var reconnectInFlightStore = TerminalReconnectInFlightStore()
     /// In-flight SSH teardown tasks by server, used to serialize close/open ordering.
-    private var serverTeardownTaskStore = TerminalTeardownTaskStore()
+    var serverTeardownTaskStore = TerminalTeardownTaskStore()
     /// Application-owned connect watchdog timers keyed by pane.
     private var connectWatchdogStore = TerminalConnectWatchdogStore()
     private var credentialsProvider: @MainActor (Server) async throws -> ServerCredentials = { server in
@@ -155,8 +155,8 @@ final class TerminalTabManager: ObservableObject {
     }
     #if DEBUG
     private var testingTerminalConnectionClientFactory: (@MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient)?
-    private var rejectedShellCleanupOperationForTesting: (@MainActor @Sendable () async -> Void)?
-    private var tmuxKillOperationForTesting: (@MainActor @Sendable () async -> Void)?
+    var rejectedShellCleanupOperationForTesting: (@MainActor @Sendable () async -> Void)?
+    var tmuxKillOperationForTesting: (@MainActor @Sendable () async -> Void)?
     private var tmuxInstallOperationForTesting: (@MainActor (UUID) async -> Void)?
     private var moshInstallAndReconnectOperationForTesting: (@MainActor (UUID) async throws -> Void)?
     private var paneRetryOperationForTesting: (@MainActor (UUID, Server) async -> TerminalReconnectRequestResult)?
@@ -171,7 +171,7 @@ final class TerminalTabManager: ObservableObject {
 
     /// Pane state keyed by pane ID
     @Published var paneStates: [UUID: TerminalPaneState] = [:]
-    @Published private(set) var runtimeTitleByPane: [UUID: String] = [:]
+    @Published var runtimeTitleByPane: [UUID: String] = [:]
 
     @Published var tmuxAttachPrompt: TmuxAttachPrompt?
 
@@ -414,85 +414,6 @@ final class TerminalTabManager: ObservableObject {
         return tab
     }
 
-    /// Close a tab
-    func closeTab(_ tab: TerminalTab) {
-        guard let closeResult = closeTabUI(tab) else { return }
-        let teardownTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.finishTabClose(closeResult)
-        }
-        trackServerTeardownTask(teardownTask, for: closeResult.serverId)
-    }
-
-    /// Close a tab and wait for every pane's SSH teardown to finish.
-    func closeTabAndWait(_ tab: TerminalTab) async {
-        await waitForServerTeardownTasks(tab.serverId)
-        guard let closeResult = closeTabUI(tab) else { return }
-        await finishTabClose(closeResult)
-    }
-
-    private func closeTabUI(_ tab: TerminalTab) -> TabCloseResult? {
-        guard let currentTab = tabs(for: tab.serverId).first(where: { $0.id == tab.id }) else {
-            logger.warning("closeTab: tab not found \(tab.id.uuidString, privacy: .public)")
-            return nil
-        }
-
-        // Clean up all panes in this tab
-        let paneCloseResults = currentTab.allPaneIds.map { preparePaneClose($0) }
-
-        // Remove from tabs
-        if var serverTabs = tabsByServer[currentTab.serverId] {
-            serverTabs.removeAll { $0.id == currentTab.id }
-            tabsByServer[currentTab.serverId] = serverTabs
-
-            // Select another tab if this was selected
-            if selectedTabByServer[currentTab.serverId] == currentTab.id {
-                selectedTabByServer[currentTab.serverId] = serverTabs.first?.id
-            }
-
-            // Keep live transport state separate; explicit disconnect and pane state
-            // transitions decide whether a server remains active.
-        }
-
-        EngagementTracker.shared.noteTerminalSessionEnded(
-            otherTerminalsActive: hasConnectedPanes,
-            isPro: StoreManager.shared.isPro
-        )
-
-        logger.info("Closed tab \(currentTab.id)")
-        return TabCloseResult(
-            serverId: currentTab.serverId,
-            paneCloseResults: paneCloseResults
-        )
-    }
-
-    /// Close all tabs for a server
-    func closeAllTabs(for serverId: UUID) {
-        let serverTabs = tabs(for: serverId)
-        for tab in serverTabs {
-            closeTab(tab)
-        }
-    }
-
-    /// Disconnect all tabs for every server and wait for SSH teardown to finish.
-    func disconnectAllAndWait() async {
-        await waitForAllServerTeardownTasks()
-        for serverId in Array(tabsByServer.keys) {
-            await disconnectServerAndWait(serverId)
-        }
-        await waitForAllServerTeardownTasks()
-    }
-
-    /// Disconnect all tabs for a server and wait for SSH teardown to finish.
-    func disconnectServerAndWait(_ serverId: UUID) async {
-        await waitForServerTeardownTasks(serverId)
-        let closeResults = tabs(for: serverId).compactMap { closeTabUI($0) }
-        selectedViewByServer.removeValue(forKey: serverId)
-        for closeResult in closeResults {
-            await finishTabClose(closeResult)
-        }
-    }
-
     // MARK: - Split Management
 
     /// Split a pane horizontally (left | right)
@@ -542,63 +463,6 @@ final class TerminalTabManager: ObservableObject {
 
         logger.info("Split pane \(paneId) \(direction.rawValue), new pane: \(newPaneId)")
         return newPaneId
-    }
-
-    /// Close a pane within a tab
-    func closePane(tab: TerminalTab, paneId: UUID) {
-        guard let closeResult = closePaneUI(tab: tab, paneId: paneId) else { return }
-        let teardownTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.finishTabClose(closeResult)
-        }
-        trackServerTeardownTask(teardownTask, for: closeResult.serverId)
-    }
-
-    /// Close a pane and wait for SSH teardown to finish.
-    func closePaneAndWait(_ paneId: UUID) async {
-        guard let state = paneStates[paneId],
-              let tab = tabs(for: state.serverId).first(where: { $0.id == state.tabId }) else {
-            return
-        }
-        await closePaneAndWait(tab: tab, paneId: paneId)
-    }
-
-    /// Close a pane and wait for SSH teardown to finish.
-    func closePaneAndWait(tab: TerminalTab, paneId: UUID) async {
-        await waitForServerTeardownTasks(tab.serverId)
-        guard let closeResult = closePaneUI(tab: tab, paneId: paneId) else { return }
-        await finishTabClose(closeResult)
-    }
-
-    private func closePaneUI(tab: TerminalTab, paneId: UUID) -> TabCloseResult? {
-        // Get current tab from manager (passed tab might be stale)
-        guard let currentTab = tabs(for: tab.serverId).first(where: { $0.id == tab.id }) else {
-            logger.warning("closePane: tab not found")
-            return nil
-        }
-
-        guard let closePlan = TerminalTabClosePanePolicy.plan(tab: currentTab, paneId: paneId) else {
-            logger.warning("closePane: pane not found \(paneId)")
-            return nil
-        }
-
-        if closePlan == .closeTab {
-            return closeTabUI(currentTab)
-        }
-
-        // Update layout FIRST (before cleanup) to avoid "Initializing" flash
-        // When cleanupPane triggers @Published, the pane won't be rendered anymore
-        if case .closePane(let updatedTab) = closePlan {
-            updateTab(updatedTab)
-        }
-
-        // Now clean up the pane (after layout is updated)
-        let paneCloseResult = preparePaneClose(paneId)
-        logger.info("Closed pane \(paneId)")
-        return TabCloseResult(
-            serverId: currentTab.serverId,
-            paneCloseResults: [paneCloseResult]
-        )
     }
 
     /// Update a tab in the tabs array
@@ -825,7 +689,7 @@ final class TerminalTabManager: ObservableObject {
         return (client: client, shellId: shellId)
     }
 
-    private func cancelRuntime(
+    func cancelRuntime(
         forPane paneId: UUID,
         mode: ShellTeardownMode,
         cleanupTerminal: Bool,
@@ -852,7 +716,7 @@ final class TerminalTabManager: ObservableObject {
         }
     }
 
-    private func closeTestingRuntimeIfNeeded(forPane paneId: UUID) async -> Bool {
+    func closeTestingRuntimeIfNeeded(forPane paneId: UUID) async -> Bool {
         guard let runtime = terminalConnectionRegistry.runtime(for: .pane(paneId)) else {
             return false
         }
@@ -974,7 +838,7 @@ final class TerminalTabManager: ObservableObject {
         await unregisterSSHClient(for: paneId, killingManagedTmuxSessionNamed: nil)
     }
 
-    private func unregisterSSHClient(
+    func unregisterSSHClient(
         for paneId: UUID,
         killingManagedTmuxSessionNamed tmuxSessionName: String?
     ) async {
@@ -1620,184 +1484,6 @@ final class TerminalTabManager: ObservableObject {
         }
     }
 
-    /// Remove pane UI/runtime state and return the SSH teardown that must be awaited.
-    private func preparePaneClose(_ paneId: UUID) -> PaneCloseResult {
-        let serverId = paneStates[paneId]?.serverId
-        let tmuxSessionToKill = paneTmuxStatus(for: paneId)
-            .flatMap { managedTmuxSessionNameToKill(for: paneId, status: $0) }
-
-        if let serverId {
-            terminalConnectionRegistry.updateState(
-                .disconnected,
-                for: .pane(paneId),
-                serverId: serverId
-            )
-        }
-        cancelInstallRequests(for: paneId)
-        cancelPaneRetryRequest(for: paneId)
-        cancelPaneHostRetrustRequest(for: paneId)
-        cancelPaneCredentialLoadRequest(for: paneId)
-        cancelInputRequests(for: paneId)
-        let richPasteUploadTasks = cancelPaneRichPasteUploadRequests(for: paneId)
-        cancelResizeRequests(for: paneId)
-        cancelProcessExitRequests(for: paneId)
-        clearTmuxRuntimeState(for: paneId)
-        unregisterTerminal(for: paneId)
-        paneStates.removeValue(forKey: paneId)
-        runtimeTitleByPane.removeValue(forKey: paneId)
-
-        return PaneCloseResult(
-            paneId: paneId,
-            tmuxSessionNameToKill: tmuxSessionToKill,
-            richPasteUploadTasks: richPasteUploadTasks
-        )
-    }
-
-    private func cancelInstallRequests(for paneId: UUID) {
-        if let request = tmuxInstallRequestStore.removeMappedRequest(forScope: paneId) {
-            request.task.cancel()
-            request.onCompleted.forEach { $0() }
-        }
-
-        if let request = moshInstallRequestStore.removeMappedRequest(forScope: paneId) {
-            request.task.cancel()
-            request.onCompleted.forEach { $0() }
-        }
-    }
-
-    private func cancelProcessExitRequests(for paneId: UUID) {
-        processExitRequestStore.removeMappedRequest(forScope: paneId)?.task.cancel()
-    }
-
-    private func cancelPaneRetryRequest(for paneId: UUID) {
-        if let request = paneRetryRequestStore.removeMappedRequest(forScope: paneId) {
-            request.task.cancel()
-            request.onCompleted.forEach { $0(.skipped) }
-        }
-    }
-
-    private func cancelPaneHostRetrustRequest(for paneId: UUID) {
-        if let request = paneHostRetrustRequestStore.removeMappedRequest(forScope: paneId) {
-            request.task.cancel()
-            request.onCompleted.forEach { $0(false) }
-        }
-    }
-
-    private func cancelPaneCredentialLoadRequest(for paneId: UUID) {
-        paneCredentialLoadRequestStore.removeScopeMapping(forScope: paneId)?.task.cancel()
-    }
-
-    private func finishTabClose(_ closeResult: TabCloseResult) async {
-        for paneCloseResult in closeResult.paneCloseResults {
-            await finishPaneClose(paneCloseResult)
-        }
-    }
-
-    private func finishPaneClose(_ closeResult: PaneCloseResult) async {
-        for task in closeResult.richPasteUploadTasks {
-            await task.value
-        }
-
-        if await closeTestingRuntimeIfNeeded(forPane: closeResult.paneId) {
-            paneRuntimes.removeValue(forKey: closeResult.paneId)
-        } else {
-            await cancelRuntime(
-                forPane: closeResult.paneId,
-                mode: .fullDisconnect,
-                cleanupTerminal: false,
-                closeRegisteredShell: false
-            )
-        }
-
-        await unregisterSSHClient(
-            for: closeResult.paneId,
-            killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
-        )
-    }
-
-    private func waitForServerTeardownTasks(_ serverId: UUID) async {
-        while !serverTeardownTaskStore.tasks(forServer: serverId).isEmpty {
-            for entry in serverTeardownTaskStore.tasks(forServer: serverId) {
-                await entry.task.value
-                finishServerTeardownTask(entry.id, for: serverId)
-            }
-        }
-    }
-
-    private func waitForAllServerTeardownTasks() async {
-        while !serverTeardownTaskStore.isEmpty {
-            for serverId in serverTeardownTaskStore.serverIDs {
-                await waitForServerTeardownTasks(serverId)
-            }
-        }
-    }
-
-    private func trackServerTeardownTask(_ task: Task<Void, Never>, for serverId: UUID) {
-        let taskId = serverTeardownTaskStore.insert(task, forServer: serverId)
-        logger.info("Tracking tab teardown [serverId: \(serverId.uuidString, privacy: .public), taskId: \(taskId.uuidString, privacy: .public), count: \(self.serverTeardownTaskStore.count(forServer: serverId))]")
-
-        Task { @MainActor [weak self] in
-            await task.value
-            guard let self else { return }
-            self.finishServerTeardownTask(taskId, for: serverId)
-        }
-    }
-
-    private func finishServerTeardownTask(_ taskId: UUID, for serverId: UUID) {
-        guard let remainingTasks = serverTeardownTaskStore.finish(taskId, forServer: serverId) else { return }
-        logger.info("Finished tab teardown [serverId: \(serverId.uuidString, privacy: .public), taskId: \(taskId.uuidString, privacy: .public), remaining: \(remainingTasks)]")
-    }
-
-    private func trackShellCleanup(
-        for serverId: UUID,
-        reason: String,
-        priority: TaskPriority = .utility,
-        operation: @escaping @Sendable () async -> Void
-    ) {
-#if DEBUG
-        let testingOperation = rejectedShellCleanupOperationForTesting
-#endif
-        let task = Task.detached(priority: priority) { [logger] in
-            logger.info("Pane shell cleanup started [serverId: \(serverId.uuidString, privacy: .public), reason: \(reason, privacy: .public)]")
-#if DEBUG
-            if let testingOperation {
-                await testingOperation()
-            } else {
-                await operation()
-            }
-#else
-            await operation()
-#endif
-            logger.info("Pane shell cleanup finished [serverId: \(serverId.uuidString, privacy: .public), reason: \(reason, privacy: .public)]")
-        }
-        trackServerTeardownTask(task, for: serverId)
-    }
-
-    func trackTmuxKill(
-        for serverId: UUID,
-        sessionName: String,
-        client: SSHClient,
-        preferred: TerminalMultiplexer
-    ) {
-#if DEBUG
-        let testingOperation = tmuxKillOperationForTesting
-#endif
-        let task = Task.detached(priority: .utility) { [logger] in
-            logger.info("Managed pane tmux kill started [serverId: \(serverId.uuidString, privacy: .public), sessionName: \(sessionName, privacy: .public)]")
-#if DEBUG
-            if let testingOperation {
-                await testingOperation()
-            } else {
-                await RemoteTmuxManager.shared.killSession(named: sessionName, using: client, preferred: preferred)
-            }
-#else
-            await RemoteTmuxManager.shared.killSession(named: sessionName, using: client, preferred: preferred)
-#endif
-            logger.info("Managed pane tmux kill finished [serverId: \(serverId.uuidString, privacy: .public), sessionName: \(sessionName, privacy: .public)]")
-        }
-        trackServerTeardownTask(task, for: serverId)
-    }
-
     // MARK: - Pane State
 
     /// Update connection state for a pane
@@ -1834,7 +1520,7 @@ final class TerminalTabManager: ObservableObject {
             ?? .ssh
     }
 
-    private var hasConnectedPanes: Bool {
+    var hasConnectedPanes: Bool {
         hasLivePanes
     }
 

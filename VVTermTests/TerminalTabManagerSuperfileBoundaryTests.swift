@@ -405,6 +405,49 @@ struct TerminalTabManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func paneCloseLifecycleLivesOutsideTerminalTabManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let closeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Closing.swift")
+        )
+
+        // Given tab and pane close paths own teardown ordering, request
+        // cancellation, shell cleanup, and managed tmux kill tracking.
+        #expect(closeSource.contains("extension TerminalTabManager"))
+        #expect(closeSource.contains("func closeTab"))
+        #expect(closeSource.contains("func closePane"))
+        #expect(closeSource.contains("func preparePaneClose"))
+        #expect(closeSource.contains("func finishPaneClose"))
+        #expect(closeSource.contains("func waitForServerTeardownTasks"))
+        #expect(closeSource.contains("func trackShellCleanup"))
+
+        // Then the superfile should not own close/teardown lifecycle directly.
+        #expect(
+            !managerSource.containsRegex(#"func\s+closeTab\s*\("#),
+            "TerminalTabManager.swift should not own tab close lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+closePane\s*\("#),
+            "TerminalTabManager.swift should not own pane close lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+preparePaneClose\s*\("#),
+            "TerminalTabManager.swift should not own pane teardown preparation."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+finishPaneClose\s*\("#),
+            "TerminalTabManager.swift should not own pane teardown completion."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+trackShellCleanup\s*\("#),
+            "TerminalTabManager.swift should not own shell cleanup task tracking."
+        )
+    }
+
+    @Test
     func connectWatchdogTrackingUsesWatchdogStore() throws {
         let root = try sourceRoot()
         let managerSource = try source(
