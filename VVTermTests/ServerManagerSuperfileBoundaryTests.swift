@@ -211,11 +211,11 @@ struct ServerManagerSuperfileBoundaryTests {
             at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager.swift")
         )
         let credentialSource = try source(
-            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager+CredentialLifecycle.swift")
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Infrastructure/ServerManager+CredentialLifecycle.swift")
         )
 
         // Given default Keychain and teardown adapters are credential/deletion
-        // lifecycle glue, not core server list orchestration.
+        // lifecycle infrastructure glue, not core server list orchestration.
         #expect(credentialSource.contains("extension ServerManager"))
         #expect(credentialSource.contains("func defaultDeletionTeardown"))
         #expect(credentialSource.contains("func defaultCredentialDeletion"))
