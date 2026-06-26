@@ -439,6 +439,28 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func tmuxCleanupTrackingUsesTmuxCleanupStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTmuxCleanupStore.swift")
+        )
+
+        // Given tmux cleanup state tracks cleaned servers across attach attempts.
+        #expect(storeSource.contains("struct TerminalTmuxCleanupStore"))
+        #expect(storeSource.contains("func replace"))
+
+        // Then cleanup state should not remain a bespoke Set in the superfile.
+        #expect(
+            !managerSource.contains("tmuxCleanupServers"),
+            "ConnectionSessionManager.swift should not own bespoke tmux cleanup server indexing."
+        )
+        #expect(managerSource.contains("tmuxCleanupStore"))
+    }
+
+    @Test
     func connectWatchdogTrackingUsesWatchdogStore() throws {
         let root = try sourceRoot()
         let managerSource = try source(

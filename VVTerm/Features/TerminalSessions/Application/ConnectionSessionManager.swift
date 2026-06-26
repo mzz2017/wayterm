@@ -237,7 +237,7 @@ final class ConnectionSessionManager: ObservableObject {
     @Published private(set) var isSuspendingForBackground = false
 
     /// Servers that already ran tmux cleanup (per app launch)
-    private var tmuxCleanupServers: Set<UUID> = []
+    private var tmuxCleanupStore = TerminalTmuxCleanupStore()
 
     // MARK: - LRU Terminal Cache
 
@@ -3049,14 +3049,14 @@ extension ConnectionSessionManager {
         selection: TmuxAttachSelection,
         using client: SSHClient
     ) async {
-        var cleanupSet = tmuxCleanupServers
+        var cleanupSet = tmuxCleanupStore.serverIDs
         await tmuxResolver.runCleanupIfNeeded(
             serverId: serverId,
             cleanupSet: &cleanupSet,
             managedNames: tmuxSessionNamesToKeep(for: serverId, sessionId: sessionId, selection: selection),
             using: client
         )
-        tmuxCleanupServers = cleanupSet
+        tmuxCleanupStore.replace(with: cleanupSet)
     }
 
     private func prepareActiveTmuxSession(
@@ -3343,7 +3343,7 @@ extension ConnectionSessionManager {
         serverDisconnectTaskStore.removeAll()
         terminalsNeedingReconnectReset.removeAll()
         isSuspendingForBackground = false
-        tmuxCleanupServers.removeAll()
+        tmuxCleanupStore.removeAll()
         sessionRuntimes.removeAll()
         terminalConnectionRegistry.removeAll()
         testingTerminalConnectionClientFactory = nil

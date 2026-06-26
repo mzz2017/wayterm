@@ -181,7 +181,7 @@ final class TerminalTabManager: ObservableObject {
     @Published private(set) var terminalRegistryVersion: Int = 0
 
     /// Servers that already ran tmux cleanup (per app launch)
-    private var tmuxCleanupServers: Set<UUID> = []
+    private var tmuxCleanupStore = TerminalTmuxCleanupStore()
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "TerminalTabManager")
 
@@ -2346,14 +2346,14 @@ final class TerminalTabManager: ObservableObject {
         selection: TmuxAttachSelection,
         using client: SSHClient
     ) async {
-        var cleanupSet = tmuxCleanupServers
+        var cleanupSet = tmuxCleanupStore.serverIDs
         await tmuxResolver.runCleanupIfNeeded(
             serverId: serverId,
             cleanupSet: &cleanupSet,
             managedNames: tmuxSessionNamesToKeep(for: serverId, paneId: paneId, selection: selection),
             using: client
         )
-        tmuxCleanupServers = cleanupSet
+        tmuxCleanupStore.replace(with: cleanupSet)
     }
 
     private func prepareActiveTmuxPane(
@@ -2773,7 +2773,7 @@ extension TerminalTabManager {
         richPasteUploadOperationForTesting = nil
         resizeOperationForTesting = nil
         processExitOperationForTesting = nil
-        tmuxCleanupServers.removeAll()
+        tmuxCleanupStore.removeAll()
         isRestoring = false
 
         snapshotStore.remove()
