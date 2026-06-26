@@ -576,6 +576,43 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func connectionOpenLifecycleLivesOutsideConnectionSessionManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let openSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Open.swift")
+        )
+
+        // Given connection opening owns request gating, unlock, teardown
+        // ordering, existing-session reuse, and new session creation.
+        #expect(openSource.contains("extension ConnectionSessionManager"))
+        #expect(openSource.contains("func requestConnectionOpen"))
+        #expect(openSource.contains("func waitForConnectionOpenRequest"))
+        #expect(openSource.contains("func openConnection"))
+        #expect(openSource.contains("func sourceSessionForNewTab"))
+
+        // Then the superfile should not own connection open lifecycle directly.
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestConnectionOpen\s*\("#),
+            "ConnectionSessionManager.swift should not own connection-open request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+waitForConnectionOpenRequest\s*\("#),
+            "ConnectionSessionManager.swift should not own connection-open request waiting."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+openConnection\s*\("#),
+            "ConnectionSessionManager.swift should not own connection-open orchestration."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+sourceSessionForNewTab\s*\("#),
+            "ConnectionSessionManager.swift should not own source-session selection for new tabs."
+        )
+    }
+
+    @Test
     func sessionInputRequestIndexingUsesSerialStore() throws {
         let root = try sourceRoot()
         let managerSource = try source(

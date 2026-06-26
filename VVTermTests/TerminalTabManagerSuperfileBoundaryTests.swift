@@ -297,6 +297,43 @@ struct TerminalTabManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func tabOpenLifecycleLivesOutsideTerminalTabManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let openSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Open.swift")
+        )
+
+        // Given tab opening owns request gating, unlock, teardown ordering,
+        // existing-tab reuse, and new root pane creation.
+        #expect(openSource.contains("extension TerminalTabManager"))
+        #expect(openSource.contains("func requestTabOpen"))
+        #expect(openSource.contains("func requestServerTerminalOpen"))
+        #expect(openSource.contains("func waitForTabOpenRequest"))
+        #expect(openSource.contains("func openTab"))
+
+        // Then the superfile should not own tab open lifecycle directly.
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestTabOpen\s*\("#),
+            "TerminalTabManager.swift should not own tab-open request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestServerTerminalOpen\s*\("#),
+            "TerminalTabManager.swift should not own server terminal-open request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+waitForTabOpenRequest\s*\("#),
+            "TerminalTabManager.swift should not own tab-open request waiting."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+openTab\s*\("#),
+            "TerminalTabManager.swift should not own tab-open orchestration."
+        )
+    }
+
+    @Test
     func serverTeardownTaskTrackingUsesTeardownTaskStore() throws {
         let root = try sourceRoot()
         let managerSource = try source(
