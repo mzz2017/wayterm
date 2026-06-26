@@ -1,5 +1,89 @@
 import SwiftUI
 
+struct ServerFormLimitSection: View {
+    let isAtLimit: Bool
+    let isEditing: Bool
+    let isPro: Bool
+    let serverCount: Int
+    @Binding var showingServerLimitAlert: Bool
+
+    @ViewBuilder
+    var body: some View {
+        if isAtLimit {
+            Section {
+                ProLimitBanner(
+                    title: String(localized: "Server Limit Reached"),
+                    message: String(format: String(localized: "You've reached the free limit of %lld servers. Pro unlocks unlimited servers, connections, and split panes."), Int64(FreeTierLimits.maxServers))
+                ) {
+                    showingServerLimitAlert = true
+                }
+            }
+        } else if !isEditing && !isPro {
+            Section {
+                UsageIndicator(
+                    current: serverCount,
+                    limit: FreeTierLimits.maxServers,
+                    label: String(localized: "Servers"),
+                    showUpgrade: $showingServerLimitAlert
+                )
+            }
+        }
+    }
+}
+
+struct ServerFormServerSection: View {
+    @Binding var name: String
+    @Binding var host: String
+    @Binding var port: String
+    @Binding var username: String
+    let onLocalDiscovery: () -> Void
+
+    var body: some View {
+        Section {
+            TextField("Name", text: $name, prompt: Text(String(localized: "My Server")))
+                #if os(iOS)
+                .textContentType(.name)
+                #endif
+
+            HStack(spacing: 12) {
+                TextField("Host", text: $host, prompt: Text(String(localized: "203.0.113.10")))
+                    #if os(iOS)
+                    .textContentType(.URL)
+                    #endif
+                    .autocorrectionDisabled()
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+                    #endif
+
+                TextField("Port", text: $port, prompt: Text(String(localized: "22")))
+                    #if os(iOS)
+                    .keyboardType(.numberPad)
+                    #endif
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 76)
+            }
+
+            TextField("Username", text: $username, prompt: Text(String(localized: "root")))
+                #if os(iOS)
+                .textContentType(.username)
+                #endif
+                .autocorrectionDisabled()
+                #if os(iOS)
+                .textInputAutocapitalization(.never)
+                #endif
+
+            Button {
+                onLocalDiscovery()
+            } label: {
+                Label(String(localized: "Pick from Local Discovery..."), systemImage: "dot.radiowaves.left.and.right")
+            }
+        } header: {
+            sectionHeader("Server")
+        }
+    }
+}
+
 struct ServerFormAuthenticationSection<KeyInput: View>: View {
     @Binding var transportSelection: ServerTransportSelection
     @Binding var selectedCloudflareAccessMode: CloudflareAccessMode
@@ -174,6 +258,56 @@ struct ServerFormConnectionSection<Footer: View>: View {
     }
 }
 
+struct ServerFormConnectionFooter: View {
+    let isSuccessful: Bool
+    let errorMessage: String?
+
+    @ViewBuilder
+    var body: some View {
+        if isSuccessful {
+            Label(String(localized: "Connection successful"), systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .font(.caption)
+        } else if let errorMessage {
+            Text(errorMessage)
+                .foregroundStyle(.red)
+                .font(.caption)
+        }
+    }
+}
+
+struct ServerFormKeyInputView: View {
+    let storedKeys: [SSHKeyEntry]
+    @Binding var selectedStoredKey: SSHKeyEntry?
+    let onLoadStoredKey: (SSHKeyEntry) -> Void
+    let onAddKey: () -> Void
+
+    @ViewBuilder
+    var body: some View {
+        if !storedKeys.isEmpty {
+            Picker("Stored Key", selection: $selectedStoredKey) {
+                Text("Select a key...").tag(nil as SSHKeyEntry?)
+                ForEach(storedKeys) { key in
+                    HStack {
+                        Image(systemName: key.hasPassphrase ? "lock.shield.fill" : "key.fill")
+                        Text(key.name)
+                    }
+                    .tag(key as SSHKeyEntry?)
+                }
+            }
+            .onChange(of: selectedStoredKey) { newKey in
+                if let key = newKey {
+                    onLoadStoredKey(key)
+                }
+            }
+        }
+
+        Button("Add to Keychain") {
+            onAddKey()
+        }
+    }
+}
+
 struct ServerFormSessionSection: View {
     @Binding var multiplexer: TerminalMultiplexer
     @Binding var tmuxStartupBehavior: TmuxStartupBehavior
@@ -206,6 +340,45 @@ struct ServerFormSessionSection: View {
         }
     }
 }
+
+#if os(macOS)
+struct ServerFormMacActionRow: View {
+    let isEditing: Bool
+    let isSaving: Bool
+    let isSaveDisabled: Bool
+    let onCancel: () -> Void
+    let onSave: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Spacer(minLength: 0)
+
+            Button("Cancel") {
+                onCancel()
+            }
+            .disabled(isSaving)
+
+            Button {
+                onSave()
+            } label: {
+                if isSaving {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(String(localized: "Saving..."))
+                    }
+                } else {
+                    Text(isEditing ? String(localized: "Save") : String(localized: "Add"))
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isSaveDisabled)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+}
+#endif
 
 struct ServerFormSecuritySection: View {
     let biometryDisplayName: String

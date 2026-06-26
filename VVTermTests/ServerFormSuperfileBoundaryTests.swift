@@ -105,12 +105,20 @@ struct ServerFormSuperfileBoundaryTests {
         let sectionSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Servers/UI/ServerDetail/ServerFormSections.swift")
         )
+        let platformModifierSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/ServerDetail/ServerFormPlatformModifiers.swift")
+        )
 
         // Given ServerFormSheet is the add/edit form root.
         for component in [
+            "ServerFormLimitSection",
+            "ServerFormServerSection",
             "ServerFormAuthenticationSection",
             "ServerFormConnectionSection",
+            "ServerFormConnectionFooter",
+            "ServerFormKeyInputView",
             "ServerFormSessionSection",
+            "ServerFormMacActionRow",
             "ServerFormSecuritySection",
             "ServerFormNotesSection",
             "ServerFormAssignmentSection"
@@ -126,6 +134,33 @@ struct ServerFormSuperfileBoundaryTests {
             #expect(
                 sectionSource.contains("struct \(component)"),
                 "ServerFormSections.swift should define \(component)."
+            )
+        }
+
+        for helperName in [
+            "macActionRow",
+            "limitSection",
+            "serverSection",
+            "connectionFooter",
+            "keyInputView"
+        ] {
+            #expect(
+                !formSource.contains("private var \(helperName)"),
+                "ServerFormSheet.swift should not own \(helperName) presentation helper."
+            )
+        }
+
+        for modifierName in [
+            "CompactListSectionSpacingModifier",
+            "TransparentNavigationBarModifier"
+        ] {
+            #expect(
+                !formSource.contains("struct \(modifierName)"),
+                "ServerFormSheet.swift should not own \(modifierName) platform support."
+            )
+            #expect(
+                platformModifierSource.contains("struct \(modifierName)"),
+                "ServerFormPlatformModifiers.swift should own \(modifierName) platform support."
             )
         }
 

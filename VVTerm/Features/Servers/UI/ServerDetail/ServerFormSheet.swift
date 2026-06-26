@@ -246,15 +246,33 @@ struct ServerFormSheet: View {
 
             Divider()
 
-            macActionRow
+            ServerFormMacActionRow(
+                isEditing: isEditing,
+                isSaving: isSaving,
+                isSaveDisabled: saveButtonDisabled,
+                onCancel: { dismiss() },
+                onSave: saveServer
+            )
         }
         #endif
     }
 
     private var formContent: some View {
         Form {
-            limitSection
-            serverSection
+            ServerFormLimitSection(
+                isAtLimit: isAtLimit,
+                isEditing: isEditing,
+                isPro: storeManager.isPro,
+                serverCount: serverCount,
+                showingServerLimitAlert: $showingServerLimitAlert
+            )
+            ServerFormServerSection(
+                name: $name,
+                host: $host,
+                port: $port,
+                username: $username,
+                onLocalDiscovery: { showingLocalDiscoverySheet = true }
+            )
             authSection
             connectionSection
             sessionSection
@@ -438,37 +456,6 @@ struct ServerFormSheet: View {
     }
     #endif
 
-    #if os(macOS)
-    private var macActionRow: some View {
-        HStack(spacing: 10) {
-            Spacer(minLength: 0)
-
-            Button("Cancel") {
-                dismiss()
-            }
-            .disabled(isSaving)
-
-            Button {
-                saveServer()
-            } label: {
-                if isSaving {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(String(localized: "Saving..."))
-                    }
-                } else {
-                    Text(isEditing ? String(localized: "Save") : String(localized: "Add"))
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(saveButtonDisabled)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-    }
-    #endif
-
     @ViewBuilder
     private var assignmentSection: some View {
         ServerFormAssignmentSection(
@@ -484,74 +471,6 @@ struct ServerFormSheet: View {
     }
 
     @ViewBuilder
-    private var limitSection: some View {
-        if isAtLimit {
-            Section {
-                ProLimitBanner(
-                    title: String(localized: "Server Limit Reached"),
-                    message: String(format: String(localized: "You've reached the free limit of %lld servers. Pro unlocks unlimited servers, connections, and split panes."), Int64(FreeTierLimits.maxServers))
-                ) {
-                    showingServerLimitAlert = true
-                }
-            }
-        } else if !isEditing && !storeManager.isPro {
-            Section {
-                UsageIndicator(
-                    current: serverCount,
-                    limit: FreeTierLimits.maxServers,
-                    label: String(localized: "Servers"),
-                    showUpgrade: $showingServerLimitAlert
-                )
-            }
-        }
-    }
-
-    private var serverSection: some View {
-        Section {
-            TextField("Name", text: $name, prompt: Text(String(localized: "My Server")))
-                #if os(iOS)
-                .textContentType(.name)
-                #endif
-
-            HStack(spacing: 12) {
-                TextField("Host", text: $host, prompt: Text(String(localized: "203.0.113.10")))
-                    #if os(iOS)
-                    .textContentType(.URL)
-                    #endif
-                    .autocorrectionDisabled()
-                    #if os(iOS)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.URL)
-                    #endif
-
-                TextField("Port", text: $port, prompt: Text(String(localized: "22")))
-                    #if os(iOS)
-                    .keyboardType(.numberPad)
-                    #endif
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: 76)
-            }
-
-            TextField("Username", text: $username, prompt: Text(String(localized: "root")))
-                #if os(iOS)
-                .textContentType(.username)
-                #endif
-                .autocorrectionDisabled()
-                #if os(iOS)
-                .textInputAutocapitalization(.never)
-                #endif
-
-            Button {
-                showingLocalDiscoverySheet = true
-            } label: {
-                Label(String(localized: "Pick from Local Discovery..."), systemImage: "dot.radiowaves.left.and.right")
-            }
-        } header: {
-            sectionHeader("Server")
-        }
-    }
-
-    @ViewBuilder
     private var authSection: some View {
         ServerFormAuthenticationSection(
             transportSelection: $transportSelection,
@@ -564,7 +483,12 @@ struct ServerFormSheet: View {
             password: $password,
             sshPassphrase: $sshPassphrase
         ) {
-            keyInputView
+            ServerFormKeyInputView(
+                storedKeys: storedKeys,
+                selectedStoredKey: $selectedStoredKey,
+                onLoadStoredKey: loadStoredKey,
+                onAddKey: { showingAddKeySheet = true }
+            )
         }
     }
 
@@ -574,7 +498,10 @@ struct ServerFormSheet: View {
             isDisabled: !isValid || isTestingConnection,
             onTestConnection: { requestConnectionTest(force: true) }
         ) {
-            connectionFooter
+            ServerFormConnectionFooter(
+                isSuccessful: connectionTestSucceeded && hasValidConnectionTest,
+                errorMessage: connectionTestError
+            )
         }
     }
 
@@ -605,69 +532,6 @@ struct ServerFormSheet: View {
                 Text(error)
                     .foregroundStyle(.red)
             }
-        }
-    }
-
-    #if os(iOS)
-    private struct CompactListSectionSpacingModifier: ViewModifier {
-        func body(content: Content) -> some View {
-            if #available(iOS 17.0, *) {
-                content.listSectionSpacing(.compact)
-            } else {
-                content
-            }
-        }
-    }
-
-    private struct TransparentNavigationBarModifier: ViewModifier {
-        func body(content: Content) -> some View {
-            if #available(iOS 16.0, *) {
-                content.toolbarBackground(.hidden, for: .navigationBar)
-            } else {
-                content
-            }
-        }
-    }
-    #endif
-
-    // MARK: - Key Input View
-
-    @ViewBuilder
-    private var connectionFooter: some View {
-        if connectionTestSucceeded && hasValidConnectionTest {
-            Label(String(localized: "Connection successful"), systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-                .font(.caption)
-        } else if let connectionTestError {
-            Text(connectionTestError)
-                .foregroundStyle(.red)
-                .font(.caption)
-        }
-    }
-
-    @ViewBuilder
-    private var keyInputView: some View {
-        // Stored keys picker
-        if !storedKeys.isEmpty {
-            Picker("Stored Key", selection: $selectedStoredKey) {
-                Text("Select a key...").tag(nil as SSHKeyEntry?)
-                ForEach(storedKeys) { key in
-                    HStack {
-                        Image(systemName: key.hasPassphrase ? "lock.shield.fill" : "key.fill")
-                        Text(key.name)
-                    }
-                    .tag(key as SSHKeyEntry?)
-                }
-            }
-            .onChange(of: selectedStoredKey) { newKey in
-                if let key = newKey {
-                    loadStoredKey(key)
-                }
-            }
-        }
-
-        Button("Add to Keychain") {
-            showingAddKeySheet = true
         }
     }
 
