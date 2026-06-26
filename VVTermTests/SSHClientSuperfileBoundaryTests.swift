@@ -126,6 +126,32 @@ struct SSHClientSuperfileBoundaryTests {
         #expect(serviceSource.contains("withTemporaryConnection"))
     }
 
+    @Test
+    func keyboardInteractiveAuthHelperLivesOutsideSSHClientFile() throws {
+        let root = try sourceRoot()
+        let clientSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift")
+        )
+        let authSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHKeyboardInteractiveAuth.swift")
+        )
+
+        // Given the SSH client superfile source.
+        #expect(
+            !clientSource.contains("final class KeyboardInteractiveContext"),
+            "SSHClient.swift should not own the libssh2 keyboard-interactive auth context."
+        )
+        #expect(
+            !clientSource.contains("let kbdintCallback"),
+            "SSHClient.swift should not own the libssh2 keyboard-interactive auth callback."
+        )
+
+        // Then keyboard-interactive auth support has a dedicated Core/SSH file.
+        #expect(authSource.contains("final class KeyboardInteractiveContext"))
+        #expect(authSource.contains("keyboardInteractivePassword"))
+        #expect(authSource.contains("kbdintCallback"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
