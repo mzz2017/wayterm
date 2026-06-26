@@ -617,171 +617,49 @@ struct ServerFormSheet: View {
 
     @ViewBuilder
     private var authSection: some View {
-        Section {
-            Picker("Transport", selection: $transportSelection) {
-                ForEach(ServerTransportSelection.allCases) { transport in
-                    Label(transport.displayName, systemImage: transport.icon)
-                        .tag(transport)
-                }
-            }
-
-            if transportSelection == .cloudflare {
-                Picker("Cloudflare Access", selection: $selectedCloudflareAccessMode) {
-                    ForEach(CloudflareAccessMode.allCases) { mode in
-                        Text(mode.displayName).tag(mode)
-                    }
-                }
-
-                switch selectedCloudflareAccessMode {
-                case .oauth:
-                    Text(String(localized: "OAuth login will open in browser. Team/App domain values are auto-discovered from host."))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if showCloudflareOverrides {
-                        TextField("Team Domain Override", text: $cloudflareTeamDomainOverride, prompt: Text("team.cloudflareaccess.com"))
-                            .autocorrectionDisabled()
-                            #if os(iOS)
-                            .textInputAutocapitalization(.never)
-                            #endif
-
-                        Button("Hide Overrides") {
-                            showCloudflareOverrides = false
-                        }
-                    } else {
-                        Button("Set Team Domain Override") {
-                            showCloudflareOverrides = true
-                        }
-                    }
-
-                case .serviceToken:
-                    TextField("Service Token Client ID", text: $cloudflareClientID, prompt: Text(String(localized: "Required")))
-                        .autocorrectionDisabled()
-                        #if os(iOS)
-                        .textInputAutocapitalization(.never)
-                        #endif
-                    SecureField("Service Token Client Secret", text: $cloudflareClientSecret, prompt: Text(String(localized: "Required")))
-                }
-            }
-
-            if transportSelection != .tailscale {
-                Picker("Method", selection: $selectedAuthMethod) {
-                    ForEach(AuthMethod.allCases) { method in
-                        Label(method.displayName, systemImage: method.icon)
-                            .tag(method)
-                    }
-                }
-
-                switch selectedAuthMethod {
-                case .password:
-                    SecureField("Password", text: $password, prompt: Text(String(localized: "Required")))
-                        #if os(iOS)
-                        .textContentType(.password)
-                        #endif
-
-                case .sshKey:
-                    keyInputView
-
-                case .sshKeyWithPassphrase:
-                    keyInputView
-                    SecureField("Key Passphrase", text: $sshPassphrase, prompt: Text(String(localized: "Optional")))
-                }
-            } else {
-                Text(String(localized: "Uses server-side Tailscale SSH policy. No password or SSH key is required."))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        } header: {
-            sectionHeader("Authentication")
+        ServerFormAuthenticationSection(
+            transportSelection: $transportSelection,
+            selectedCloudflareAccessMode: $selectedCloudflareAccessMode,
+            cloudflareClientID: $cloudflareClientID,
+            cloudflareClientSecret: $cloudflareClientSecret,
+            cloudflareTeamDomainOverride: $cloudflareTeamDomainOverride,
+            showCloudflareOverrides: $showCloudflareOverrides,
+            selectedAuthMethod: $selectedAuthMethod,
+            password: $password,
+            sshPassphrase: $sshPassphrase
+        ) {
+            keyInputView
         }
     }
 
     private var connectionSection: some View {
-        Section {
-            Button {
-                requestConnectionTest(force: true)
-            } label: {
-                Text(String(localized: "Test Connection"))
-                    .opacity(isTestingConnection ? 0 : 1)
-                    .overlay {
-                        if isTestingConnection {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                    .progressViewStyle(.circular)
-                                Text(String(localized: "Testing..."))
-                            }
-                        }
-                    }
-            }
-            .buttonStyle(.bordered)
-            .tint(.secondary)
-            .controlSize(.regular)
-            .disabled(!isValid || isTestingConnection)
-        } header: {
-            sectionHeader("Connection")
-        } footer: {
+        ServerFormConnectionSection(
+            isTestingConnection: isTestingConnection,
+            isDisabled: !isValid || isTestingConnection,
+            onTestConnection: { requestConnectionTest(force: true) }
+        ) {
             connectionFooter
         }
     }
 
     private var sessionSection: some View {
-        Section {
-            Picker("Session persistence", selection: $multiplexer) {
-                ForEach(TerminalMultiplexer.allCases) { mux in
-                    Text(mux.displayName).tag(mux)
-                }
-            }
-
-            if multiplexer.isEnabled {
-                Picker("On connect", selection: $tmuxStartupBehavior) {
-                    ForEach(TmuxStartupBehavior.configCases) { behavior in
-                        Text(behavior.displayName).tag(behavior)
-                    }
-                }
-
-                Text(tmuxStartupBehavior.descriptionText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        } header: {
-            sectionHeader("Session")
-        } footer: {
-            Text("Sessions stay alive across app restarts and disconnects when tmux is available.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
+        ServerFormSessionSection(
+            multiplexer: $multiplexer,
+            tmuxStartupBehavior: $tmuxStartupBehavior
+        )
     }
 
     private var securitySection: some View {
-        Section {
-            Toggle(
-                String(format: String(localized: "Require %@ to open this server"), appLockManager.biometryDisplayName),
-                isOn: $requiresBiometricUnlock
-            )
-            .disabled(!appLockManager.isBiometryAvailable && !requiresBiometricUnlock)
-
-            if !appLockManager.isBiometryAvailable,
-               let message = appLockManager.biometryAvailabilityMessage {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        } header: {
-            sectionHeader("Security")
-        }
+        ServerFormSecuritySection(
+            biometryDisplayName: appLockManager.biometryDisplayName,
+            isBiometryAvailable: appLockManager.isBiometryAvailable,
+            biometryAvailabilityMessage: appLockManager.biometryAvailabilityMessage,
+            requiresBiometricUnlock: $requiresBiometricUnlock
+        )
     }
 
     private var notesSection: some View {
-        Section {
-            TextEditor(text: $notes)
-                .frame(minHeight: 56)
-                #if os(iOS)
-                .scrollContentBackground(.hidden)
-                .background(Color.clear)
-                #endif
-        } header: {
-            sectionHeader("Notes")
-        }
+        ServerFormNotesSection(notes: $notes)
     }
 
     @ViewBuilder

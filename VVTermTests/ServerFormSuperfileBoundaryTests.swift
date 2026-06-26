@@ -96,6 +96,54 @@ struct ServerFormSuperfileBoundaryTests {
         )
     }
 
+    @Test
+    func serverFormSheetComposesFieldSectionsWithoutOwningTheirLayout() throws {
+        let root = try sourceRoot()
+        let formSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift")
+        )
+        let sectionSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/ServerDetail/ServerFormSections.swift")
+        )
+
+        // Given ServerFormSheet is the add/edit form root.
+        for component in [
+            "ServerFormAuthenticationSection",
+            "ServerFormConnectionSection",
+            "ServerFormSessionSection",
+            "ServerFormSecuritySection",
+            "ServerFormNotesSection"
+        ] {
+            #expect(
+                formSource.contains("\(component)("),
+                "ServerFormSheet.swift should compose \(component)."
+            )
+            #expect(
+                !formSource.contains("struct \(component)"),
+                "ServerFormSheet.swift should not define \(component)."
+            )
+            #expect(
+                sectionSource.contains("struct \(component)"),
+                "ServerFormSections.swift should define \(component)."
+            )
+        }
+
+        // Then the root form should keep sending lifecycle intent instead of
+        // moving save or connection-test orchestration into the section views.
+        #expect(
+            formSource.contains("requestConnectionTest(force: true)"),
+            "ServerFormSheet.swift should keep connection-test intent at the form root."
+        )
+        #expect(
+            !sectionSource.contains("requestConnectionTest("),
+            "ServerFormSections.swift should not own connection-test orchestration."
+        )
+        #expect(
+            !sectionSource.contains("requestServerSave("),
+            "ServerFormSections.swift should not own save orchestration."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
