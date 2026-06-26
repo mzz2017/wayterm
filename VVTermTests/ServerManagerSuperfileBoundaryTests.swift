@@ -145,6 +145,65 @@ struct ServerManagerSuperfileBoundaryTests {
         )
     }
 
+    @Test
+    func requestCoordinationLivesOutsideServerManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager.swift")
+        )
+        let requestSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager+Requests.swift")
+        )
+
+        // Given UI-facing request APIs and their tracked Tasks are lifecycle
+        // coordination rather than core server/workspace mutation rules.
+        #expect(requestSource.contains("extension ServerManager"))
+        #expect(requestSource.contains("func requestServerSave"))
+        #expect(requestSource.contains("func requestServerDeletion"))
+        #expect(requestSource.contains("func requestWorkspaceSave"))
+        #expect(requestSource.contains("func requestWorkspaceDeletion"))
+        #expect(requestSource.contains("func requestEnvironmentDeletion"))
+        #expect(requestSource.contains("func requestServerMove"))
+        #expect(requestSource.contains("func requestEnvironmentSave"))
+        #expect(requestSource.contains("func waitForDeletionRequest"))
+        #expect(requestSource.contains("func waitForServerSaveRequest"))
+        #expect(requestSource.contains("func waitForWorkspaceSaveRequest"))
+        #expect(requestSource.contains("func waitForEnvironmentSaveRequest"))
+        #expect(requestSource.contains("func waitForServerMoveRequest"))
+        #expect(requestSource.contains("func trackDeletionRequest"))
+        #expect(requestSource.contains("func trackServerSaveRequest"))
+        #expect(requestSource.contains("func trackWorkspaceSaveRequest"))
+        #expect(requestSource.contains("func trackEnvironmentSaveRequest"))
+        #expect(requestSource.contains("func trackServerMoveRequest"))
+
+        // Then the ServerManager superfile should not own request Task
+        // tracking and UI failure coordination directly.
+        for functionName in [
+            "requestServerSave",
+            "requestServerDeletion",
+            "requestWorkspaceSave",
+            "requestWorkspaceDeletion",
+            "requestEnvironmentDeletion",
+            "requestServerMove",
+            "requestEnvironmentSave",
+            "waitForDeletionRequest",
+            "waitForServerSaveRequest",
+            "waitForWorkspaceSaveRequest",
+            "waitForEnvironmentSaveRequest",
+            "waitForServerMoveRequest",
+            "trackDeletionRequest",
+            "trackServerSaveRequest",
+            "trackWorkspaceSaveRequest",
+            "trackEnvironmentSaveRequest",
+            "trackServerMoveRequest"
+        ] {
+            #expect(
+                !managerSource.containsRegex(#"func\s+\#(functionName)\s*\("#),
+                "ServerManager.swift should not own \(functionName)."
+            )
+        }
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
