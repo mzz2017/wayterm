@@ -155,6 +155,14 @@ Safe refactor expectation:
 - same user-facing flows
 - smaller files, clearer boundaries, better ownership
 
+### Superfile Control
+
+- Do not add new superfiles. Treat Swift source files over roughly 800 lines as design debt and files over roughly 1200 lines as split candidates before adding more behavior.
+- Root/composition views should stay small, ideally 200-300 lines, and only wire dependencies, navigation, and top-level presentation state.
+- Move feature UI, policy, parsing, lifecycle intent, and state orchestration into the owning `Features/<FeatureName>` or `Core` layer instead of expanding app-shell files.
+- Prefer direct structural splits with focused tests over compatibility shims or partial duplicate paths.
+- If touching an existing superfile, either reduce it, extract a coherent owned piece, or document why the change cannot reasonably shrink it in the same atomic commit.
+
 ## Commits
 
 - Use **atomic commits**.
