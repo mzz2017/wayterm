@@ -112,10 +112,9 @@ final class TerminalTabManager: ObservableObject {
     private let terminalSurfaceRegistry = TerminalSurfaceRegistry()
     private var shellRegistry = SSHShellRegistry(staleThreshold: 120)
     /// Server IDs with an in-flight tab-open request to avoid queued duplicates.
-    private var tabOpensInFlight: Set<UUID> = []
-    private var tabOpenRequests: [UUID: Task<Void, Never>] = [:]
+    private var tabOpenRequestStore = TerminalOpenRequestStore()
     private(set) var lastTabOpenFailure: Error?
-    var pendingTabOpenRequestIDs: Set<UUID> { Set(tabOpenRequests.keys) }
+    var pendingTabOpenRequestIDs: Set<UUID> { tabOpenRequestStore.pendingRequestIDs }
     private var tmuxInstallRequestStore = TerminalScopedRequestStore<TmuxInstallRequest>()
     var pendingTmuxInstallRequestIDs: Set<UUID> { tmuxInstallRequestStore.pendingRequestIDs }
     private var moshInstallRequestStore = TerminalScopedRequestStore<MoshInstallRequest>()
@@ -283,7 +282,7 @@ final class TerminalTabManager: ObservableObject {
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.tabOpenRequests.removeValue(forKey: requestID) }
+            defer { self.tabOpenRequestStore.remove(id: requestID) }
 
             do {
                 let tab = try await self.openTab(for: server)
@@ -299,7 +298,7 @@ final class TerminalTabManager: ObservableObject {
             }
         }
 
-        tabOpenRequests[requestID] = task
+        tabOpenRequestStore.insert(task, id: requestID)
         return requestID
     }
 
@@ -315,7 +314,7 @@ final class TerminalTabManager: ObservableObject {
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.tabOpenRequests.removeValue(forKey: requestID) }
+            defer { self.tabOpenRequestStore.remove(id: requestID) }
 
             do {
                 guard await self.serverUnlocker(server) else {
@@ -343,12 +342,12 @@ final class TerminalTabManager: ObservableObject {
             }
         }
 
-        tabOpenRequests[requestID] = task
+        tabOpenRequestStore.insert(task, id: requestID)
         return requestID
     }
 
     func waitForTabOpenRequest(_ requestID: UUID) async {
-        await tabOpenRequests[requestID]?.value
+        await tabOpenRequestStore[requestID]?.value
     }
 
     func waitForSurfaceAttachRequest(_ requestID: UUID) async {
@@ -381,13 +380,12 @@ final class TerminalTabManager: ObservableObject {
     private func openTab(for server: Server, shouldEnsureUnlocked: Bool) async throws -> TerminalTab {
         await waitForServerTeardownTasks(server.id)
 
-        if tabOpensInFlight.contains(server.id) {
+        if !tabOpenRequestStore.beginOpen(forScope: server.id) {
             throw VVTermError.connectionFailed(
                 String(localized: "A tab is already opening for this server.")
             )
         }
-        tabOpensInFlight.insert(server.id)
-        defer { tabOpensInFlight.remove(server.id) }
+        defer { tabOpenRequestStore.finishOpen(forScope: server.id) }
 
         if shouldEnsureUnlocked {
             guard await serverUnlocker(server) else {
@@ -2732,9 +2730,7 @@ extension TerminalTabManager {
         tmuxAttachPrompt = nil
         terminalRegistryVersion = 0
         shellRegistry.removeAll()
-        tabOpensInFlight.removeAll()
-        tabOpenRequests.values.forEach { $0.cancel() }
-        tabOpenRequests.removeAll()
+        tabOpenRequestStore.removeAll().forEach { $0.cancel() }
         lastTabOpenFailure = nil
         tmuxInstallRequestStore.allRequests.forEach { $0.task.cancel() }
         tmuxInstallRequestStore.removeAll()

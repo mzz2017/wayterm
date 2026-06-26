@@ -226,6 +226,32 @@ struct TerminalTabManagerSuperfileBoundaryTests {
         #expect(managerSource.contains("inputRequestStore"))
     }
 
+    @Test
+    func tabOpenRequestTrackingUsesOpenRequestStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalOpenRequestStore.swift")
+        )
+
+        // Given tab opening needs request tracking and per-server in-flight gating.
+        #expect(storeSource.contains("struct TerminalOpenRequestStore"))
+        #expect(storeSource.contains("beginOpen(forScope"))
+
+        // Then tab open request bookkeeping should not remain bespoke state in the superfile.
+        #expect(
+            !managerSource.contains("tabOpenRequests"),
+            "TerminalTabManager.swift should not own bespoke tab open request indexing."
+        )
+        #expect(
+            !managerSource.contains("tabOpensInFlight"),
+            "TerminalTabManager.swift should not own bespoke tab open in-flight gating."
+        )
+        #expect(managerSource.contains("tabOpenRequestStore"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
