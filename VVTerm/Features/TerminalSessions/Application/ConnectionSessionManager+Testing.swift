@@ -66,8 +66,22 @@ extension ConnectionSessionManager {
         processExitRequestStore.removeAll()
         reconnectInFlightStore.removeAll()
         connectWatchdogStore.removeAll().forEach { $0.cancel() }
+        let lastConnectedUpdateTasks = lastConnectedUpdateTaskStore.removeAll()
+        lastConnectedUpdateTasks.forEach { $0.cancel() }
+        for task in lastConnectedUpdateTasks {
+            await task.value
+        }
         serverProvider = { serverId in
             ServerManager.shared.servers.first { $0.id == serverId }
+        }
+        serverLockPolicy = { server in
+            ServerManager.shared.isServerLocked(server)
+        }
+        serverUnlocker = { server in
+            await AppLockManager.shared.ensureServerUnlocked(server)
+        }
+        lastConnectedUpdater = { server in
+            await ServerManager.shared.updateLastConnected(for: server)
         }
         credentialsProvider = { server in
             try KeychainManager.shared.getCredentials(for: server)
@@ -234,6 +248,28 @@ extension ConnectionSessionManager {
         _ provider: @escaping ServerProvider
     ) {
         serverProvider = provider
+    }
+
+    func setServerLockPolicyForTesting(
+        _ policy: @escaping ServerLockPolicy
+    ) {
+        serverLockPolicy = policy
+    }
+
+    func setServerUnlockerForTesting(
+        _ unlocker: @escaping ServerUnlocker
+    ) {
+        serverUnlocker = unlocker
+    }
+
+    func setLastConnectedUpdaterForTesting(
+        _ updater: @escaping LastConnectedUpdater
+    ) {
+        lastConnectedUpdater = updater
+    }
+
+    func waitForLastConnectedUpdateForTesting(serverId: UUID) async {
+        await lastConnectedUpdateTaskStore.task(forServer: serverId)?.value
     }
 
     func registerTerminalForTesting(sessionId: UUID) {

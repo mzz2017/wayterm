@@ -52,6 +52,32 @@ struct TerminalSessionDependencyBoundaryTests {
         #expect(!runtimeSource.contains("ServerManager.shared.servers"))
     }
 
+    @Test
+    func connectionOpenUsesInjectedAccessAndPersistenceBoundaries() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let openSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Open.swift")
+        )
+
+        // Given opening a terminal session needs server access policy,
+        // app-lock authorization, and last-connected persistence.
+        #expect(managerSource.contains("typealias ServerLockPolicy"))
+        #expect(managerSource.contains("typealias ServerUnlocker"))
+        #expect(managerSource.contains("typealias LastConnectedUpdater"))
+        #expect(openSource.contains("serverLockPolicy(server)"))
+        #expect(openSource.contains("await serverUnlocker(server)"))
+        #expect(openSource.contains("scheduleLastConnectedUpdate(for: server)"))
+
+        // Then the open lifecycle file does not reach directly into Servers or
+        // Security singletons for those cross-feature concerns.
+        #expect(!openSource.contains("ServerManager.shared.isServerLocked"))
+        #expect(!openSource.contains("AppLockManager.shared.ensureServerUnlocked"))
+        #expect(!openSource.contains("ServerManager.shared.updateLastConnected"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

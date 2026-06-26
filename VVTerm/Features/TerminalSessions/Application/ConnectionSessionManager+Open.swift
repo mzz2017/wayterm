@@ -47,7 +47,7 @@ extension ConnectionSessionManager {
         await waitForServerTeardownTasks(server.id)
 
         // Check if server is locked due to downgrade
-        if ServerManager.shared.isServerLocked(server) {
+        if serverLockPolicy(server) {
             throw VVTermError.serverLocked(server.name)
         }
 
@@ -58,7 +58,7 @@ extension ConnectionSessionManager {
         }
         defer { connectionOpenRequestStore.finishOpen(forScope: server.id) }
 
-        guard await AppLockManager.shared.ensureServerUnlocked(server) else {
+        guard await serverUnlocker(server) else {
             throw VVTermError.authenticationFailed
         }
 
@@ -103,14 +103,28 @@ extension ConnectionSessionManager {
         sessions.append(session)
         selectedSessionId = session.id
 
-        // Update server's last connected after the navigation animation completes
-        Task { [server] in
-            try? await Task.sleep(for: .milliseconds(350))
-            await ServerManager.shared.updateLastConnected(for: server)
-        }
+        scheduleLastConnectedUpdate(for: server)
 
         logger.info("Created session for \(server.name)")
         return session
+    }
+
+    func scheduleLastConnectedUpdate(for server: Server) {
+        guard lastConnectedUpdateTaskStore.task(forServer: server.id) == nil else { return }
+
+        let task = Task { @MainActor [weak self] in
+            defer {
+                self?.lastConnectedUpdateTaskStore.removeTask(forServer: server.id)
+            }
+            do {
+                try await Task.sleep(for: .milliseconds(350))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.lastConnectedUpdater(server)
+        }
+        lastConnectedUpdateTaskStore.setTask(task, forServer: server.id)
     }
 
     func sourceSessionForNewTab(on serverId: UUID) -> ConnectionSession? {

@@ -30,6 +30,9 @@ final class ConnectionSessionManager: ObservableObject {
     typealias ProcessExitRequest = ConnectionSessionManagerSupport.ProcessExitRequest
     typealias SessionRuntimeState = ConnectionSessionManagerSupport.SessionRuntimeState
     typealias ServerProvider = @MainActor (UUID) -> Server?
+    typealias ServerLockPolicy = @MainActor (Server) -> Bool
+    typealias ServerUnlocker = @MainActor (Server) async -> Bool
+    typealias LastConnectedUpdater = @MainActor (Server) async -> Void
 
     @Published var sessions: [ConnectionSession] = [] {
         didSet {
@@ -208,10 +211,20 @@ final class ConnectionSessionManager: ObservableObject {
     var reconnectInFlightStore = TerminalReconnectInFlightStore()
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
     var serverDisconnectTaskStore = TerminalServerTaskStore()
+    var lastConnectedUpdateTaskStore = TerminalServerTaskStore()
     /// Application-owned connect watchdog timers keyed by session.
     var connectWatchdogStore = TerminalConnectWatchdogStore()
     var serverProvider: ServerProvider = { serverId in
         ServerManager.shared.servers.first { $0.id == serverId }
+    }
+    var serverLockPolicy: ServerLockPolicy = { server in
+        ServerManager.shared.isServerLocked(server)
+    }
+    var serverUnlocker: ServerUnlocker = { server in
+        await AppLockManager.shared.ensureServerUnlocked(server)
+    }
+    var lastConnectedUpdater: LastConnectedUpdater = { server in
+        await ServerManager.shared.updateLastConnected(for: server)
     }
     var credentialsProvider: @MainActor (Server) async throws -> ServerCredentials = { server in
         try KeychainManager.shared.getCredentials(for: server)
