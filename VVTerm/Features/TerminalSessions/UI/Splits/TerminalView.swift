@@ -241,7 +241,7 @@ struct TerminalTabView: View {
 
     private var voiceOverlay: some View {
         let target = voiceTarget
-        VoiceRecordingView(
+        return VoiceRecordingView(
             voiceInput: voiceInput,
             target: target,
             onSend: { transcribedText in

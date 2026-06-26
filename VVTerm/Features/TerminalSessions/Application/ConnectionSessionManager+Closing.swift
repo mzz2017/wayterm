@@ -1,5 +1,8 @@
 import Foundation
 import os.log
+#if os(macOS)
+import AppKit
+#endif
 #if os(iOS)
 import UIKit
 #endif
