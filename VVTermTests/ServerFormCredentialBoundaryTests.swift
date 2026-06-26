@@ -33,6 +33,27 @@ struct ServerFormCredentialBoundaryTests {
         )
     }
 
+    @Test
+    func serverFormCredentialProviderReceivesKeychainFromInfrastructure() throws {
+        // Given the Servers application credential provider and its
+        // infrastructure adapter.
+        let root = try sourceRoot()
+        let providerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerFormCredentialProvider.swift")
+        )
+        let infrastructureSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Infrastructure/ServerFormCredentialProvider+Keychain.swift")
+        )
+
+        // Then Application owns form credential preparation, while Keychain
+        // wiring stays in Infrastructure.
+        #expect(providerSource.contains("protocol ServerFormCredentialLibrary"))
+        #expect(providerSource.contains("init(library: any ServerFormCredentialLibrary)"))
+        #expect(!providerSource.contains("KeychainManager.shared"))
+        #expect(infrastructureSource.contains("extension KeychainManager: ServerFormCredentialLibrary"))
+        #expect(infrastructureSource.contains("ServerFormCredentialProvider(library: KeychainManager.shared)"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

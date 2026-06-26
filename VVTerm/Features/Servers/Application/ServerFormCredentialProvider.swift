@@ -6,16 +6,6 @@ protocol ServerFormCredentialLibrary: AnyObject {
     func credentials(for server: Server) throws -> ServerCredentials
 }
 
-extension KeychainManager: ServerFormCredentialLibrary {
-    func storedSSHKeyData(for keyId: UUID) throws -> (key: Data, passphrase: String?)? {
-        try getStoredSSHKeyData(for: keyId)
-    }
-
-    func credentials(for server: Server) throws -> ServerCredentials {
-        try getCredentials(for: server)
-    }
-}
-
 struct ServerFormStoredSSHKeyMaterial: Equatable {
     let privateKey: String
     let passphrase: String?
@@ -34,12 +24,10 @@ enum ServerFormCredentialProviderError: LocalizedError, Equatable {
 }
 
 final class ServerFormCredentialProvider {
-    static let shared = ServerFormCredentialProvider()
-
     private let library: any ServerFormCredentialLibrary
 
-    init(library: (any ServerFormCredentialLibrary)? = nil) {
-        self.library = library ?? KeychainManager.shared
+    init(library: any ServerFormCredentialLibrary) {
+        self.library = library
     }
 
     func storedSSHKeys() -> [SSHKeyEntry] {
