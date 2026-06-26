@@ -52,6 +52,28 @@ struct GhosttyIOSSuperfileBoundaryTests {
         #expect(accessorySource.contains("RepeatableKeyButton"))
     }
 
+    @Test
+    func terminalKeyModelLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+        )
+        let keySource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalKey+iOS.swift")
+        )
+
+        // Given the iOS Ghostty terminal main view source.
+        #expect(
+            !mainSource.contains("enum TerminalKey"),
+            "GhosttyTerminalView+iOS.swift should not own the terminal key model."
+        )
+
+        // Then toolbar key modeling and Ghostty modifier bridging have a dedicated file.
+        #expect(keySource.contains("enum TerminalKey"))
+        #expect(keySource.contains("ansiSequence"))
+        #expect(keySource.contains("TerminalAccessoryShortcutModifiers"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
