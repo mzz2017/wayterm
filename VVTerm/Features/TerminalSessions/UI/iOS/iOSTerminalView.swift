@@ -415,7 +415,46 @@ struct iOSTerminalView: View {
             }
             .overlay(alignment: .topTrailing) {
                 if effectiveZenModeEnabled {
-                    zenModeOverlay
+                    IOSTerminalZenModeOverlay(
+                        isPanelPresented: $showingZenPanel,
+                        indicatorColor: selectedSession?.connectionState.statusTintColor ?? .secondary,
+                        serverName: selectedServer?.name ?? String(localized: "Terminal"),
+                        selectedView: selectedView,
+                        selectedViewBinding: zenSelectedViewBinding,
+                        visibleTabs: viewTabConfig.currentVisibleTabs,
+                        sessions: serverSessions,
+                        selectedSessionId: selectedSessionIdBinding,
+                        sessionTitle: { sessionManager.displayTitle(for: $0) },
+                        onCloseSession: { session in
+                            pendingCloseSession = session
+                        },
+                        fileTabs: serverFileTabs,
+                        selectedFileTabId: selectedFileTabIdBinding,
+                        fileTabTitle: displayedFileTabTitle(for:),
+                        onSelectFileTab: { tab in
+                            fileTabs.selectTab(tab)
+                        },
+                        onCloseFileTab: closeFileTab,
+                        onNewTerminalTab: openNewTab,
+                        onNewFileTab: openNewFileTab,
+                        onOpenSettings: {
+                            showingSettings = true
+                        },
+                        editableServer: selectedServer,
+                        onEditServer: { server in
+                            serverToEdit = server
+                        },
+                        onDisconnect: disconnectCurrentServerSessions,
+                        onBack: {
+                            dismissKeyboardForCurrentSession()
+                            onBack()
+                        },
+                        onExitZen: {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+                                isZenModeEnabled = false
+                            }
+                        }
+                    )
                 }
             }
             .overlay(alignment: .bottom) {
@@ -901,69 +940,6 @@ struct iOSTerminalView: View {
         guard recoveredState.shouldCallBack else { return }
         DispatchQueue.main.async {
             onBack()
-        }
-    }
-
-    private var zenModeOverlay: some View {
-        ZenModeFloatingOverlay(
-            isPanelPresented: $showingZenPanel,
-            indicatorColor: selectedSession?.connectionState.statusTintColor ?? .secondary
-        ) { panelWidth in
-            IOSZenModePanel(
-                width: panelWidth,
-                serverName: selectedServer?.name ?? String(localized: "Terminal"),
-                selectedView: selectedView,
-                selectedViewBinding: zenSelectedViewBinding,
-                viewTabs: viewTabConfig.currentVisibleTabs,
-                sessions: serverSessions,
-                selectedSessionId: selectedSessionIdBinding,
-                sessionTitle: { sessionManager.displayTitle(for: $0) },
-                onCloseSession: { session in
-                    pendingCloseSession = session
-                },
-                fileTabs: serverFileTabs,
-                selectedFileTabId: selectedFileTabIdBinding,
-                fileTabTitle: displayedFileTabTitle(for:),
-                onSelectFileTab: { tab in
-                    fileTabs.selectTab(tab)
-                },
-                onCloseFileTab: { tab in
-                    closeFileTab(tab)
-                },
-                onNewTerminalTab: {
-                    showingZenPanel = false
-                    openNewTab()
-                },
-                onNewFileTab: {
-                    showingZenPanel = false
-                    openNewFileTab()
-                },
-                onOpenSettings: {
-                    showingZenPanel = false
-                    showingSettings = true
-                },
-                onEditServer: selectedServer.map { server in
-                    {
-                        showingZenPanel = false
-                        serverToEdit = server
-                    }
-                },
-                onDisconnect: {
-                    showingZenPanel = false
-                    disconnectCurrentServerSessions()
-                },
-                onBack: {
-                    showingZenPanel = false
-                    dismissKeyboardForCurrentSession()
-                    onBack()
-                },
-                onExitZen: {
-                    showingZenPanel = false
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
-                        isZenModeEnabled = false
-                    }
-                }
-            )
         }
     }
 

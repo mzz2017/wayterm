@@ -4,9 +4,9 @@ import Testing
 // Test Context:
 // These source-boundary tests protect iOSTerminalView superfile control. The
 // iOS terminal root owns top-level composition and intent routing; reusable
-// floating controls, navigation toolbar chrome, and transient connection
-// chrome should live in sibling UI files so the root view does not accumulate
-// presentation subcomponents.
+// floating controls, navigation toolbar chrome, zen-mode overlay chrome, and
+// transient connection chrome should live in sibling UI files so the root view
+// does not accumulate presentation subcomponents.
 // Update this test only if iOS terminal root composition intentionally changes.
 @Suite
 struct IOSTerminalViewSuperfileBoundaryTests {
@@ -73,6 +73,46 @@ struct IOSTerminalViewSuperfileBoundaryTests {
         #expect(
             toolbarSource.contains("ToolbarItemGroup(placement: .navigationBarTrailing)"),
             "IOSTerminalNavigationToolbar should own trailing toolbar chrome."
+        )
+    }
+
+    @Test
+    func iosTerminalViewComposesZenOverlayWithoutOwningOverlayChrome() throws {
+        let root = try sourceRoot()
+        let rootSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/iOS/iOSTerminalView.swift")
+        )
+        let overlaySource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/iOS/IOSTerminalZenModeOverlay.swift")
+        )
+
+        // Given iOSTerminalView owns zen-mode state and intent routing.
+        #expect(
+            rootSource.contains("IOSTerminalZenModeOverlay("),
+            "iOSTerminalView.swift should compose the iOS terminal zen overlay."
+        )
+
+        // Then reusable overlay presentation should live in its own sibling UI
+        // component rather than growing the terminal root view.
+        #expect(
+            !rootSource.contains("ZenModeFloatingOverlay("),
+            "iOSTerminalView.swift should not directly own zen floating overlay chrome."
+        )
+        #expect(
+            !rootSource.contains("IOSZenModePanel("),
+            "iOSTerminalView.swift should not directly own the iOS zen panel."
+        )
+        #expect(
+            overlaySource.contains("struct IOSTerminalZenModeOverlay: View"),
+            "IOSTerminalZenModeOverlay.swift should define the overlay component."
+        )
+        #expect(
+            overlaySource.contains("ZenModeFloatingOverlay("),
+            "IOSTerminalZenModeOverlay should own the floating overlay chrome."
+        )
+        #expect(
+            overlaySource.contains("IOSZenModePanel("),
+            "IOSTerminalZenModeOverlay should own the iOS zen panel composition."
         )
     }
 
