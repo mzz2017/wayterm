@@ -426,7 +426,34 @@ struct iOSTerminalView: View {
                 }
             }
             .navigationBarBackButtonHidden(true)
-            .toolbar { navigationToolbar }
+            .toolbar {
+                IOSTerminalNavigationToolbar(
+                    selectedView: selectedView,
+                    shouldShowViewSwitcher: shouldShowViewSwitcher,
+                    selectedViewBinding: resolvedServerId.map { selectedViewBinding(for: $0) },
+                    visibleTabs: viewTabConfig.currentVisibleTabs,
+                    selectedServer: selectedServer,
+                    onBack: {
+                        dismissKeyboardForCurrentSession()
+                        onBack()
+                    },
+                    onOpenTerminalTab: openNewTab,
+                    onOpenFileTab: openNewFileTab,
+                    onOpenSettings: {
+                        showingSettings = true
+                    },
+                    onShowFind: showFindNavigatorForCurrentSession,
+                    onEditServer: { server in
+                        serverToEdit = server
+                    },
+                    onEnterZenMode: {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
+                            isZenModeEnabled = true
+                        }
+                    },
+                    onDisconnect: disconnectCurrentServerSessions
+                )
+            }
             .toolbar(effectiveZenModeEnabled ? .hidden : .visible, for: .navigationBar)
             .animation(.spring(response: 0.28, dampingFraction: 0.84), value: shouldShowFloatingTerminalControls)
             .animation(.spring(response: 0.28, dampingFraction: 0.84), value: shouldShowFloatingReturnButton)
@@ -606,92 +633,6 @@ struct iOSTerminalView: View {
         } else {
             Color(UIColor.systemBackground)
                 .ignoresSafeArea(.all)
-        }
-    }
-
-    @ToolbarContentBuilder
-    private var navigationToolbar: some ToolbarContent {
-        ToolbarItem(placement: .navigationBarLeading) {
-            navigationBackButton
-        }
-
-        if shouldShowViewSwitcher {
-            ToolbarItem(placement: .principal) {
-                if let serverId = resolvedServerId {
-                    iOSNativeSegmentedPicker(
-                        selection: selectedViewBinding(for: serverId),
-                        tabs: viewTabConfig.currentVisibleTabs
-                    )
-                    .fixedSize()
-                }
-            }
-        }
-
-        ToolbarItemGroup(placement: .navigationBarTrailing) {
-            if selectedView == "terminal" {
-                Button {
-                    openNewTab()
-                } label: {
-                    Image(systemName: "plus")
-                }
-            }
-
-            if selectedView == "files" {
-                Button {
-                    openNewFileTab()
-                } label: {
-                    Image(systemName: "plus")
-                }
-            }
-
-            Menu {
-                Button {
-                    showingSettings = true
-                } label: {
-                    Label("Settings", systemImage: "gear")
-                }
-
-                if selectedView == "terminal" {
-                    Button {
-                        showFindNavigatorForCurrentSession()
-                    } label: {
-                        Label("Find", systemImage: "magnifyingglass")
-                    }
-                }
-
-                if let server = selectedServer {
-                    Button {
-                        serverToEdit = server
-                    } label: {
-                        Label("Edit Server", systemImage: "pencil")
-                    }
-                }
-
-                Button {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
-                        isZenModeEnabled = true
-                    }
-                } label: {
-                    Label("Zen Mode", systemImage: "arrow.up.left.and.arrow.down.right")
-                }
-
-                Button(role: .destructive) {
-                    disconnectCurrentServerSessions()
-                } label: {
-                    Label("Disconnect", systemImage: "xmark.circle")
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-        }
-    }
-
-    private var navigationBackButton: some View {
-        Button {
-            dismissKeyboardForCurrentSession()
-            onBack()
-        } label: {
-            Image(systemName: "chevron.left")
         }
     }
 

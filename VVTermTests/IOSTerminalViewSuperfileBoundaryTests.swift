@@ -4,8 +4,9 @@ import Testing
 // Test Context:
 // These source-boundary tests protect iOSTerminalView superfile control. The
 // iOS terminal root owns top-level composition and intent routing; reusable
-// floating controls and transient connection chrome should live in sibling UI
-// files so the root view does not accumulate presentation subcomponents.
+// floating controls, navigation toolbar chrome, and transient connection
+// chrome should live in sibling UI files so the root view does not accumulate
+// presentation subcomponents.
 // Update this test only if iOS terminal root composition intentionally changes.
 @Suite
 struct IOSTerminalViewSuperfileBoundaryTests {
@@ -36,6 +37,42 @@ struct IOSTerminalViewSuperfileBoundaryTests {
         #expect(
             !rootSource.contains("private func floatingTerminalControlButton"),
             "iOSTerminalView.swift should not own floating control button chrome."
+        )
+    }
+
+    @Test
+    func iosTerminalViewComposesNavigationToolbarWithoutOwningToolbarChrome() throws {
+        let root = try sourceRoot()
+        let rootSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/iOS/iOSTerminalView.swift")
+        )
+        let toolbarSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/iOS/IOSTerminalNavigationToolbar.swift")
+        )
+
+        // Given iOSTerminalView owns terminal routing and state.
+        #expect(
+            rootSource.contains("IOSTerminalNavigationToolbar("),
+            "iOSTerminalView.swift should compose the iOS terminal navigation toolbar."
+        )
+
+        // Then reusable navigation toolbar presentation should live in its own
+        // sibling UI component rather than growing the terminal root view.
+        #expect(
+            !rootSource.contains("ToolbarItem(placement:"),
+            "iOSTerminalView.swift should not own concrete navigation toolbar items."
+        )
+        #expect(
+            !rootSource.contains("ToolbarItemGroup(placement:"),
+            "iOSTerminalView.swift should not own concrete navigation toolbar groups."
+        )
+        #expect(
+            toolbarSource.contains("struct IOSTerminalNavigationToolbar: ToolbarContent"),
+            "IOSTerminalNavigationToolbar.swift should define the toolbar component."
+        )
+        #expect(
+            toolbarSource.contains("ToolbarItemGroup(placement: .navigationBarTrailing)"),
+            "IOSTerminalNavigationToolbar should own trailing toolbar chrome."
         )
     }
 
