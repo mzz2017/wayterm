@@ -282,6 +282,141 @@ struct ServerManagerSuperfileBoundaryTests {
         )
     }
 
+    @Test
+    func queryHelpersLiveOutsideServerManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager.swift")
+        )
+        let querySource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager+Queries.swift")
+        )
+
+        // Given read-only filtering/search helpers are presentation query
+        // helpers, not core mutation orchestration.
+        #expect(querySource.contains("extension ServerManager"))
+        #expect(querySource.contains("func servers(in workspace: Workspace"))
+        #expect(querySource.contains("func recentServers"))
+        #expect(querySource.contains("func favoriteServers"))
+        #expect(querySource.contains("func searchServers"))
+        #expect(querySource.contains("func workspace(withId"))
+
+        for functionName in [
+            "servers",
+            "recentServers",
+            "favoriteServers",
+            "searchServers",
+            "workspace"
+        ] {
+            #expect(
+                !managerSource.containsRegex(#"func\s+\#(functionName)\s*\("#),
+                "ServerManager.swift should not own \(functionName) query helper."
+            )
+        }
+    }
+
+    @Test
+    func accessPolicyHelpersLiveOutsideServerManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager.swift")
+        )
+        let accessSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager+AccessPolicy.swift")
+        )
+
+        // Given Pro/free-tier access helpers delegate to ServerAccessPolicy and
+        // should not inflate the composition root.
+        #expect(accessSource.contains("extension ServerManager"))
+        #expect(accessSource.contains("var canAddServer"))
+        #expect(accessSource.contains("var canAddWorkspace"))
+        #expect(accessSource.contains("var canCreateCustomEnvironment"))
+        #expect(accessSource.contains("var unlockedServerIds"))
+        #expect(accessSource.contains("var unlockedWorkspaceIds"))
+        #expect(accessSource.contains("func isServerLocked"))
+        #expect(accessSource.contains("func isWorkspaceLocked"))
+        #expect(accessSource.contains("var lockedServersCount"))
+        #expect(accessSource.contains("var lockedWorkspacesCount"))
+        #expect(accessSource.contains("var hasLockedItems"))
+
+        for propertyName in [
+            "canAddServer",
+            "canAddWorkspace",
+            "canCreateCustomEnvironment",
+            "unlockedServerIds",
+            "unlockedWorkspaceIds",
+            "lockedServersCount",
+            "lockedWorkspacesCount",
+            "hasLockedItems"
+        ] {
+            #expect(
+                !managerSource.containsRegex(#"var\s+\#(propertyName)\s*:"#),
+                "ServerManager.swift should not own \(propertyName) access-policy helper."
+            )
+        }
+
+        for functionName in [
+            "isServerLocked",
+            "isWorkspaceLocked"
+        ] {
+            #expect(
+                !managerSource.containsRegex(#"func\s+\#(functionName)\s*\("#),
+                "ServerManager.swift should not own \(functionName) access-policy helper."
+            )
+        }
+    }
+
+    @Test
+    func moveAndEnvironmentHelpersLiveOutsideServerManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager.swift")
+        )
+        let moveSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager+Move.swift")
+        )
+        let environmentSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager+Environment.swift")
+        )
+
+        // Given move and environment mutation helpers are secondary workflows
+        // around server/workspace state.
+        #expect(moveSource.contains("extension ServerManager"))
+        #expect(moveSource.contains("func assignmentWorkspaces"))
+        #expect(moveSource.contains("func moveDestinations"))
+        #expect(moveSource.contains("func resolvedEnvironment"))
+        #expect(moveSource.contains("func moveRequiresEnvironmentFallback"))
+        #expect(moveSource.contains("func canAssignServer"))
+        #expect(moveSource.contains("func moveServer"))
+        #expect(moveSource.contains("func moveRestriction"))
+        #expect(moveSource.contains("func moveDestinationIDs"))
+        #expect(moveSource.contains("func updateWorkspaceSelectionMetadataAfterMove"))
+        #expect(environmentSource.contains("extension ServerManager"))
+        #expect(environmentSource.contains("func createCustomEnvironment"))
+        #expect(environmentSource.contains("func updateEnvironment"))
+        #expect(environmentSource.contains("func handleAppLanguageChange"))
+
+        for functionName in [
+            "assignmentWorkspaces",
+            "moveDestinations",
+            "resolvedEnvironment",
+            "moveRequiresEnvironmentFallback",
+            "canAssignServer",
+            "moveServer",
+            "moveRestriction",
+            "moveDestinationIDs",
+            "updateWorkspaceSelectionMetadataAfterMove",
+            "createCustomEnvironment",
+            "updateEnvironment",
+            "handleAppLanguageChange"
+        ] {
+            #expect(
+                !managerSource.containsRegex(#"func\s+\#(functionName)\s*\("#),
+                "ServerManager.swift should not own \(functionName) workflow helper."
+            )
+        }
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
