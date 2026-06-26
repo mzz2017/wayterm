@@ -171,6 +171,9 @@ struct RemoteFileMutationIntentBoundaryTests {
         let browserSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
         )
+        let sheetFactorySource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen+Sheets.swift")
+        )
         let sheetSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Sheets/RemoteFileBrowserSheets.swift")
         )
@@ -181,12 +184,16 @@ struct RemoteFileMutationIntentBoundaryTests {
         )
         let moveSheetFactory = try slice(
             startingAt: "func moveSheet(entry: RemoteFileEntry) -> some View",
-            endingBefore: "\n    func deleteSheet",
-            in: browserSource
+            endingBefore: "\n    @ViewBuilder\n    func deleteSheet",
+            in: sheetFactorySource
         )
 
         // Then the sheet may keep local presentation state, but remote folder
         // loading task lifetime belongs to the RemoteFiles application store.
+        #expect(
+            !browserSource.contains("func moveSheet(entry: RemoteFileEntry) -> some View"),
+            "RemoteFileBrowserScreen.swift should not own move sheet presentation."
+        )
         #expect(
             moveSheet.contains("onRequestDirectories"),
             "RemoteFileMoveSheet should expose synchronous directory-load intent instead of awaiting remote listing itself."

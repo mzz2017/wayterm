@@ -260,6 +260,51 @@ struct RemoteFileBrowserScreenBoundaryTests {
     }
 
     @Test
+    func screenDoesNotOwnSheetPresentationHelpers() throws {
+        let root = try sourceRoot()
+        let screenSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
+        )
+        let sheetSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen+Sheets.swift")
+        )
+
+        // Given sheet and alert builders are presentation helpers over
+        // RemoteFiles operations, they should not keep inflating the root
+        // browser surface.
+        for functionName in [
+            "renameSheet",
+            "moveSheet",
+            "deleteSheet",
+            "permissionSheet"
+        ] {
+            #expect(
+                !screenSource.contains("func \(functionName)"),
+                "RemoteFileBrowserScreen.swift should not own \(functionName) sheet presentation."
+            )
+            #expect(
+                sheetSource.contains("func \(functionName)"),
+                "RemoteFileBrowserScreen+Sheets.swift should own \(functionName) sheet presentation."
+            )
+        }
+
+        for propertyName in [
+            "newFolderPromptActions",
+            "operationErrorActions",
+            "operationErrorMessageView"
+        ] {
+            #expect(
+                !screenSource.contains("var \(propertyName)"),
+                "RemoteFileBrowserScreen.swift should not own \(propertyName) presentation."
+            )
+            #expect(
+                sheetSource.contains("var \(propertyName)"),
+                "RemoteFileBrowserScreen+Sheets.swift should own \(propertyName) presentation."
+            )
+        }
+    }
+
+    @Test
     func screenDoesNotOwnMacOSInlineEditRouting() throws {
         let root = try sourceRoot()
         let screenSource = try source(
