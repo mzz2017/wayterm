@@ -20,6 +20,10 @@ nonisolated final class RemoteFileTemporaryStorage {
         try makeFileURL(in: "Transfers", suggestedName: entry.name.isEmpty ? "download" : entry.name)
     }
 
+    func makeDownloadExportFileURL(for entry: RemoteFileEntry) throws -> URL {
+        try makeNamedFileURL(in: "Downloads", suggestedName: entry.name.isEmpty ? "download" : entry.name)
+    }
+
     func removeItem(at url: URL) {
         try? fileManager.removeItem(at: url)
     }
@@ -40,5 +44,12 @@ nonisolated final class RemoteFileTemporaryStorage {
             url.appendPathExtension(fileExtension)
         }
         return url
+    }
+
+    private func makeNamedFileURL(in subdirectoryName: String, suggestedName: String) throws -> URL {
+        let directory = rootDirectory.appendingPathComponent(subdirectoryName, isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        return directory.appendingPathComponent("\(UUID().uuidString)-\(suggestedName)")
     }
 }

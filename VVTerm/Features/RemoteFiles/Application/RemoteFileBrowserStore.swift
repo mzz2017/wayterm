@@ -147,7 +147,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     let legacyPersistenceKey = "remoteFileBrowserState.v1"
     let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "RemoteFiles")
     let remoteFileServiceAdapter: SSHSFTPAdapter
-    let temporaryStorage: RemoteFileTemporaryStorage
+    nonisolated let temporaryStorage: RemoteFileTemporaryStorage
     let previewLoader: RemoteFilePreviewLoader
     let conflictResolver: RemoteFileConflictResolver
     let serverProvider: ServerProvider

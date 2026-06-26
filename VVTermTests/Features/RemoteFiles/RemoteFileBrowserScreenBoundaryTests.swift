@@ -33,6 +33,26 @@ struct RemoteFileBrowserScreenBoundaryTests {
         #expect(transferSource.contains("func validatedRemoteDirectoryPath"))
     }
 
+    @Test
+    func screenDoesNotOwnDownloadTemporaryURLCreation() throws {
+        let root = try sourceRoot()
+        let screenSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
+        )
+        let storageSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Infrastructure/RemoteFileTemporaryStorage.swift")
+        )
+
+        // Given the RemoteFiles SwiftUI screen source.
+        #expect(
+            !screenSource.contains("func temporaryDownloadURL"),
+            "RemoteFileBrowserScreen should not own temporary download URL creation."
+        )
+
+        // Then RemoteFiles infrastructure owns temporary download export paths.
+        #expect(storageSource.contains("func makeDownloadExportFileURL"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

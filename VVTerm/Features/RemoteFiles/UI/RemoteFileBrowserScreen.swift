@@ -998,7 +998,7 @@ struct RemoteFileBrowserScreen: View {
             initialMessage: String(localized: "Preparing remote file."),
             successMessage: String(localized: "Download ready to export.")
         ) {
-            let temporaryURL = try temporaryDownloadURL(for: entry)
+            let temporaryURL = try browser.makeDownloadExportFileURL(for: entry)
             try await browser.downloadFile(
                 at: entry.path,
                 to: temporaryURL,
@@ -1024,7 +1024,7 @@ struct RemoteFileBrowserScreen: View {
             initialMessage: String(localized: "Preparing remote file."),
             successMessage: String(localized: "Share sheet ready.")
         ) {
-            let temporaryURL = try temporaryDownloadURL(for: entry)
+            let temporaryURL = try browser.makeDownloadExportFileURL(for: entry)
             try await browser.downloadFile(
                 at: entry.path,
                 to: temporaryURL,
@@ -1919,20 +1919,9 @@ struct RemoteFileBrowserScreen: View {
         isPermissionSubmitting = false
     }
 
-    func temporaryDownloadURL(for entry: RemoteFileEntry) throws -> URL {
-        let fileManager = FileManager.default
-        let downloadDirectory = fileManager.temporaryDirectory
-            .appendingPathComponent("VVTermDownloads", isDirectory: true)
-        try fileManager.createDirectory(at: downloadDirectory, withIntermediateDirectories: true)
-
-        let uniquePrefix = UUID().uuidString
-        let filename = entry.name.isEmpty ? "download" : entry.name
-        return downloadDirectory.appendingPathComponent("\(uniquePrefix)-\(filename)")
-    }
-
     func cleanupDownloadExport() {
         if let sourceURL = downloadExportDocument?.sourceURL {
-            try? FileManager.default.removeItem(at: sourceURL)
+            browser.removeTemporaryFile(at: sourceURL)
         }
         downloadExportDocument = nil
         downloadExportFilename = ""
@@ -1940,7 +1929,7 @@ struct RemoteFileBrowserScreen: View {
 
     func cleanupShareItem() {
         if let sourceURL = shareItem?.sourceURL {
-            try? FileManager.default.removeItem(at: sourceURL)
+            browser.removeTemporaryFile(at: sourceURL)
         }
         shareItem = nil
     }

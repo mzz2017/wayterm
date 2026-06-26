@@ -623,6 +623,14 @@ extension RemoteFileBrowserStore {
         }.value
     }
 
+    nonisolated func makeDownloadExportFileURL(for entry: RemoteFileEntry) throws -> URL {
+        try temporaryStorage.makeDownloadExportFileURL(for: entry)
+    }
+
+    nonisolated func removeTemporaryFile(at url: URL) {
+        temporaryStorage.removeItem(at: url)
+    }
+
     func withSecurityScopedAccess<T>(
         to urls: [URL],
         operation: () async throws -> T

@@ -22,6 +22,33 @@ struct RemoteFileTemporaryStorageTests {
     }
 
     @Test
+    func downloadExportFilesUseDownloadsSubdirectoryAndKeepDisplayName() throws {
+        let rootDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let storage = RemoteFileTemporaryStorage(rootDirectory: rootDirectory)
+        let entry = makeEntry(name: "notes.txt", path: "/tmp/notes.txt")
+
+        // Given a remote file prepared for iOS file export or sharing.
+        let url = try storage.makeDownloadExportFileURL(for: entry)
+
+        // Then temporary storage owns the directory and preserves a recognizable name suffix.
+        #expect(url.path.contains("/Downloads/"))
+        #expect(url.lastPathComponent.hasSuffix("-notes.txt"))
+    }
+
+    @Test
+    func downloadExportFilesFallbackToDownloadNameForUnnamedEntries() throws {
+        let rootDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let storage = RemoteFileTemporaryStorage(rootDirectory: rootDirectory)
+        let entry = makeEntry(name: "", path: "/tmp/unnamed")
+
+        let url = try storage.makeDownloadExportFileURL(for: entry)
+
+        #expect(url.lastPathComponent.hasSuffix("-download"))
+    }
+
+    @Test
     func removePreviewArtifactDeletesStoredFile() throws {
         let rootDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
