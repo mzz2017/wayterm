@@ -198,10 +198,8 @@ final class ConnectionSessionManager: ObservableObject {
     var pendingSessionCredentialLoadRequestIDs: Set<UUID> { sessionCredentialLoadRequestStore.pendingScopedRequestIDs }
     private var surfaceAttachRequestStore = TerminalScopedRequestStore<SurfaceAttachRequest>()
     var pendingSurfaceAttachRequestIDs: Set<UUID> { surfaceAttachRequestStore.pendingRequestIDs }
-    private var inputRequests: [UUID: InputRequest] = [:]
-    private var inputRequestBySession: [UUID: UUID] = [:]
-    private var lastInputTaskBySession: [UUID: Task<Void, Never>] = [:]
-    var pendingInputRequestIDs: Set<UUID> { Set(inputRequests.keys) }
+    private var inputRequestStore = TerminalSerialRequestStore<InputRequest>()
+    var pendingInputRequestIDs: Set<UUID> { inputRequestStore.pendingRequestIDs }
     private var richPasteUploadRequestStore = TerminalScopedRequestStore<RichPasteUploadRequest>()
     var pendingSessionRichPasteUploadRequestIDs: Set<UUID> { richPasteUploadRequestStore.pendingRequestIDs }
     private var resizeRequestStore = TerminalScopedRequestStore<ResizeRequest>()
@@ -440,7 +438,7 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     func waitForInputRequest(_ requestID: UUID) async {
-        await inputRequests[requestID]?.task.value
+        await inputRequestStore[requestID]?.task.value
     }
 
     func waitForSessionRichPasteUploadRequest(_ requestID: UUID) async {
@@ -889,16 +887,7 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func cancelInputRequests(for sessionId: UUID) {
-        let requestIDs = inputRequests.compactMap { requestID, request in
-            request.sessionId == sessionId ? requestID : nil
-        }
-
-        for requestID in requestIDs {
-            inputRequests.removeValue(forKey: requestID)?.task.cancel()
-        }
-
-        inputRequestBySession.removeValue(forKey: sessionId)
-        lastInputTaskBySession.removeValue(forKey: sessionId)
+        inputRequestStore.removeAllRequests(forScope: sessionId).forEach { $0.task.cancel() }
     }
 
     private func cancelSessionRichPasteUploadRequests(for sessionId: UUID) -> [Task<Void, Never>] {
@@ -1914,7 +1903,7 @@ final class ConnectionSessionManager: ObservableObject {
         guard sessionWithID(sessionId) != nil else { return nil }
 
         let requestID = UUID()
-        let previousTask = lastInputTaskBySession[sessionId]
+        let previousTask = inputRequestStore.lastTask(forScope: sessionId)
         let task = Task { @MainActor [weak self] in
             if let previousTask {
                 await previousTask.value
@@ -1922,11 +1911,7 @@ final class ConnectionSessionManager: ObservableObject {
 
             guard let self else { return }
             defer {
-                self.inputRequests.removeValue(forKey: requestID)
-                if self.inputRequestBySession[sessionId] == requestID {
-                    self.inputRequestBySession.removeValue(forKey: sessionId)
-                    self.lastInputTaskBySession.removeValue(forKey: sessionId)
-                }
+                self.inputRequestStore.remove(id: requestID, ifLatestForScope: sessionId)
             }
 
             guard !Task.isCancelled else { return }
@@ -1942,9 +1927,12 @@ final class ConnectionSessionManager: ObservableObject {
             await self.sendInput(data, to: sessionId)
         }
 
-        inputRequests[requestID] = InputRequest(sessionId: sessionId, task: task)
-        inputRequestBySession[sessionId] = requestID
-        lastInputTaskBySession[sessionId] = task
+        inputRequestStore.insert(
+            InputRequest(sessionId: sessionId, task: task),
+            id: requestID,
+            scopeID: sessionId,
+            task: task
+        )
         return requestID
     }
 
@@ -3348,10 +3336,8 @@ extension ConnectionSessionManager {
         sessionCredentialLoadRequestStore.removeAll()
         surfaceAttachRequestStore.allRequests.forEach { $0.task.cancel() }
         surfaceAttachRequestStore.removeAll()
-        inputRequests.values.forEach { $0.task.cancel() }
-        inputRequests.removeAll()
-        inputRequestBySession.removeAll()
-        lastInputTaskBySession.removeAll()
+        inputRequestStore.allRequests.forEach { $0.task.cancel() }
+        inputRequestStore.removeAll()
         let richPasteUploadTasks = richPasteUploadRequestStore.allRequests.map(\.task)
         richPasteUploadTasks.forEach { $0.cancel() }
         for task in richPasteUploadTasks {
