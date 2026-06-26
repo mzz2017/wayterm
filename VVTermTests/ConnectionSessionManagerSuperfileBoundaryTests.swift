@@ -295,6 +295,59 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func sessionReconnectRequestLifecycleLivesOutsideConnectionSessionManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let reconnectSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Reconnect.swift")
+        )
+
+        // Given reconnect requests coordinate async retry, credential
+        // loading, host retrust, active-view reconnect, and install/reconnect
+        // callbacks.
+        #expect(reconnectSource.contains("extension ConnectionSessionManager"))
+        #expect(reconnectSource.contains("func reconnect"))
+        #expect(reconnectSource.contains("func requestActiveConnectionOpen"))
+        #expect(reconnectSource.contains("func requestForegroundReconnectForSelectedSession"))
+        #expect(reconnectSource.contains("func requestSessionRetry"))
+        #expect(reconnectSource.contains("func requestSessionCredentialLoad"))
+        #expect(reconnectSource.contains("func requestSessionHostRetrust"))
+        #expect(reconnectSource.contains("func requestMoshInstallAndReconnect"))
+
+        // Then the superfile should not own reconnect request lifecycle directly.
+        #expect(
+            !managerSource.containsRegex(#"func\s+reconnect\s*\("#),
+            "ConnectionSessionManager.swift should not own reconnect orchestration."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestActiveConnectionOpen\s*\("#),
+            "ConnectionSessionManager.swift should not own active connection-open reconnect requests."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestForegroundReconnectForSelectedSession\s*\("#),
+            "ConnectionSessionManager.swift should not own foreground reconnect requests."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestSessionRetry\s*\("#),
+            "ConnectionSessionManager.swift should not own retry request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestSessionCredentialLoad\s*\("#),
+            "ConnectionSessionManager.swift should not own credential-load request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestSessionHostRetrust\s*\("#),
+            "ConnectionSessionManager.swift should not own host-retrust request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestMoshInstallAndReconnect\s*\("#),
+            "ConnectionSessionManager.swift should not own mosh install/reconnect requests."
+        )
+    }
+
+    @Test
     func installRequestIndexingUsesSharedScopedStore() throws {
         let root = try sourceRoot()
         let managerSource = try source(
