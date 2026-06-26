@@ -187,7 +187,9 @@ final class TerminalTabManager: ObservableObject {
 
     @Published var tmuxAttachPrompt: TmuxAttachPrompt?
 
-    let tmuxResolver = TmuxAttachResolver()
+    let tmuxResolver = TmuxAttachResolver(serverProvider: { serverId in
+        ServerManager.shared.servers.first { $0.id == serverId }
+    })
 
     /// Bumps when a terminal view is registered/unregistered so views refresh.
     @Published var terminalRegistryVersion: Int = 0

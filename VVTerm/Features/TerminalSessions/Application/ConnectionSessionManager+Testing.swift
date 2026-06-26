@@ -74,6 +74,7 @@ extension ConnectionSessionManager {
         serverProvider = { serverId in
             ServerManager.shared.servers.first { $0.id == serverId }
         }
+        tmuxResolver.setServerProvider(serverProvider)
         serverLockPolicy = { server in
             ServerManager.shared.isServerLocked(server)
         }
@@ -251,6 +252,7 @@ extension ConnectionSessionManager {
         _ provider: @escaping ServerProvider
     ) {
         serverProvider = provider
+        tmuxResolver.setServerProvider(provider)
     }
 
     func setServerLockPolicyForTesting(

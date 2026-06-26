@@ -2,6 +2,7 @@ import Foundation
 
 @MainActor
 final class TmuxAttachResolver {
+    typealias ServerProvider = @MainActor (UUID) -> Server?
 
     enum SessionOwnership {
         case managed
@@ -10,16 +11,22 @@ final class TmuxAttachResolver {
 
     var sessionNames: [UUID: String] = [:]
     var sessionOwnership: [UUID: SessionOwnership] = [:]
+    private var serverProvider: ServerProvider
 
     private let bindingStore = TmuxSessionBindingStore()
 
-    init() {
+    init(serverProvider: @escaping ServerProvider) {
+        self.serverProvider = serverProvider
         // Hydrate persisted bindings so a chosen session survives an app restart.
         for (idString, binding) in bindingStore.allBindings() {
             guard let id = UUID(uuidString: idString) else { continue }
             sessionNames[id] = binding.sessionName
             sessionOwnership[id] = (binding.ownership == "managed") ? .managed : .external
         }
+    }
+
+    func setServerProvider(_ provider: @escaping ServerProvider) {
+        serverProvider = provider
     }
 
     private(set) var currentPrompt: TmuxAttachPrompt?
@@ -50,7 +57,7 @@ final class TmuxAttachResolver {
     }
 
     func multiplexer(for serverId: UUID) -> TerminalMultiplexer {
-        if let server = ServerManager.shared.servers.first(where: { $0.id == serverId }),
+        if let server = serverProvider(serverId),
            let override = server.multiplexerOverride {
             return override
         }
@@ -69,7 +76,7 @@ final class TmuxAttachResolver {
     }
 
     func tmuxStartupBehavior(for serverId: UUID) -> TmuxStartupBehavior {
-        guard let server = ServerManager.shared.servers.first(where: { $0.id == serverId }) else {
+        guard let server = serverProvider(serverId) else {
             return tmuxStartupBehaviorDefault
         }
         if let override = server.tmuxStartupBehaviorOverride {
@@ -323,7 +330,7 @@ final class TmuxAttachResolver {
         availableSessions: [TmuxAttachSessionInfo],
         setPrompt: @escaping (TmuxAttachPrompt?) -> Void
     ) async -> TmuxAttachSelection {
-        let serverName = ServerManager.shared.servers.first(where: { $0.id == serverId })?.name ?? String(localized: "Server")
+        let serverName = serverProvider(serverId)?.name ?? String(localized: "Server")
         let prompt = TmuxAttachPrompt(
             id: entityId,
             serverId: serverId,

@@ -108,6 +108,38 @@ struct TerminalSessionDependencyBoundaryTests {
         #expect(!managerSource.contains("guard StoreManager.shared.isPro"))
     }
 
+    @Test
+    func tmuxResolverUsesInjectedServerProviderBoundary() throws {
+        let root = try sourceRoot()
+        let resolverSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TmuxAttachResolver.swift")
+        )
+        let connectionManagerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let tabManagerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let connectionTestingSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Testing.swift")
+        )
+        let tabTestingSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Testing.swift")
+        )
+
+        // Given tmux attach prompts and multiplexer policy need server metadata.
+        #expect(resolverSource.contains("typealias ServerProvider"))
+        #expect(resolverSource.contains("init(serverProvider: @escaping ServerProvider)"))
+        #expect(resolverSource.contains("serverProvider(serverId)"))
+        #expect(connectionManagerSource.contains("TmuxAttachResolver(serverProvider:"))
+        #expect(tabManagerSource.contains("TmuxAttachResolver(serverProvider:"))
+        #expect(connectionTestingSource.contains("tmuxResolver.setServerProvider(provider)"))
+        #expect(tabTestingSource.contains("tmuxResolver.setServerProvider(provider)"))
+
+        // Then the resolver does not reach directly into Servers feature state.
+        #expect(!resolverSource.contains("ServerManager.shared.servers"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

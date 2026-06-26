@@ -78,7 +78,9 @@ final class ConnectionSessionManager: ObservableObject {
     @Published var terminalFindNavigatorVisibleBySession: [UUID: Bool] = [:]
     @Published private(set) var runtimeTitleBySession: [UUID: String] = [:]
 
-    let tmuxResolver = TmuxAttachResolver()
+    let tmuxResolver = TmuxAttachResolver(serverProvider: { serverId in
+        ServerManager.shared.servers.first { $0.id == serverId }
+    })
 
     /// Legacy single server ID for backward compatibility
     var connectedServerId: UUID? {

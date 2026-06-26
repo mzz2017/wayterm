@@ -72,6 +72,7 @@ extension TerminalTabManager {
         serverProvider = { serverId in
             ServerManager.shared.servers.first { $0.id == serverId }
         }
+        tmuxResolver.setServerProvider(serverProvider)
         credentialsProvider = { server in
             try KeychainManager.shared.getCredentials(for: server)
         }
@@ -211,6 +212,7 @@ extension TerminalTabManager {
         _ provider: @escaping ServerProvider
     ) {
         serverProvider = provider
+        tmuxResolver.setServerProvider(provider)
     }
 
     func setIsProProviderForTesting(
