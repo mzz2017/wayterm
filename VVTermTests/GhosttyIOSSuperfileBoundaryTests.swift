@@ -30,6 +30,28 @@ struct GhosttyIOSSuperfileBoundaryTests {
         #expect(proxySource.contains("UITextInput"))
     }
 
+    @Test
+    func inputAccessoryViewLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+        )
+        let accessorySource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalInputAccessoryView+iOS.swift")
+        )
+
+        // Given the iOS Ghostty terminal main view source.
+        #expect(
+            !mainSource.contains("class TerminalInputAccessoryView"),
+            "GhosttyTerminalView+iOS.swift should not own the keyboard accessory view class."
+        )
+
+        // Then the input accessory has a dedicated UIKit toolbar owner file.
+        #expect(accessorySource.contains("class TerminalInputAccessoryView"))
+        #expect(accessorySource.contains("UIInputView"))
+        #expect(accessorySource.contains("RepeatableKeyButton"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
