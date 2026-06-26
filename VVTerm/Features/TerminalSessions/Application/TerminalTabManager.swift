@@ -116,17 +116,17 @@ final class TerminalTabManager: ObservableObject {
     private var tabOpenRequests: [UUID: Task<Void, Never>] = [:]
     private(set) var lastTabOpenFailure: Error?
     var pendingTabOpenRequestIDs: Set<UUID> { Set(tabOpenRequests.keys) }
-    private var tmuxInstallRequestStore = TerminalPaneRequestStore<TmuxInstallRequest>()
+    private var tmuxInstallRequestStore = TerminalScopedRequestStore<TmuxInstallRequest>()
     var pendingTmuxInstallRequestIDs: Set<UUID> { tmuxInstallRequestStore.pendingRequestIDs }
-    private var moshInstallRequestStore = TerminalPaneRequestStore<MoshInstallRequest>()
+    private var moshInstallRequestStore = TerminalScopedRequestStore<MoshInstallRequest>()
     private(set) var lastMoshInstallFailure: Error?
     var pendingMoshInstallRequestIDs: Set<UUID> { moshInstallRequestStore.pendingRequestIDs }
-    private var paneRetryRequestStore = TerminalPaneRequestStore<PaneRetryRequest>()
+    private var paneRetryRequestStore = TerminalScopedRequestStore<PaneRetryRequest>()
     var pendingPaneRetryRequestIDs: Set<UUID> { paneRetryRequestStore.pendingRequestIDs }
-    private var paneHostRetrustRequestStore = TerminalPaneRequestStore<PaneHostRetrustRequest>()
+    private var paneHostRetrustRequestStore = TerminalScopedRequestStore<PaneHostRetrustRequest>()
     var pendingPaneHostRetrustRequestIDs: Set<UUID> { paneHostRetrustRequestStore.pendingRequestIDs }
-    private var paneCredentialLoadRequestStore = TerminalPaneRequestStore<PaneCredentialLoadRequest>()
-    var pendingPaneCredentialLoadRequestIDs: Set<UUID> { paneCredentialLoadRequestStore.pendingPaneRequestIDs }
+    private var paneCredentialLoadRequestStore = TerminalScopedRequestStore<PaneCredentialLoadRequest>()
+    var pendingPaneCredentialLoadRequestIDs: Set<UUID> { paneCredentialLoadRequestStore.pendingScopedRequestIDs }
     private var surfaceAttachRequests: [UUID: SurfaceAttachRequest] = [:]
     private var surfaceAttachRequestByPane: [UUID: UUID] = [:]
     var pendingSurfaceAttachRequestIDs: Set<UUID> { Set(surfaceAttachRequests.keys) }
@@ -1543,7 +1543,7 @@ final class TerminalTabManager: ObservableObject {
         server: Server,
         onCompleted: @escaping @MainActor (TerminalReconnectRequestResult) -> Void = { _ in }
     ) -> UUID {
-        if let requestID = paneRetryRequestStore.requestID(forPane: paneId) {
+        if let requestID = paneRetryRequestStore.requestID(forScope: paneId) {
             paneRetryRequestStore.update(requestID) { $0.onCompleted.append(onCompleted) }
             return requestID
         }
@@ -1576,7 +1576,7 @@ final class TerminalTabManager: ObservableObject {
                 onCompleted: [onCompleted]
             ),
             id: requestID,
-            paneId: paneId
+            scopeID: paneId
         )
         return requestID
     }
@@ -1613,7 +1613,7 @@ final class TerminalTabManager: ObservableObject {
         server: Server,
         onCompleted: @escaping @MainActor (TerminalCredentialLoadResult) -> Void = { _ in }
     ) -> UUID {
-        if let requestID = paneCredentialLoadRequestStore.requestID(forPane: paneId) {
+        if let requestID = paneCredentialLoadRequestStore.requestID(forScope: paneId) {
             paneCredentialLoadRequestStore.update(requestID) { $0.onCompleted.append(onCompleted) }
             return requestID
         }
@@ -1639,7 +1639,7 @@ final class TerminalTabManager: ObservableObject {
                 onCompleted: [onCompleted]
             ),
             id: requestID,
-            paneId: paneId
+            scopeID: paneId
         )
         return requestID
     }
@@ -1667,7 +1667,7 @@ final class TerminalTabManager: ObservableObject {
         server: Server,
         onCompleted: @escaping @MainActor (Bool) -> Void = { _ in }
     ) -> UUID {
-        if let requestID = paneHostRetrustRequestStore.requestID(forPane: paneId) {
+        if let requestID = paneHostRetrustRequestStore.requestID(forScope: paneId) {
             paneHostRetrustRequestStore.update(requestID) { $0.onCompleted.append(onCompleted) }
             return requestID
         }
@@ -1708,7 +1708,7 @@ final class TerminalTabManager: ObservableObject {
                 onCompleted: [onCompleted]
             ),
             id: requestID,
-            paneId: paneId
+            scopeID: paneId
         )
         return requestID
     }
@@ -1727,7 +1727,7 @@ final class TerminalTabManager: ObservableObject {
         for paneId: UUID,
         onCompleted: @escaping @MainActor () -> Void = {}
     ) -> UUID {
-        if let requestID = tmuxInstallRequestStore.requestID(forPane: paneId) {
+        if let requestID = tmuxInstallRequestStore.requestID(forScope: paneId) {
             tmuxInstallRequestStore.update(requestID) { $0.onCompleted.append(onCompleted) }
             return requestID
         }
@@ -1760,7 +1760,7 @@ final class TerminalTabManager: ObservableObject {
                 onCompleted: [onCompleted]
             ),
             id: requestID,
-            paneId: paneId
+            scopeID: paneId
         )
         return requestID
     }
@@ -1775,7 +1775,7 @@ final class TerminalTabManager: ObservableObject {
         onCompleted: @escaping @MainActor () -> Void = {},
         onFailed: @escaping @MainActor (Error) -> Void = { _ in }
     ) -> UUID {
-        if let requestID = moshInstallRequestStore.requestID(forPane: paneId) {
+        if let requestID = moshInstallRequestStore.requestID(forScope: paneId) {
             moshInstallRequestStore.update(requestID) {
                 $0.onCompleted.append(onCompleted)
                 $0.onFailed.append(onFailed)
@@ -1823,7 +1823,7 @@ final class TerminalTabManager: ObservableObject {
                 onFailed: [onFailed]
             ),
             id: requestID,
-            paneId: paneId
+            scopeID: paneId
         )
         return requestID
     }
@@ -2048,12 +2048,12 @@ final class TerminalTabManager: ObservableObject {
     }
 
     private func cancelInstallRequests(for paneId: UUID) {
-        if let request = tmuxInstallRequestStore.removeMappedRequest(forPane: paneId) {
+        if let request = tmuxInstallRequestStore.removeMappedRequest(forScope: paneId) {
             request.task.cancel()
             request.onCompleted.forEach { $0() }
         }
 
-        if let request = moshInstallRequestStore.removeMappedRequest(forPane: paneId) {
+        if let request = moshInstallRequestStore.removeMappedRequest(forScope: paneId) {
             request.task.cancel()
             request.onCompleted.forEach { $0() }
         }
@@ -2114,21 +2114,21 @@ final class TerminalTabManager: ObservableObject {
     }
 
     private func cancelPaneRetryRequest(for paneId: UUID) {
-        if let request = paneRetryRequestStore.removeMappedRequest(forPane: paneId) {
+        if let request = paneRetryRequestStore.removeMappedRequest(forScope: paneId) {
             request.task.cancel()
             request.onCompleted.forEach { $0(.skipped) }
         }
     }
 
     private func cancelPaneHostRetrustRequest(for paneId: UUID) {
-        if let request = paneHostRetrustRequestStore.removeMappedRequest(forPane: paneId) {
+        if let request = paneHostRetrustRequestStore.removeMappedRequest(forScope: paneId) {
             request.task.cancel()
             request.onCompleted.forEach { $0(false) }
         }
     }
 
     private func cancelPaneCredentialLoadRequest(for paneId: UUID) {
-        paneCredentialLoadRequestStore.removePaneMapping(forPane: paneId)?.task.cancel()
+        paneCredentialLoadRequestStore.removeScopeMapping(forScope: paneId)?.task.cancel()
     }
 
     private func finishTabClose(_ closeResult: TabCloseResult) async {

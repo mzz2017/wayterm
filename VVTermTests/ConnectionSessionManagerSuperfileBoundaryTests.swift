@@ -139,6 +139,32 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
         #expect(reliabilitySource.contains("resetAttempts"))
     }
 
+    @Test
+    func installRequestIndexingUsesSharedScopedStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalScopedRequestStore.swift")
+        )
+
+        // Given session- and pane-scoped request indexing has a shared Application helper.
+        #expect(storeSource.contains("struct TerminalScopedRequestStore"))
+
+        // Then install requests should not keep bespoke session/request double dictionaries in the superfile.
+        #expect(
+            !managerSource.contains("tmuxInstallRequestBySession"),
+            "ConnectionSessionManager.swift should not own bespoke tmux install request indexing."
+        )
+        #expect(
+            !managerSource.contains("moshInstallRequestBySession"),
+            "ConnectionSessionManager.swift should not own bespoke mosh install request indexing."
+        )
+        #expect(managerSource.contains("tmuxInstallRequestStore"))
+        #expect(managerSource.contains("moshInstallRequestStore"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

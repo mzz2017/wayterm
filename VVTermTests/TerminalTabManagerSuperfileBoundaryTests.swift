@@ -96,11 +96,11 @@ struct TerminalTabManagerSuperfileBoundaryTests {
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
         )
         let storeSource = try source(
-            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalPaneRequestStore.swift")
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalScopedRequestStore.swift")
         )
 
-        // Given pane-scoped request indexing has a shared Application helper.
-        #expect(storeSource.contains("struct TerminalPaneRequestStore"))
+        // Given pane- and session-scoped request indexing has a shared Application helper.
+        #expect(storeSource.contains("struct TerminalScopedRequestStore"))
 
         // Then install requests should not keep bespoke pane/request double dictionaries in the superfile.
         #expect(
