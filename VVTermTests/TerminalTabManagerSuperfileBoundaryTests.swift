@@ -447,6 +447,58 @@ struct TerminalTabManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func paneRuntimeLifecycleLivesOutsideTerminalTabManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let runtimeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Runtime.swift")
+        )
+
+        // Given SSH registration, shell-start gating, runtime startup, and
+        // runtime teardown are long-lived pane resource lifecycle concerns.
+        #expect(runtimeSource.contains("extension TerminalTabManager"))
+        #expect(runtimeSource.contains("func registerSSHClient"))
+        #expect(runtimeSource.contains("func configureRuntime"))
+        #expect(runtimeSource.contains("func startRuntimeIfNeeded"))
+        #expect(runtimeSource.contains("func cancelRuntime"))
+        #expect(runtimeSource.contains("func unregisterSSHClient"))
+        #expect(runtimeSource.contains("func registeredShellRoute"))
+        #expect(runtimeSource.contains("func beginShellStart"))
+
+        // Then the superfile should not own pane runtime/SSH lifecycle directly.
+        #expect(
+            !managerSource.containsRegex(#"func\s+registerSSHClient\s*\("#),
+            "TerminalTabManager.swift should not own pane SSH registration lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+configureRuntime\s*\("#),
+            "TerminalTabManager.swift should not own pane runtime configuration."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+startRuntimeIfNeeded\s*\("#),
+            "TerminalTabManager.swift should not own pane runtime start orchestration."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+cancelRuntime\s*\("#),
+            "TerminalTabManager.swift should not own pane runtime teardown orchestration."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+unregisterSSHClient\s*\("#),
+            "TerminalTabManager.swift should not own pane SSH unregister teardown."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+registeredShellRoute\s*\("#),
+            "TerminalTabManager.swift should not own pane registered shell route lookup."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+beginShellStart\s*\("#),
+            "TerminalTabManager.swift should not own pane shell-start gating."
+        )
+    }
+
+    @Test
     func paneCloseLifecycleLivesOutsideTerminalTabManagerFile() throws {
         let root = try sourceRoot()
         let managerSource = try source(
