@@ -197,9 +197,8 @@ final class ConnectionSessionManager: ObservableObject {
     var pendingSessionHostRetrustRequestIDs: Set<UUID> { sessionHostRetrustRequestStore.pendingRequestIDs }
     private var sessionCredentialLoadRequestStore = TerminalScopedRequestStore<SessionCredentialLoadRequest>()
     var pendingSessionCredentialLoadRequestIDs: Set<UUID> { sessionCredentialLoadRequestStore.pendingScopedRequestIDs }
-    private var surfaceAttachRequests: [UUID: SurfaceAttachRequest] = [:]
-    private var surfaceAttachRequestBySession: [UUID: UUID] = [:]
-    var pendingSurfaceAttachRequestIDs: Set<UUID> { Set(surfaceAttachRequests.keys) }
+    private var surfaceAttachRequestStore = TerminalScopedRequestStore<SurfaceAttachRequest>()
+    var pendingSurfaceAttachRequestIDs: Set<UUID> { surfaceAttachRequestStore.pendingRequestIDs }
     private var inputRequests: [UUID: InputRequest] = [:]
     private var inputRequestBySession: [UUID: UUID] = [:]
     private var lastInputTaskBySession: [UUID: Task<Void, Never>] = [:]
@@ -441,7 +440,7 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     func waitForSurfaceAttachRequest(_ requestID: UUID) async {
-        await surfaceAttachRequests[requestID]?.task.value
+        await surfaceAttachRequestStore[requestID]?.task.value
     }
 
     func waitForInputRequest(_ requestID: UUID) async {
@@ -1819,12 +1818,12 @@ final class ConnectionSessionManager: ObservableObject {
         resetTerminal: @escaping @MainActor () -> Void = {},
         attachOperation: @escaping @MainActor () async -> Void
     ) -> UUID? {
-        if let requestID = surfaceAttachRequestBySession[sessionId] {
+        if let requestID = surfaceAttachRequestStore.requestID(forScope: sessionId) {
             guard shouldAcceptSurfaceAttach(sessionId: sessionId, context: context) else {
-                surfaceAttachRequests[requestID]?.context = context
+                surfaceAttachRequestStore.update(requestID) { $0.context = context }
                 return nil
             }
-            surfaceAttachRequests[requestID]?.context = context
+            surfaceAttachRequestStore.update(requestID) { $0.context = context }
             return requestID
         }
 
@@ -1834,13 +1833,10 @@ final class ConnectionSessionManager: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.surfaceAttachRequests.removeValue(forKey: requestID)
-                if self.surfaceAttachRequestBySession[sessionId] == requestID {
-                    self.surfaceAttachRequestBySession.removeValue(forKey: sessionId)
-                }
+                self.surfaceAttachRequestStore.remove(id: requestID, ifMappedTo: sessionId)
             }
 
-            let latestContext = self.surfaceAttachRequests[requestID]?.context ?? context
+            let latestContext = self.surfaceAttachRequestStore[requestID]?.context ?? context
             guard self.shouldAcceptSurfaceAttach(sessionId: sessionId, context: latestContext) else { return }
             if self.consumeTerminalReconnectReset(for: sessionId) {
                 resetTerminal()
@@ -1848,8 +1844,11 @@ final class ConnectionSessionManager: ObservableObject {
             await attachOperation()
         }
 
-        surfaceAttachRequests[requestID] = SurfaceAttachRequest(sessionId: sessionId, context: context, task: task)
-        surfaceAttachRequestBySession[sessionId] = requestID
+        surfaceAttachRequestStore.insert(
+            SurfaceAttachRequest(sessionId: sessionId, context: context, task: task),
+            id: requestID,
+            scopeID: sessionId
+        )
         return requestID
     }
 
@@ -3385,9 +3384,8 @@ extension ConnectionSessionManager {
         sessionHostRetrustRequestStore.removeAll()
         sessionCredentialLoadRequestStore.allRequests.forEach { $0.task.cancel() }
         sessionCredentialLoadRequestStore.removeAll()
-        surfaceAttachRequests.values.forEach { $0.task.cancel() }
-        surfaceAttachRequests.removeAll()
-        surfaceAttachRequestBySession.removeAll()
+        surfaceAttachRequestStore.allRequests.forEach { $0.task.cancel() }
+        surfaceAttachRequestStore.removeAll()
         inputRequests.values.forEach { $0.task.cancel() }
         inputRequests.removeAll()
         inputRequestBySession.removeAll()

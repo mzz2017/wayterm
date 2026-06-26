@@ -222,6 +222,27 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
         #expect(managerSource.contains("foregroundReconnectRequestStore"))
     }
 
+    @Test
+    func surfaceAttachRequestIndexingUsesSharedScopedStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalScopedRequestStore.swift")
+        )
+
+        // Given surface attach requests have a shared Application helper.
+        #expect(storeSource.contains("struct TerminalScopedRequestStore"))
+
+        // Then surface attach should not keep bespoke session/request double dictionaries in the superfile.
+        #expect(
+            !managerSource.contains("surfaceAttachRequestBySession"),
+            "ConnectionSessionManager.swift should not own bespoke surface attach request indexing."
+        )
+        #expect(managerSource.contains("surfaceAttachRequestStore"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
