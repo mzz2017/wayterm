@@ -127,12 +127,10 @@ enum AppLanguage: String, CaseIterable, Identifiable {
 
         append(identifier)
 
-        let components = Locale.components(fromIdentifier: identifier)
-        let languageCodeKey = NSLocale.Key.languageCode.rawValue
-        let scriptCodeKey = NSLocale.Key.scriptCode.rawValue
+        let components = Locale.Components(identifier: identifier).languageComponents
 
-        if let language = components[languageCodeKey] {
-            if let script = components[scriptCodeKey] {
+        if let language = components.languageCode?.identifier {
+            if let script = components.script?.identifier {
                 append("\(language)-\(script)")
             }
 

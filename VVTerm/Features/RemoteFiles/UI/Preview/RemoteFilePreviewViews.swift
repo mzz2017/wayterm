@@ -10,8 +10,8 @@ import UIKit
 struct RemoteFileTextSaveRequest {
     let entry: RemoteFileEntry
     let text: String
-    let onSaved: @MainActor () -> Void
-    let onFailure: @MainActor (Error) -> Void
+    let onSaved: @MainActor @Sendable () -> Void
+    let onFailure: @MainActor @Sendable (Error) -> Void
 }
 
 struct RemoteFileInspectorView: View {
