@@ -651,4 +651,12 @@ extension RemoteFileBrowserStore {
         }
         return trimmed
     }
+
+    func validatedRemoteDirectoryPath(_ path: String, relativeTo currentPath: String) throws -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw RemoteFileBrowserError.failed(String(localized: "Destination folder cannot be empty."))
+        }
+        return RemoteFilePath.normalize(trimmed, relativeTo: currentPath)
+    }
 }

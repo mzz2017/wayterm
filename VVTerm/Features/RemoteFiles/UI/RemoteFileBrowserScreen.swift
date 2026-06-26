@@ -1564,7 +1564,7 @@ struct RemoteFileBrowserScreen: View {
 
         performOperation(
             operation: {
-                let folderName = try validatedRemoteName(trimmedNewFolderName)
+                let folderName = try browser.validatedRemoteName(trimmedNewFolderName)
                 try await browser.createDirectory(
                     named: folderName,
                     in: destinationPath,
@@ -1588,7 +1588,7 @@ struct RemoteFileBrowserScreen: View {
 
         performOperation(
             operation: {
-                let newName = try validatedRemoteName(trimmedRenameName)
+                let newName = try browser.validatedRemoteName(trimmedRenameName)
                 guard newName != entry.name else {
                     return false
                 }
@@ -1622,7 +1622,7 @@ struct RemoteFileBrowserScreen: View {
         performOperation(
             operation: {
                 let sourceDirectory = RemoteFilePath.parent(of: entry.path)
-                let destinationDirectory = try validatedRemoteDirectoryPath(
+                let destinationDirectory = try browser.validatedRemoteDirectoryPath(
                     moveDestinationDirectory,
                     relativeTo: sourceDirectory
                 )
@@ -1766,7 +1766,7 @@ struct RemoteFileBrowserScreen: View {
                 return
             }
             do {
-                let validatedName = try validatedRemoteName(proposedName)
+                let validatedName = try browser.validatedRemoteName(proposedName)
                 let createdPath = RemoteFilePath.appending(validatedName, to: parentPath)
                 macOSInlineEditor = .createFolder(
                     parentPath: parentPath,
@@ -1807,7 +1807,7 @@ struct RemoteFileBrowserScreen: View {
 
         case .rename(let entryPath, let originalName, _, _):
             do {
-                let validatedName = try validatedRemoteName(proposedName)
+                let validatedName = try browser.validatedRemoteName(proposedName)
                 if validatedName == originalName {
                     macOSInlineEditor = nil
                     return
@@ -1917,28 +1917,6 @@ struct RemoteFileBrowserScreen: View {
         permissionFileTypeBits = 0
         permissionErrorMessage = nil
         isPermissionSubmitting = false
-    }
-
-    func validatedRemoteName(_ value: String) throws -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw RemoteFileBrowserError.failed(String(localized: "Name cannot be empty."))
-        }
-        guard trimmed != ".", trimmed != ".." else {
-            throw RemoteFileBrowserError.failed(String(localized: "This name is not allowed."))
-        }
-        guard !trimmed.contains("/") else {
-            throw RemoteFileBrowserError.failed(String(localized: "Names cannot contain slashes."))
-        }
-        return trimmed
-    }
-
-    func validatedRemoteDirectoryPath(_ value: String, relativeTo currentPath: String) throws -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw RemoteFileBrowserError.failed(String(localized: "Destination folder cannot be empty."))
-        }
-        return RemoteFilePath.normalize(trimmed, relativeTo: currentPath)
     }
 
     func temporaryDownloadURL(for entry: RemoteFileEntry) throws -> URL {

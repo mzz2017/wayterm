@@ -55,6 +55,26 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func validatedRemoteDirectoryPathTrimsAndNormalizesRelativeDestination() throws {
+        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+
+        // Given a user-entered destination relative to the current directory.
+        let result = try store.validatedRemoteDirectoryPath(" ../logs/./today ", relativeTo: "/var/tmp/cache")
+
+        // Then validation trims UI text and delegates path semantics to RemoteFilePath.
+        #expect(result == "/var/tmp/logs/today")
+    }
+
+    @Test
+    func validatedRemoteDirectoryPathRejectsEmptyDestination() {
+        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+
+        #expect(throws: RemoteFileBrowserError.self) {
+            try store.validatedRemoteDirectoryPath(" \n ", relativeTo: "/var/tmp/cache")
+        }
+    }
+
+    @Test
     func uniqueTransferEntriesRemovesDuplicatePaths() {
         let store = RemoteFileBrowserStore(defaults: makeDefaults())
         let duplicate = makeEntry(name: "a.txt", path: "/tmp/a.txt")
