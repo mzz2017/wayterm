@@ -177,11 +177,10 @@ final class ConnectionSessionManager: ObservableObject {
     private var shellCancelHandlers: [UUID: @MainActor (_ mode: ShellTeardownMode) async -> Void] = [:]
     /// Shell suspend handlers indexed by session ID - cancel in-flight connects without destroying terminals
     private var shellSuspendHandlers: [UUID: @MainActor () async -> Void] = [:]
-    /// Server IDs with an in-flight open request, used to collapse repeated clicks.
-    private var sessionOpensInFlight: Set<UUID> = []
-    private var connectionOpenRequests: [UUID: Task<Void, Never>] = [:]
+    /// Server IDs and request tasks with an in-flight open request, used to collapse repeated clicks.
+    private var connectionOpenRequestStore = TerminalOpenRequestStore()
     private(set) var lastConnectionOpenFailure: Error?
-    var pendingConnectionOpenRequestIDs: Set<UUID> { Set(connectionOpenRequests.keys) }
+    var pendingConnectionOpenRequestIDs: Set<UUID> { connectionOpenRequestStore.pendingRequestIDs }
     private var tmuxInstallRequestStore = TerminalScopedRequestStore<TmuxInstallRequest>()
     var pendingTmuxInstallRequestIDs: Set<UUID> { tmuxInstallRequestStore.pendingRequestIDs }
     private var moshInstallRequestStore = TerminalScopedRequestStore<MoshInstallRequest>()
@@ -415,7 +414,7 @@ final class ConnectionSessionManager: ObservableObject {
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.connectionOpenRequests.removeValue(forKey: requestID) }
+            defer { self.connectionOpenRequestStore.remove(id: requestID) }
 
             do {
                 let session = try await self.openConnection(to: server, forceNew: forceNew)
@@ -428,12 +427,12 @@ final class ConnectionSessionManager: ObservableObject {
             }
         }
 
-        connectionOpenRequests[requestID] = task
+        connectionOpenRequestStore.insert(task, id: requestID)
         return requestID
     }
 
     func waitForConnectionOpenRequest(_ requestID: UUID) async {
-        await connectionOpenRequests[requestID]?.value
+        await connectionOpenRequestStore[requestID]?.value
     }
 
     func waitForSurfaceAttachRequest(_ requestID: UUID) async {
@@ -480,13 +479,12 @@ final class ConnectionSessionManager: ObservableObject {
             throw VVTermError.serverLocked(server.name)
         }
 
-        if sessionOpensInFlight.contains(server.id) {
+        if !connectionOpenRequestStore.beginOpen(forScope: server.id) {
             throw VVTermError.connectionFailed(
                 String(localized: "A connection is already opening for this server.")
             )
         }
-        sessionOpensInFlight.insert(server.id)
-        defer { sessionOpensInFlight.remove(server.id) }
+        defer { connectionOpenRequestStore.finishOpen(forScope: server.id) }
 
         guard await AppLockManager.shared.ensureServerUnlocked(server) else {
             throw VVTermError.authenticationFailed
@@ -3331,9 +3329,7 @@ extension ConnectionSessionManager {
         shellRegistry.removeAll()
         shellCancelHandlers.removeAll()
         shellSuspendHandlers.removeAll()
-        sessionOpensInFlight.removeAll()
-        connectionOpenRequests.values.forEach { $0.cancel() }
-        connectionOpenRequests.removeAll()
+        connectionOpenRequestStore.removeAll().forEach { $0.cancel() }
         lastConnectionOpenFailure = nil
         tmuxInstallRequestStore.allRequests.forEach { $0.task.cancel() }
         tmuxInstallRequestStore.removeAll()

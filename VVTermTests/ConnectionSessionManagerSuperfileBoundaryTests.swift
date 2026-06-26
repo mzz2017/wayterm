@@ -294,6 +294,32 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
         #expect(managerSource.contains("richPasteUploadRequestStore"))
     }
 
+    @Test
+    func connectionOpenRequestTrackingUsesOpenRequestStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalOpenRequestStore.swift")
+        )
+
+        // Given connection opening needs request tracking and per-server in-flight gating.
+        #expect(storeSource.contains("struct TerminalOpenRequestStore"))
+        #expect(storeSource.contains("beginOpen(forScope"))
+
+        // Then connection open request bookkeeping should not remain bespoke state in the superfile.
+        #expect(
+            !managerSource.contains("connectionOpenRequests"),
+            "ConnectionSessionManager.swift should not own bespoke connection open request indexing."
+        )
+        #expect(
+            !managerSource.contains("sessionOpensInFlight"),
+            "ConnectionSessionManager.swift should not own bespoke connection open in-flight gating."
+        )
+        #expect(managerSource.contains("connectionOpenRequestStore"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
