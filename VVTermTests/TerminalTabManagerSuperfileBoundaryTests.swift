@@ -568,6 +568,37 @@ struct TerminalTabManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func paneConnectWatchdogLifecycleLivesOutsideTerminalTabManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let watchdogSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Watchdog.swift")
+        )
+
+        // Given connect watchdog scheduling owns timeout retry lifecycle.
+        #expect(watchdogSource.contains("extension TerminalTabManager"))
+        #expect(watchdogSource.contains("func shouldScheduleConnectWatchdog"))
+        #expect(watchdogSource.contains("func scheduleConnectWatchdog"))
+        #expect(watchdogSource.contains("func handleConnectWatchdogTimeout"))
+
+        // Then the superfile should not own watchdog lifecycle directly.
+        #expect(
+            !managerSource.containsRegex(#"func\s+shouldScheduleConnectWatchdog\s*\("#),
+            "TerminalTabManager.swift should not own watchdog scheduling policy."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+scheduleConnectWatchdog\s*\("#),
+            "TerminalTabManager.swift should not own watchdog retry lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+handleConnectWatchdogTimeout\s*\("#),
+            "TerminalTabManager.swift should not own watchdog timeout handling."
+        )
+    }
+
+    @Test
     func paneTerminalIORequestLifecycleLivesOutsideTerminalTabManagerFile() throws {
         let root = try sourceRoot()
         let managerSource = try source(
