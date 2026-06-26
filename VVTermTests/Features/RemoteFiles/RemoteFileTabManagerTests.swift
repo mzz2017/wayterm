@@ -12,7 +12,7 @@ struct RemoteFileTabManagerTests {
     @Test
     func closingLastTabPreservesExplicitEmptyState() {
         let defaults = makeDefaults()
-        let manager = RemoteFileTabManager(defaults: defaults)
+        let manager = RemoteFileTabManager(defaults: defaults, isProProvider: { false })
         let server = makeServer()
 
         let initialTab = manager.ensureInitialTab(for: server, seedPath: "/srv")!
@@ -37,7 +37,7 @@ struct RemoteFileTabManagerTests {
         )
         defaults.set(try JSONEncoder().encode(snapshot), forKey: "remoteFileTabsSnapshot.v1")
 
-        let manager = RemoteFileTabManager(defaults: defaults)
+        let manager = RemoteFileTabManager(defaults: defaults, isProProvider: { false })
         let removedMiddle = manager.closeTab(secondTab)
 
         #expect(removedMiddle == secondTab)
@@ -47,6 +47,36 @@ struct RemoteFileTabManagerTests {
 
         #expect(removedRightmost == thirdTab)
         #expect(manager.selectedTab(for: server.id)?.id == firstTab.id)
+    }
+
+    @Test
+    func freeTierRejectsFileTabAfterLimit() {
+        let manager = RemoteFileTabManager(defaults: makeDefaults(), isProProvider: { false })
+        let server = makeServer()
+
+        // Given a free user has reached the RemoteFiles tab limit.
+        for _ in 0..<FreeTierLimits.maxFileTabs {
+            #expect(manager.openTab(for: server) != nil)
+        }
+
+        // Then the next tab request is rejected without consulting StoreManager.
+        #expect(manager.openTab(for: server) == nil)
+        #expect(manager.tabs(for: server.id).count == FreeTierLimits.maxFileTabs)
+    }
+
+    @Test
+    func proProviderAllowsFileTabsPastFreeLimit() {
+        let manager = RemoteFileTabManager(defaults: makeDefaults(), isProProvider: { true })
+        let server = makeServer()
+
+        // Given App composition reports an active Pro entitlement.
+        for _ in 0...FreeTierLimits.maxFileTabs {
+            #expect(manager.openTab(for: server) != nil)
+        }
+
+        // Then RemoteFiles applies the injected policy instead of reading the
+        // Store feature singleton directly.
+        #expect(manager.tabs(for: server.id).count == FreeTierLimits.maxFileTabs + 1)
     }
 
     private func makeServer() -> Server {

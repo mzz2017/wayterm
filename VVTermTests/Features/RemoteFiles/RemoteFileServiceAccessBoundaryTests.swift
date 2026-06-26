@@ -2,11 +2,11 @@ import Foundation
 import Testing
 
 // Test Context:
-// These source-boundary tests protect RemoteFiles service-access ownership.
-// RemoteFileBrowserStore may coordinate browser state and user intent, but the
-// SFTP adapter and pending-disconnect gate should live behind an Application
-// coordinator so reconnect/disconnect ordering has one stable service owner.
-// Update these tests only when the service-access owner intentionally changes.
+// These source-boundary tests protect RemoteFiles Application ownership.
+// RemoteFiles may coordinate browser/tab state and user intent, but service
+// access, pending-disconnect gates, and cross-feature policy inputs should be
+// owned behind explicit Application or App-composition boundaries.
+// Update these tests only when those owners intentionally change.
 
 struct RemoteFileServiceAccessBoundaryTests {
     @Test
@@ -54,6 +54,28 @@ struct RemoteFileServiceAccessBoundaryTests {
         #expect(!storeSource.contains("serverProvider: @escaping ServerProvider ="))
         #expect(appSource.contains("serverProvider: { serverId in"))
         #expect(appSource.contains("ServerManager.shared.servers.first { $0.id == serverId }"))
+    }
+
+    @Test
+    func tabManagerReceivesEntitlementPolicyFromAppBoundary() throws {
+        let root = try sourceRoot()
+        let tabManagerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFileTabManager.swift")
+        )
+        let appSource = try source(
+            at: root.appendingPathComponent("VVTerm/App/VVTermApp.swift")
+        )
+
+        // Given RemoteFiles must enforce file-tab limits.
+        #expect(tabManagerSource.contains("typealias IsProProvider"))
+        #expect(tabManagerSource.contains("private let isProProvider"))
+        #expect(tabManagerSource.contains("isProProvider: @escaping IsProProvider"))
+
+        // Then Store entitlement state stays outside the RemoteFiles feature
+        // and is wired from App composition.
+        #expect(!tabManagerSource.contains("StoreManager.shared"))
+        #expect(appSource.contains("RemoteFileTabManager("))
+        #expect(appSource.contains("isProProvider: { StoreManager.shared.isPro }"))
     }
 
     private func source(at url: URL) throws -> String {

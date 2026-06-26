@@ -249,7 +249,7 @@ struct ContentView: View {
 
 #Preview {
     ContentView(
-        fileTabs: RemoteFileTabManager(),
+        fileTabs: RemoteFileTabManager(isProProvider: { false }),
         fileBrowser: RemoteFileBrowserStore(serverProvider: { _ in nil })
     )
 }

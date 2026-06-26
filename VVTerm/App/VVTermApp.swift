@@ -27,7 +27,9 @@ struct VVTermApp: App {
     #endif
     @StateObject private var appLockManager = AppLockManager.shared
     @StateObject private var storeManager = StoreManager.shared
-    @StateObject private var remoteFileTabManager = RemoteFileTabManager()
+    @StateObject private var remoteFileTabManager = RemoteFileTabManager(
+        isProProvider: { StoreManager.shared.isPro }
+    )
     @StateObject private var remoteFileBrowserStore = VVTermApp.makeRemoteFileBrowserStore()
     @StateObject private var terminalThemeManager = TerminalThemeManager.shared
     @StateObject private var terminalAccessoryPreferencesManager = TerminalAccessoryPreferencesManager.shared

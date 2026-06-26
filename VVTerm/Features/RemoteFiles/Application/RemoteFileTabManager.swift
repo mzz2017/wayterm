@@ -3,6 +3,8 @@ import Foundation
 
 @MainActor
 final class RemoteFileTabManager: ObservableObject {
+    typealias IsProProvider = @MainActor () -> Bool
+
     @Published private(set) var tabsByServer: [UUID: [RemoteFileTab]] = [:] {
         didSet { persistSnapshotIfNeeded() }
     }
@@ -11,11 +13,16 @@ final class RemoteFileTabManager: ObservableObject {
     }
 
     private let defaults: UserDefaults
+    private let isProProvider: IsProProvider
     private let persistenceKey = "remoteFileTabsSnapshot.v1"
     private var isRestoring = false
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        isProProvider: @escaping IsProProvider
+    ) {
         self.defaults = defaults
+        self.isProProvider = isProProvider
         restoreSnapshot()
     }
 
@@ -40,7 +47,7 @@ final class RemoteFileTabManager: ObservableObject {
     }
 
     func canOpenNewTab(for serverId: UUID) -> Bool {
-        if StoreManager.shared.isPro {
+        if isProProvider() {
             return true
         }
 
