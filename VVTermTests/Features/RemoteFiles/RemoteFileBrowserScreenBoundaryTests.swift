@@ -86,6 +86,9 @@ struct RemoteFileBrowserScreenBoundaryTests {
         let tableSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Platform/RemoteFileBrowserMacTableView.swift")
         )
+        let filePromiseSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Platform/RemoteFileBrowserMacFilePromise.swift")
+        )
 
         // Given the platform support source file.
         #expect(
@@ -95,6 +98,14 @@ struct RemoteFileBrowserScreenBoundaryTests {
 
         // Then the macOS table view lives in its own platform UI file.
         #expect(tableSource.contains("struct MacOSRemoteFileTableView"))
+        #expect(
+            !tableSource.contains("final class FilePromiseDelegate"),
+            "RemoteFileBrowserMacTableView.swift should not own file-promise export glue."
+        )
+        #expect(
+            filePromiseSource.contains("final class FilePromiseDelegate"),
+            "RemoteFileBrowserMacFilePromise.swift should own file-promise export glue."
+        )
     }
 
     @Test
