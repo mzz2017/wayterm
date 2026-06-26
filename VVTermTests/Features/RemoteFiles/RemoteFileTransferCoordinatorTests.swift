@@ -11,7 +11,7 @@ import Testing
 struct RemoteFileTransferCoordinatorTests {
     @Test
     func deleteDirectoryRecursivelyRemovesNestedContentsBeforeParent() async throws {
-        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let store = RemoteFileBrowserStore(defaults: makeDefaults(), serverProvider: { _ in nil })
         let service = RecordingRemoteFileService(
             directoryContents: [
                 "/root/.vivyterm": [
@@ -38,7 +38,7 @@ struct RemoteFileTransferCoordinatorTests {
 
     @Test
     func validatedRemoteNameTrimsWhitespace() throws {
-        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let store = RemoteFileBrowserStore(defaults: makeDefaults(), serverProvider: { _ in nil })
 
         let result = try store.validatedRemoteName("  notes.txt \n")
 
@@ -47,7 +47,7 @@ struct RemoteFileTransferCoordinatorTests {
 
     @Test
     func validatedRemoteNameRejectsSlashSeparatedPaths() {
-        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let store = RemoteFileBrowserStore(defaults: makeDefaults(), serverProvider: { _ in nil })
 
         #expect(throws: RemoteFileBrowserError.self) {
             try store.validatedRemoteName("nested/path.txt")
@@ -56,7 +56,7 @@ struct RemoteFileTransferCoordinatorTests {
 
     @Test
     func validatedRemoteDirectoryPathTrimsAndNormalizesRelativeDestination() throws {
-        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let store = RemoteFileBrowserStore(defaults: makeDefaults(), serverProvider: { _ in nil })
 
         // Given a user-entered destination relative to the current directory.
         let result = try store.validatedRemoteDirectoryPath(" ../logs/./today ", relativeTo: "/var/tmp/cache")
@@ -67,7 +67,7 @@ struct RemoteFileTransferCoordinatorTests {
 
     @Test
     func validatedRemoteDirectoryPathRejectsEmptyDestination() {
-        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let store = RemoteFileBrowserStore(defaults: makeDefaults(), serverProvider: { _ in nil })
 
         #expect(throws: RemoteFileBrowserError.self) {
             try store.validatedRemoteDirectoryPath(" \n ", relativeTo: "/var/tmp/cache")
@@ -76,7 +76,7 @@ struct RemoteFileTransferCoordinatorTests {
 
     @Test
     func uniqueTransferEntriesRemovesDuplicatePaths() {
-        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let store = RemoteFileBrowserStore(defaults: makeDefaults(), serverProvider: { _ in nil })
         let duplicate = makeEntry(name: "a.txt", path: "/tmp/a.txt")
         let unique = makeEntry(name: "b.txt", path: "/tmp/b.txt")
 

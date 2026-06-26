@@ -15,7 +15,7 @@ struct RemoteFileBrowserStoreTests {
     @Test
     func displayedEntriesHideDotFilesAndKeepDirectoryOrdering() {
         let defaults = makeDefaults()
-        let store = RemoteFileBrowserStore(defaults: defaults)
+        let store = RemoteFileBrowserStore(defaults: defaults, serverProvider: { _ in nil })
         let tab = makeTab()
 
         store.updateState(for: tab) { state in
@@ -37,7 +37,7 @@ struct RemoteFileBrowserStoreTests {
         let defaults = makeDefaults()
         let tab = makeTab()
 
-        let store = RemoteFileBrowserStore(defaults: defaults)
+        let store = RemoteFileBrowserStore(defaults: defaults, serverProvider: { _ in nil })
         store.updateState(for: tab) { state in
             state.currentPath = "/srv/releases"
             state.sort = .size
@@ -47,7 +47,7 @@ struct RemoteFileBrowserStoreTests {
         }
         store.persistState(for: tab.id)
 
-        let reloadedStore = RemoteFileBrowserStore(defaults: defaults)
+        let reloadedStore = RemoteFileBrowserStore(defaults: defaults, serverProvider: { _ in nil })
         let persisted = reloadedStore.persistedState(for: tab.id)
 
         #expect(persisted.lastVisitedPath == "/srv/releases")
@@ -66,7 +66,7 @@ struct RemoteFileBrowserStoreTests {
         ])
         defaults.set(legacyPayload, forKey: legacyKey)
 
-        let store = RemoteFileBrowserStore(defaults: defaults)
+        let store = RemoteFileBrowserStore(defaults: defaults, serverProvider: { _ in nil })
 
         #expect(defaults.object(forKey: legacyKey) == nil)
         #expect(store.persistedStates.isEmpty)
@@ -80,6 +80,7 @@ struct RemoteFileBrowserStoreTests {
 
         let store = RemoteFileBrowserStore(
             defaults: defaults,
+            serverProvider: { _ in nil },
             workingDirectoryProvider: { _ in "/srv/app" }
         )
         store.updateState(for: tab) { state in
@@ -89,6 +90,7 @@ struct RemoteFileBrowserStoreTests {
 
         let reloadedStore = RemoteFileBrowserStore(
             defaults: defaults,
+            serverProvider: { _ in nil },
             workingDirectoryProvider: { _ in "/srv/app" }
         )
         let candidates = reloadedStore.initialDirectoryCandidates(
@@ -115,7 +117,8 @@ struct RemoteFileBrowserStoreTests {
                 ownedClientFactory: {
                     clients.removeFirst()
                 }
-            )
+            ),
+            serverProvider: { _ in nil }
         )
 
         // Given RemoteFiles has an established service registration for a
@@ -164,7 +167,8 @@ struct RemoteFileBrowserStoreTests {
                 ownedClientFactory: {
                     clients.removeFirst()
                 }
-            )
+            ),
+            serverProvider: { _ in nil }
         )
         var insertedSecondDisconnect = false
         store.setPendingDisconnectWaitDidFinishForTesting { serverId in
@@ -209,7 +213,7 @@ struct RemoteFileBrowserStoreTests {
 
     @Test
     func mutationRequestTracksTaskAndRunsSuccessAfterOperation() async throws {
-        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let store = RemoteFileBrowserStore(defaults: makeDefaults(), serverProvider: { _ in nil })
         let gate = RemoteFileMutationGate()
         var events: [String] = []
 
@@ -244,7 +248,7 @@ struct RemoteFileBrowserStoreTests {
 
     @Test
     func mutationRequestTracksFailureAndSkipsSuccessContinuation() async throws {
-        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let store = RemoteFileBrowserStore(defaults: makeDefaults(), serverProvider: { _ in nil })
         var events: [String] = []
 
         // Given a RemoteFiles mutation whose async operation fails before it
@@ -271,7 +275,7 @@ struct RemoteFileBrowserStoreTests {
 
     @Test
     func transferRequestTracksTaskProgressAndSuccessAfterOperation() async throws {
-        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let store = RemoteFileBrowserStore(defaults: makeDefaults(), serverProvider: { _ in nil })
         let gate = RemoteFileMutationGate()
         var events: [String] = []
 
@@ -320,7 +324,7 @@ struct RemoteFileBrowserStoreTests {
     @Test
     func disconnectCancelsVisibleMutationRequestsForServerAndSkipsLateSuccess() async throws {
         let server = makeServer()
-        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let store = RemoteFileBrowserStore(defaults: makeDefaults(), serverProvider: { _ in nil })
         let gate = RemoteFileMutationGate()
         let waitProbe = RemoteFileWaitProbe()
         var operationEvents: [String] = []
@@ -373,7 +377,7 @@ struct RemoteFileBrowserStoreTests {
     @Test
     func disconnectCancelsVisibleTransferRequestsForServerAndSkipsLateProgressAndSuccess() async throws {
         let server = makeServer()
-        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let store = RemoteFileBrowserStore(defaults: makeDefaults(), serverProvider: { _ in nil })
         let gate = RemoteFileMutationGate()
         let waitProbe = RemoteFileWaitProbe()
         var operationEvents: [String] = []
@@ -434,7 +438,7 @@ struct RemoteFileBrowserStoreTests {
     func disconnectLeavesOtherServerMutationAndTransferRequestsPending() async throws {
         let disconnectingServer = makeServer()
         let otherServer = makeServer()
-        let store = RemoteFileBrowserStore(defaults: makeDefaults())
+        let store = RemoteFileBrowserStore(defaults: makeDefaults(), serverProvider: { _ in nil })
         let mutationGate = RemoteFileMutationGate()
         let transferGate = RemoteFileMutationGate()
         var events: [String] = []
@@ -998,7 +1002,8 @@ struct RemoteFileBrowserStoreTests {
                 ownedClientFactory: {
                     client
                 }
-            )
+            ),
+            serverProvider: { _ in nil }
         )
     }
 }

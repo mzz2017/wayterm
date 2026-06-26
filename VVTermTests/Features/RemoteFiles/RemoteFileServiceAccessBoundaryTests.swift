@@ -33,6 +33,29 @@ struct RemoteFileServiceAccessBoundaryTests {
         #expect(coordinatorSource.contains("func disconnect(serverId"))
     }
 
+    @Test
+    func browserStoreReceivesServerLookupFromAppBoundary() throws {
+        let root = try sourceRoot()
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift")
+        )
+        let appSource = try source(
+            at: root.appendingPathComponent("VVTerm/App/VVTermApp.swift")
+        )
+
+        // Given RemoteFiles needs server metadata to start browser work.
+        #expect(storeSource.contains("typealias ServerProvider"))
+        #expect(storeSource.contains("let serverProvider: ServerProvider"))
+        #expect(storeSource.contains("serverProvider: @escaping ServerProvider,"))
+
+        // Then the RemoteFiles feature must not reach across into Servers'
+        // shared manager; App composition wires that dependency explicitly.
+        #expect(!storeSource.contains("ServerManager.shared"))
+        #expect(!storeSource.contains("serverProvider: @escaping ServerProvider ="))
+        #expect(appSource.contains("serverProvider: { serverId in"))
+        #expect(appSource.contains("ServerManager.shared.servers.first { $0.id == serverId }"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

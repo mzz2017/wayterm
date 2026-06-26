@@ -254,7 +254,8 @@ struct RemoteFilePreviewCoordinatorTests {
         let temporaryStorage = RemoteFileTemporaryStorage(rootDirectory: rootDirectory)
         let store = RemoteFileBrowserStore(
             defaults: makeDefaults(),
-            temporaryStorage: temporaryStorage
+            temporaryStorage: temporaryStorage,
+            serverProvider: { _ in nil }
         )
         let tab = makeTab()
         let entry = makeEntry(name: "preview.txt", path: "/tmp/preview.txt")
@@ -302,7 +303,8 @@ struct RemoteFilePreviewCoordinatorTests {
             remoteFileServiceAdapter: SSHSFTPAdapter(
                 credentialsProvider: { server in makeCredentials(serverId: server.id) },
                 ownedClientFactory: { client }
-            )
+            ),
+            serverProvider: { _ in nil }
         )
         var events: [String] = []
         store.updateState(for: tab) { state in
@@ -406,7 +408,8 @@ struct RemoteFilePreviewCoordinatorTests {
             remoteFileServiceAdapter: SSHSFTPAdapter(
                 credentialsProvider: { server in makeCredentials(serverId: server.id) },
                 ownedClientFactory: { client }
-            )
+            ),
+            serverProvider: { _ in nil }
         )
     }
 

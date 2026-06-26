@@ -180,9 +180,7 @@ final class RemoteFileBrowserStore: ObservableObject {
         temporaryStorage: RemoteFileTemporaryStorage = RemoteFileTemporaryStorage(),
         previewLoader: RemoteFilePreviewLoader = RemoteFilePreviewLoader(),
         conflictResolver: RemoteFileConflictResolver = RemoteFileConflictResolver(),
-        serverProvider: @escaping ServerProvider = { serverId in
-            ServerManager.shared.servers.first { $0.id == serverId }
-        },
+        serverProvider: @escaping ServerProvider,
         workingDirectoryProvider: @escaping WorkingDirectoryProvider = { _ in nil }
     ) {
         self.defaults = defaults
