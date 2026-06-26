@@ -1647,6 +1647,8 @@ final class ServerManager: ObservableObject {
     }
 
     func assignmentWorkspaces(for server: Server?) -> [Workspace] {
+        let workspacesSortedByOrder = ServerAccessPolicy.workspacesSortedByOrder(workspaces)
+
         if StoreManager.shared.isPro {
             return workspacesSortedByOrder
         }
@@ -1664,7 +1666,7 @@ final class ServerManager: ObservableObject {
 
     func moveDestinations(for server: Server) -> [Workspace] {
         let destinationIDs = moveDestinationIDs(for: server)
-        return workspacesSortedByOrder.filter { destinationIDs.contains($0.id) }
+        return ServerAccessPolicy.workspacesSortedByOrder(workspaces).filter { destinationIDs.contains($0.id) }
     }
 
     func resolvedEnvironment(
@@ -1754,81 +1756,64 @@ final class ServerManager: ObservableObject {
     // MARK: - Pro Limits
 
     var canAddServer: Bool {
-        if StoreManager.shared.isPro { return true }
-        return servers.count < FreeTierLimits.maxServers
+        ServerAccessPolicy.canAddServer(isPro: StoreManager.shared.isPro, servers: servers)
     }
 
     var canAddWorkspace: Bool {
-        if StoreManager.shared.isPro { return true }
-        return workspaces.count < FreeTierLimits.maxWorkspaces
+        ServerAccessPolicy.canAddWorkspace(isPro: StoreManager.shared.isPro, workspaces: workspaces)
     }
 
     var canCreateCustomEnvironment: Bool {
-        StoreManager.shared.isPro
+        ServerAccessPolicy.canCreateCustomEnvironment(isPro: StoreManager.shared.isPro)
     }
 
     // MARK: - Downgrade Locking
     // When user downgrades from Pro, excess servers/workspaces are locked
 
-    /// Returns sorted servers with oldest (by createdAt) first - these get priority access
-    private var serversSortedByCreation: [Server] {
-        servers.sorted { $0.createdAt < $1.createdAt }
-    }
-
-    /// Returns sorted workspaces with oldest (by order, then createdAt) first
-    private var workspacesSortedByOrder: [Workspace] {
-        workspaces.sorted { $0.order < $1.order }
-    }
-
     /// Set of server IDs that are accessible on free tier (oldest N servers)
     var unlockedServerIds: Set<UUID> {
-        if StoreManager.shared.isPro { return Set(servers.map(\.id)) }
-        let unlocked = serversSortedByCreation.prefix(FreeTierLimits.maxServers)
-        return Set(unlocked.map(\.id))
+        ServerAccessPolicy.unlockedServerIds(isPro: StoreManager.shared.isPro, servers: servers)
     }
 
     /// Set of workspace IDs that are accessible on free tier (first N workspaces by order)
     var unlockedWorkspaceIds: Set<UUID> {
-        if StoreManager.shared.isPro { return Set(workspaces.map(\.id)) }
-        let unlocked = workspacesSortedByOrder.prefix(FreeTierLimits.maxWorkspaces)
-        return Set(unlocked.map(\.id))
+        ServerAccessPolicy.unlockedWorkspaceIds(isPro: StoreManager.shared.isPro, workspaces: workspaces)
     }
 
     /// Check if a specific server is locked (over free tier limit)
     func isServerLocked(_ server: Server) -> Bool {
-        if StoreManager.shared.isPro { return false }
-        return !unlockedServerIds.contains(server.id)
+        ServerAccessPolicy.isServerLocked(server, isPro: StoreManager.shared.isPro, servers: servers)
     }
 
     /// Check if a specific workspace is locked (over free tier limit)
     func isWorkspaceLocked(_ workspace: Workspace) -> Bool {
-        if StoreManager.shared.isPro { return false }
-        return !unlockedWorkspaceIds.contains(workspace.id)
+        ServerAccessPolicy.isWorkspaceLocked(workspace, isPro: StoreManager.shared.isPro, workspaces: workspaces)
     }
 
     /// Number of servers that are locked due to downgrade
     var lockedServersCount: Int {
-        if StoreManager.shared.isPro { return 0 }
-        return max(0, servers.count - FreeTierLimits.maxServers)
+        ServerAccessPolicy.lockedServersCount(isPro: StoreManager.shared.isPro, servers: servers)
     }
 
     /// Number of workspaces that are locked due to downgrade
     var lockedWorkspacesCount: Int {
-        if StoreManager.shared.isPro { return 0 }
-        return max(0, workspaces.count - FreeTierLimits.maxWorkspaces)
+        ServerAccessPolicy.lockedWorkspacesCount(isPro: StoreManager.shared.isPro, workspaces: workspaces)
     }
 
     /// Whether user has any locked items after downgrade
     var hasLockedItems: Bool {
-        lockedServersCount > 0 || lockedWorkspacesCount > 0
+        ServerAccessPolicy.hasLockedItems(
+            isPro: StoreManager.shared.isPro,
+            servers: servers,
+            workspaces: workspaces
+        )
     }
 
     private func moveDestinationIDs(for server: Server) -> Set<UUID> {
-        ServerMoveSupport.allowedDestinationIDs(
+        ServerAccessPolicy.moveDestinationIDs(
             isPro: StoreManager.shared.isPro,
-            sourceWorkspaceId: server.workspaceId,
-            workspacesInOrder: workspacesSortedByOrder,
-            unlockedWorkspaceIds: unlockedWorkspaceIds
+            server: server,
+            workspaces: workspaces
         )
     }
 
