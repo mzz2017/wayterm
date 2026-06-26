@@ -47,10 +47,13 @@ struct ServerFormSuperfileBoundaryTests {
         let credentialBuilderSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerFormCredentialBuilder.swift")
         )
+        let submissionBuilderSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerFormSubmissionBuilder.swift")
+        )
 
         // Given transport selection is UI support and credential assembly is
-        // application-layer form orchestration, the root form should only call
-        // into those collaborators.
+        // application-layer form orchestration, the root form should only call into
+        // those collaborators instead of owning submitted model construction.
         #expect(
             !formSource.contains("enum ServerTransportSelection"),
             "ServerFormSheet.swift should not own the transport selection support type."
@@ -58,6 +61,18 @@ struct ServerFormSuperfileBoundaryTests {
         #expect(
             !formSource.contains("struct ServerFormCredentialBuilder"),
             "ServerFormSheet.swift should not own credential assembly policy."
+        )
+        #expect(
+            !formSource.contains("func buildServer"),
+            "ServerFormSheet.swift should not own submitted Server construction."
+        )
+        #expect(
+            !formSource.contains("func buildCredentials"),
+            "ServerFormSheet.swift should not own submitted credential construction."
+        )
+        #expect(
+            !formSource.contains("UserDefaults.standard"),
+            "ServerFormSheet.swift should not read terminal defaults directly."
         )
         #expect(
             selectionSource.contains("enum ServerTransportSelection"),
@@ -70,6 +85,14 @@ struct ServerFormSuperfileBoundaryTests {
         #expect(
             credentialBuilderSource.contains("connectionMode: SSHConnectionMode"),
             "Credential assembly should depend on connection mode, not UI selection state."
+        )
+        #expect(
+            submissionBuilderSource.contains("struct ServerFormSubmissionBuilder"),
+            "Servers Application should own server form submission assembly."
+        )
+        #expect(
+            submissionBuilderSource.contains("struct ServerFormDefaults"),
+            "Servers Application should own form default resolution."
         )
     }
 

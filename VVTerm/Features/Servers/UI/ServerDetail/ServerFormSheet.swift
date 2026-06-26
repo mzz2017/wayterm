@@ -95,6 +95,7 @@ struct ServerFormSheet: View {
 
         let initialWorkspaceId = server?.workspaceId ?? workspace?.id
         _selectedWorkspaceId = State(initialValue: initialWorkspaceId)
+        let defaults = ServerFormDefaults()
 
         if let server = server {
             _name = State(initialValue: server.name)
@@ -111,18 +112,18 @@ struct ServerFormSheet: View {
             _selectedEnvironment = State(initialValue: server.environment)
             _notes = State(initialValue: server.notes ?? "")
             _requiresBiometricUnlock = State(initialValue: server.requiresBiometricUnlock)
-            _multiplexer = State(initialValue: server.multiplexerOverride ?? Self.defaultMultiplexer())
-            _tmuxStartupBehavior = State(initialValue: server.tmuxStartupBehaviorOverride ?? Self.defaultTmuxStartupBehavior())
+            _multiplexer = State(initialValue: server.multiplexerOverride ?? defaults.multiplexer())
+            _tmuxStartupBehavior = State(initialValue: server.tmuxStartupBehaviorOverride ?? defaults.tmuxStartupBehavior())
         } else if let prefill {
             _name = State(initialValue: prefill.name)
             _host = State(initialValue: prefill.host)
             _port = State(initialValue: String(prefill.port))
             _username = State(initialValue: prefill.username ?? "")
-            _multiplexer = State(initialValue: Self.defaultMultiplexer())
-            _tmuxStartupBehavior = State(initialValue: Self.defaultTmuxStartupBehavior())
+            _multiplexer = State(initialValue: defaults.multiplexer())
+            _tmuxStartupBehavior = State(initialValue: defaults.tmuxStartupBehavior())
         } else {
-            _multiplexer = State(initialValue: Self.defaultMultiplexer())
-            _tmuxStartupBehavior = State(initialValue: Self.defaultTmuxStartupBehavior())
+            _multiplexer = State(initialValue: defaults.multiplexer())
+            _tmuxStartupBehavior = State(initialValue: defaults.tmuxStartupBehavior())
         }
     }
 
@@ -205,7 +206,7 @@ struct ServerFormSheet: View {
         ConnectionTestSnapshot(
             host: host,
             port: port,
-            username: effectiveUsername,
+            username: currentDraft.effectiveUsername,
             transportSelection: transportSelection,
             authMethod: selectedAuthMethod,
             password: password,
@@ -944,32 +945,29 @@ struct ServerFormSheet: View {
         connectionTester.cancelConnectionTestRequest(requestID)
     }
 
-    private func buildServer(id: UUID, createdAt: Date) -> Server {
-        let portNum = ServerPortValidator.normalizedPort(from: port) ?? 22
-        return Server(
-            id: id,
+    private var currentDraft: ServerFormDraft {
+        ServerFormDraft(
             workspaceId: selectedWorkspace?.id ?? assignmentWorkspaces.first?.id ?? serverManager.workspaces.first?.id ?? UUID(),
             environment: selectedEnvironment,
             name: name,
             host: host,
-            port: portNum,
-            username: effectiveUsername,
+            port: port,
+            username: username,
             connectionMode: transportSelection.connectionMode,
-            authMethod: transportSelection == .tailscale ? .password : selectedAuthMethod,
-            cloudflareAccessMode: transportSelection == .cloudflare ? selectedCloudflareAccessMode : nil,
-            cloudflareTeamDomainOverride: transportSelection == .cloudflare ? normalizedCloudflareOverride(cloudflareTeamDomainOverride) : nil,
-            cloudflareAppDomainOverride: nil,
-            notes: notes.isEmpty ? nil : notes,
+            authMethod: selectedAuthMethod,
+            cloudflareAccessMode: selectedCloudflareAccessMode,
+            cloudflareTeamDomainOverride: cloudflareTeamDomainOverride,
+            notes: notes,
             requiresBiometricUnlock: requiresBiometricUnlock,
-            multiplexerOverride: multiplexer,
-            tmuxStartupBehaviorOverride: tmuxStartupBehavior,
-            createdAt: createdAt
+            multiplexer: multiplexer,
+            tmuxStartupBehavior: tmuxStartupBehavior,
+            password: password,
+            sshKey: sshKey,
+            sshPassphrase: sshPassphrase,
+            sshPublicKey: sshPublicKey,
+            cloudflareClientID: cloudflareClientID,
+            cloudflareClientSecret: cloudflareClientSecret
         )
-    }
-
-    private var effectiveUsername: String {
-        let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "root" : trimmed
     }
 
     private func sectionHeader(_ title: LocalizedStringKey) -> some View {
@@ -981,46 +979,6 @@ struct ServerFormSheet: View {
         #else
         Text(title)
         #endif
-    }
-
-    private static func defaultMultiplexer() -> TerminalMultiplexer {
-        let defaults = UserDefaults.standard
-        if let raw = defaults.string(forKey: "terminalMultiplexerDefault"),
-           let mux = TerminalMultiplexer(rawValue: raw) {
-            return mux
-        }
-        if defaults.object(forKey: "terminalTmuxEnabledDefault") != nil {
-            return .fromLegacyTmuxEnabled(defaults.bool(forKey: "terminalTmuxEnabledDefault"))
-        }
-        return .tmux
-    }
-
-    private static func defaultTmuxStartupBehavior() -> TmuxStartupBehavior {
-        let defaults = UserDefaults.standard
-        guard let rawValue = defaults.string(forKey: "terminalTmuxStartupBehaviorDefault") else {
-            return .askEveryTime
-        }
-        return TmuxStartupBehavior(rawValue: rawValue) ?? .askEveryTime
-    }
-
-    private func buildCredentials(for serverId: UUID) -> ServerCredentials {
-        ServerFormCredentialBuilder.build(
-            serverId: serverId,
-            connectionMode: transportSelection.connectionMode,
-            authMethod: selectedAuthMethod,
-            password: password,
-            sshKey: sshKey,
-            sshPassphrase: sshPassphrase,
-            sshPublicKey: sshPublicKey,
-            cloudflareAccessMode: transportSelection == .cloudflare ? selectedCloudflareAccessMode : nil,
-            cloudflareClientID: cloudflareClientID,
-            cloudflareClientSecret: cloudflareClientSecret
-        )
-    }
-
-    private func normalizedCloudflareOverride(_ value: String) -> String? {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func applyPrefill(_ prefill: ServerFormPrefill) {
@@ -1060,15 +1018,18 @@ struct ServerFormSheet: View {
         connectionTestSucceeded = false
 
         let serverId = server?.id ?? UUID()
-        let testServer = buildServer(id: serverId, createdAt: server?.createdAt ?? Date())
-        let credentials = buildCredentials(for: serverId)
+        let submission = ServerFormSubmissionBuilder.build(
+            id: serverId,
+            createdAt: server?.createdAt ?? Date(),
+            draft: currentDraft
+        )
         let requestID = UUID()
         activeConnectionTestRequestID = requestID
 
         connectionTester.requestConnectionTest(
             id: requestID,
-            server: testServer,
-            credentials: credentials,
+            server: submission.server,
+            credentials: submission.credentials,
             onSucceeded: {
                 guard activeConnectionTestRequestID == requestID,
                       connectionSnapshot == snapshot else { return }
@@ -1078,7 +1039,7 @@ struct ServerFormSheet: View {
             onFailed: { error in
                 guard activeConnectionTestRequestID == requestID,
                       connectionSnapshot == snapshot else { return }
-                applyConnectionTestFailure(error, testServer: testServer, snapshot: snapshot)
+                applyConnectionTestFailure(error, testServer: submission.server, snapshot: snapshot)
             },
             onCompleted: {
                 guard activeConnectionTestRequestID == requestID else { return }
@@ -1116,12 +1077,15 @@ struct ServerFormSheet: View {
         error = nil
 
         let serverId = server?.id ?? UUID()
-        let newServer = buildServer(id: serverId, createdAt: server?.createdAt ?? Date())
-        let credentials = buildCredentials(for: serverId)
+        let submission = ServerFormSubmissionBuilder.build(
+            id: serverId,
+            createdAt: server?.createdAt ?? Date(),
+            draft: currentDraft
+        )
 
         serverManager.requestServerSave(
-            newServer,
-            credentials: credentials,
+            submission.server,
+            credentials: submission.credentials,
             mode: isEditing ? .update : .create,
             onSaved: { savedServer in
                 isSaving = false
