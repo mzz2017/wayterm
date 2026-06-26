@@ -494,20 +494,109 @@ struct ConnectionTerminalContainer: View {
             .focusedValue(\.openTerminalTab, handleNewTabCommand)
             .focusedValue(\.serverViewTabActions, serverViewTabActions())
             .toolbar {
-                if !isZenModeEnabled {
-                    viewPickerToolbarItem
-                    if (selectedView == "terminal" && !serverTabs.isEmpty)
-                        || (selectedView == "files" && !serverFileTabs.isEmpty) {
-                        tabsToolbarSpacer
-                        tabsToolbarItem
-                    }
-                    toolbarSpacer
-                    trailingToolbarItems
-                } else {
-                    ToolbarItem(placement: .primaryAction) {
-                        zenModePanelToolbarButton
-                    }
-                }
+                ConnectionTabsToolbarContent(
+                    selectedView: selectedView,
+                    shouldShowViewPicker: shouldShowViewPicker,
+                    visibleViewTabs: visibleViewTabs,
+                    selectedViewBinding: selectedViewBinding,
+                    isZenModeEnabled: $isZenModeEnabled,
+                    showingZenPanel: $showingZenPanel,
+                    serverName: server.name,
+                    statusText: tabsStatusText,
+                    statusColor: zenIndicatorColor,
+                    terminalTabs: serverTabs,
+                    selectedTerminalTabId: selectedTabIdBinding,
+                    terminalTabTitle: { tabManager.displayTitle(for: $0) },
+                    paneState: { tab in tabManager.paneStates[tab.focusedPaneId] },
+                    tabManager: tabManager,
+                    onCloseTerminalTab: { tabManager.closeTab($0) },
+                    onNewTerminalTab: { selectTerminalViewOnSuccess in
+                        openNewTab(selectTerminalViewOnSuccess: selectTerminalViewOnSuccess)
+                    },
+                    onPreviousTerminalTab: selectPreviousTab,
+                    onNextTerminalTab: selectNextTab,
+                    fileTabs: serverFileTabs,
+                    selectedFileTabId: selectedFileTabIdBinding,
+                    fileTabTitle: displayedFileTabTitle(for:),
+                    selectedFileTab: selectedFileTab,
+                    filesCurrentPath: selectedFileTab.map { fileBrowser.currentPath(for: $0) } ?? "/",
+                    areHiddenFilesVisible: selectedFileTab.map { fileBrowser.showHiddenFiles(for: $0) } ?? false,
+                    filesShowHiddenBinding: Binding(
+                        get: { selectedFileTab.map { fileBrowser.showHiddenFiles(for: $0) } ?? false },
+                        set: { newValue in
+                            guard let selectedFileTab else { return }
+                            fileBrowser.setShowHiddenFiles(newValue, for: selectedFileTab)
+                        }
+                    ),
+                    canFilesGoUp: selectedFileTab.map { fileBrowser.currentPath(for: $0) != "/" } ?? false,
+                    onSelectFileTab: { fileTabManager.selectTab($0) },
+                    onCloseFileTab: { tab in
+                        if let removedTab = fileTabManager.closeTab(tab) {
+                            fileBrowser.removeState(for: removedTab.id)
+                        }
+                    },
+                    onCloseOtherFileTabs: { tab in
+                        for removedTab in fileTabManager.closeOtherTabs(except: tab) {
+                            fileBrowser.removeState(for: removedTab.id)
+                        }
+                    },
+                    onCloseFileTabsToLeft: { tab in
+                        for removedTab in fileTabManager.closeTabsToLeft(of: tab) {
+                            fileBrowser.removeState(for: removedTab.id)
+                        }
+                    },
+                    onCloseFileTabsToRight: { tab in
+                        for removedTab in fileTabManager.closeTabsToRight(of: tab) {
+                            fileBrowser.removeState(for: removedTab.id)
+                        }
+                    },
+                    onDuplicateFileTab: { tab in
+                        guard fileTabManager.canOpenNewTab(for: server.id) else {
+                            showingFileTabLimitAlert = true
+                            return
+                        }
+
+                        let seedPath = fileBrowser.lastVisitedPath(for: tab)
+                        guard let duplicate = fileTabManager.duplicateTab(tab, seedPath: seedPath) else { return }
+                        fileBrowser.prepareNewTab(duplicate, duplicating: tab)
+                    },
+                    onNewFileTab: { selectFilesViewOnSuccess in
+                        openNewFileTab(selectFilesViewOnSuccess: selectFilesViewOnSuccess)
+                    },
+                    onPreviousFileTab: selectPreviousFileTab,
+                    onNextFileTab: selectNextFileTab,
+                    onFilesGoUp: {
+                        guard let selectedFileTab else { return }
+                        fileBrowser.requestNavigation(.goUp, in: selectedFileTab, server: server)
+                    },
+                    onFilesRefresh: {
+                        guard let selectedFileTab else { return }
+                        fileBrowser.requestNavigation(.refresh, in: selectedFileTab, server: server)
+                    },
+                    onFilesUpload: {
+                        guard let selectedFileTab else { return }
+                        let currentPath = fileBrowser.currentPath(for: selectedFileTab)
+                        fileBrowser.requestUploadPicker(for: selectedFileTab, destinationPath: currentPath)
+                    },
+                    onFilesCreateFolder: {
+                        guard let selectedFileTab else { return }
+                        let currentPath = fileBrowser.currentPath(for: selectedFileTab)
+                        fileBrowser.requestCreateFolder(for: selectedFileTab, destinationPath: currentPath)
+                    },
+                    canSplit: selectedTab != nil,
+                    canClosePane: selectedTab != nil,
+                    onSplitRight: { splitFocusedPane(.horizontal) },
+                    onSplitDown: { splitFocusedPane(.vertical) },
+                    onClosePane: {
+                        guard let selectedTab else { return }
+                        tabManager.closePane(tab: selectedTab, paneId: selectedTab.focusedPaneId)
+                    },
+                    isSidebarVisible: isSidebarVisible,
+                    onToggleSidebar: onToggleSidebar,
+                    onShowSettings: { SettingsWindowManager.shared.show() },
+                    onEditServer: { serverToEdit = server },
+                    onRequestDisconnect: { showingDisconnectConfirmation = true }
+                )
             }
             .alert(
                 disconnectAlertTitle,
@@ -539,317 +628,6 @@ struct ConnectionTerminalContainer: View {
                     maxHeight: 680
                 )
             }
-    }
-
-    @ToolbarContentBuilder
-    private var viewPickerToolbarItem: some ToolbarContent {
-        if shouldShowViewPicker {
-            ToolbarItem(placement: .navigation) {
-                viewPickerControl
-            }
-        }
-    }
-
-    private var viewPickerControl: some View {
-        Picker("View", selection: selectedViewBinding) {
-            ForEach(visibleViewTabs) { tab in
-                Label(tab.localizedKey, systemImage: tab.icon)
-                    .tag(tab.id)
-            }
-        }
-        .pickerStyle(.segmented)
-    }
-
-    @ToolbarContentBuilder
-    private var tabsToolbarSpacer: some ToolbarContent {
-        adaptiveFixedToolbarSpacer(placement: .navigation)
-    }
-
-    @ToolbarContentBuilder
-    private var tabsToolbarItem: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            if selectedView == ConnectionViewTab.files.id {
-                RemoteFileTabsScrollView(
-                    tabs: serverFileTabs,
-                    selectedTabId: selectedFileTabIdBinding,
-                    titleForTab: displayedFileTabTitle(for:),
-                    onSelect: { fileTabManager.selectTab($0) },
-                    onClose: { tab in
-                        if let removedTab = fileTabManager.closeTab(tab) {
-                            fileBrowser.removeState(for: removedTab.id)
-                        }
-                    },
-                    onCloseOtherTabs: { tab in
-                        for removedTab in fileTabManager.closeOtherTabs(except: tab) {
-                            fileBrowser.removeState(for: removedTab.id)
-                        }
-                    },
-                    onCloseTabsToLeft: { tab in
-                        for removedTab in fileTabManager.closeTabsToLeft(of: tab) {
-                            fileBrowser.removeState(for: removedTab.id)
-                        }
-                    },
-                    onCloseTabsToRight: { tab in
-                        for removedTab in fileTabManager.closeTabsToRight(of: tab) {
-                            fileBrowser.removeState(for: removedTab.id)
-                        }
-                    },
-                    onDuplicate: { tab in
-                        guard fileTabManager.canOpenNewTab(for: server.id) else {
-                            showingFileTabLimitAlert = true
-                            return
-                        }
-
-                        let seedPath = fileBrowser.lastVisitedPath(for: tab)
-                        guard let duplicate = fileTabManager.duplicateTab(tab, seedPath: seedPath) else { return }
-                        fileBrowser.prepareNewTab(duplicate, duplicating: tab)
-                    },
-                    onNew: { openNewFileTab(selectFilesViewOnSuccess: false) }
-                )
-            } else {
-                TerminalTabsScrollView(
-                    tabs: serverTabs,
-                    selectedTabId: selectedTabIdBinding,
-                    onClose: { tab in tabManager.closeTab(tab) },
-                    onNew: { openNewTab() },
-                    tabManager: tabManager
-                )
-            }
-        }
-    }
-
-    @ToolbarContentBuilder
-    private var toolbarSpacer: some ToolbarContent {
-        ToolbarItem(placement: .automatic) {
-            Spacer()
-        }
-    }
-
-    @ToolbarContentBuilder
-    private var trailingToolbarItems: some ToolbarContent {
-        if selectedView == "files" {
-            ToolbarItem(placement: .primaryAction) {
-                filesActionsToolbarButton
-            }
-        }
-
-        ToolbarItem(placement: .primaryAction) {
-            zenModeToolbarButton
-        }
-
-        ToolbarItem(placement: .primaryAction) {
-            serverMenuToolbarButton
-        }
-    }
-
-    private var zenModeToolbarButton: some View {
-        Button {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
-                isZenModeEnabled = true
-            }
-        } label: {
-            Label("Zen", systemImage: "arrow.up.left.and.arrow.down.right")
-                .labelStyle(.iconOnly)
-        }
-        .help(Text("Enter Zen Mode"))
-    }
-
-    private var filesActionsToolbarButton: some View {
-        let currentPath = selectedFileTab.map { fileBrowser.currentPath(for: $0) } ?? "/"
-        let areHiddenFilesVisible = selectedFileTab.map { fileBrowser.showHiddenFiles(for: $0) } ?? false
-
-        return Menu {
-            Button {
-                guard let selectedFileTab else { return }
-                fileBrowser.requestNavigation(.goUp, in: selectedFileTab, server: server)
-            } label: {
-                Label("Parent", systemImage: "arrow.turn.up.left")
-            }
-            .disabled(selectedFileTab == nil || currentPath == "/")
-
-            Button {
-                guard let selectedFileTab else { return }
-                fileBrowser.requestNavigation(.refresh, in: selectedFileTab, server: server)
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            .disabled(selectedFileTab == nil)
-
-            Divider()
-
-            Button {
-                guard let selectedFileTab else { return }
-                fileBrowser.requestUploadPicker(for: selectedFileTab, destinationPath: currentPath)
-            } label: {
-                Label("Upload…", systemImage: "square.and.arrow.up")
-            }
-            .disabled(selectedFileTab == nil)
-
-            Button {
-                guard let selectedFileTab else { return }
-                fileBrowser.requestCreateFolder(for: selectedFileTab, destinationPath: currentPath)
-            } label: {
-                Label("New Folder…", systemImage: "folder.badge.plus")
-            }
-            .disabled(selectedFileTab == nil)
-
-            Button {
-                guard let selectedFileTab else { return }
-                fileBrowser.setShowHiddenFiles(!areHiddenFilesVisible, for: selectedFileTab)
-            } label: {
-                Label(
-                    areHiddenFilesVisible ? "Hide Hidden Files" : "Show Hidden Files",
-                    systemImage: areHiddenFilesVisible ? "eye.slash" : "eye"
-                )
-            }
-            .disabled(selectedFileTab == nil)
-
-            Divider()
-
-            Button {
-                Clipboard.copy(currentPath)
-            } label: {
-                Label("Copy Path", systemImage: "document.on.document")
-            }
-        } label: {
-            Label("Files", systemImage: "folder")
-                .labelStyle(.titleAndIcon)
-        }
-        .help(Text("Files Menu"))
-    }
-
-    private var serverMenuToolbarButton: some View {
-        Menu {
-            Button {
-                SettingsWindowManager.shared.show()
-            } label: {
-                Label("Settings", systemImage: "gear")
-            }
-
-            Button {
-                serverToEdit = server
-            } label: {
-                Label("Edit Server", systemImage: "pencil")
-            }
-
-            Button(role: .destructive) {
-                showingDisconnectConfirmation = true
-            } label: {
-                Label("Disconnect", systemImage: "xmark.circle")
-            }
-        } label: {
-            Label("Server", systemImage: "ellipsis.circle")
-                .labelStyle(.iconOnly)
-        }
-        .help(Text("Server Options"))
-    }
-
-    private var zenModePanelToolbarButton: some View {
-        Button {
-            withAnimation(.spring(response: 0.26, dampingFraction: 0.84)) {
-                showingZenPanel.toggle()
-            }
-        } label: {
-            Label("Zen", systemImage: "slider.horizontal.3")
-                .labelStyle(.iconOnly)
-        }
-        .help(Text(showingZenPanel ? "Hide Zen controls" : "Show Zen controls"))
-        .popover(isPresented: $showingZenPanel, arrowEdge: .top) {
-            MacOSZenModePanel(
-                width: 360,
-                serverName: server.name,
-                statusText: tabsStatusText,
-                statusColor: zenIndicatorColor,
-                selectedView: selectedView,
-                selectedViewBinding: selectedViewBinding,
-                viewTabs: visibleViewTabs,
-                terminalTabs: serverTabs,
-                selectedTerminalTabId: selectedTabIdBinding,
-                terminalTabTitle: { tabManager.displayTitle(for: $0) },
-                paneState: { tab in
-                    tabManager.paneStates[tab.focusedPaneId]
-                },
-                fileTabs: serverFileTabs,
-                selectedFileTabId: selectedFileTabIdBinding,
-                fileTabTitle: displayedFileTabTitle(for:),
-                onPreviousTab: {
-                    if selectedView == ConnectionViewTab.files.id {
-                        selectPreviousFileTab()
-                    } else {
-                        selectPreviousTab()
-                    }
-                },
-                onNextTab: {
-                    if selectedView == ConnectionViewTab.files.id {
-                        selectNextFileTab()
-                    } else {
-                        selectNextTab()
-                    }
-                },
-                onNewTerminalTab: {
-                    showingZenPanel = false
-                    openNewTab(selectTerminalViewOnSuccess: true)
-                },
-                onCloseTerminalTab: { tab in
-                    tabManager.closeTab(tab)
-                },
-                onNewFileTab: {
-                    showingZenPanel = false
-                    openNewFileTab(selectFilesViewOnSuccess: true)
-                },
-                onCloseFileTab: { tab in
-                    if let removedTab = fileTabManager.closeTab(tab) {
-                        fileBrowser.removeState(for: removedTab.id)
-                    }
-                },
-                onSelectFileTab: { tab in
-                    fileTabManager.selectTab(tab)
-                },
-                onSplitRight: {
-                    splitFocusedPane(.horizontal)
-                },
-                onSplitDown: {
-                    splitFocusedPane(.vertical)
-                },
-                onClosePane: {
-                    guard let selectedTab else { return }
-                    tabManager.closePane(tab: selectedTab, paneId: selectedTab.focusedPaneId)
-                },
-                canSplit: selectedTab != nil,
-                canClosePane: selectedTab != nil,
-                isSidebarVisible: isSidebarVisible,
-                onToggleSidebar: {
-                    showingZenPanel = false
-                    onToggleSidebar()
-                },
-                onDisconnect: {
-                    showingZenPanel = false
-                    showingDisconnectConfirmation = true
-                },
-                canFilesGoUp: selectedFileTab.map { fileBrowser.currentPath(for: $0) != "/" } ?? false,
-                filesShowHiddenBinding: Binding(
-                    get: { selectedFileTab.map { fileBrowser.showHiddenFiles(for: $0) } ?? false },
-                    set: { newValue in
-                        guard let selectedFileTab else { return }
-                        fileBrowser.setShowHiddenFiles(newValue, for: selectedFileTab)
-                    }
-                ),
-                onFilesGoUp: {
-                    guard let selectedFileTab else { return }
-                    fileBrowser.requestNavigation(.goUp, in: selectedFileTab, server: server)
-                },
-                onFilesRefresh: {
-                    guard let selectedFileTab else { return }
-                    fileBrowser.requestNavigation(.refresh, in: selectedFileTab, server: server)
-                },
-                onExitZen: {
-                    showingZenPanel = false
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
-                        isZenModeEnabled = false
-                    }
-                }
-            )
-        }
     }
 
     private func disconnectFromServer() {

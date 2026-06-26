@@ -82,6 +82,52 @@ struct ConnectionTabsViewSuperfileBoundaryTests {
         )
     }
 
+    @Test
+    func connectionTabsViewComposesToolbarContentWithoutOwningToolbarItems() throws {
+        let root = try sourceRoot()
+        let containerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift")
+        )
+        let toolbarSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsToolbarContent.swift")
+        )
+
+        // Given ConnectionTabsView owns server-scoped lifecycle intent routing.
+        #expect(
+            containerSource.contains("ConnectionTabsToolbarContent("),
+            "ConnectionTabsView.swift should compose the macOS toolbar content."
+        )
+
+        // Then toolbar item layout should live in a sibling UI component so the
+        // container root stays focused on composition and intent routing.
+        #expect(
+            !containerSource.contains("ToolbarItem(placement:"),
+            "ConnectionTabsView.swift should not own concrete macOS toolbar items."
+        )
+        #expect(
+            toolbarSource.contains("struct ConnectionTabsToolbarContent: ToolbarContent"),
+            "ConnectionTabsToolbarContent.swift should define the toolbar content component."
+        )
+        #expect(
+            toolbarSource.contains("ToolbarItem(placement:"),
+            "ConnectionTabsToolbarContent.swift should own concrete macOS toolbar items."
+        )
+
+        for lifecycleCall in [
+            "requestTabOpen(",
+            "requestServerDisconnect(",
+            "disconnectServerAndWait",
+            "splitFocusedPane(",
+            "splitHorizontal(",
+            "splitVertical("
+        ] {
+            #expect(
+                !toolbarSource.contains(lifecycleCall),
+                "ConnectionTabsToolbarContent.swift should receive lifecycle actions as closures, not call \(lifecycleCall)."
+            )
+        }
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
