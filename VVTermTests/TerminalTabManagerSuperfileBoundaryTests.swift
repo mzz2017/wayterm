@@ -32,6 +32,33 @@ struct TerminalTabManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func snapshotStoreLivesOutsideTerminalTabManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabsSnapshotStore.swift")
+        )
+
+        // Given the terminal tab manager source.
+        #expect(
+            !managerSource.contains("JSONEncoder().encode(makeSnapshot())"),
+            "TerminalTabManager.swift should not own snapshot encoding."
+        )
+        #expect(
+            !managerSource.contains("JSONDecoder().decode(TerminalTabsSnapshot.self"),
+            "TerminalTabManager.swift should not own snapshot decoding."
+        )
+
+        // Then tab snapshot storage has a dedicated Application file.
+        #expect(storeSource.contains("struct TerminalTabsSnapshotStore"))
+        #expect(storeSource.contains("func save"))
+        #expect(storeSource.contains("func load"))
+        #expect(storeSource.contains("func remove"))
+    }
+
+    @Test
     func supportTypesLiveOutsideTerminalTabManagerFile() throws {
         let root = try sourceRoot()
         let managerSource = try source(

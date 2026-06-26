@@ -198,7 +198,7 @@ final class TerminalTabManager: ObservableObject {
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "TerminalTabManager")
 
-    private let persistenceKey = "terminalTabsSnapshot.v1"
+    private let snapshotStore = TerminalTabsSnapshotStore()
     private var persistTask: Task<Void, Never>?
     private var isRestoring = false
 
@@ -2823,17 +2823,15 @@ final class TerminalTabManager: ObservableObject {
 
     private func persistSnapshot() {
         do {
-            let data = try JSONEncoder().encode(makeSnapshot())
-            UserDefaults.standard.set(data, forKey: persistenceKey)
+            try snapshotStore.save(makeSnapshot())
         } catch {
             logger.error("Failed to persist tabs snapshot: \(error.localizedDescription)")
         }
     }
 
     private func restoreSnapshot() {
-        guard let data = UserDefaults.standard.data(forKey: persistenceKey) else { return }
         do {
-            let snapshot = try JSONDecoder().decode(TerminalTabsSnapshot.self, from: data)
+            guard let snapshot = try snapshotStore.load() else { return }
             isRestoring = true
             applyRestoredSnapshot(snapshot)
         } catch {
@@ -2946,7 +2944,7 @@ extension TerminalTabManager {
         tmuxCleanupServers.removeAll()
         isRestoring = false
 
-        UserDefaults.standard.removeObject(forKey: persistenceKey)
+        snapshotStore.remove()
         for terminal in terminals {
             terminal.cleanup()
         }
