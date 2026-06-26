@@ -67,6 +67,84 @@ struct ServerManagerSuperfileBoundaryTests {
         )
     }
 
+    @Test
+    func cloudKitSyncAndStartupLoadingLiveOutsideServerManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager.swift")
+        )
+        let syncSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager+Sync.swift")
+        )
+
+        // Given CloudKit sync, startup loading, and CloudKit merge/backfill are
+        // durable application orchestration responsibilities.
+        #expect(syncSource.contains("extension ServerManager"))
+        #expect(syncSource.contains("func enqueuePendingServerUpsert"))
+        #expect(syncSource.contains("func enqueuePendingServerDelete"))
+        #expect(syncSource.contains("func enqueuePendingWorkspaceUpsert"))
+        #expect(syncSource.contains("func enqueuePendingWorkspaceDelete"))
+        #expect(syncSource.contains("func applyPendingSyncOverlay"))
+        #expect(syncSource.contains("func reconcilePendingServerAndWorkspaceUpsertsAgainstCloudKit"))
+        #expect(syncSource.contains("func drainPendingCloudKitMutations"))
+        #expect(syncSource.contains("func persistLocalMutations"))
+        #expect(syncSource.contains("func startStartupLoad"))
+        #expect(syncSource.contains("func waitForStartupLoadRequest"))
+        #expect(syncSource.contains("func loadData"))
+        #expect(syncSource.contains("func backfillMissingLocalRecordsIfNeeded"))
+        #expect(syncSource.contains("func backfillCandidates"))
+        #expect(syncSource.contains("func applyCloudKitChanges"))
+        #expect(syncSource.contains("func repairOrphanedServers"))
+        #expect(syncSource.contains("func initializeCloudKitSchema"))
+
+        // Then the ServerManager superfile should not own sync/load lifecycle
+        // orchestration directly.
+        #expect(
+            !managerSource.containsRegex(#"func\s+enqueuePendingServerUpsert\s*\("#),
+            "ServerManager.swift should not own pending server sync upserts."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+enqueuePendingWorkspaceDelete\s*\("#),
+            "ServerManager.swift should not own pending workspace sync deletes."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+applyPendingSyncOverlay\s*\("#),
+            "ServerManager.swift should not own pending sync overlay application."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+reconcilePendingServerAndWorkspaceUpsertsAgainstCloudKit\s*\("#),
+            "ServerManager.swift should not own CloudKit pending sync reconciliation."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+drainPendingCloudKitMutations\s*\("#),
+            "ServerManager.swift should not own pending CloudKit mutation draining."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+startStartupLoad\s*\("#),
+            "ServerManager.swift should not own startup load request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+loadData\s*\("#),
+            "ServerManager.swift should not own CloudKit data loading."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+backfillMissingLocalRecordsIfNeeded\s*\("#),
+            "ServerManager.swift should not own CloudKit backfill orchestration."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+applyCloudKitChanges\s*\("#),
+            "ServerManager.swift should not own CloudKit merge application."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+repairOrphanedServers\s*\("#),
+            "ServerManager.swift should not own sync-time orphan repair."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+initializeCloudKitSchema\s*\("#),
+            "ServerManager.swift should not own CloudKit schema initialization."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
