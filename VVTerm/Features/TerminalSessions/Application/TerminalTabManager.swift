@@ -143,8 +143,7 @@ final class TerminalTabManager: ObservableObject {
     /// In-flight SSH teardown tasks by server, used to serialize close/open ordering.
     private var serverTeardownTaskStore = TerminalTeardownTaskStore()
     /// Application-owned connect watchdog timers keyed by pane.
-    private var connectWatchdogTasks: [UUID: Task<Void, Never>] = [:]
-    private var connectWatchdogGenerations: [UUID: UUID] = [:]
+    private var connectWatchdogStore = TerminalConnectWatchdogStore()
     private var credentialsProvider: @MainActor (Server) async throws -> ServerCredentials = { server in
         try KeychainManager.shared.getCredentials(for: server)
     }
@@ -1879,25 +1878,23 @@ final class TerminalTabManager: ObservableObject {
         timeoutMessage: String,
         onRetry: @escaping @MainActor () async -> Void
     ) {
-        connectWatchdogTasks[paneId]?.cancel()
-        connectWatchdogTasks[paneId] = nil
+        connectWatchdogStore.removeTask(for: paneId)?.cancel()
 
         guard shouldScheduleConnectWatchdog(
             forPaneId: paneId,
             isReady: isReady,
             terminalExists: terminalExists
         ) else {
-            connectWatchdogGenerations.removeValue(forKey: paneId)
+            connectWatchdogStore.clear(for: paneId)?.cancel()
             return
         }
 
-        let generation = UUID()
-        connectWatchdogGenerations[paneId] = generation
+        let generation = connectWatchdogStore.beginGeneration(for: paneId)
         let task = Task { @MainActor [weak self] in
             try? await Task.sleep(for: timeout)
             guard !Task.isCancelled else { return }
             guard let self else { return }
-            guard self.connectWatchdogGenerations[paneId] == generation else { return }
+            guard self.connectWatchdogStore.isCurrent(generation, for: paneId) else { return }
 
             let action = self.handleConnectWatchdogTimeout(
                 forPaneId: paneId,
@@ -1908,8 +1905,7 @@ final class TerminalTabManager: ObservableObject {
 
             switch action {
             case .retry:
-                self.connectWatchdogTasks[paneId] = nil
-                self.connectWatchdogGenerations.removeValue(forKey: paneId)
+                self.connectWatchdogStore.clear(for: paneId)
                 await onRetry()
             case .continueWatching:
                 self.scheduleConnectWatchdog(
@@ -1921,11 +1917,10 @@ final class TerminalTabManager: ObservableObject {
                     onRetry: onRetry
                 )
             case .none:
-                self.connectWatchdogTasks[paneId] = nil
-                self.connectWatchdogGenerations.removeValue(forKey: paneId)
+                self.connectWatchdogStore.clear(for: paneId)
             }
         }
-        connectWatchdogTasks[paneId] = task
+        connectWatchdogStore.setTask(task, for: paneId)
     }
 
     func handleConnectWatchdogTimeout(
@@ -2753,9 +2748,7 @@ extension TerminalTabManager {
         processExitRequestStore.allRequests.forEach { $0.task.cancel() }
         processExitRequestStore.removeAll()
         paneReconnectsInFlight.removeAll()
-        connectWatchdogTasks.values.forEach { $0.cancel() }
-        connectWatchdogTasks.removeAll()
-        connectWatchdogGenerations.removeAll()
+        connectWatchdogStore.removeAll().forEach { $0.cancel() }
         credentialsProvider = { server in
             try KeychainManager.shared.getCredentials(for: server)
         }

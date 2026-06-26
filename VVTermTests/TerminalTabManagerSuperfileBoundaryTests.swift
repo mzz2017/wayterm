@@ -274,6 +274,32 @@ struct TerminalTabManagerSuperfileBoundaryTests {
         #expect(managerSource.contains("serverTeardownTaskStore"))
     }
 
+    @Test
+    func connectWatchdogTrackingUsesWatchdogStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalConnectWatchdogStore.swift")
+        )
+
+        // Given connect watchdog lifecycle needs task and generation tracking.
+        #expect(storeSource.contains("struct TerminalConnectWatchdogStore"))
+        #expect(storeSource.contains("beginGeneration"))
+
+        // Then watchdog task/generation indexing should not remain bespoke state in the superfile.
+        #expect(
+            !managerSource.contains("connectWatchdogTasks"),
+            "TerminalTabManager.swift should not own bespoke connect watchdog task indexing."
+        )
+        #expect(
+            !managerSource.contains("connectWatchdogGenerations"),
+            "TerminalTabManager.swift should not own bespoke connect watchdog generation tracking."
+        )
+        #expect(managerSource.contains("connectWatchdogStore"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
