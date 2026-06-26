@@ -99,11 +99,6 @@ final class RemoteFileBrowserStore: ObservableObject {
         let filesystemStatus: RemoteFileFilesystemStatus?
     }
 
-    private struct PendingDisconnect {
-        let id: UUID
-        let task: Task<Void, Never>
-    }
-
     struct PreviewLoadRequest {
         let entryPath: String
         let allowLargeDownloads: Bool
@@ -146,12 +141,12 @@ final class RemoteFileBrowserStore: ObservableObject {
     let persistenceKey = "remoteFileBrowserState.v2"
     let legacyPersistenceKey = "remoteFileBrowserState.v1"
     let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "RemoteFiles")
-    let remoteFileServiceAdapter: SSHSFTPAdapter
     nonisolated let temporaryStorage: RemoteFileTemporaryStorage
     let previewLoader: RemoteFilePreviewLoader
     let conflictResolver: RemoteFileConflictResolver
     let serverProvider: ServerProvider
     let workingDirectoryProvider: WorkingDirectoryProvider
+    private let serviceAccessCoordinator: RemoteFileServiceAccessCoordinator
 
     var persistedStates: [String: RemoteFileBrowserPersistedState] = [:]
     var directoryRequestIDs: [UUID: UUID] = [:]
@@ -164,10 +159,6 @@ final class RemoteFileBrowserStore: ObservableObject {
     private var moveDestinationLoadRequestByKey: [MoveDestinationLoadRequestKey: UUID] = [:]
     private var mutationRequests: [UUID: MutationRequest] = [:]
     private var transferRequests: [UUID: TransferRequest] = [:]
-    private var pendingDisconnects: [UUID: PendingDisconnect] = [:]
-    #if DEBUG
-    private var pendingDisconnectWaitDidFinishForTesting: (@MainActor (UUID) async -> Void)?
-    #endif
 
     static let directoryEntryLimit = 2_000
     static let defaultPreviewBytes = 512 * 1_024
@@ -202,6 +193,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     init(
         defaults: UserDefaults = .standard,
         remoteFileServiceAdapter: SSHSFTPAdapter? = nil,
+        serviceAccessCoordinator: RemoteFileServiceAccessCoordinator? = nil,
         temporaryStorage: RemoteFileTemporaryStorage = RemoteFileTemporaryStorage(),
         previewLoader: RemoteFilePreviewLoader = RemoteFilePreviewLoader(),
         conflictResolver: RemoteFileConflictResolver = RemoteFileConflictResolver(),
@@ -211,7 +203,9 @@ final class RemoteFileBrowserStore: ObservableObject {
         workingDirectoryProvider: @escaping WorkingDirectoryProvider = { _ in nil }
     ) {
         self.defaults = defaults
-        self.remoteFileServiceAdapter = remoteFileServiceAdapter ?? SSHSFTPAdapter()
+        self.serviceAccessCoordinator = serviceAccessCoordinator ?? RemoteFileServiceAccessCoordinator(
+            remoteFileServiceAdapter: remoteFileServiceAdapter ?? SSHSFTPAdapter()
+        )
         self.temporaryStorage = temporaryStorage
         self.previewLoader = previewLoader
         self.conflictResolver = conflictResolver
@@ -627,19 +621,7 @@ final class RemoteFileBrowserStore: ObservableObject {
             removeRuntimeState(for: tabId)
         }
 
-        if let pending = pendingDisconnects[serverId] {
-            return pending.task
-        }
-
-        let disconnectID = UUID()
-        let task = Task { @MainActor [weak self, remoteFileServiceAdapter] in
-            await remoteFileServiceAdapter.disconnect(serverId: serverId)
-            if self?.pendingDisconnects[serverId]?.id == disconnectID {
-                self?.pendingDisconnects.removeValue(forKey: serverId)
-            }
-        }
-        pendingDisconnects[serverId] = PendingDisconnect(id: disconnectID, task: task)
-        return task
+        return serviceAccessCoordinator.disconnect(serverId: serverId)
     }
 
     func cancelPreviewLoadRequest(for tabId: UUID) {
@@ -802,27 +784,14 @@ final class RemoteFileBrowserStore: ObservableObject {
         for server: Server,
         operation: @escaping (any RemoteFileService) async throws -> T
     ) async throws -> T {
-        await waitForPendingDisconnect(serverId: server.id)
-        return try await remoteFileServiceAdapter.withService(for: server, operation: operation)
-    }
-
-    private func waitForPendingDisconnect(serverId: UUID) async {
-        while let pending = pendingDisconnects[serverId] {
-            await pending.task.value
-            if pendingDisconnects[serverId]?.id == pending.id {
-                pendingDisconnects.removeValue(forKey: serverId)
-            }
-            #if DEBUG
-            await pendingDisconnectWaitDidFinishForTesting?(serverId)
-            #endif
-        }
+        try await serviceAccessCoordinator.withRemoteFileService(for: server, operation: operation)
     }
 
     #if DEBUG
     func setPendingDisconnectWaitDidFinishForTesting(
         _ action: (@MainActor (UUID) async -> Void)?
     ) {
-        pendingDisconnectWaitDidFinishForTesting = action
+        serviceAccessCoordinator.setPendingDisconnectWaitDidFinishForTesting(action)
     }
 
     func cancelMoveDestinationLoadRequestForTesting(_ requestID: UUID) {
