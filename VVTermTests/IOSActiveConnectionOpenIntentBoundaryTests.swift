@@ -12,7 +12,7 @@ struct IOSActiveConnectionOpenIntentBoundaryTests {
     @Test
     func iosActiveConnectionOpenUsesManagerRequestAfterUnlock() throws {
         let root = try sourceRoot()
-        let source = try source(at: root.appendingPathComponent("VVTerm/App/iOS/iOSContentView.swift"))
+        let source = try source(at: root.appendingPathComponent("VVTerm/Features/Servers/UI/iOS/iOSServerListView.swift"))
         let helper = try slice(
             startingAt: "private func openActiveConnection(_ connection: ActiveConnection)",
             endingBefore: "\n    private func disconnectActiveConnection",

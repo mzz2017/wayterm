@@ -19,10 +19,10 @@ struct ServerDeletionIntentBoundaryTests {
         let root = try sourceRoot()
         let sources = try [
             "VVTerm/Core/UI/SidebarComponents.swift",
-            "VVTerm/App/iOS/iOSServerComponents.swift",
+            "VVTerm/Features/Servers/UI/iOS/iOSServerComponents.swift",
+            "VVTerm/Features/Servers/UI/iOS/iOSServerListView.swift",
             "VVTerm/Features/Servers/UI/Workspace/WorkspaceSwitcherSheet.swift",
-            "VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift",
-            "VVTerm/App/iOS/iOSContentView.swift"
+            "VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift"
         ].map { path in
             try source(at: root.appendingPathComponent(path))
         }.joined(separator: "\n")

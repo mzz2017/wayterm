@@ -92,10 +92,10 @@ struct AppLockIntentBoundaryTests {
 
     @Test
     func iosActiveConnectionOpenSendsServerUnlockIntentWithoutDirectAuth() throws {
-        // Given the iOS root SwiftUI source that opens active connections.
+        // Given the iOS server list SwiftUI source that opens active connections.
         let root = try sourceRoot()
         let source = try source(
-            at: root.appendingPathComponent("VVTerm/App/iOS/iOSContentView.swift")
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/iOS/iOSServerListView.swift")
         )
         let openActiveConnectionSource = try slice(
             startingAt: "private func openActiveConnection(_ connection: ActiveConnection)",
@@ -107,11 +107,11 @@ struct AppLockIntentBoundaryTests {
         // biometric-auth await; it should send unlock intent first.
         #expect(
             !openActiveConnectionSource.contains("ensureServerUnlocked("),
-            "iOSContentView should not call the async server-unlock behavior boundary directly."
+            "iOSServerListView should not call the async server-unlock behavior boundary directly."
         )
         #expect(
             openActiveConnectionSource.contains("requestServerUnlock"),
-            "iOSContentView should send server-unlock intent to AppLockManager."
+            "iOSServerListView should send server-unlock intent to AppLockManager."
         )
     }
 

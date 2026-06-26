@@ -14,7 +14,7 @@ struct ServerDisconnectIntentBoundaryTests {
     @Test
     func iosActiveConnectionDisconnectUsesApplicationCoordinator() throws {
         let root = try sourceRoot()
-        let source = try source(at: root.appendingPathComponent("VVTerm/App/iOS/iOSContentView.swift"))
+        let source = try source(at: root.appendingPathComponent("VVTerm/Features/Servers/UI/iOS/iOSServerListView.swift"))
         let helper = try slice(
             startingAt: "private func disconnectActiveConnection",
             endingBefore: "private func server(for serverId:",
@@ -35,7 +35,7 @@ struct ServerDisconnectIntentBoundaryTests {
     @Test
     func iosCurrentServerDisconnectUsesApplicationCoordinator() throws {
         let root = try sourceRoot()
-        let source = try source(at: root.appendingPathComponent("VVTerm/App/iOS/iOSContentView.swift"))
+        let source = try source(at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/iOS/iOSTerminalView.swift"))
         let helper = try slice(
             startingAt: "private func disconnectCurrentServerSessions",
             endingBefore: "private func synchronizeRecoveredTerminalState",

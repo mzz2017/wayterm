@@ -18,7 +18,7 @@ struct IOSForegroundReconnectIntentBoundaryTests {
     @Test
     func foregroundReconnectHelperSendsTrackedManagerRequest() throws {
         let root = try sourceRoot()
-        let source = try source(at: root.appendingPathComponent("VVTerm/App/iOS/iOSContentView.swift"))
+        let source = try source(at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/iOS/iOSTerminalView.swift"))
         let helper = try slice(
             startingAt: "private func attemptForegroundReconnectIfNeeded",
             endingBefore: "\n    var body:",

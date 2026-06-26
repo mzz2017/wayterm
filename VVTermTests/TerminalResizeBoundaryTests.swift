@@ -54,7 +54,7 @@ struct TerminalResizeBoundaryTests {
     func iOSActiveConnectionRedrawUsesResizeRequestBoundary() throws {
         let root = try sourceRoot()
         let source = try source(
-            at: root.appendingPathComponent("VVTerm/App/iOS/iOSContentView.swift")
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/iOS/iOSTerminalView.swift")
         )
         let redraw = try slice(
             startingAt: "private func refreshTerminal",
