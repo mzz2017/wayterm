@@ -341,6 +341,48 @@ struct TerminalTabManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func paneReconnectRequestLifecycleLivesOutsideTerminalTabManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let reconnectSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Reconnect.swift")
+        )
+
+        // Given pane reconnect requests coordinate async retry, credential
+        // loading, host retrust, and install/reconnect callbacks.
+        #expect(reconnectSource.contains("extension TerminalTabManager"))
+        #expect(reconnectSource.contains("func reconnectPane"))
+        #expect(reconnectSource.contains("func requestPaneRetry"))
+        #expect(reconnectSource.contains("func requestPaneCredentialLoad"))
+        #expect(reconnectSource.contains("func requestPaneHostRetrust"))
+        #expect(reconnectSource.contains("func requestMoshInstallAndReconnect"))
+
+        // Then the superfile should not own pane reconnect request lifecycle directly.
+        #expect(
+            !managerSource.containsRegex(#"func\s+reconnectPane\s*\("#),
+            "TerminalTabManager.swift should not own pane reconnect orchestration."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestPaneRetry\s*\("#),
+            "TerminalTabManager.swift should not own pane retry request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestPaneCredentialLoad\s*\("#),
+            "TerminalTabManager.swift should not own pane credential-load request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestPaneHostRetrust\s*\("#),
+            "TerminalTabManager.swift should not own pane host-retrust request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestMoshInstallAndReconnect\s*\("#),
+            "TerminalTabManager.swift should not own pane mosh install/reconnect requests."
+        )
+    }
+
+    @Test
     func tmuxCleanupTrackingUsesTmuxCleanupStore() throws {
         let root = try sourceRoot()
         let managerSource = try source(
