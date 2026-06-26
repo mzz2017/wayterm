@@ -260,6 +260,70 @@ struct RemoteFileBrowserScreenBoundaryTests {
     }
 
     @Test
+    func screenDoesNotOwnBrowserLabelFormatting() throws {
+        let root = try sourceRoot()
+        let screenSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
+        )
+        let labelSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen+Labels.swift")
+        )
+
+        // Given the root browser screen owns state composition and operation
+        // intent, reusable presentation labels should live in a focused UI
+        // extension instead of re-growing the root screen.
+        for functionName in [
+            "currentFolderTitle",
+            "itemCountLabel",
+            "modifiedLabel",
+            "deleteAlertTitle",
+            "sizeLabel",
+            "kindLabel"
+        ] {
+            #expect(
+                !screenSource.contains("func \(functionName)"),
+                "RemoteFileBrowserScreen.swift should not own \(functionName) label formatting."
+            )
+            #expect(
+                labelSource.contains("func \(functionName)"),
+                "RemoteFileBrowserScreen+Labels.swift should own \(functionName) label formatting."
+            )
+        }
+    }
+
+    @Test
+    func screenDoesNotOwnMacOSPanelPresentation() throws {
+        let root = try sourceRoot()
+        let screenSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
+        )
+        let panelSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen+MacOSPanels.swift")
+        )
+
+        // Given NSOpenPanel, NSSavePanel, and NSAlert are macOS-specific
+        // presentation details, keep them out of the root browser surface.
+        for functionName in [
+            "presentMacOSUploadPanel",
+            "presentMacOSDownloadPanel",
+            "presentMacOSDeleteConfirmation"
+        ] {
+            #expect(
+                !screenSource.contains("func \(functionName)"),
+                "RemoteFileBrowserScreen.swift should not own \(functionName) macOS panel presentation."
+            )
+            #expect(
+                panelSource.contains("func \(functionName)"),
+                "RemoteFileBrowserScreen+MacOSPanels.swift should own \(functionName) macOS panel presentation."
+            )
+        }
+        #expect(
+            !screenSource.contains("import AppKit"),
+            "RemoteFileBrowserScreen.swift should not import AppKit for macOS panel presentation."
+        )
+    }
+
+    @Test
     func screenDoesNotOwnToolbarCommandRouting() throws {
         let root = try sourceRoot()
         let screenSource = try source(
