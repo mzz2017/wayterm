@@ -209,6 +209,48 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func tmuxLifecycleLivesOutsideConnectionSessionManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let tmuxSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Tmux.swift")
+        )
+
+        // Given tmux prompt handling, attach planning, cleanup, and install
+        // are remote runtime lifecycle concerns with their own policy surface.
+        #expect(tmuxSource.contains("extension ConnectionSessionManager"))
+        #expect(tmuxSource.contains("func resolveTmuxAttachPrompt"))
+        #expect(tmuxSource.contains("func tmuxStartupPlan"))
+        #expect(tmuxSource.contains("func startTmuxInstall"))
+        #expect(tmuxSource.contains("func killTmuxIfNeeded"))
+        #expect(tmuxSource.contains("func disableTmux"))
+
+        // Then the superfile should not own tmux lifecycle policy directly.
+        #expect(
+            !managerSource.containsRegex(#"func\s+resolveTmuxAttachPrompt\s*\("#),
+            "ConnectionSessionManager.swift should not own tmux prompt resolution."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+tmuxStartupPlan\s*\("#),
+            "ConnectionSessionManager.swift should not own tmux startup planning."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+startTmuxInstall\s*\("#),
+            "ConnectionSessionManager.swift should not own tmux installation orchestration."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+killTmuxIfNeeded\s*\("#),
+            "ConnectionSessionManager.swift should not own tmux cleanup orchestration."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+disableTmux\s*\("#),
+            "ConnectionSessionManager.swift should not own tmux disable policy."
+        )
+    }
+
+    @Test
     func installRequestIndexingUsesSharedScopedStore() throws {
         let root = try sourceRoot()
         let managerSource = try source(
