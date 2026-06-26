@@ -86,6 +86,50 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func persistenceOrchestrationLivesOutsideConnectionSessionManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let persistenceSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Persistence.swift")
+        )
+
+        // Given snapshot shape and storage already live in dedicated
+        // Application files, the manager should delegate persistence
+        // orchestration too.
+        #expect(persistenceSource.contains("extension ConnectionSessionManager"))
+        #expect(persistenceSource.contains("func makeSnapshot"))
+        #expect(persistenceSource.contains("func applyRestoredSnapshot"))
+        #expect(persistenceSource.contains("func schedulePersist"))
+        #expect(persistenceSource.contains("func persistSnapshot"))
+        #expect(persistenceSource.contains("func restoreSnapshot"))
+
+        // Then the superfile should not own snapshot assembly or
+        // persist/restore scheduling directly.
+        #expect(
+            !managerSource.containsRegex(#"func\s+makeSnapshot\s*\("#),
+            "ConnectionSessionManager.swift should not own snapshot assembly."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+applyRestoredSnapshot\s*\("#),
+            "ConnectionSessionManager.swift should not own snapshot restoration mapping."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+schedulePersist\s*\("#),
+            "ConnectionSessionManager.swift should not own persistence scheduling."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+persistSnapshot\s*\("#),
+            "ConnectionSessionManager.swift should not own persistence writes."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+restoreSnapshot\s*\("#),
+            "ConnectionSessionManager.swift should not own persistence restores."
+        )
+    }
+
+    @Test
     func supportTypesLiveOutsideConnectionSessionManagerFile() throws {
         let root = try sourceRoot()
         let managerSource = try source(
