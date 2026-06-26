@@ -218,6 +218,32 @@ struct SSHClientSuperfileBoundaryTests {
         #expect(registrySource.contains("func tasks()"))
     }
 
+    @Test
+    func remoteFileErrorMapperLivesOutsideSSHClientFile() throws {
+        let root = try sourceRoot()
+        let clientSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift")
+        )
+        let mapperSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHRemoteFileErrorMapper.swift")
+        )
+
+        // Given the SSH client superfile source.
+        #expect(
+            !clientSource.contains("case UInt(LIBSSH2_FX_PERMISSION_DENIED)"),
+            "SSHClient.swift should not own SFTP error-code to domain-error mapping."
+        )
+        #expect(
+            !clientSource.contains("case UInt(LIBSSH2_FX_LINK_LOOP)"),
+            "SSHClient.swift should not own SFTP link-loop error mapping."
+        )
+
+        // Then SFTP remote-file error mapping has a dedicated Core/SSH file.
+        #expect(mapperSource.contains("enum SSHRemoteFileErrorMapper"))
+        #expect(mapperSource.contains("LIBSSH2_FX_PERMISSION_DENIED"))
+        #expect(mapperSource.contains("func remoteFileError"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
