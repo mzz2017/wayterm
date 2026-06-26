@@ -169,6 +169,38 @@ struct RemoteFileBrowserScreenBoundaryTests {
         }
     }
 
+    @Test
+    func screenDoesNotOwnTransferStatusPresentation() throws {
+        let root = try sourceRoot()
+        let screenSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
+        )
+        let transferSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen+TransferStatus.swift")
+        )
+
+        // Given transfer progress is UI presentation over application-owned
+        // request lifecycle state.
+        for functionName in [
+            "beginTransferStatus",
+            "updateTransferStatus",
+            "completeTransferStatus",
+            "transferProgress",
+            "transferDetail",
+            "transferCompletionAction",
+            "performTransfer"
+        ] {
+            #expect(
+                !screenSource.contains("func \(functionName)"),
+                "RemoteFileBrowserScreen.swift should not own \(functionName) transfer presentation."
+            )
+            #expect(
+                transferSource.contains("func \(functionName)"),
+                "RemoteFileBrowserScreen+TransferStatus.swift should own \(functionName) transfer presentation."
+            )
+        }
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
