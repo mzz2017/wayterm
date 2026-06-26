@@ -519,6 +519,48 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
         )
     }
 
+    @Test
+    func terminalIORequestLifecycleLivesOutsideConnectionSessionManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let ioSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+TerminalIO.swift")
+        )
+
+        // Given terminal input, rich-paste upload, and resize requests share
+        // application-owned async lifecycle tracking.
+        #expect(ioSource.contains("extension ConnectionSessionManager"))
+        #expect(ioSource.contains("func requestSessionInput"))
+        #expect(ioSource.contains("func requestSessionRichPasteUpload"))
+        #expect(ioSource.contains("func requestSessionResize"))
+        #expect(ioSource.contains("func cancelSessionRichPasteUploadRequests"))
+
+        // Then the superfile should not own the terminal I/O request
+        // implementations directly.
+        #expect(
+            !managerSource.containsRegex(#"func\s+sendInput\s*\("#),
+            "ConnectionSessionManager.swift should not own terminal input sending."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestSessionInput\s*\("#),
+            "ConnectionSessionManager.swift should not own terminal input request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestSessionRichPasteUpload\s*\("#),
+            "ConnectionSessionManager.swift should not own rich-paste upload request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+resizeSession\s*\("#),
+            "ConnectionSessionManager.swift should not own terminal resize sending."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestSessionResize\s*\("#),
+            "ConnectionSessionManager.swift should not own terminal resize request lifecycle."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

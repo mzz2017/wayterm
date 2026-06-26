@@ -24,11 +24,11 @@ final class ConnectionSessionManager: ObservableObject {
     private typealias SessionHostRetrustRequest = ConnectionSessionManagerSupport.SessionHostRetrustRequest
     private typealias SessionCredentialLoadRequest = ConnectionSessionManagerSupport.SessionCredentialLoadRequest
     private typealias SurfaceAttachRequest = ConnectionSessionManagerSupport.SurfaceAttachRequest
-    private typealias InputRequest = ConnectionSessionManagerSupport.InputRequest
-    private typealias RichPasteUploadRequest = ConnectionSessionManagerSupport.RichPasteUploadRequest
-    private typealias ResizeRequest = ConnectionSessionManagerSupport.ResizeRequest
+    typealias InputRequest = ConnectionSessionManagerSupport.InputRequest
+    typealias RichPasteUploadRequest = ConnectionSessionManagerSupport.RichPasteUploadRequest
+    typealias ResizeRequest = ConnectionSessionManagerSupport.ResizeRequest
     private typealias ProcessExitRequest = ConnectionSessionManagerSupport.ProcessExitRequest
-    private typealias SessionRuntimeState = ConnectionSessionManagerSupport.SessionRuntimeState
+    typealias SessionRuntimeState = ConnectionSessionManagerSupport.SessionRuntimeState
 
     @Published var sessions: [ConnectionSession] = [] {
         didSet {
@@ -196,11 +196,11 @@ final class ConnectionSessionManager: ObservableObject {
     var pendingSessionCredentialLoadRequestIDs: Set<UUID> { sessionCredentialLoadRequestStore.pendingScopedRequestIDs }
     private var surfaceAttachRequestStore = TerminalScopedRequestStore<SurfaceAttachRequest>()
     var pendingSurfaceAttachRequestIDs: Set<UUID> { surfaceAttachRequestStore.pendingRequestIDs }
-    private var inputRequestStore = TerminalSerialRequestStore<InputRequest>()
+    var inputRequestStore = TerminalSerialRequestStore<InputRequest>()
     var pendingInputRequestIDs: Set<UUID> { inputRequestStore.pendingRequestIDs }
-    private var richPasteUploadRequestStore = TerminalScopedRequestStore<RichPasteUploadRequest>()
+    var richPasteUploadRequestStore = TerminalScopedRequestStore<RichPasteUploadRequest>()
     var pendingSessionRichPasteUploadRequestIDs: Set<UUID> { richPasteUploadRequestStore.pendingRequestIDs }
-    private var resizeRequestStore = TerminalScopedRequestStore<ResizeRequest>()
+    var resizeRequestStore = TerminalScopedRequestStore<ResizeRequest>()
     var pendingResizeRequestIDs: Set<UUID> { resizeRequestStore.pendingRequestIDs }
     private var processExitRequestStore = TerminalScopedRequestStore<ProcessExitRequest>()
     var pendingProcessExitRequestIDs: Set<UUID> { processExitRequestStore.pendingRequestIDs }
@@ -215,8 +215,8 @@ final class ConnectionSessionManager: ObservableObject {
     /// Per-server teardown work from ordinary tab closes. New opens wait for this too.
     private var serverTeardownTaskStore = TerminalTeardownTaskStore()
     /// Application-owned tab SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
-    private var sessionRuntimes: [UUID: SessionRuntimeState] = [:]
-    private let terminalConnectionRegistry = TerminalConnectionRegistry()
+    var sessionRuntimes: [UUID: SessionRuntimeState] = [:]
+    let terminalConnectionRegistry = TerminalConnectionRegistry()
     #if DEBUG
     private var testingTerminalConnectionClientFactory: (@MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient)?
     private var rejectedShellCleanupOperationForTesting: (@MainActor @Sendable () async -> Void)?
@@ -228,10 +228,10 @@ final class ConnectionSessionManager: ObservableObject {
     private var foregroundReconnectOperationForTesting: (@MainActor (ConnectionSession) async -> Bool)?
     private var sessionHostRetrustOperationForTesting: (@MainActor (ConnectionSession, Server) async -> Bool)?
     private var surfaceAttachOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
-    private var inputOperationForTesting: (@MainActor (Data, TerminalEntityID) async -> Void)?
-    private var richPasteLeaseProviderForTesting: (@MainActor (UUID) -> RemoteConnectionLease?)?
-    private var richPasteUploadOperationForTesting: TerminalRichPasteUploadOperation?
-    private var resizeOperationForTesting: (@MainActor (TerminalResizeRequestSize, TerminalEntityID) async -> Void)?
+    var inputOperationForTesting: (@MainActor (Data, TerminalEntityID) async -> Void)?
+    var richPasteLeaseProviderForTesting: (@MainActor (UUID) -> RemoteConnectionLease?)?
+    var richPasteUploadOperationForTesting: TerminalRichPasteUploadOperation?
+    var resizeOperationForTesting: (@MainActor (TerminalResizeRequestSize, TerminalEntityID) async -> Void)?
     private var processExitOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
     #endif
     @Published private(set) var isSuspendingForBackground = false
@@ -432,18 +432,6 @@ final class ConnectionSessionManager: ObservableObject {
 
     func waitForSurfaceAttachRequest(_ requestID: UUID) async {
         await surfaceAttachRequestStore[requestID]?.task.value
-    }
-
-    func waitForInputRequest(_ requestID: UUID) async {
-        await inputRequestStore[requestID]?.task.value
-    }
-
-    func waitForSessionRichPasteUploadRequest(_ requestID: UUID) async {
-        await richPasteUploadRequestStore[requestID]?.task.value
-    }
-
-    func waitForResizeRequest(_ requestID: UUID) async {
-        await resizeRequestStore[requestID]?.task.value
     }
 
     func waitForProcessExitRequest(_ requestID: UUID) async {
@@ -877,20 +865,6 @@ final class ConnectionSessionManager: ObservableObject {
             request.task.cancel()
             request.onCompleted.forEach { $0() }
         }
-    }
-
-    private func cancelInputRequests(for sessionId: UUID) {
-        inputRequestStore.removeAllRequests(forScope: sessionId).forEach { $0.task.cancel() }
-    }
-
-    private func cancelSessionRichPasteUploadRequests(for sessionId: UUID) -> [Task<Void, Never>] {
-        let requests = richPasteUploadRequestStore.removeAllRequests(forScope: sessionId)
-        requests.forEach { $0.task.cancel() }
-        return requests.map(\.task)
-    }
-
-    private func cancelResizeRequests(for sessionId: UUID) {
-        resizeRequestStore.removeMappedRequest(forScope: sessionId)?.task.cancel()
     }
 
     private func cancelProcessExitRequests(for sessionId: UUID) {
@@ -1742,262 +1716,6 @@ final class ConnectionSessionManager: ObservableObject {
         }
     }
 
-    func sendInput(_ data: Data, to sessionId: UUID) async {
-        if let runtime = terminalConnectionRegistry.runtime(for: .session(sessionId)) {
-            do {
-                try await runtime.send(data)
-                return
-            } catch SSHError.notConnected {
-                // Input can arrive before shell registration; fallback routes
-                // below handle existing registered shells without noisy logs.
-            } catch {
-                logger.error("Failed to send to SSH: \(error.localizedDescription)")
-            }
-        }
-
-        guard let runtime = sessionRuntimes[sessionId] else {
-            if let route = registeredShellRoute(for: sessionId) {
-                try? await route.client.write(data, to: route.shellId)
-            }
-            return
-        }
-
-        if let shellId = await runtime.runtime.currentShellId(),
-           let client = await runtime.runtime.runnerClientIfCreated() {
-            do {
-                try await client.write(data, to: shellId)
-            } catch {
-                logger.error("Failed to send to SSH: \(error.localizedDescription)")
-            }
-            return
-        }
-
-        if let route = registeredShellRoute(for: sessionId) {
-            do {
-                try await route.client.write(data, to: route.shellId)
-            } catch {
-                logger.error("Failed to send to SSH: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    @discardableResult
-    func requestSessionInput(_ data: Data, to sessionId: UUID) -> UUID? {
-        guard !data.isEmpty else { return nil }
-        guard sessionWithID(sessionId) != nil else { return nil }
-
-        let requestID = UUID()
-        let previousTask = inputRequestStore.lastTask(forScope: sessionId)
-        let task = Task { @MainActor [weak self] in
-            if let previousTask {
-                await previousTask.value
-            }
-
-            guard let self else { return }
-            defer {
-                self.inputRequestStore.remove(id: requestID, ifLatestForScope: sessionId)
-            }
-
-            guard !Task.isCancelled else { return }
-            guard self.sessionWithID(sessionId) != nil else { return }
-
-            #if DEBUG
-            if let inputOperationForTesting = self.inputOperationForTesting {
-                await inputOperationForTesting(data, .session(sessionId))
-                return
-            }
-            #endif
-
-            await self.sendInput(data, to: sessionId)
-        }
-
-        inputRequestStore.insert(
-            InputRequest(sessionId: sessionId, task: task),
-            id: requestID,
-            scopeID: sessionId,
-            task: task
-        )
-        return requestID
-    }
-
-    @discardableResult
-    func requestSessionRichPasteUpload(
-        image: ClipboardImagePayload,
-        settings: RichClipboardSettings,
-        for sessionId: UUID,
-        onProgress: @escaping @MainActor (String?) -> Void = { _ in },
-        onCompleted: @escaping @MainActor (TerminalRichPasteUploadRequestResult) -> Void = { _ in }
-    ) -> UUID? {
-        guard sessionWithID(sessionId) != nil else { return nil }
-
-        if let previousRequestID = richPasteUploadRequestStore.requestID(forScope: sessionId) {
-            richPasteUploadRequestStore[previousRequestID]?.task.cancel()
-        }
-
-        let requestID = UUID()
-        let upload = richPasteUploadOperation(for: sessionId)
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                self.richPasteUploadRequestStore.remove(id: requestID, ifMappedTo: sessionId)
-            }
-
-            guard !Task.isCancelled else {
-                onCompleted(.cancelled)
-                return
-            }
-            guard self.sessionWithID(sessionId) != nil else {
-                onCompleted(.cancelled)
-                return
-            }
-
-            let result = await TerminalRichPasteUploadRequest.perform(
-                image: image,
-                settings: settings,
-                lease: self.richPasteLease(for: sessionId),
-                upload: upload,
-                onProgress: { message in
-                    guard self.richPasteUploadRequestStore.requestID(forScope: sessionId) == requestID else { return }
-                    onProgress(message)
-                },
-                pasteUploadedPath: { [weak self] text in
-                    guard let self else { return }
-                    guard self.sessionWithID(sessionId) != nil else { return }
-                    guard let inputRequestID = self.requestSessionInput(
-                        Data(text.utf8),
-                        to: sessionId
-                    ) else {
-                        return
-                    }
-                    await self.waitForInputRequest(inputRequestID)
-                }
-            )
-
-            if Task.isCancelled {
-                onCompleted(.cancelled)
-                return
-            }
-            onCompleted(result)
-        }
-
-        richPasteUploadRequestStore.insert(
-            RichPasteUploadRequest(
-                sessionId: sessionId,
-                task: task
-            ),
-            id: requestID,
-            scopeID: sessionId
-        )
-        return requestID
-    }
-
-    private func richPasteLease(for sessionId: UUID) -> RemoteConnectionLease? {
-        #if DEBUG
-        if let richPasteLeaseProviderForTesting {
-            return richPasteLeaseProviderForTesting(sessionId)
-        }
-        #endif
-
-        return remoteConnectionLease(forSessionId: sessionId)
-    }
-
-    private func richPasteUploadOperation(for sessionId: UUID) -> TerminalRichPasteUploadOperation {
-        #if DEBUG
-        if let richPasteUploadOperationForTesting {
-            return richPasteUploadOperationForTesting
-        }
-        #endif
-
-        let coordinator = TerminalRichPasteCoordinator(sessionId: sessionId)
-        return { image, settings, client, _ in
-            try await coordinator.performRichPaste(
-                image: image,
-                settings: settings,
-                client: client
-            )
-        }
-    }
-
-    func resizeSession(_ sessionId: UUID, cols: Int, rows: Int) async {
-        guard cols > 0 && rows > 0 else { return }
-
-        if let runtime = terminalConnectionRegistry.runtime(for: .session(sessionId)) {
-            do {
-                try await runtime.resize(cols: cols, rows: rows)
-                return
-            } catch SSHError.notConnected {
-                // The first resize often arrives before the remote shell exists.
-            } catch {
-                logger.warning("Failed to resize PTY: \(error.localizedDescription)")
-            }
-        }
-
-        if let runtime = sessionRuntimes[sessionId] {
-            if let shellId = await runtime.runtime.currentShellId(),
-               let client = await runtime.runtime.runnerClientIfCreated() {
-                do {
-                    try await client.resize(cols: cols, rows: rows, for: shellId)
-                } catch {
-                    logger.warning("Failed to resize PTY: \(error.localizedDescription)")
-                }
-                return
-            }
-        }
-
-        guard let route = registeredShellRoute(for: sessionId) else { return }
-        do {
-            try await route.client.resize(cols: cols, rows: rows, for: route.shellId)
-        } catch {
-            logger.warning("Failed to resize PTY: \(error.localizedDescription)")
-        }
-    }
-
-    @discardableResult
-    func requestSessionResize(_ size: TerminalResizeRequestSize, for sessionId: UUID) -> UUID? {
-        guard size.isValid else { return nil }
-        guard sessionWithID(sessionId) != nil else { return nil }
-
-        if let existingRequestID = resizeRequestStore.requestID(forScope: sessionId) {
-            resizeRequestStore.update(existingRequestID) { $0.size = size }
-            return existingRequestID
-        }
-
-        let requestID = UUID()
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                self.resizeRequestStore.remove(id: requestID, ifMappedTo: sessionId)
-            }
-
-            var appliedSize: TerminalResizeRequestSize?
-            while !Task.isCancelled {
-                guard self.sessionWithID(sessionId) != nil else { return }
-                guard let request = self.resizeRequestStore[requestID] else { return }
-                let size = request.size
-                guard size != appliedSize else { return }
-
-                #if DEBUG
-                if let resizeOperationForTesting = self.resizeOperationForTesting {
-                    await resizeOperationForTesting(size, .session(sessionId))
-                } else {
-                    await self.resizeSession(sessionId, cols: size.cols, rows: size.rows)
-                }
-                #else
-                await self.resizeSession(sessionId, cols: size.cols, rows: size.rows)
-                #endif
-
-                appliedSize = size
-            }
-        }
-
-        resizeRequestStore.insert(
-            ResizeRequest(sessionId: sessionId, size: size, task: task),
-            id: requestID,
-            scopeID: sessionId
-        )
-        return requestID
-    }
-
     private func startRuntimeIfNeeded(for sessionId: UUID, terminal: GhosttyTerminalView) async {
         guard let runtime = runtimeStateForStarting(sessionId: sessionId) else { return }
         await startRuntimeIfNeeded(runtime, terminal: terminal)
@@ -2159,7 +1877,7 @@ final class ConnectionSessionManager: ObservableObject {
         await runtime.runtime.setShellTask(shellTask)
     }
 
-    private func registeredShellRoute(for sessionId: UUID) -> (client: SSHClient, shellId: UUID)? {
+    func registeredShellRoute(for sessionId: UUID) -> (client: SSHClient, shellId: UUID)? {
         guard let client = sshClient(forSessionId: sessionId),
               let shellId = shellId(for: sessionId) else {
             return nil
