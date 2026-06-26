@@ -275,6 +275,28 @@ struct TerminalTabManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func reconnectInFlightTrackingUsesReconnectInFlightStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalReconnectInFlightStore.swift")
+        )
+
+        // Given reconnect duplicate suppression is per terminal entity.
+        #expect(storeSource.contains("struct TerminalReconnectInFlightStore"))
+        #expect(storeSource.contains("func begin"))
+
+        // Then reconnect in-flight state should not remain a bespoke Set in the superfile.
+        #expect(
+            !managerSource.contains("paneReconnectsInFlight"),
+            "TerminalTabManager.swift should not own bespoke reconnect in-flight indexing."
+        )
+        #expect(managerSource.contains("reconnectInFlightStore"))
+    }
+
+    @Test
     func connectWatchdogTrackingUsesWatchdogStore() throws {
         let root = try sourceRoot()
         let managerSource = try source(

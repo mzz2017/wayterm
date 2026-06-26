@@ -82,7 +82,7 @@ final class TerminalTabManager: ObservableObject {
         return TerminalAutoReconnectPolicy.shouldAttemptReconnect(
             isSceneActive: isSceneActive,
             autoReconnectEnabled: autoReconnectEnabled,
-            reconnectInFlight: reconnectInFlight || paneReconnectsInFlight.contains(paneId),
+            reconnectInFlight: reconnectInFlight || reconnectInFlightStore.contains(paneId),
             isSuspendingForBackground: isSuspendingForBackground,
             connectionState: state,
             hasLiveRuntime: hasLiveRuntime(forPaneId: paneId)
@@ -95,7 +95,7 @@ final class TerminalTabManager: ObservableObject {
     ) -> Bool {
         guard let state = paneStates[paneId]?.connectionState else { return false }
         return TerminalManualReconnectPolicy.shouldAttemptReconnect(
-            reconnectInFlight: reconnectInFlight || paneReconnectsInFlight.contains(paneId),
+            reconnectInFlight: reconnectInFlight || reconnectInFlightStore.contains(paneId),
             snapshotState: state,
             hasLiveRuntime: hasLiveRuntime(forPaneId: paneId)
         )
@@ -139,7 +139,7 @@ final class TerminalTabManager: ObservableObject {
     private var serverUnlocker: @MainActor (Server) async -> Bool = { server in
         await AppLockManager.shared.ensureServerUnlocked(server)
     }
-    private var paneReconnectsInFlight: Set<UUID> = []
+    private var reconnectInFlightStore = TerminalReconnectInFlightStore()
     /// In-flight SSH teardown tasks by server, used to serialize close/open ordering.
     private var serverTeardownTaskStore = TerminalTeardownTaskStore()
     /// Application-owned connect watchdog timers keyed by pane.
@@ -1504,13 +1504,15 @@ final class TerminalTabManager: ObservableObject {
     ) async -> TerminalReconnectRequestResult {
         guard shouldManuallyReconnectPane(
             paneId,
-            reconnectInFlight: paneReconnectsInFlight.contains(paneId)
+            reconnectInFlight: reconnectInFlightStore.contains(paneId)
         ) else {
             return .skipped
         }
+        guard reconnectInFlightStore.begin(paneId) else {
+            return .skipped
+        }
 
-        paneReconnectsInFlight.insert(paneId)
-        defer { paneReconnectsInFlight.remove(paneId) }
+        defer { reconnectInFlightStore.finish(paneId) }
 
         do {
             let credentials = try await credentialsProvider(server)
@@ -2747,7 +2749,7 @@ extension TerminalTabManager {
         resizeRequestStore.removeAll()
         processExitRequestStore.allRequests.forEach { $0.task.cancel() }
         processExitRequestStore.removeAll()
-        paneReconnectsInFlight.removeAll()
+        reconnectInFlightStore.removeAll()
         connectWatchdogStore.removeAll().forEach { $0.cancel() }
         credentialsProvider = { server in
             try KeychainManager.shared.getCredentials(for: server)

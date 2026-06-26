@@ -102,7 +102,7 @@ final class ConnectionSessionManager: ObservableObject {
         return TerminalAutoReconnectPolicy.shouldAttemptReconnect(
             isSceneActive: isSceneActive,
             autoReconnectEnabled: autoReconnectEnabled,
-            reconnectInFlight: reconnectInFlight || sessionReconnectsInFlight.contains(sessionId),
+            reconnectInFlight: reconnectInFlight || reconnectInFlightStore.contains(sessionId),
             isSuspendingForBackground: isSuspendingForBackground,
             connectionState: state,
             hasLiveRuntime: hasLiveRuntime(forSessionId: sessionId)
@@ -115,7 +115,7 @@ final class ConnectionSessionManager: ObservableObject {
     ) -> Bool {
         guard let state = sessionState(for: sessionId) else { return false }
         return TerminalManualReconnectPolicy.shouldAttemptReconnect(
-            reconnectInFlight: reconnectInFlight || sessionReconnectsInFlight.contains(sessionId),
+            reconnectInFlight: reconnectInFlight || reconnectInFlightStore.contains(sessionId),
             snapshotState: state,
             hasLiveRuntime: hasLiveRuntime(forSessionId: sessionId)
         )
@@ -204,7 +204,7 @@ final class ConnectionSessionManager: ObservableObject {
     var pendingResizeRequestIDs: Set<UUID> { resizeRequestStore.pendingRequestIDs }
     private var processExitRequestStore = TerminalScopedRequestStore<ProcessExitRequest>()
     var pendingProcessExitRequestIDs: Set<UUID> { processExitRequestStore.pendingRequestIDs }
-    private var sessionReconnectsInFlight: Set<UUID> = []
+    private var reconnectInFlightStore = TerminalReconnectInFlightStore()
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
     private var serverDisconnectTaskStore = TerminalServerTaskStore()
     /// Application-owned connect watchdog timers keyed by session.
@@ -2506,13 +2506,15 @@ final class ConnectionSessionManager: ObservableObject {
         }
         guard shouldManuallyReconnectSession(
             session.id,
-            reconnectInFlight: sessionReconnectsInFlight.contains(session.id)
+            reconnectInFlight: reconnectInFlightStore.contains(session.id)
         ) else {
             return .skipped
         }
+        guard reconnectInFlightStore.begin(session.id) else {
+            return .skipped
+        }
 
-        sessionReconnectsInFlight.insert(session.id)
-        defer { sessionReconnectsInFlight.remove(session.id) }
+        defer { reconnectInFlightStore.finish(session.id) }
 
         do {
             let credentials = try await credentialsProvider(server)
@@ -3333,7 +3335,7 @@ extension ConnectionSessionManager {
         resizeRequestStore.removeAll()
         processExitRequestStore.allRequests.forEach { $0.task.cancel() }
         processExitRequestStore.removeAll()
-        sessionReconnectsInFlight.removeAll()
+        reconnectInFlightStore.removeAll()
         connectWatchdogStore.removeAll().forEach { $0.cancel() }
         credentialsProvider = { server in
             try KeychainManager.shared.getCredentials(for: server)
