@@ -77,4 +77,29 @@ final class TerminalScopedRequestStoreTests: XCTestCase {
         XCTAssertEqual(store[newRequestID], "new")
         XCTAssertEqual(store.requestID(forScope: scopeID), newRequestID)
     }
+
+    func testRemoveAllRequestsForScopeClearsOlderAndVisibleRequests() {
+        // Given a scope has a superseded request plus the latest visible request.
+        var store = TerminalScopedRequestStore<String>()
+        let scopeID = UUID()
+        let otherScopeID = UUID()
+        let oldRequestID = UUID()
+        let newRequestID = UUID()
+        let otherRequestID = UUID()
+        store.insert("old", id: oldRequestID, scopeID: scopeID)
+        store.insert("new", id: newRequestID, scopeID: scopeID)
+        store.insert("other", id: otherRequestID, scopeID: otherScopeID)
+
+        // When all requests for that scope are removed.
+        let removed = store.removeAllRequests(forScope: scopeID)
+
+        // Then both the superseded and visible requests are returned, and
+        // unrelated scopes keep their request and visible mapping.
+        XCTAssertEqual(Set(removed), ["old", "new"])
+        XCTAssertNil(store[oldRequestID])
+        XCTAssertNil(store[newRequestID])
+        XCTAssertNil(store.requestID(forScope: scopeID))
+        XCTAssertEqual(store[otherRequestID], "other")
+        XCTAssertEqual(store.requestID(forScope: otherScopeID), otherRequestID)
+    }
 }

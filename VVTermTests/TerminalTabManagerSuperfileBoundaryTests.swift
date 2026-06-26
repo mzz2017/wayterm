@@ -178,6 +178,28 @@ struct TerminalTabManagerSuperfileBoundaryTests {
         #expect(managerSource.contains("processExitRequestStore"))
     }
 
+    @Test
+    func paneRichPasteUploadRequestIndexingUsesSharedStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalScopedRequestStore.swift")
+        )
+
+        // Given pane-scoped rich-paste upload indexing has a shared Application helper.
+        #expect(storeSource.contains("struct TerminalScopedRequestStore"))
+        #expect(storeSource.contains("removeAllRequests(forScope"))
+
+        // Then rich-paste upload should not keep bespoke pane/request double dictionaries in the superfile.
+        #expect(
+            !managerSource.contains("richPasteUploadRequestByPane"),
+            "TerminalTabManager.swift should not own bespoke rich-paste upload request indexing."
+        )
+        #expect(managerSource.contains("richPasteUploadRequestStore"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

@@ -133,9 +133,8 @@ final class TerminalTabManager: ObservableObject {
     private var inputRequestByPane: [UUID: UUID] = [:]
     private var lastInputTaskByPane: [UUID: Task<Void, Never>] = [:]
     var pendingInputRequestIDs: Set<UUID> { Set(inputRequests.keys) }
-    private var richPasteUploadRequests: [UUID: RichPasteUploadRequest] = [:]
-    private var richPasteUploadRequestByPane: [UUID: UUID] = [:]
-    var pendingPaneRichPasteUploadRequestIDs: Set<UUID> { Set(richPasteUploadRequests.keys) }
+    private var richPasteUploadRequestStore = TerminalScopedRequestStore<RichPasteUploadRequest>()
+    var pendingPaneRichPasteUploadRequestIDs: Set<UUID> { richPasteUploadRequestStore.pendingRequestIDs }
     private var resizeRequestStore = TerminalScopedRequestStore<ResizeRequest>()
     var pendingResizeRequestIDs: Set<UUID> { resizeRequestStore.pendingRequestIDs }
     private var processExitRequestStore = TerminalScopedRequestStore<ProcessExitRequest>()
@@ -363,7 +362,7 @@ final class TerminalTabManager: ObservableObject {
     }
 
     func waitForPaneRichPasteUploadRequest(_ requestID: UUID) async {
-        await richPasteUploadRequests[requestID]?.task.value
+        await richPasteUploadRequestStore[requestID]?.task.value
     }
 
     func waitForResizeRequest(_ requestID: UUID) async {
@@ -874,9 +873,8 @@ final class TerminalTabManager: ObservableObject {
     ) -> UUID? {
         guard paneStates[paneId] != nil else { return nil }
 
-        if let previousRequestID = richPasteUploadRequestByPane[paneId],
-           let previousRequest = richPasteUploadRequests[previousRequestID] {
-            previousRequest.task.cancel()
+        if let previousRequestID = richPasteUploadRequestStore.requestID(forScope: paneId) {
+            richPasteUploadRequestStore[previousRequestID]?.task.cancel()
         }
 
         let requestID = UUID()
@@ -884,10 +882,7 @@ final class TerminalTabManager: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.richPasteUploadRequests.removeValue(forKey: requestID)
-                if self.richPasteUploadRequestByPane[paneId] == requestID {
-                    self.richPasteUploadRequestByPane.removeValue(forKey: paneId)
-                }
+                self.richPasteUploadRequestStore.remove(id: requestID, ifMappedTo: paneId)
             }
 
             guard !Task.isCancelled else {
@@ -905,7 +900,7 @@ final class TerminalTabManager: ObservableObject {
                 lease: self.richPasteLease(for: paneId),
                 upload: upload,
                 onProgress: { message in
-                    guard self.richPasteUploadRequestByPane[paneId] == requestID else { return }
+                    guard self.richPasteUploadRequestStore.requestID(forScope: paneId) == requestID else { return }
                     onProgress(message)
                 },
                 pasteUploadedPath: { [weak self] text in
@@ -928,11 +923,14 @@ final class TerminalTabManager: ObservableObject {
             onCompleted(result)
         }
 
-        richPasteUploadRequests[requestID] = RichPasteUploadRequest(
-            paneId: paneId,
-            task: task
+        richPasteUploadRequestStore.insert(
+            RichPasteUploadRequest(
+                paneId: paneId,
+                task: task
+            ),
+            id: requestID,
+            scopeID: paneId
         )
-        richPasteUploadRequestByPane[paneId] = requestID
         return requestID
     }
 
@@ -2067,20 +2065,9 @@ final class TerminalTabManager: ObservableObject {
     }
 
     private func cancelPaneRichPasteUploadRequests(for paneId: UUID) -> [Task<Void, Never>] {
-        let requestIDs = richPasteUploadRequests.compactMap { requestID, request in
-            request.paneId == paneId ? requestID : nil
-        }
-
-        var tasks: [Task<Void, Never>] = []
-        for requestID in requestIDs {
-            if let task = richPasteUploadRequests[requestID]?.task {
-                task.cancel()
-                tasks.append(task)
-            }
-        }
-
-        richPasteUploadRequestByPane.removeValue(forKey: paneId)
-        return tasks
+        let requests = richPasteUploadRequestStore.removeAllRequests(forScope: paneId)
+        requests.forEach { $0.task.cancel() }
+        return requests.map(\.task)
     }
 
     private func cancelResizeRequests(for paneId: UUID) {
@@ -2778,13 +2765,12 @@ extension TerminalTabManager {
         inputRequests.removeAll()
         inputRequestByPane.removeAll()
         lastInputTaskByPane.removeAll()
-        let richPasteUploadTasks = richPasteUploadRequests.values.map(\.task)
+        let richPasteUploadTasks = richPasteUploadRequestStore.allRequests.map(\.task)
         richPasteUploadTasks.forEach { $0.cancel() }
         for task in richPasteUploadTasks {
             await task.value
         }
-        richPasteUploadRequests.removeAll()
-        richPasteUploadRequestByPane.removeAll()
+        richPasteUploadRequestStore.removeAll()
         resizeRequestStore.allRequests.forEach { $0.task.cancel() }
         resizeRequestStore.removeAll()
         processExitRequestStore.allRequests.forEach { $0.task.cancel() }
