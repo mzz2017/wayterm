@@ -29,6 +29,7 @@ final class ConnectionSessionManager: ObservableObject {
     typealias ResizeRequest = ConnectionSessionManagerSupport.ResizeRequest
     typealias ProcessExitRequest = ConnectionSessionManagerSupport.ProcessExitRequest
     typealias SessionRuntimeState = ConnectionSessionManagerSupport.SessionRuntimeState
+    typealias ServerProvider = @MainActor (UUID) -> Server?
 
     @Published var sessions: [ConnectionSession] = [] {
         didSet {
@@ -209,6 +210,9 @@ final class ConnectionSessionManager: ObservableObject {
     var serverDisconnectTaskStore = TerminalServerTaskStore()
     /// Application-owned connect watchdog timers keyed by session.
     var connectWatchdogStore = TerminalConnectWatchdogStore()
+    var serverProvider: ServerProvider = { serverId in
+        ServerManager.shared.servers.first { $0.id == serverId }
+    }
     var credentialsProvider: @MainActor (Server) async throws -> ServerCredentials = { server in
         try KeychainManager.shared.getCredentials(for: server)
     }

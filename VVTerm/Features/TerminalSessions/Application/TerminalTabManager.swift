@@ -34,6 +34,7 @@ final class TerminalTabManager: ObservableObject {
     typealias ResizeRequest = TerminalTabManagerSupport.ResizeRequest
     typealias ProcessExitRequest = TerminalTabManagerSupport.ProcessExitRequest
     typealias PaneRuntimeState = TerminalTabManagerSupport.PaneRuntimeState
+    typealias ServerProvider = @MainActor (UUID) -> Server?
 
     // MARK: - Published State
 
@@ -144,6 +145,9 @@ final class TerminalTabManager: ObservableObject {
     var serverTeardownTaskStore = TerminalTeardownTaskStore()
     /// Application-owned connect watchdog timers keyed by pane.
     var connectWatchdogStore = TerminalConnectWatchdogStore()
+    var serverProvider: ServerProvider = { serverId in
+        ServerManager.shared.servers.first { $0.id == serverId }
+    }
     var credentialsProvider: @MainActor (Server) async throws -> ServerCredentials = { server in
         try KeychainManager.shared.getCredentials(for: server)
     }

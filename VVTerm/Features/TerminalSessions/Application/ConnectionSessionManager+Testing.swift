@@ -66,6 +66,9 @@ extension ConnectionSessionManager {
         processExitRequestStore.removeAll()
         reconnectInFlightStore.removeAll()
         connectWatchdogStore.removeAll().forEach { $0.cancel() }
+        serverProvider = { serverId in
+            ServerManager.shared.servers.first { $0.id == serverId }
+        }
         credentialsProvider = { server in
             try KeychainManager.shared.getCredentials(for: server)
         }
@@ -225,6 +228,12 @@ extension ConnectionSessionManager {
         _ provider: @escaping @MainActor (Server) async throws -> ServerCredentials
     ) {
         credentialsProvider = provider
+    }
+
+    func setServerProviderForTesting(
+        _ provider: @escaping ServerProvider
+    ) {
+        serverProvider = provider
     }
 
     func registerTerminalForTesting(sessionId: UUID) {

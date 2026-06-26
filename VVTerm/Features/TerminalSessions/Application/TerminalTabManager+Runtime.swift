@@ -282,7 +282,7 @@ extension TerminalTabManager {
         }
 
         guard let paneState = paneStates[paneId],
-              let server = ServerManager.shared.servers.first(where: { $0.id == paneState.serverId }) else {
+              let server = serverProvider(paneState.serverId) else {
             updatePaneState(paneId, connectionState: .failed("Server not found"))
             return nil
         }
@@ -559,7 +559,7 @@ extension TerminalTabManager {
             return
         }
 
-        let server = ServerManager.shared.servers.first { $0.id == paneState.serverId }
+        let server = serverProvider(paneState.serverId)
         let entityId = TerminalEntityID.pane(paneId)
         let runtime: TerminalConnectionRuntime
         if let existing = terminalConnectionRegistry.runtime(for: entityId) {

@@ -323,7 +323,7 @@ extension ConnectionSessionManager {
         }
 
         guard let session = sessionWithID(sessionId),
-              let server = ServerManager.shared.servers.first(where: { $0.id == session.serverId }) else {
+              let server = serverProvider(session.serverId) else {
             updateSessionState(sessionId, to: .failed("Server not found"))
             return nil
         }
@@ -520,7 +520,7 @@ extension ConnectionSessionManager {
             return
         }
 
-        let server = ServerManager.shared.servers.first { $0.id == session.serverId }
+        let server = serverProvider(session.serverId)
         let entityId = session.terminalEntityId
         let runtime: TerminalConnectionRuntime
         if let existing = terminalConnectionRegistry.runtime(for: entityId) {
