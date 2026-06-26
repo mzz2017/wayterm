@@ -90,6 +90,28 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
         #expect(supportSource.contains("final class SessionRuntimeState"))
     }
 
+    @Test
+    func reliabilityManagerLivesOutsideConnectionSessionManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let reliabilitySource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionReliabilityManager.swift")
+        )
+
+        // Given the connection session manager source.
+        #expect(
+            !managerSource.contains("actor ConnectionReliabilityManager"),
+            "ConnectionSessionManager.swift should not own the reconnect reliability actor."
+        )
+
+        // Then reconnect reliability policy has a dedicated Application file.
+        #expect(reliabilitySource.contains("actor ConnectionReliabilityManager"))
+        #expect(reliabilitySource.contains("handleDisconnect"))
+        #expect(reliabilitySource.contains("resetAttempts"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
