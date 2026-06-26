@@ -544,51 +544,23 @@ final class TerminalTabManager: ObservableObject {
             return nil
         }
 
-        let paneExists: Bool
-        if let layout = currentTab.layout {
-            paneExists = layout.findPane(paneId)
-        } else {
-            paneExists = currentTab.rootPaneId == paneId
-        }
-        guard paneExists else {
+        let newPaneId = UUID()
+        guard let split = TerminalTabSplitPolicy.split(
+            tab: currentTab,
+            targetPaneId: paneId,
+            newPaneId: newPaneId,
+            direction: direction,
+            sourcePaneState: paneStates[paneId],
+            isTmuxEnabled: tmuxResolver.isTmuxEnabled(for: currentTab.serverId)
+        ) else {
             logger.warning("splitPane: pane not found \(paneId.uuidString, privacy: .public)")
             return nil
         }
 
-        let newPaneId = UUID()
+        // Store pane state before @Published tab updates so rendering can resolve it immediately.
+        paneStates[newPaneId] = split.newPaneState
 
-        // Create pane state FIRST (before any @Published updates)
-        // This ensures the view has state when it renders
-        var newState = TerminalPaneState(
-            paneId: newPaneId,
-            tabId: currentTab.id,
-            serverId: currentTab.serverId
-        )
-        newState.workingDirectory = paneStates[paneId]?.workingDirectory
-        newState.seedPaneId = paneId
-        newState.tmuxStatus = tmuxResolver.isTmuxEnabled(for: currentTab.serverId) ? .unknown : .off
-        paneStates[newPaneId] = newState
-
-        // Create the new split node
-        let newSplit = TerminalSplitNode.split(TerminalSplitNode.Split(
-            direction: direction,
-            ratio: 0.5,
-            left: .leaf(paneId: paneId),
-            right: .leaf(paneId: newPaneId)
-        ))
-
-        // Update tab layout
-        var updatedTab = currentTab
-        if let currentLayout = currentTab.layout {
-            updatedTab.layout = currentLayout.replacingPane(paneId, with: newSplit).equalized()
-        } else {
-            // No layout yet - create one with the split
-            updatedTab.layout = newSplit
-        }
-        updatedTab.focusedPaneId = newPaneId
-
-        // Update tabs array (triggers @Published, view will have state ready)
-        updateTab(updatedTab)
+        updateTab(split.updatedTab)
 
         logger.info("Split pane \(paneId) \(direction.rawValue), new pane: \(newPaneId)")
         return newPaneId
