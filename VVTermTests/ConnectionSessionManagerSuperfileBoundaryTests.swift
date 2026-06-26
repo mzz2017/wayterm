@@ -369,6 +369,28 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func serverDisconnectTaskTrackingUsesServerTaskStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalServerTaskStore.swift")
+        )
+
+        // Given explicit server disconnect gates allow one tracked task per server.
+        #expect(storeSource.contains("struct TerminalServerTaskStore"))
+        #expect(storeSource.contains("task(forServer"))
+
+        // Then server disconnect task indexing should not remain a bespoke dictionary in the superfile.
+        #expect(
+            !managerSource.contains("serverDisconnectTasks"),
+            "ConnectionSessionManager.swift should not own bespoke server disconnect task indexing."
+        )
+        #expect(managerSource.contains("serverDisconnectTaskStore"))
+    }
+
+    @Test
     func connectWatchdogTrackingUsesWatchdogStore() throws {
         let root = try sourceRoot()
         let managerSource = try source(

@@ -208,7 +208,7 @@ final class ConnectionSessionManager: ObservableObject {
     var pendingProcessExitRequestIDs: Set<UUID> { processExitRequestStore.pendingRequestIDs }
     private var sessionReconnectsInFlight: Set<UUID> = []
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
-    private var serverDisconnectTasks: [UUID: Task<Void, Never>] = [:]
+    private var serverDisconnectTaskStore = TerminalServerTaskStore()
     /// Application-owned connect watchdog timers keyed by session.
     private var connectWatchdogStore = TerminalConnectWatchdogStore()
     private var credentialsProvider: @MainActor (Server) async throws -> ServerCredentials = { server in
@@ -465,7 +465,7 @@ final class ConnectionSessionManager: ObservableObject {
     ///   - server: The server to connect to
     ///   - forceNew: If true, always creates a new tab even if one exists for this server
     func openConnection(to server: Server, forceNew: Bool = false) async throws -> ConnectionSession {
-        if let disconnectTask = serverDisconnectTasks[server.id] {
+        if let disconnectTask = serverDisconnectTaskStore.task(forServer: server.id) {
             logger.info("Open waiting for disconnect cleanup [serverId: \(server.id.uuidString, privacy: .public)]")
             await disconnectTask.value
         }
@@ -1087,7 +1087,7 @@ final class ConnectionSessionManager: ObservableObject {
     /// Disconnect all sessions for a server and wait until SSH clients/shells are unregistered.
     /// Use this for explicit user disconnects that may be followed immediately by a new connect.
     func disconnectServerAndWait(_ serverId: UUID) async {
-        if let existingTask = serverDisconnectTasks[serverId] {
+        if let existingTask = serverDisconnectTaskStore.task(forServer: serverId) {
             await existingTask.value
             return
         }
@@ -1096,9 +1096,9 @@ final class ConnectionSessionManager: ObservableObject {
             guard let self else { return }
             await self.performDisconnectServerAndWait(serverId)
         }
-        serverDisconnectTasks[serverId] = task
+        serverDisconnectTaskStore.setTask(task, forServer: serverId)
         await task.value
-        serverDisconnectTasks.removeValue(forKey: serverId)
+        serverDisconnectTaskStore.removeTask(forServer: serverId)
     }
 
     private func performDisconnectServerAndWait(_ serverId: UUID) async {
@@ -3343,7 +3343,7 @@ extension ConnectionSessionManager {
         credentialsProvider = { server in
             try KeychainManager.shared.getCredentials(for: server)
         }
-        serverDisconnectTasks.removeAll()
+        serverDisconnectTaskStore.removeAll()
         terminalsNeedingReconnectReset.removeAll()
         isSuspendingForBackground = false
         tmuxCleanupServers.removeAll()
@@ -3434,7 +3434,7 @@ extension ConnectionSessionManager {
     }
 
     func setServerDisconnectTaskForTesting(_ serverId: UUID, task: Task<Void, Never>?) {
-        serverDisconnectTasks[serverId] = task
+        serverDisconnectTaskStore.setTask(task, forServer: serverId)
     }
 
     func setTerminalConnectionClientFactoryForTesting(
