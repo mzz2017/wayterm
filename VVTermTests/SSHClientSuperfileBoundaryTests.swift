@@ -174,6 +174,50 @@ struct SSHClientSuperfileBoundaryTests {
         #expect(registrySource.contains("func tasks()"))
     }
 
+    @Test
+    func abortStateLivesOutsideSSHClientFile() throws {
+        let root = try sourceRoot()
+        let clientSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift")
+        )
+        let abortStateSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHClientAbortState.swift")
+        )
+
+        // Given the SSH client superfile source.
+        #expect(
+            !clientSource.contains("final class SSHClientAbortState"),
+            "SSHClient.swift should not own abort synchronization state."
+        )
+
+        // Then connection abort state has a dedicated Core/SSH file.
+        #expect(abortStateSource.contains("final class SSHClientAbortState"))
+        #expect(abortStateSource.contains("setSessionForAbort"))
+        #expect(abortStateSource.contains("func abort()"))
+    }
+
+    @Test
+    func moshTeardownTaskRegistryLivesOutsideSSHClientFile() throws {
+        let root = try sourceRoot()
+        let clientSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift")
+        )
+        let registrySource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHMoshTeardownTaskRegistry.swift")
+        )
+
+        // Given the SSH client superfile source.
+        #expect(
+            !clientSource.contains("final class SSHMoshTeardownTaskRegistry"),
+            "SSHClient.swift should not own Mosh teardown task tracking."
+        )
+
+        // Then Mosh stream teardown tracking has a dedicated Core/SSH file.
+        #expect(registrySource.contains("final class SSHMoshTeardownTaskRegistry"))
+        #expect(registrySource.contains("Task.detached"))
+        #expect(registrySource.contains("func tasks()"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
