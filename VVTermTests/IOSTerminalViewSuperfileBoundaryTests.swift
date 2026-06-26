@@ -5,8 +5,9 @@ import Testing
 // These source-boundary tests protect iOSTerminalView superfile control. The
 // iOS terminal root owns top-level composition and intent routing; reusable
 // floating controls, navigation toolbar chrome, zen-mode overlay chrome,
-// session-page chrome, and transient connection chrome should live in sibling
-// UI files so the root view does not accumulate presentation subcomponents.
+// session-page chrome, tab-swipe chrome, and transient connection chrome
+// should live in sibling UI files so the root view does not accumulate
+// presentation subcomponents.
 // Update this test only if iOS terminal root composition intentionally changes.
 @Suite
 struct IOSTerminalViewSuperfileBoundaryTests {
@@ -153,6 +154,50 @@ struct IOSTerminalViewSuperfileBoundaryTests {
         #expect(
             sessionPageSource.contains("IOSTerminalViewPolicy.terminalPreparation"),
             "IOSTerminalSessionPage should preserve terminal preparation policy use."
+        )
+    }
+
+    @Test
+    func iosTerminalViewComposesTabSwipeOverlayWithoutOwningGestureChrome() throws {
+        let root = try sourceRoot()
+        let rootSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/iOS/iOSTerminalView.swift")
+        )
+        let overlaySource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/iOS/IOSTerminalTabSwipeOverlay.swift")
+        )
+
+        // Given iOSTerminalView owns top-level view selection state.
+        #expect(
+            rootSource.contains("IOSTerminalTabSwipeOverlay("),
+            "iOSTerminalView.swift should compose the tab swipe overlay."
+        )
+
+        // Then edge gesture chrome and haptic feedback should live in their own
+        // sibling UI component instead of growing the terminal root view.
+        #expect(
+            !rootSource.contains("private var serverViewSwipeOverlay"),
+            "iOSTerminalView.swift should not define the tab swipe overlay."
+        )
+        #expect(
+            !rootSource.contains("private func tabSwipeGesture"),
+            "iOSTerminalView.swift should not define the tab swipe gesture."
+        )
+        #expect(
+            !rootSource.contains("UIImpactFeedbackGenerator"),
+            "iOSTerminalView.swift should not own tab-swipe haptic chrome."
+        )
+        #expect(
+            overlaySource.contains("struct IOSTerminalTabSwipeOverlay: View"),
+            "IOSTerminalTabSwipeOverlay.swift should define the swipe overlay component."
+        )
+        #expect(
+            overlaySource.contains("DragGesture(minimumDistance: 24"),
+            "IOSTerminalTabSwipeOverlay should own the swipe gesture."
+        )
+        #expect(
+            overlaySource.contains("UIImpactFeedbackGenerator"),
+            "IOSTerminalTabSwipeOverlay should own tab-swipe haptic feedback."
         )
     }
 

@@ -677,7 +677,15 @@ struct iOSTerminalView: View {
         .transaction { transaction in
             transaction.animation = nil
         }
-        .overlay(serverViewSwipeOverlay)
+        .overlay {
+            IOSTerminalTabSwipeOverlay(
+                selectedView: selectedView,
+                serverSessions: serverSessions,
+                fileTabServerId: fileTabServerId,
+                selectedSessionId: selectedSessionIdBinding,
+                fileTabs: fileTabs
+            )
+        }
     }
 
     @ViewBuilder
@@ -950,94 +958,6 @@ struct iOSTerminalView: View {
                 attemptFocus()
             }
         }
-    }
-
-
-    @ViewBuilder
-    private var serverViewSwipeOverlay: some View {
-        if (selectedView == ConnectionViewTab.terminal.id && serverSessions.count > 1)
-            || (selectedView == ConnectionViewTab.files.id && serverFileTabs.count > 1) {
-            GeometryReader { _ in
-                let edgeWidth: CGFloat = 32
-                let leadingGestureInset: CGFloat = selectedView == ConnectionViewTab.files.id ? 44 : 0
-                HStack(spacing: 0) {
-                    Color.clear
-                        .frame(width: leadingGestureInset)
-                        .allowsHitTesting(false)
-
-                    Color.clear
-                        .frame(width: edgeWidth)
-                        .contentShape(Rectangle())
-                        .gesture(tabSwipeGesture())
-
-                    Color.clear
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .allowsHitTesting(false)
-
-                    Color.clear
-                        .frame(width: edgeWidth)
-                        .contentShape(Rectangle())
-                        .gesture(tabSwipeGesture())
-                }
-            }
-        }
-    }
-
-    private func tabSwipeGesture() -> some Gesture {
-        DragGesture(minimumDistance: 24, coordinateSpace: .local)
-            .onEnded { value in
-                let horizontal = value.translation.width
-                let vertical = value.translation.height
-                guard abs(horizontal) > abs(vertical),
-                      abs(horizontal) > 60 else { return }
-                if horizontal < 0 {
-                    if selectedView == ConnectionViewTab.files.id {
-                        selectNextFileTab()
-                    } else {
-                        selectNextServerSession()
-                    }
-                } else {
-                    if selectedView == ConnectionViewTab.files.id {
-                        selectPreviousFileTab()
-                    } else {
-                        selectPreviousServerSession()
-                    }
-                }
-            }
-    }
-
-    private func selectNextServerSession() {
-        guard let currentId = sessionManager.selectedSessionId,
-              let index = serverSessions.firstIndex(where: { $0.id == currentId }),
-              index < serverSessions.count - 1 else { return }
-        sessionManager.selectedSessionId = serverSessions[index + 1].id
-        triggerTabSwitchFeedback()
-    }
-
-    private func selectPreviousServerSession() {
-        guard let currentId = sessionManager.selectedSessionId,
-              let index = serverSessions.firstIndex(where: { $0.id == currentId }),
-              index > 0 else { return }
-        sessionManager.selectedSessionId = serverSessions[index - 1].id
-        triggerTabSwitchFeedback()
-    }
-
-    private func selectNextFileTab() {
-        guard let serverId = fileTabServerId else { return }
-        fileTabs.selectNextTab(for: serverId)
-        triggerTabSwitchFeedback()
-    }
-
-    private func selectPreviousFileTab() {
-        guard let serverId = fileTabServerId else { return }
-        fileTabs.selectPreviousTab(for: serverId)
-        triggerTabSwitchFeedback()
-    }
-
-    private func triggerTabSwitchFeedback() {
-        let generator = UIImpactFeedbackGenerator(style: .light)
-        generator.prepare()
-        generator.impactOccurred()
     }
 
 }
