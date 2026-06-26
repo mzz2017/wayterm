@@ -157,11 +157,15 @@ Safe refactor expectation:
 
 ### Superfile Control
 
-- Do not add new superfiles. Treat Swift source files over roughly 800 lines as design debt and files over roughly 1200 lines as split candidates before adding more behavior.
+- Do not add new superfiles.
+- A Swift source file is a superfile when it is over roughly 1200 lines, or when it is over roughly 800 lines and also has multiple responsibilities, non-trivial lifecycle ownership, cross-layer dependencies, or tests that are hard to localize.
+- Treat files over roughly 800 lines as design debt signals, not as an automatic mandate for low-value splits. Use line count to trigger ownership review.
+- Prioritize splits by risk and responsibility: extract stable owners for lifecycle, persistence, FFI, input routing, state machines, protocol adapters, and parsing before cosmetic line-count reductions.
 - Root/composition views should stay small, ideally 200-300 lines, and only wire dependencies, navigation, and top-level presentation state.
 - Move feature UI, policy, parsing, lifecycle intent, and state orchestration into the owning `Features/<FeatureName>` or `Core` layer instead of expanding app-shell files.
 - Prefer direct structural splits with focused tests over compatibility shims or partial duplicate paths.
-- If touching an existing superfile, either reduce it, extract a coherent owned piece, or document why the change cannot reasonably shrink it in the same atomic commit.
+- If touching an existing superfile, either reduce it, extract a coherent owned piece with focused behavior or boundary tests, or document why the change cannot reasonably shrink it in the same atomic commit.
+- Avoid extracting code that only saves a few lines while creating unclear ownership, broadening access control, or locking implementation details into brittle structure-only tests.
 
 ## Commits
 
