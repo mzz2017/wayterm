@@ -59,6 +59,37 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
         #expect(snapshotSource.contains("struct ServerSnapshot"))
     }
 
+    @Test
+    func supportTypesLiveOutsideConnectionSessionManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let supportSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManagerSupport.swift")
+        )
+
+        // Given the connection session manager source.
+        #expect(
+            !managerSource.contains("struct SessionCloseResult"),
+            "ConnectionSessionManager.swift should not own session close result support shape."
+        )
+        #expect(
+            !managerSource.contains("struct ForegroundReconnectRequest"),
+            "ConnectionSessionManager.swift should not own foreground reconnect request shape."
+        )
+        #expect(
+            !managerSource.contains("final class SessionRuntimeState"),
+            "ConnectionSessionManager.swift should not own session runtime support storage."
+        )
+
+        // Then session-manager-only support types have a dedicated Application file.
+        #expect(supportSource.contains("enum ConnectionSessionManagerSupport"))
+        #expect(supportSource.contains("struct SessionCloseResult"))
+        #expect(supportSource.contains("struct ForegroundReconnectRequest"))
+        #expect(supportSource.contains("final class SessionRuntimeState"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

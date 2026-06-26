@@ -12,120 +12,23 @@ import UIKit
 final class ConnectionSessionManager: ObservableObject {
     static let shared = ConnectionSessionManager()
 
-    private struct SSHUnregisterResult: Sendable {
-        let shellToClose: (client: SSHClient, shellId: UUID)?
-        let clientToDisconnect: SSHClient?
-    }
-
-    private struct SessionCloseResult {
-        let sessionId: UUID
-        let serverId: UUID
-        let tmuxSessionNameToKill: String?
-        let richPasteUploadTasks: [Task<Void, Never>]
-        let shellTeardownRequest: ShellTeardownRequest?
-    }
-
-    private struct ShellTeardownRequest {
-        let sessionId: UUID
-        let handler: @MainActor (_ mode: ShellTeardownMode) async -> Void
-    }
-
-    private struct TmuxInstallRequest {
-        let sessionId: UUID
-        let task: Task<Void, Never>
-        var onCompleted: [@MainActor () -> Void]
-    }
-
-    private struct MoshInstallRequest {
-        let sessionId: UUID
-        let task: Task<Void, Never>
-        var onCompleted: [@MainActor () -> Void]
-        var onFailed: [@MainActor (Error) -> Void]
-    }
-
-    private struct SessionRetryRequest {
-        let sessionId: UUID
-        let task: Task<Void, Never>
-        var onCompleted: [@MainActor (TerminalReconnectRequestResult) -> Void]
-    }
-
-    private struct ActiveConnectionOpenRequest {
-        let sessionId: UUID
-        var task: Task<Void, Never>?
-        var onOpened: [@MainActor () -> Void]
-    }
-
-    private struct ForegroundReconnectRequest {
-        let sessionId: UUID
-        var task: Task<Void, Never>?
-        var callbacks: [ForegroundReconnectCallback]
-    }
-
-    private struct ForegroundReconnectCallback {
-        let action: TerminalForegroundReconnectAction
-        let onAction: @MainActor (TerminalForegroundReconnectAction) -> Void
-    }
-
-    private struct SessionHostRetrustRequest {
-        let sessionId: UUID
-        let task: Task<Void, Never>
-        var onCompleted: [@MainActor (Bool) -> Void]
-    }
-
-    private struct SessionCredentialLoadRequest {
-        let sessionId: UUID
-        let task: Task<Void, Never>
-        var onCompleted: [@MainActor (TerminalCredentialLoadResult) -> Void]
-    }
-
-    private struct SurfaceAttachRequest {
-        let sessionId: UUID
-        var context: TerminalSurfaceAttachContext
-        let task: Task<Void, Never>
-    }
-
-    private struct InputRequest {
-        let sessionId: UUID
-        let task: Task<Void, Never>
-    }
-
-    private struct RichPasteUploadRequest {
-        let sessionId: UUID
-        let task: Task<Void, Never>
-    }
-
-    private struct ResizeRequest {
-        let sessionId: UUID
-        var size: TerminalResizeRequestSize
-        let task: Task<Void, Never>
-    }
-
-    private struct ProcessExitRequest {
-        let sessionId: UUID
-        let task: Task<Void, Never>
-    }
-
-    private final class SessionRuntimeState {
-        let sessionId: UUID
-        var server: Server
-        var credentials: ServerCredentials
-        let runtime: TerminalConnectionRuntime
-        var onProcessExit: () -> Void
-
-        init(
-            sessionId: UUID,
-            server: Server,
-            credentials: ServerCredentials,
-            runtime: TerminalConnectionRuntime,
-            onProcessExit: @escaping () -> Void
-        ) {
-            self.sessionId = sessionId
-            self.server = server
-            self.credentials = credentials
-            self.runtime = runtime
-            self.onProcessExit = onProcessExit
-        }
-    }
+    private typealias SSHUnregisterResult = ConnectionSessionManagerSupport.SSHUnregisterResult
+    private typealias SessionCloseResult = ConnectionSessionManagerSupport.SessionCloseResult
+    private typealias ShellTeardownRequest = ConnectionSessionManagerSupport.ShellTeardownRequest
+    private typealias TmuxInstallRequest = ConnectionSessionManagerSupport.TmuxInstallRequest
+    private typealias MoshInstallRequest = ConnectionSessionManagerSupport.MoshInstallRequest
+    private typealias SessionRetryRequest = ConnectionSessionManagerSupport.SessionRetryRequest
+    private typealias ActiveConnectionOpenRequest = ConnectionSessionManagerSupport.ActiveConnectionOpenRequest
+    private typealias ForegroundReconnectRequest = ConnectionSessionManagerSupport.ForegroundReconnectRequest
+    private typealias ForegroundReconnectCallback = ConnectionSessionManagerSupport.ForegroundReconnectCallback
+    private typealias SessionHostRetrustRequest = ConnectionSessionManagerSupport.SessionHostRetrustRequest
+    private typealias SessionCredentialLoadRequest = ConnectionSessionManagerSupport.SessionCredentialLoadRequest
+    private typealias SurfaceAttachRequest = ConnectionSessionManagerSupport.SurfaceAttachRequest
+    private typealias InputRequest = ConnectionSessionManagerSupport.InputRequest
+    private typealias RichPasteUploadRequest = ConnectionSessionManagerSupport.RichPasteUploadRequest
+    private typealias ResizeRequest = ConnectionSessionManagerSupport.ResizeRequest
+    private typealias ProcessExitRequest = ConnectionSessionManagerSupport.ProcessExitRequest
+    private typealias SessionRuntimeState = ConnectionSessionManagerSupport.SessionRuntimeState
 
     @Published var sessions: [ConnectionSession] = [] {
         didSet {
