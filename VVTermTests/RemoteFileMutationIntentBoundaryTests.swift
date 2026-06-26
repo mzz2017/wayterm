@@ -119,9 +119,12 @@ struct RemoteFileMutationIntentBoundaryTests {
         // Given shared RemoteFiles browser UI plus the macOS file-promise
         // support source.
         let root = try sourceRoot()
-        let browserSource = try source(
-            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
-        )
+        let transferSource = try [
+            "VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen+TransferStatus.swift",
+            "VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen+FileTransfers.swift"
+        ].map { path in
+            try source(at: root.appendingPathComponent(path))
+        }.joined(separator: "\n")
         let macOSScreenSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift")
         )
@@ -132,27 +135,27 @@ struct RemoteFileMutationIntentBoundaryTests {
         // Then transfer UI should send intent to the application store instead
         // of owning transfer/drop/file-promise async Tasks.
         #expect(
-            browserSource.contains("browser.requestTransfer("),
-            "RemoteFileBrowserScreen.performTransfer should delegate transfer task ownership to RemoteFileBrowserStore."
+            transferSource.contains("browser.requestTransfer("),
+            "RemoteFileBrowserScreen transfer extensions should delegate transfer task ownership to RemoteFileBrowserStore."
         )
         #expect(
-            containsRegex(#"browser\.requestTransfer\(\s*serverId:\s*server\.id"#, in: browserSource),
-            "RemoteFileBrowserScreen.performTransfer should pass server identity so disconnect can cancel same-server transfers."
+            containsRegex(#"browser\.requestTransfer\(\s*serverId:\s*server\.id"#, in: transferSource),
+            "RemoteFileBrowserScreen transfer extensions should pass server identity so disconnect can cancel same-server transfers."
         )
         #expect(
             containsRegex(#"browser\.requestTransfer\(\s*serverId:\s*server\.id"#, in: macOSScreenSource),
             "RemoteFileBrowserMacScreen file export should pass server identity into the store-owned transfer request."
         )
         #expect(
-            !browserSource.contains("Task {\n            do {\n                try await operation { progress in"),
+            !transferSource.contains("Task {\n            do {\n                try await operation { progress in"),
             "RemoteFileBrowserScreen should not own the transfer Task in performTransfer."
         )
         #expect(
-            !browserSource.contains("func beginUploadFlow(urls: [URL], to destinationPath: String, initialMessage: String) {\n        Task {"),
+            !transferSource.contains("func beginUploadFlow(urls: [URL], to destinationPath: String, initialMessage: String) {\n        Task {"),
             "RemoteFileBrowserScreen should not own the upload planning Task before starting a transfer request."
         )
         #expect(
-            !browserSource.contains("Task {\n                do {\n                    let temporaryURL = try preparedTemporaryURL.get()"),
+            !transferSource.contains("Task {\n                do {\n                    let temporaryURL = try preparedTemporaryURL.get()"),
             "Remote drag file representations should not download through a UI-owned Task."
         )
         #expect(

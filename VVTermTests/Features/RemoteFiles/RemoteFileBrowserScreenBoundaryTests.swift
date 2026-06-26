@@ -201,6 +201,64 @@ struct RemoteFileBrowserScreenBoundaryTests {
         }
     }
 
+    @Test
+    func screenDoesNotOwnFileTransferGlue() throws {
+        let root = try sourceRoot()
+        let screenSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
+        )
+        let transferSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen+FileTransfers.swift")
+        )
+
+        // Given upload, download, share, and file-promise export are transfer
+        // presentation over application-owned request lifecycle state.
+        for functionName in [
+            "beginUpload",
+            "beginDownload",
+            "beginShare",
+            "handleUploadSelection",
+            "handleDownloadExportCompletion",
+            "beginUploadFlow",
+            "uploadResolvedLocalURLs",
+            "requestFileRepresentationExport",
+            "cleanupDownloadExport",
+            "cleanupShareItem",
+            "finishSharing"
+        ] {
+            #expect(
+                !screenSource.contains("func \(functionName)"),
+                "RemoteFileBrowserScreen.swift should not own \(functionName) file-transfer glue."
+            )
+            #expect(
+                transferSource.contains("func \(functionName)"),
+                "RemoteFileBrowserScreen+FileTransfers.swift should own \(functionName) file-transfer glue."
+            )
+        }
+    }
+
+    @Test
+    func screenDoesNotOwnToolbarCommandRouting() throws {
+        let root = try sourceRoot()
+        let screenSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
+        )
+        let toolbarCommandSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen+ToolbarCommands.swift")
+        )
+
+        // Given toolbar commands are external intent routing into the browser
+        // surface rather than root view composition.
+        #expect(
+            !screenSource.contains("func handlePendingToolbarCommand"),
+            "RemoteFileBrowserScreen.swift should not own toolbar command routing."
+        )
+        #expect(
+            toolbarCommandSource.contains("func handlePendingToolbarCommand"),
+            "RemoteFileBrowserScreen+ToolbarCommands.swift should own toolbar command routing."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
