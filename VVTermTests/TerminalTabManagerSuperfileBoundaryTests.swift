@@ -334,6 +334,39 @@ struct TerminalTabManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func debugTestingLifecycleLivesOutsideTerminalTabManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let testingSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Testing.swift")
+        )
+
+        // Given test reset and fake-injection hooks perform lifecycle teardown
+        // and should not keep the production manager source near superfile size.
+        #expect(testingSource.contains("#if DEBUG"))
+        #expect(testingSource.contains("extension TerminalTabManager"))
+        #expect(testingSource.contains("func resetForTesting"))
+        #expect(testingSource.contains("func setTerminalConnectionClientFactoryForTesting"))
+        #expect(testingSource.contains("func completeRuntimeShellStartForTesting"))
+
+        // Then the production manager file should not own debug lifecycle support.
+        #expect(
+            !managerSource.containsRegex(#"func\s+resetForTesting\s*\("#),
+            "TerminalTabManager.swift should not own debug reset lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+setTerminalConnectionClientFactoryForTesting\s*\("#),
+            "TerminalTabManager.swift should not own test client injection."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+completeRuntimeShellStartForTesting\s*\("#),
+            "TerminalTabManager.swift should not own test shell-start completion helpers."
+        )
+    }
+
+    @Test
     func serverTeardownTaskTrackingUsesTeardownTaskStore() throws {
         let root = try sourceRoot()
         let managerSource = try source(

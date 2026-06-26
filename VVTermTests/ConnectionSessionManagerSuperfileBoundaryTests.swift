@@ -613,6 +613,39 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func debugTestingLifecycleLivesOutsideConnectionSessionManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let testingSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Testing.swift")
+        )
+
+        // Given test reset and fake-injection hooks perform lifecycle teardown
+        // and should not keep the production manager source near superfile size.
+        #expect(testingSource.contains("#if DEBUG"))
+        #expect(testingSource.contains("extension ConnectionSessionManager"))
+        #expect(testingSource.contains("func resetForTesting"))
+        #expect(testingSource.contains("func setTerminalConnectionClientFactoryForTesting"))
+        #expect(testingSource.contains("func completeRuntimeShellStartForTesting"))
+
+        // Then the production manager file should not own debug lifecycle support.
+        #expect(
+            !managerSource.containsRegex(#"func\s+resetForTesting\s*\("#),
+            "ConnectionSessionManager.swift should not own debug reset lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+setTerminalConnectionClientFactoryForTesting\s*\("#),
+            "ConnectionSessionManager.swift should not own test client injection."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+completeRuntimeShellStartForTesting\s*\("#),
+            "ConnectionSessionManager.swift should not own test shell-start completion helpers."
+        )
+    }
+
+    @Test
     func sessionInputRequestIndexingUsesSerialStore() throws {
         let root = try sourceRoot()
         let managerSource = try source(
