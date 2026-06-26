@@ -525,10 +525,6 @@ struct ServerManagerBootstrapTests {
     func serverSaveIntentTracksProFailureWithoutCallingSaveContinuations() async throws {
         // Given a free-tier server create request when the server limit is
         // already reached.
-        let wasPro = StoreManager.shared.isPro
-        StoreManager.shared.isPro = false
-        defer { StoreManager.shared.isPro = wasPro }
-
         let workspace = Workspace(id: UUID(), name: "Main", order: 0)
         let existingServers = (0..<FreeTierLimits.maxServers).map { index in
             Server(
@@ -548,7 +544,8 @@ struct ServerManagerBootstrapTests {
         )
         let manager = ServerManager.makeForTesting(
             servers: existingServers,
-            workspaces: [workspace]
+            workspaces: [workspace],
+            isProProvider: { false }
         )
         let credentials = ServerCredentials(serverId: submittedServer.id, password: "secret")
         var didSave = false
@@ -583,10 +580,6 @@ struct ServerManagerBootstrapTests {
     func serverMoveIntentTracksSuccessAfterMetadataAndSelectionUpdates() async throws {
         // Given a user-initiated server move where the source workspace
         // currently selects the server and the destination has not selected it.
-        let wasPro = StoreManager.shared.isPro
-        StoreManager.shared.isPro = true
-        defer { StoreManager.shared.isPro = wasPro }
-
         let sourceWorkspace = Workspace(
             id: UUID(),
             name: "Source",
@@ -611,7 +604,8 @@ struct ServerManagerBootstrapTests {
         selectedSource.lastSelectedServerId = server.id
         let manager = ServerManager.makeForTesting(
             servers: [server],
-            workspaces: [selectedSource, destinationWorkspace]
+            workspaces: [selectedSource, destinationWorkspace],
+            isProProvider: { true }
         )
         var movedServer: Server?
 
@@ -640,10 +634,6 @@ struct ServerManagerBootstrapTests {
     @Test
     func serverMoveIntentTracksProFailureWithoutCallingMoveContinuations() async throws {
         // Given a free-tier move request into a locked destination workspace.
-        let wasPro = StoreManager.shared.isPro
-        StoreManager.shared.isPro = false
-        defer { StoreManager.shared.isPro = wasPro }
-
         let sourceWorkspace = Workspace(id: UUID(), name: "Unlocked", order: 0)
         let lockedDestination = Workspace(id: UUID(), name: "Locked", order: 1)
         let server = Server(
@@ -655,7 +645,8 @@ struct ServerManagerBootstrapTests {
         )
         let manager = ServerManager.makeForTesting(
             servers: [server],
-            workspaces: [sourceWorkspace, lockedDestination]
+            workspaces: [sourceWorkspace, lockedDestination],
+            isProProvider: { false }
         )
         var didMove = false
         var didShowProRequired = false
@@ -687,10 +678,6 @@ struct ServerManagerBootstrapTests {
     func serverMoveIntentRoutesOrdinaryFailureToFailureContinuation() async throws {
         // Given a move request whose destination workspace has disappeared
         // before the application-layer move starts.
-        let wasPro = StoreManager.shared.isPro
-        StoreManager.shared.isPro = true
-        defer { StoreManager.shared.isPro = wasPro }
-
         let sourceWorkspace = Workspace(id: UUID(), name: "Source", order: 0)
         let missingDestination = Workspace(id: UUID(), name: "Missing", order: 1)
         let server = Server(
@@ -702,7 +689,8 @@ struct ServerManagerBootstrapTests {
         )
         let manager = ServerManager.makeForTesting(
             servers: [server],
-            workspaces: [sourceWorkspace]
+            workspaces: [sourceWorkspace],
+            isProProvider: { true }
         )
         var didMove = false
         var didShowProRequired = false
@@ -931,12 +919,8 @@ struct ServerManagerBootstrapTests {
     @Test
     func environmentSaveIntentTracksCreateAndReturnsPersistedWorkspace() async throws {
         // Given an environment create launched from synchronous UI intent.
-        let wasPro = StoreManager.shared.isPro
-        StoreManager.shared.isPro = true
-        defer { StoreManager.shared.isPro = wasPro }
-
         let workspace = Workspace(id: UUID(), name: "Main", order: 0)
-        let manager = ServerManager.makeForTesting(workspaces: [workspace])
+        let manager = ServerManager.makeForTesting(workspaces: [workspace], isProProvider: { true })
         let newEnvironment = ServerEnvironment(
             id: UUID(),
             name: "QA",

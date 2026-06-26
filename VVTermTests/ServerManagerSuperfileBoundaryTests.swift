@@ -338,6 +338,11 @@ struct ServerManagerSuperfileBoundaryTests {
         #expect(accessSource.contains("var lockedServersCount"))
         #expect(accessSource.contains("var lockedWorkspacesCount"))
         #expect(accessSource.contains("var hasLockedItems"))
+        #expect(accessSource.contains("isProProvider()"))
+        #expect(
+            !accessSource.contains("StoreManager.shared.isPro"),
+            "ServerManager access policy should receive entitlement state through the manager boundary."
+        )
 
         for propertyName in [
             "canAddServer",
@@ -391,6 +396,11 @@ struct ServerManagerSuperfileBoundaryTests {
         #expect(moveSource.contains("func moveRestriction"))
         #expect(moveSource.contains("func moveDestinationIDs"))
         #expect(moveSource.contains("func updateWorkspaceSelectionMetadataAfterMove"))
+        #expect(moveSource.contains("isProProvider()"))
+        #expect(
+            !moveSource.contains("StoreManager.shared.isPro"),
+            "ServerManager move policy should receive entitlement state through the manager boundary."
+        )
         #expect(environmentSource.contains("extension ServerManager"))
         #expect(environmentSource.contains("func createCustomEnvironment"))
         #expect(environmentSource.contains("func updateEnvironment"))

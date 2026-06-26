@@ -110,6 +110,7 @@ final class ServerManager: ObservableObject {
     typealias ServerCredentialDeletion = @MainActor @Sendable (UUID) async throws -> Void
     typealias ServerCredentialStore = @MainActor @Sendable (Server, ServerCredentials) throws -> Void
     typealias ServerStartupLoadAction = @MainActor @Sendable (ServerManager) async -> Void
+    typealias IsProProvider = @MainActor @Sendable () -> Bool
 
     static let shared = ServerManager()
 
@@ -129,6 +130,7 @@ final class ServerManager: ObservableObject {
     let deleteCredentials: ServerCredentialDeletion
     private let storeCredentials: ServerCredentialStore
     let startupLoadAction: ServerStartupLoadAction
+    let isProProvider: IsProProvider
     let persistsLocalData: Bool
     let recordsSyncMutations: Bool
     let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ServerManager")
@@ -162,6 +164,7 @@ final class ServerManager: ObservableObject {
         deleteCredentials: @escaping ServerCredentialDeletion = ServerManager.defaultCredentialDeletion,
         storeCredentials: @escaping ServerCredentialStore = ServerManager.defaultCredentialStore,
         startupLoadAction: ServerStartupLoadAction? = nil,
+        isProProvider: @escaping IsProProvider = { StoreManager.shared.isPro },
         persistsLocalData: Bool = true,
         recordsSyncMutations: Bool = true
     ) {
@@ -171,6 +174,7 @@ final class ServerManager: ObservableObject {
         self.startupLoadAction = startupLoadAction ?? { manager in
             await manager.loadData()
         }
+        self.isProProvider = isProProvider
         self.persistsLocalData = persistsLocalData
         self.recordsSyncMutations = recordsSyncMutations
 
@@ -190,7 +194,8 @@ final class ServerManager: ObservableObject {
         deletionTeardown: @escaping ServerDeletionTeardown = { _ in },
         deleteCredentials: @escaping ServerCredentialDeletion = { _ in },
         storeCredentials: @escaping ServerCredentialStore = { _, _ in },
-        startupLoadAction: ServerStartupLoadAction? = nil
+        startupLoadAction: ServerStartupLoadAction? = nil,
+        isProProvider: @escaping IsProProvider = { StoreManager.shared.isPro }
     ) -> ServerManager {
         let manager = ServerManager(
             loadLocalDataOnInit: false,
@@ -199,6 +204,7 @@ final class ServerManager: ObservableObject {
             deleteCredentials: deleteCredentials,
             storeCredentials: storeCredentials,
             startupLoadAction: startupLoadAction,
+            isProProvider: isProProvider,
             persistsLocalData: false,
             recordsSyncMutations: false
         )

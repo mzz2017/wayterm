@@ -4,7 +4,7 @@ extension ServerManager {
     func assignmentWorkspaces(for server: Server?) -> [Workspace] {
         let workspacesSortedByOrder = ServerAccessPolicy.workspacesSortedByOrder(workspaces)
 
-        if StoreManager.shared.isPro {
+        if isProProvider() {
             return workspacesSortedByOrder
         }
 
@@ -91,7 +91,7 @@ extension ServerManager {
             return nil
         }
 
-        if !StoreManager.shared.isPro && isWorkspaceLocked(destination) {
+        if !isProProvider() && isWorkspaceLocked(destination) {
             return VVTermError.proRequired(String(localized: "Upgrade to Pro to move servers into locked workspaces"))
         }
 
@@ -100,7 +100,7 @@ extension ServerManager {
 
     private func moveDestinationIDs(for server: Server) -> Set<UUID> {
         ServerAccessPolicy.moveDestinationIDs(
-            isPro: StoreManager.shared.isPro,
+            isPro: isProProvider(),
             server: server,
             workspaces: workspaces
         )
