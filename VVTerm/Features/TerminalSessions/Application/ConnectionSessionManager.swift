@@ -8,37 +8,6 @@ import AppKit
 import UIKit
 #endif
 
-enum ShellTeardownMode: Equatable, Sendable {
-    case closeShellOnly
-    case fullDisconnect
-}
-
-enum TerminalSurfaceDetachReason: Equatable, Sendable {
-    case viewDisappeared
-    case sessionClosed
-}
-
-struct TerminalSurfaceAttachContext: Equatable, Sendable {
-    var isAppActive: Bool
-    var isViewActive: Bool
-    var autoReconnectEnabled: Bool
-
-    static let active = TerminalSurfaceAttachContext(
-        isAppActive: true,
-        isViewActive: true,
-        autoReconnectEnabled: true
-    )
-}
-
-struct TerminalResizeRequestSize: Equatable, Sendable {
-    let cols: Int
-    let rows: Int
-
-    var isValid: Bool {
-        cols > 0 && rows > 0
-    }
-}
-
 @MainActor
 final class ConnectionSessionManager: ObservableObject {
     static let shared = ConnectionSessionManager()
@@ -3135,58 +3104,6 @@ extension ConnectionSessionManager {
         }
         isRestoring = false
     }
-}
-
-private struct ConnectionSessionsSnapshot: Codable {
-    struct SessionSnapshot: Codable {
-        let id: UUID
-        let serverId: UUID
-        let title: String
-        let createdAt: Date
-        let lastActivity: Date
-        let autoReconnect: Bool
-        let parentSessionId: UUID?
-        let workingDirectory: String?
-        let presentationOverrides: TerminalPresentationOverrides?
-
-        init(from session: ConnectionSession) {
-            self.id = session.id
-            self.serverId = session.serverId
-            self.title = session.title
-            self.createdAt = session.createdAt
-            self.lastActivity = session.lastActivity
-            self.autoReconnect = session.autoReconnect
-            self.parentSessionId = session.parentSessionId
-            self.workingDirectory = session.workingDirectory
-            self.presentationOverrides = session.presentationOverrides.isEmpty ? nil : session.presentationOverrides
-        }
-
-        func toSession() -> ConnectionSession {
-            ConnectionSession(
-                id: id,
-                serverId: serverId,
-                title: title,
-                connectionState: .disconnected,
-                createdAt: createdAt,
-                lastActivity: lastActivity,
-                terminalSurfaceId: nil,
-                autoReconnect: autoReconnect,
-                workingDirectory: workingDirectory,
-                presentationOverrides: presentationOverrides ?? .empty,
-                parentSessionId: parentSessionId
-            )
-        }
-    }
-
-    struct ServerSnapshot: Codable {
-        let serverId: UUID
-        let selectedSessionId: UUID?
-        let selectedView: String?
-    }
-
-    let sessions: [SessionSnapshot]
-    let selectedSessionId: UUID?
-    let serverSelections: [ServerSnapshot]
 }
 
 // MARK: - tmux Integration
