@@ -78,6 +78,33 @@ struct TerminalSessionDependencyBoundaryTests {
         #expect(!openSource.contains("ServerManager.shared.updateLastConnected"))
     }
 
+    @Test
+    func terminalTabOpenAndSplitUseInjectedPolicyBoundaries() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let openSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Open.swift")
+        )
+
+        // Given tab opening needs a default selected view and split/tab limits
+        // need entitlement state.
+        #expect(managerSource.contains("typealias IsProProvider"))
+        #expect(managerSource.contains("typealias DefaultViewProvider"))
+        #expect(managerSource.contains("var isProProvider: IsProProvider"))
+        #expect(managerSource.contains("var defaultViewProvider: DefaultViewProvider"))
+        #expect(openSource.contains("self.defaultViewProvider()"))
+        #expect(managerSource.contains("if isProProvider() { return true }"))
+        #expect(managerSource.contains("guard isProProvider() else { return nil }"))
+
+        // Then TerminalSessions open/split policy does not reach directly
+        // into Store or connection-view configuration singletons.
+        #expect(!openSource.contains("ViewTabConfigurationManager.shared"))
+        #expect(!managerSource.contains("StoreManager.shared.isPro { return true }"))
+        #expect(!managerSource.contains("guard StoreManager.shared.isPro"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

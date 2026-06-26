@@ -19,7 +19,7 @@ extension TerminalTabManager {
             do {
                 let tab = try await self.openTab(for: server)
                 if selectTerminalViewOnSuccess {
-                    self.selectedViewByServer[server.id] = ViewTabConfigurationManager.shared.effectiveDefaultTab()
+                    self.selectedViewByServer[server.id] = self.defaultViewProvider()
                 }
                 onOpened(tab)
             } catch is CancellationError {
@@ -55,7 +55,7 @@ extension TerminalTabManager {
 
                 if let tab = self.selectedTab(for: server.id) ?? self.tabs(for: server.id).first {
                     if selectTerminalViewOnSuccess {
-                        self.selectedViewByServer[server.id] = ViewTabConfigurationManager.shared.effectiveDefaultTab()
+                        self.selectedViewByServer[server.id] = self.defaultViewProvider()
                     }
                     onOpened(tab)
                     return
@@ -63,7 +63,7 @@ extension TerminalTabManager {
 
                 let tab = try await self.openTab(for: server, shouldEnsureUnlocked: false)
                 if selectTerminalViewOnSuccess {
-                    self.selectedViewByServer[server.id] = ViewTabConfigurationManager.shared.effectiveDefaultTab()
+                    self.selectedViewByServer[server.id] = self.defaultViewProvider()
                 }
                 onOpened(tab)
             } catch is CancellationError {

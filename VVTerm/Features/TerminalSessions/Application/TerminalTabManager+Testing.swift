@@ -63,6 +63,12 @@ extension TerminalTabManager {
         processExitRequestStore.removeAll()
         reconnectInFlightStore.removeAll()
         connectWatchdogStore.removeAll().forEach { $0.cancel() }
+        isProProvider = {
+            StoreManager.shared.isPro
+        }
+        defaultViewProvider = {
+            ViewTabConfigurationManager.shared.effectiveDefaultTab()
+        }
         serverProvider = { serverId in
             ServerManager.shared.servers.first { $0.id == serverId }
         }
@@ -205,6 +211,18 @@ extension TerminalTabManager {
         _ provider: @escaping ServerProvider
     ) {
         serverProvider = provider
+    }
+
+    func setIsProProviderForTesting(
+        _ provider: @escaping IsProProvider
+    ) {
+        isProProvider = provider
+    }
+
+    func setDefaultViewProviderForTesting(
+        _ provider: @escaping DefaultViewProvider
+    ) {
+        defaultViewProvider = provider
     }
 
     func setServerUnlockerForTesting(

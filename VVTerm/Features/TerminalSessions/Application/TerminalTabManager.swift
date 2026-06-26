@@ -35,6 +35,8 @@ final class TerminalTabManager: ObservableObject {
     typealias ProcessExitRequest = TerminalTabManagerSupport.ProcessExitRequest
     typealias PaneRuntimeState = TerminalTabManagerSupport.PaneRuntimeState
     typealias ServerProvider = @MainActor (UUID) -> Server?
+    typealias IsProProvider = @MainActor () -> Bool
+    typealias DefaultViewProvider = @MainActor () -> String
 
     // MARK: - Published State
 
@@ -137,6 +139,12 @@ final class TerminalTabManager: ObservableObject {
     var pendingResizeRequestIDs: Set<UUID> { resizeRequestStore.pendingRequestIDs }
     var processExitRequestStore = TerminalScopedRequestStore<ProcessExitRequest>()
     var pendingProcessExitRequestIDs: Set<UUID> { processExitRequestStore.pendingRequestIDs }
+    var isProProvider: IsProProvider = {
+        StoreManager.shared.isPro
+    }
+    var defaultViewProvider: DefaultViewProvider = {
+        ViewTabConfigurationManager.shared.effectiveDefaultTab()
+    }
     var serverUnlocker: @MainActor (Server) async -> Bool = { server in
         await AppLockManager.shared.ensureServerUnlocked(server)
     }
@@ -258,7 +266,7 @@ final class TerminalTabManager: ObservableObject {
 
     /// Check if can open new tab (Pro limit check)
     var canOpenNewTab: Bool {
-        if StoreManager.shared.isPro { return true }
+        if isProProvider() { return true }
         let totalTabs = tabsByServer.values.flatMap { $0 }.count
         return totalTabs < FreeTierLimits.maxTabs
     }
@@ -275,7 +283,7 @@ final class TerminalTabManager: ObservableObject {
 
     /// Split a pane horizontally (left | right)
     func splitHorizontal(tab: TerminalTab, paneId: UUID) -> UUID? {
-        guard StoreManager.shared.isPro else { return nil }
+        guard isProProvider() else { return nil }
         let newPaneId = splitPane(tab: tab, paneId: paneId, direction: .horizontal)
         if newPaneId != nil {
             AnalyticsTracker.shared.trackSplitPaneCreated()
@@ -285,7 +293,7 @@ final class TerminalTabManager: ObservableObject {
 
     /// Split a pane vertically (top / bottom)
     func splitVertical(tab: TerminalTab, paneId: UUID) -> UUID? {
-        guard StoreManager.shared.isPro else { return nil }
+        guard isProProvider() else { return nil }
         let newPaneId = splitPane(tab: tab, paneId: paneId, direction: .vertical)
         if newPaneId != nil {
             AnalyticsTracker.shared.trackSplitPaneCreated()
