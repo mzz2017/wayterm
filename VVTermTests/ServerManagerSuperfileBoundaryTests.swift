@@ -244,6 +244,44 @@ struct ServerManagerSuperfileBoundaryTests {
         )
     }
 
+    @Test
+    func deletionMutationLifecycleLivesOutsideServerManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager.swift")
+        )
+        let deletionSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager+Deletion.swift")
+        )
+
+        // Given destructive server/workspace/environment mutations coordinate
+        // teardown, credentials, known-host cleanup, local persistence, and sync.
+        #expect(deletionSource.contains("extension ServerManager"))
+        #expect(deletionSource.contains("func deleteServer"))
+        #expect(deletionSource.contains("func deleteWorkspace"))
+        #expect(deletionSource.contains("func deleteEnvironment"))
+        #expect(deletionSource.contains("deletionTeardown"))
+        #expect(deletionSource.contains("deleteCredentials"))
+        #expect(deletionSource.contains("removeKnownHosts"))
+        #expect(deletionSource.contains("enqueuePendingServerDelete"))
+        #expect(deletionSource.contains("enqueuePendingWorkspaceDelete"))
+
+        // Then the ServerManager superfile should not directly own destructive
+        // deletion lifecycle implementations.
+        #expect(
+            !managerSource.containsRegex(#"func\s+deleteServer\s*\("#),
+            "ServerManager.swift should not own server deletion lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+deleteWorkspace\s*\("#),
+            "ServerManager.swift should not own workspace deletion lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+deleteEnvironment\s*\("#),
+            "ServerManager.swift should not own environment deletion lifecycle."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

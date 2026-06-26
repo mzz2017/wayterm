@@ -125,8 +125,8 @@ final class ServerManager: ObservableObject {
 
     let cloudKit = CloudKitManager.shared
     let syncCoordinator = CloudKitSyncCoordinator.shared
-    private let deletionTeardown: ServerDeletionTeardown
-    private let deleteCredentials: ServerCredentialDeletion
+    let deletionTeardown: ServerDeletionTeardown
+    let deleteCredentials: ServerCredentialDeletion
     private let storeCredentials: ServerCredentialStore
     let startupLoadAction: ServerStartupLoadAction
     let persistsLocalData: Bool
@@ -332,22 +332,6 @@ final class ServerManager: ObservableObject {
         try await updateServer(server)
     }
 
-
-    func deleteServer(_ server: Server) async throws {
-        await deletionTeardown(server)
-        try await deleteCredentials(server.id)
-
-        servers.removeAll { $0.id == server.id }
-        let candidates = Self.knownHostRemovalCandidates(
-            removedServers: [server],
-            remainingServers: servers
-        )
-        await removeKnownHosts(for: candidates)
-        enqueuePendingServerDelete(server)
-        await persistLocalMutations(logMessage: "Deleted server: \(server.name)")
-    }
-
-
     func updateLastConnected(for server: Server) async {
         guard let index = servers.firstIndex(where: { $0.id == server.id }) else { return }
         servers[index].lastConnected = Date()
@@ -400,39 +384,6 @@ final class ServerManager: ObservableObject {
         enqueuePendingWorkspaceUpsert(updatedWorkspace)
         await persistLocalMutations(logMessage: "Updated workspace: \(updatedWorkspace.name)")
     }
-
-
-    func deleteWorkspace(_ workspace: Workspace) async throws {
-        // Delete all servers in workspace
-        let workspaceServers = servers.filter { $0.workspaceId == workspace.id }
-        for server in workspaceServers {
-            try await deleteServer(server)
-        }
-
-        if pendingBootstrapWorkspaceID == workspace.id {
-            pendingBootstrapWorkspaceID = nil
-        }
-        workspaces.removeAll { $0.id == workspace.id }
-        enqueuePendingWorkspaceDelete(workspace)
-        await persistLocalMutations(logMessage: "Deleted workspace: \(workspace.name)")
-    }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     func reorderWorkspaces(from source: IndexSet, to destination: Int) async throws {
         workspaces.move(fromOffsets: source, toOffset: destination)
@@ -714,37 +665,6 @@ final class ServerManager: ObservableObject {
 
         return updatedWorkspace
     }
-
-    func deleteEnvironment(
-        _ environment: ServerEnvironment,
-        in workspace: Workspace
-    ) async throws -> Workspace {
-        try await deleteEnvironment(environment, in: workspace, fallback: .production)
-    }
-
-    func deleteEnvironment(
-        _ environment: ServerEnvironment,
-        in workspace: Workspace,
-        fallback: ServerEnvironment
-    ) async throws -> Workspace {
-        var updatedWorkspace = workspace
-        updatedWorkspace.environments.removeAll { $0.id == environment.id }
-        if updatedWorkspace.lastSelectedEnvironmentId == environment.id {
-            updatedWorkspace.lastSelectedEnvironmentId = fallback.id
-        }
-
-        try await updateWorkspace(updatedWorkspace)
-
-        let serversToUpdate = servers.filter { $0.workspaceId == workspace.id && $0.environment.id == environment.id }
-        for server in serversToUpdate {
-            var updatedServer = server
-            updatedServer.environment = fallback
-            try await updateServer(updatedServer)
-        }
-
-        return updatedWorkspace
-    }
-
     func handleAppLanguageChange() {
         guard refreshPendingBootstrapWorkspaceLocalizationIfNeeded() else { return }
         saveLocalData()
