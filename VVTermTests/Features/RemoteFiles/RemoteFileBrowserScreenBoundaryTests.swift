@@ -97,6 +97,37 @@ struct RemoteFileBrowserScreenBoundaryTests {
         #expect(tableSource.contains("struct MacOSRemoteFileTableView"))
     }
 
+    @Test
+    func screenDoesNotOwnActionMenuPresentation() throws {
+        let root = try sourceRoot()
+        let screenSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
+        )
+        let menuSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen+Menus.swift")
+        )
+
+        // Given RemoteFileBrowserScreen is already the root browser surface.
+        for functionName in [
+            "browserActionMenu",
+            "entryActionMenu",
+            "inspectorActionMenu",
+            "permissionMenuAction",
+            "renameAndMoveMenuActions",
+            "clipboardMenuActions",
+            "deleteMenuAction"
+        ] {
+            #expect(
+                !screenSource.contains("func \(functionName)"),
+                "RemoteFileBrowserScreen.swift should not own \(functionName) menu presentation."
+            )
+            #expect(
+                menuSource.contains("func \(functionName)"),
+                "RemoteFileBrowserScreen+Menus.swift should own \(functionName) menu presentation."
+            )
+        }
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
