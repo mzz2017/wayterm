@@ -31,6 +31,27 @@ struct SSHClientSuperfileBoundaryTests {
         #expect(errorSource.contains("isRetryable"))
     }
 
+    @Test
+    func atomicSocketLivesOutsideSSHClientFile() throws {
+        let root = try sourceRoot()
+        let clientSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift")
+        )
+        let socketSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/AtomicSocket.swift")
+        )
+
+        // Given the SSH client superfile source.
+        #expect(
+            !clientSource.contains("final class AtomicSocket"),
+            "SSHClient.swift should not own the shared atomic socket wrapper."
+        )
+
+        // Then socket abort storage has a dedicated Core/SSH file.
+        #expect(socketSource.contains("final class AtomicSocket"))
+        #expect(socketSource.contains("closeImmediately"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
