@@ -128,6 +128,47 @@ struct RemoteFileBrowserScreenBoundaryTests {
         }
     }
 
+    @Test
+    func screenDoesNotOwnDragDropPresentationGlue() throws {
+        let root = try sourceRoot()
+        let screenSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
+        )
+        let dragDropSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen+DragDrop.swift")
+        )
+
+        // Given drag/drop needs platform data-provider glue but should not
+        // keep inflating the root browser surface.
+        for functionName in [
+            "handleCurrentDirectoryDrop",
+            "handleLocalDrop",
+            "handleRemoteDrop",
+            "handleFolderDrop",
+            "dragItemProvider",
+            "registerRemoteDragPayload",
+            "registerFileRepresentation",
+            "dragFileTypeIdentifier",
+            "loadDroppedURLs",
+            "loadDroppedURL",
+            "loadDroppedRemotePayloads",
+            "loadDroppedRemotePayload",
+            "moveDroppedRemoteItems",
+            "performDroppedRemoteMoves",
+            "transferDroppedRemoteItems",
+            "dragSuggestedName"
+        ] {
+            #expect(
+                !screenSource.contains("func \(functionName)"),
+                "RemoteFileBrowserScreen.swift should not own \(functionName) drag/drop glue."
+            )
+            #expect(
+                dragDropSource.contains("func \(functionName)"),
+                "RemoteFileBrowserScreen+DragDrop.swift should own \(functionName) drag/drop glue."
+            )
+        }
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
