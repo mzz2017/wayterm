@@ -23,7 +23,7 @@ final class ConnectionSessionManager: ObservableObject {
     private typealias ForegroundReconnectCallback = ConnectionSessionManagerSupport.ForegroundReconnectCallback
     private typealias SessionHostRetrustRequest = ConnectionSessionManagerSupport.SessionHostRetrustRequest
     private typealias SessionCredentialLoadRequest = ConnectionSessionManagerSupport.SessionCredentialLoadRequest
-    private typealias SurfaceAttachRequest = ConnectionSessionManagerSupport.SurfaceAttachRequest
+    typealias SurfaceAttachRequest = ConnectionSessionManagerSupport.SurfaceAttachRequest
     typealias InputRequest = ConnectionSessionManagerSupport.InputRequest
     typealias RichPasteUploadRequest = ConnectionSessionManagerSupport.RichPasteUploadRequest
     typealias ResizeRequest = ConnectionSessionManagerSupport.ResizeRequest
@@ -194,7 +194,7 @@ final class ConnectionSessionManager: ObservableObject {
     var pendingSessionHostRetrustRequestIDs: Set<UUID> { sessionHostRetrustRequestStore.pendingRequestIDs }
     private var sessionCredentialLoadRequestStore = TerminalScopedRequestStore<SessionCredentialLoadRequest>()
     var pendingSessionCredentialLoadRequestIDs: Set<UUID> { sessionCredentialLoadRequestStore.pendingScopedRequestIDs }
-    private var surfaceAttachRequestStore = TerminalScopedRequestStore<SurfaceAttachRequest>()
+    var surfaceAttachRequestStore = TerminalScopedRequestStore<SurfaceAttachRequest>()
     var pendingSurfaceAttachRequestIDs: Set<UUID> { surfaceAttachRequestStore.pendingRequestIDs }
     var inputRequestStore = TerminalSerialRequestStore<InputRequest>()
     var pendingInputRequestIDs: Set<UUID> { inputRequestStore.pendingRequestIDs }
@@ -1545,12 +1545,6 @@ final class ConnectionSessionManager: ObservableObject {
         }
     }
 
-    /// Marks an existing terminal as recently used without fetching it for body evaluation.
-    func markTerminalUsed(for sessionId: UUID) {
-        guard terminalSurfaceRegistry.hasSurface(for: .session(sessionId)) else { return }
-        touchTerminal(sessionId)
-    }
-
     func configureRuntime(
         for sessionId: UUID,
         server: Server,
@@ -1592,131 +1586,7 @@ final class ConnectionSessionManager: ObservableObject {
         return TerminalConnectionRuntime(entityId: entityId)
     }
 
-    func attachSurface(_ terminal: GhosttyTerminalView, to sessionId: UUID) async {
-        if terminalSurfaceRegistry.surface(for: .session(sessionId)) !== terminal {
-            registerTerminal(terminal, for: sessionId)
-        }
-
-        registerShellCancelHandler({ [weak self] mode in
-            await self?.cancelRuntime(for: sessionId, mode: mode, cleanupTerminal: true)
-        }, for: sessionId)
-        registerShellSuspendHandler({ [weak self] in
-            await self?.suspendRuntime(for: sessionId)
-        }, for: sessionId)
-
-        await startRuntimeIfNeeded(for: sessionId, terminal: terminal)
-    }
-
-    @discardableResult
-    func requestSurfaceAttach(
-        sessionId: UUID,
-        terminal: GhosttyTerminalView,
-        context: TerminalSurfaceAttachContext,
-        resetTerminal: @escaping @MainActor () -> Void
-    ) -> UUID? {
-        requestSurfaceAttach(
-            sessionId: sessionId,
-            context: context,
-            resetTerminal: resetTerminal,
-            attachOperation: { [weak self, weak terminal] in
-                guard let self, let terminal else { return }
-                await self.attachSurface(terminal, to: sessionId)
-            }
-        )
-    }
-
-    @discardableResult
-    private func requestSurfaceAttach(
-        sessionId: UUID,
-        context: TerminalSurfaceAttachContext,
-        resetTerminal: @escaping @MainActor () -> Void = {},
-        attachOperation: @escaping @MainActor () async -> Void
-    ) -> UUID? {
-        if let requestID = surfaceAttachRequestStore.requestID(forScope: sessionId) {
-            guard shouldAcceptSurfaceAttach(sessionId: sessionId, context: context) else {
-                surfaceAttachRequestStore.update(requestID) { $0.context = context }
-                return nil
-            }
-            surfaceAttachRequestStore.update(requestID) { $0.context = context }
-            return requestID
-        }
-
-        guard shouldAcceptSurfaceAttach(sessionId: sessionId, context: context) else { return nil }
-
-        let requestID = UUID()
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                self.surfaceAttachRequestStore.remove(id: requestID, ifMappedTo: sessionId)
-            }
-
-            let latestContext = self.surfaceAttachRequestStore[requestID]?.context ?? context
-            guard self.shouldAcceptSurfaceAttach(sessionId: sessionId, context: latestContext) else { return }
-            if self.consumeTerminalReconnectReset(for: sessionId) {
-                resetTerminal()
-            }
-            await attachOperation()
-        }
-
-        surfaceAttachRequestStore.insert(
-            SurfaceAttachRequest(sessionId: sessionId, context: context, task: task),
-            id: requestID,
-            scopeID: sessionId
-        )
-        return requestID
-    }
-
-    private func shouldAcceptSurfaceAttach(
-        sessionId: UUID,
-        context: TerminalSurfaceAttachContext
-    ) -> Bool {
-        guard let session = sessionWithID(sessionId) else { return false }
-        guard context.isAppActive, context.isViewActive, !isSuspendingForBackground else { return false }
-        guard shellId(for: session) == nil else { return false }
-        guard !isShellStartInFlight(for: sessionId) else { return false }
-
-        switch session.connectionState {
-        case .connecting, .reconnecting, .connected:
-            return true
-        case .disconnected:
-            return context.autoReconnectEnabled
-        case .failed, .idle:
-            return false
-        }
-    }
-
-    func detachSurface(from sessionId: UUID, reason: TerminalSurfaceDetachReason) async {
-        switch reason {
-        case .viewDisappeared:
-            detachSurfaceForViewDisappeared(from: sessionId)
-        case .sessionClosed:
-            detachSurfaceForClosedSession(sessionId)
-        }
-    }
-
-    func detachSurfaceForViewDisappeared(from sessionId: UUID) {
-        terminalSurfaceRegistry.detachSurface(for: .session(sessionId), cleanup: false)
-    }
-
-    func detachSurfaceForClosedSession(_ sessionId: UUID) {
-        unregisterTerminal(for: sessionId)
-    }
-
-    func handleClosedSessionSurfaceTeardown(
-        sessionId: UUID,
-        serverId: UUID,
-        reason: String
-    ) {
-        trackShellTeardownForClosedSession(
-            sessionId: sessionId,
-            serverId: serverId,
-            reason: reason
-        ) { [weak self] in
-            self?.detachSurfaceForClosedSession(sessionId)
-        }
-    }
-
-    private func startRuntimeIfNeeded(for sessionId: UUID, terminal: GhosttyTerminalView) async {
+    func startRuntimeIfNeeded(for sessionId: UUID, terminal: GhosttyTerminalView) async {
         guard let runtime = runtimeStateForStarting(sessionId: sessionId) else { return }
         await startRuntimeIfNeeded(runtime, terminal: terminal)
     }
@@ -1885,12 +1755,12 @@ final class ConnectionSessionManager: ObservableObject {
         return (client: client, shellId: shellId)
     }
 
-    private func suspendRuntime(for sessionId: UUID) async {
+    func suspendRuntime(for sessionId: UUID) async {
         guard let runtime = sessionRuntimes[sessionId] else { return }
         await runtime.runtime.suspend()
     }
 
-    private func cancelRuntime(
+    func cancelRuntime(
         for sessionId: UUID,
         mode: ShellTeardownMode,
         cleanupTerminal: Bool

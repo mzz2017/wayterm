@@ -502,9 +502,13 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
         #expect(surfaceSource.contains("func unregisterTerminal"))
         #expect(surfaceSource.contains("func getTerminal"))
         #expect(surfaceSource.contains("func evictOldTerminalsIfNeeded"))
+        #expect(surfaceSource.contains("func requestSurfaceAttach"))
+        #expect(surfaceSource.contains("func attachSurface"))
+        #expect(surfaceSource.contains("func detachSurface"))
+        #expect(surfaceSource.contains("func handleClosedSessionSurfaceTeardown"))
 
         // Then the superfile should not own the terminal surface registration
-        // and LRU implementation directly.
+        // and attach/detach lifecycle directly.
         #expect(
             !managerSource.containsRegex(#"func\s+registerTerminal\s*\("#),
             "ConnectionSessionManager.swift should not own terminal surface registration."
@@ -516,6 +520,22 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
         #expect(
             !managerSource.containsRegex(#"func\s+evictOldTerminalsIfNeeded\s*\("#),
             "ConnectionSessionManager.swift should not own terminal surface LRU eviction."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestSurfaceAttach\s*\("#),
+            "ConnectionSessionManager.swift should not own surface attach request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+attachSurface\s*\("#),
+            "ConnectionSessionManager.swift should not own surface attach execution."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+detachSurface\s*\("#),
+            "ConnectionSessionManager.swift should not own surface detach lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+handleClosedSessionSurfaceTeardown\s*\("#),
+            "ConnectionSessionManager.swift should not own closed-session surface teardown routing."
         )
     }
 
