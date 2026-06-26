@@ -425,7 +425,7 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         let source = try sshClientSource()
         let sessionSource = try slice(
             startingAt: "actor SSHSession {",
-            endingBefore: "nonisolated struct SSHSessionConfig",
+            endingBefore: "// MARK: - fd_set helpers for select()",
             in: source
         )
         let startShellSource = try slice(

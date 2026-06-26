@@ -52,6 +52,28 @@ struct SSHClientSuperfileBoundaryTests {
         #expect(socketSource.contains("closeImmediately"))
     }
 
+    @Test
+    func sessionConfigLivesOutsideSSHClientFile() throws {
+        let root = try sourceRoot()
+        let clientSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift")
+        )
+        let configSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHSessionConfig.swift")
+        )
+
+        // Given the SSH client superfile source.
+        #expect(
+            !clientSource.contains("struct SSHSessionConfig"),
+            "SSHClient.swift should not own the shared SSH session configuration value."
+        )
+
+        // Then session connection configuration has a dedicated Core/SSH file.
+        #expect(configSource.contains("struct SSHSessionConfig"))
+        #expect(configSource.contains("connectionTimeout"))
+        #expect(configSource.contains("keepAliveInterval"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
