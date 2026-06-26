@@ -196,6 +196,32 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
         #expect(managerSource.contains("sessionCredentialLoadRequestStore"))
     }
 
+    @Test
+    func reconnectIntentRequestIndexingUsesSharedScopedStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalScopedRequestStore.swift")
+        )
+
+        // Given reconnect intent requests have a shared Application helper.
+        #expect(storeSource.contains("struct TerminalScopedRequestStore"))
+
+        // Then reconnect intents should not keep bespoke session/request double dictionaries in the superfile.
+        #expect(
+            !managerSource.contains("activeConnectionOpenRequestBySession"),
+            "ConnectionSessionManager.swift should not own bespoke active-open request indexing."
+        )
+        #expect(
+            !managerSource.contains("foregroundReconnectRequestBySession"),
+            "ConnectionSessionManager.swift should not own bespoke foreground reconnect request indexing."
+        )
+        #expect(managerSource.contains("activeConnectionOpenRequestStore"))
+        #expect(managerSource.contains("foregroundReconnectRequestStore"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

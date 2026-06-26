@@ -189,12 +189,10 @@ final class ConnectionSessionManager: ObservableObject {
     var pendingMoshInstallRequestIDs: Set<UUID> { moshInstallRequestStore.pendingRequestIDs }
     private var sessionRetryRequestStore = TerminalScopedRequestStore<SessionRetryRequest>()
     var pendingSessionRetryRequestIDs: Set<UUID> { sessionRetryRequestStore.pendingRequestIDs }
-    private var activeConnectionOpenRequests: [UUID: ActiveConnectionOpenRequest] = [:]
-    private var activeConnectionOpenRequestBySession: [UUID: UUID] = [:]
-    var pendingActiveConnectionOpenRequestIDs: Set<UUID> { Set(activeConnectionOpenRequestBySession.values) }
-    private var foregroundReconnectRequests: [UUID: ForegroundReconnectRequest] = [:]
-    private var foregroundReconnectRequestBySession: [UUID: UUID] = [:]
-    var pendingForegroundReconnectRequestIDs: Set<UUID> { Set(foregroundReconnectRequestBySession.values) }
+    private var activeConnectionOpenRequestStore = TerminalScopedRequestStore<ActiveConnectionOpenRequest>()
+    var pendingActiveConnectionOpenRequestIDs: Set<UUID> { activeConnectionOpenRequestStore.pendingScopedRequestIDs }
+    private var foregroundReconnectRequestStore = TerminalScopedRequestStore<ForegroundReconnectRequest>()
+    var pendingForegroundReconnectRequestIDs: Set<UUID> { foregroundReconnectRequestStore.pendingScopedRequestIDs }
     private var sessionHostRetrustRequestStore = TerminalScopedRequestStore<SessionHostRetrustRequest>()
     var pendingSessionHostRetrustRequestIDs: Set<UUID> { sessionHostRetrustRequestStore.pendingRequestIDs }
     private var sessionCredentialLoadRequestStore = TerminalScopedRequestStore<SessionCredentialLoadRequest>()
@@ -463,11 +461,11 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     func waitForActiveConnectionOpenRequest(_ requestID: UUID) async {
-        await activeConnectionOpenRequests[requestID]?.task?.value
+        await activeConnectionOpenRequestStore[requestID]?.task?.value
     }
 
     func waitForForegroundReconnectRequest(_ requestID: UUID) async {
-        await foregroundReconnectRequests[requestID]?.task?.value
+        await foregroundReconnectRequestStore[requestID]?.task?.value
     }
 
     /// Opens a connection to a server
@@ -958,13 +956,11 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func cancelActiveConnectionOpenRequest(for sessionId: UUID) {
-        guard let requestID = activeConnectionOpenRequestBySession.removeValue(forKey: sessionId) else { return }
-        activeConnectionOpenRequests[requestID]?.task?.cancel()
+        activeConnectionOpenRequestStore.removeScopeMapping(forScope: sessionId)?.task?.cancel()
     }
 
     private func cancelForegroundReconnectRequest(for sessionId: UUID) {
-        guard let requestID = foregroundReconnectRequestBySession.removeValue(forKey: sessionId) else { return }
-        foregroundReconnectRequests[requestID]?.task?.cancel()
+        foregroundReconnectRequestStore.removeScopeMapping(forScope: sessionId)?.task?.cancel()
     }
 
     private func cancelSessionHostRetrustRequest(for sessionId: UUID) {
@@ -2435,26 +2431,26 @@ final class ConnectionSessionManager: ObservableObject {
         preferredViewId: String,
         onOpened: @escaping @MainActor () -> Void = {}
     ) -> UUID {
-        if let requestID = activeConnectionOpenRequestBySession[session.id] {
-            activeConnectionOpenRequests[requestID]?.onOpened.append(onOpened)
+        if let requestID = activeConnectionOpenRequestStore.requestID(forScope: session.id) {
+            activeConnectionOpenRequestStore.update(requestID) { $0.onOpened.append(onOpened) }
             return requestID
         }
 
         let requestID = UUID()
-        activeConnectionOpenRequests[requestID] = ActiveConnectionOpenRequest(
-            sessionId: session.id,
-            task: nil,
-            onOpened: [onOpened]
+        activeConnectionOpenRequestStore.insert(
+            ActiveConnectionOpenRequest(
+                sessionId: session.id,
+                task: nil,
+                onOpened: [onOpened]
+            ),
+            id: requestID,
+            scopeID: session.id
         )
-        activeConnectionOpenRequestBySession[session.id] = requestID
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.activeConnectionOpenRequests.removeValue(forKey: requestID)
-                if self.activeConnectionOpenRequestBySession[session.id] == requestID {
-                    self.activeConnectionOpenRequestBySession.removeValue(forKey: session.id)
-                }
+                self.activeConnectionOpenRequestStore.remove(id: requestID, ifMappedTo: session.id)
             }
 
             #if DEBUG
@@ -2473,12 +2469,12 @@ final class ConnectionSessionManager: ObservableObject {
             self.selectSession(session)
             self.selectedViewByServer[session.serverId] = preferredViewId
 
-            let callbacks = self.activeConnectionOpenRequests[requestID]?.onOpened ?? []
+            let callbacks = self.activeConnectionOpenRequestStore[requestID]?.onOpened ?? []
             callbacks.forEach { $0() }
         }
 
-        if activeConnectionOpenRequests[requestID]?.sessionId == session.id {
-            activeConnectionOpenRequests[requestID]?.task = task
+        if activeConnectionOpenRequestStore[requestID]?.sessionId == session.id {
+            activeConnectionOpenRequestStore.update(requestID) { $0.task = task }
         }
 
         return requestID
@@ -2501,28 +2497,30 @@ final class ConnectionSessionManager: ObservableObject {
             return nil
         }
 
-        if let requestID = foregroundReconnectRequestBySession[action.sessionId] {
-            foregroundReconnectRequests[requestID]?.callbacks.append(
-                ForegroundReconnectCallback(action: action, onAction: onAction)
-            )
+        if let requestID = foregroundReconnectRequestStore.requestID(forScope: action.sessionId) {
+            foregroundReconnectRequestStore.update(requestID) {
+                $0.callbacks.append(
+                    ForegroundReconnectCallback(action: action, onAction: onAction)
+                )
+            }
             return requestID
         }
 
         let requestID = UUID()
-        foregroundReconnectRequests[requestID] = ForegroundReconnectRequest(
-            sessionId: action.sessionId,
-            task: nil,
-            callbacks: [ForegroundReconnectCallback(action: action, onAction: onAction)]
+        foregroundReconnectRequestStore.insert(
+            ForegroundReconnectRequest(
+                sessionId: action.sessionId,
+                task: nil,
+                callbacks: [ForegroundReconnectCallback(action: action, onAction: onAction)]
+            ),
+            id: requestID,
+            scopeID: action.sessionId
         )
-        foregroundReconnectRequestBySession[action.sessionId] = requestID
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.foregroundReconnectRequests.removeValue(forKey: requestID)
-                if self.foregroundReconnectRequestBySession[action.sessionId] == requestID {
-                    self.foregroundReconnectRequestBySession.removeValue(forKey: action.sessionId)
-                }
+                self.foregroundReconnectRequestStore.remove(id: requestID, ifMappedTo: action.sessionId)
             }
 
             if action.shouldReconnect,
@@ -2542,12 +2540,12 @@ final class ConnectionSessionManager: ObservableObject {
             guard self.selectedSessionId == action.sessionId else { return }
             guard self.sessionWithID(action.sessionId) != nil else { return }
 
-            let callbacks = self.foregroundReconnectRequests[requestID]?.callbacks ?? []
+            let callbacks = self.foregroundReconnectRequestStore[requestID]?.callbacks ?? []
             callbacks.forEach { $0.onAction($0.action) }
         }
 
-        if foregroundReconnectRequests[requestID]?.sessionId == action.sessionId {
-            foregroundReconnectRequests[requestID]?.task = task
+        if foregroundReconnectRequestStore[requestID]?.sessionId == action.sessionId {
+            foregroundReconnectRequestStore.update(requestID) { $0.task = task }
         }
 
         return requestID
@@ -3379,12 +3377,10 @@ extension ConnectionSessionManager {
         lastMoshInstallFailure = nil
         sessionRetryRequestStore.allRequests.forEach { $0.task.cancel() }
         sessionRetryRequestStore.removeAll()
-        activeConnectionOpenRequests.values.compactMap(\.task).forEach { $0.cancel() }
-        activeConnectionOpenRequests.removeAll()
-        activeConnectionOpenRequestBySession.removeAll()
-        foregroundReconnectRequests.values.compactMap(\.task).forEach { $0.cancel() }
-        foregroundReconnectRequests.removeAll()
-        foregroundReconnectRequestBySession.removeAll()
+        activeConnectionOpenRequestStore.allRequests.compactMap(\.task).forEach { $0.cancel() }
+        activeConnectionOpenRequestStore.removeAll()
+        foregroundReconnectRequestStore.allRequests.compactMap(\.task).forEach { $0.cancel() }
+        foregroundReconnectRequestStore.removeAll()
         sessionHostRetrustRequestStore.allRequests.forEach { $0.task.cancel() }
         sessionHostRetrustRequestStore.removeAll()
         sessionCredentialLoadRequestStore.allRequests.forEach { $0.task.cancel() }
@@ -3553,7 +3549,7 @@ extension ConnectionSessionManager {
     }
 
     func cancelActiveConnectionOpenRequestForTesting(_ requestID: UUID) {
-        activeConnectionOpenRequests[requestID]?.task?.cancel()
+        activeConnectionOpenRequestStore[requestID]?.task?.cancel()
     }
 
     func setForegroundReconnectOperationForTesting(
