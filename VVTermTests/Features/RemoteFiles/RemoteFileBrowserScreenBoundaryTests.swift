@@ -77,6 +77,26 @@ struct RemoteFileBrowserScreenBoundaryTests {
         #expect(storageSource.contains("func makeDragExportFileURL"))
     }
 
+    @Test
+    func platformSupportDoesNotOwnMacOSTableViewImplementation() throws {
+        let root = try sourceRoot()
+        let supportSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Platform/RemoteFileBrowserSupport.swift")
+        )
+        let tableSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Platform/RemoteFileBrowserMacTableView.swift")
+        )
+
+        // Given the platform support source file.
+        #expect(
+            !supportSource.contains("struct MacOSRemoteFileTableView"),
+            "RemoteFileBrowserSupport should not own the large macOS table view implementation."
+        )
+
+        // Then the macOS table view lives in its own platform UI file.
+        #expect(tableSource.contains("struct MacOSRemoteFileTableView"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
