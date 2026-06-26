@@ -3,9 +3,9 @@ import Testing
 
 // Test Context:
 // These source-boundary tests protect TerminalTabManager superfile control.
-// The manager owns tab orchestration; Codable persistence snapshot shape should
-// live in a dedicated Application support file. Update only when snapshot
-// ownership intentionally moves again.
+// The manager owns tab orchestration; persistence shapes and reusable request
+// indexing should live in dedicated Application support files. Update only when
+// those ownership boundaries intentionally move again.
 
 @Suite(.serialized)
 struct TerminalTabManagerSuperfileBoundaryTests {
@@ -134,6 +134,27 @@ struct TerminalTabManagerSuperfileBoundaryTests {
             "TerminalTabManager.swift should not own bespoke surface attach request indexing."
         )
         #expect(managerSource.contains("surfaceAttachRequestStore"))
+    }
+
+    @Test
+    func paneResizeRequestIndexingUsesSharedStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalScopedRequestStore.swift")
+        )
+
+        // Given pane-scoped resize indexing has a shared Application helper.
+        #expect(storeSource.contains("struct TerminalScopedRequestStore"))
+
+        // Then resize should not keep bespoke pane/request double dictionaries in the superfile.
+        #expect(
+            !managerSource.contains("resizeRequestByPane"),
+            "TerminalTabManager.swift should not own bespoke resize request indexing."
+        )
+        #expect(managerSource.contains("resizeRequestStore"))
     }
 
     private func source(at url: URL) throws -> String {

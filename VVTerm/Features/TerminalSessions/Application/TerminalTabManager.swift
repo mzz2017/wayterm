@@ -136,9 +136,8 @@ final class TerminalTabManager: ObservableObject {
     private var richPasteUploadRequests: [UUID: RichPasteUploadRequest] = [:]
     private var richPasteUploadRequestByPane: [UUID: UUID] = [:]
     var pendingPaneRichPasteUploadRequestIDs: Set<UUID> { Set(richPasteUploadRequests.keys) }
-    private var resizeRequests: [UUID: ResizeRequest] = [:]
-    private var resizeRequestByPane: [UUID: UUID] = [:]
-    var pendingResizeRequestIDs: Set<UUID> { Set(resizeRequests.keys) }
+    private var resizeRequestStore = TerminalScopedRequestStore<ResizeRequest>()
+    var pendingResizeRequestIDs: Set<UUID> { resizeRequestStore.pendingRequestIDs }
     private var processExitRequests: [UUID: ProcessExitRequest] = [:]
     private var processExitRequestByPane: [UUID: UUID] = [:]
     var pendingProcessExitRequestIDs: Set<UUID> { Set(processExitRequests.keys) }
@@ -369,7 +368,7 @@ final class TerminalTabManager: ObservableObject {
     }
 
     func waitForResizeRequest(_ requestID: UUID) async {
-        await resizeRequests[requestID]?.task.value
+        await resizeRequestStore[requestID]?.task.value
     }
 
     func waitForProcessExitRequest(_ requestID: UUID) async {
@@ -1004,10 +1003,8 @@ final class TerminalTabManager: ObservableObject {
         guard size.isValid else { return nil }
         guard paneStates[paneId] != nil else { return nil }
 
-        if let existingRequestID = resizeRequestByPane[paneId],
-           var request = resizeRequests[existingRequestID] {
-            request.size = size
-            resizeRequests[existingRequestID] = request
+        if let existingRequestID = resizeRequestStore.requestID(forScope: paneId) {
+            resizeRequestStore.update(existingRequestID) { $0.size = size }
             return existingRequestID
         }
 
@@ -1015,16 +1012,13 @@ final class TerminalTabManager: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.resizeRequests.removeValue(forKey: requestID)
-                if self.resizeRequestByPane[paneId] == requestID {
-                    self.resizeRequestByPane.removeValue(forKey: paneId)
-                }
+                self.resizeRequestStore.remove(id: requestID, ifMappedTo: paneId)
             }
 
             var appliedSize: TerminalResizeRequestSize?
             while !Task.isCancelled {
                 guard self.paneStates[paneId] != nil else { return }
-                guard let request = self.resizeRequests[requestID] else { return }
+                guard let request = self.resizeRequestStore[requestID] else { return }
                 let size = request.size
                 guard size != appliedSize else { return }
 
@@ -1042,8 +1036,11 @@ final class TerminalTabManager: ObservableObject {
             }
         }
 
-        resizeRequests[requestID] = ResizeRequest(paneId: paneId, size: size, task: task)
-        resizeRequestByPane[paneId] = requestID
+        resizeRequestStore.insert(
+            ResizeRequest(paneId: paneId, size: size, task: task),
+            id: requestID,
+            scopeID: paneId
+        )
         return requestID
     }
 
@@ -2089,15 +2086,7 @@ final class TerminalTabManager: ObservableObject {
     }
 
     private func cancelResizeRequests(for paneId: UUID) {
-        let requestIDs = resizeRequests.compactMap { requestID, request in
-            request.paneId == paneId ? requestID : nil
-        }
-
-        for requestID in requestIDs {
-            resizeRequests.removeValue(forKey: requestID)?.task.cancel()
-        }
-
-        resizeRequestByPane.removeValue(forKey: paneId)
+        resizeRequestStore.removeMappedRequest(forScope: paneId)?.task.cancel()
     }
 
     private func cancelProcessExitRequests(for paneId: UUID) {
@@ -2806,9 +2795,8 @@ extension TerminalTabManager {
         }
         richPasteUploadRequests.removeAll()
         richPasteUploadRequestByPane.removeAll()
-        resizeRequests.values.forEach { $0.task.cancel() }
-        resizeRequests.removeAll()
-        resizeRequestByPane.removeAll()
+        resizeRequestStore.allRequests.forEach { $0.task.cancel() }
+        resizeRequestStore.removeAll()
         processExitRequests.values.forEach { $0.task.cancel() }
         processExitRequests.removeAll()
         processExitRequestByPane.removeAll()
