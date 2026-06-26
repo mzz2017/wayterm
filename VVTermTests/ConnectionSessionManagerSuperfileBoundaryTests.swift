@@ -165,6 +165,37 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
         #expect(managerSource.contains("moshInstallRequestStore"))
     }
 
+    @Test
+    func lifecycleRequestIndexingUsesSharedScopedStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalScopedRequestStore.swift")
+        )
+
+        // Given session lifecycle requests have a shared Application helper.
+        #expect(storeSource.contains("struct TerminalScopedRequestStore"))
+
+        // Then lifecycle requests should not keep bespoke session/request double dictionaries in the superfile.
+        #expect(
+            !managerSource.contains("sessionRetryRequestBySession"),
+            "ConnectionSessionManager.swift should not own bespoke retry request indexing."
+        )
+        #expect(
+            !managerSource.contains("sessionHostRetrustRequestBySession"),
+            "ConnectionSessionManager.swift should not own bespoke host retrust request indexing."
+        )
+        #expect(
+            !managerSource.contains("sessionCredentialLoadRequestBySession"),
+            "ConnectionSessionManager.swift should not own bespoke credential-load request indexing."
+        )
+        #expect(managerSource.contains("sessionRetryRequestStore"))
+        #expect(managerSource.contains("sessionHostRetrustRequestStore"))
+        #expect(managerSource.contains("sessionCredentialLoadRequestStore"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

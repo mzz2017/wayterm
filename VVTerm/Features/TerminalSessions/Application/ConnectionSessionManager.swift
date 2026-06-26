@@ -187,21 +187,18 @@ final class ConnectionSessionManager: ObservableObject {
     private var moshInstallRequestStore = TerminalScopedRequestStore<MoshInstallRequest>()
     private(set) var lastMoshInstallFailure: Error?
     var pendingMoshInstallRequestIDs: Set<UUID> { moshInstallRequestStore.pendingRequestIDs }
-    private var sessionRetryRequests: [UUID: SessionRetryRequest] = [:]
-    private var sessionRetryRequestBySession: [UUID: UUID] = [:]
-    var pendingSessionRetryRequestIDs: Set<UUID> { Set(sessionRetryRequests.keys) }
+    private var sessionRetryRequestStore = TerminalScopedRequestStore<SessionRetryRequest>()
+    var pendingSessionRetryRequestIDs: Set<UUID> { sessionRetryRequestStore.pendingRequestIDs }
     private var activeConnectionOpenRequests: [UUID: ActiveConnectionOpenRequest] = [:]
     private var activeConnectionOpenRequestBySession: [UUID: UUID] = [:]
     var pendingActiveConnectionOpenRequestIDs: Set<UUID> { Set(activeConnectionOpenRequestBySession.values) }
     private var foregroundReconnectRequests: [UUID: ForegroundReconnectRequest] = [:]
     private var foregroundReconnectRequestBySession: [UUID: UUID] = [:]
     var pendingForegroundReconnectRequestIDs: Set<UUID> { Set(foregroundReconnectRequestBySession.values) }
-    private var sessionHostRetrustRequests: [UUID: SessionHostRetrustRequest] = [:]
-    private var sessionHostRetrustRequestBySession: [UUID: UUID] = [:]
-    var pendingSessionHostRetrustRequestIDs: Set<UUID> { Set(sessionHostRetrustRequests.keys) }
-    private var sessionCredentialLoadRequests: [UUID: SessionCredentialLoadRequest] = [:]
-    private var sessionCredentialLoadRequestBySession: [UUID: UUID] = [:]
-    var pendingSessionCredentialLoadRequestIDs: Set<UUID> { Set(sessionCredentialLoadRequestBySession.values) }
+    private var sessionHostRetrustRequestStore = TerminalScopedRequestStore<SessionHostRetrustRequest>()
+    var pendingSessionHostRetrustRequestIDs: Set<UUID> { sessionHostRetrustRequestStore.pendingRequestIDs }
+    private var sessionCredentialLoadRequestStore = TerminalScopedRequestStore<SessionCredentialLoadRequest>()
+    var pendingSessionCredentialLoadRequestIDs: Set<UUID> { sessionCredentialLoadRequestStore.pendingScopedRequestIDs }
     private var surfaceAttachRequests: [UUID: SurfaceAttachRequest] = [:]
     private var surfaceAttachRequestBySession: [UUID: UUID] = [:]
     var pendingSurfaceAttachRequestIDs: Set<UUID> { Set(surfaceAttachRequests.keys) }
@@ -954,8 +951,7 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func cancelSessionRetryRequest(for sessionId: UUID) {
-        if let requestID = sessionRetryRequestBySession.removeValue(forKey: sessionId),
-           let request = sessionRetryRequests.removeValue(forKey: requestID) {
+        if let request = sessionRetryRequestStore.removeMappedRequest(forScope: sessionId) {
             request.task.cancel()
             request.onCompleted.forEach { $0(.skipped) }
         }
@@ -972,8 +968,7 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func cancelSessionHostRetrustRequest(for sessionId: UUID) {
-        if let requestID = sessionHostRetrustRequestBySession.removeValue(forKey: sessionId),
-           let request = sessionHostRetrustRequests.removeValue(forKey: requestID) {
+        if let request = sessionHostRetrustRequestStore.removeMappedRequest(forScope: sessionId) {
             request.task.cancel()
             request.onCompleted.forEach { $0(false) }
         }
@@ -2602,8 +2597,8 @@ final class ConnectionSessionManager: ObservableObject {
         server: Server?,
         onCompleted: @escaping @MainActor (TerminalReconnectRequestResult) -> Void = { _ in }
     ) -> UUID {
-        if let requestID = sessionRetryRequestBySession[session.id] {
-            sessionRetryRequests[requestID]?.onCompleted.append(onCompleted)
+        if let requestID = sessionRetryRequestStore.requestID(forScope: session.id) {
+            sessionRetryRequestStore.update(requestID) { $0.onCompleted.append(onCompleted) }
             return requestID
         }
 
@@ -2611,10 +2606,7 @@ final class ConnectionSessionManager: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.sessionRetryRequests.removeValue(forKey: requestID)
-                if self.sessionRetryRequestBySession[session.id] == requestID {
-                    self.sessionRetryRequestBySession.removeValue(forKey: session.id)
-                }
+                self.sessionRetryRequestStore.remove(id: requestID, ifMappedTo: session.id)
             }
 
             #if DEBUG
@@ -2628,20 +2620,23 @@ final class ConnectionSessionManager: ObservableObject {
             let result = await self.retrySessionConnection(session: session, server: server)
             #endif
 
-            let callbacks = self.sessionRetryRequests[requestID]?.onCompleted ?? []
+            let callbacks = self.sessionRetryRequestStore[requestID]?.onCompleted ?? []
             callbacks.forEach { $0(Task.isCancelled ? .skipped : result) }
         }
-        sessionRetryRequests[requestID] = SessionRetryRequest(
-            sessionId: session.id,
-            task: task,
-            onCompleted: [onCompleted]
+        sessionRetryRequestStore.insert(
+            SessionRetryRequest(
+                sessionId: session.id,
+                task: task,
+                onCompleted: [onCompleted]
+            ),
+            id: requestID,
+            scopeID: session.id
         )
-        sessionRetryRequestBySession[session.id] = requestID
         return requestID
     }
 
     func waitForSessionRetryRequest(_ requestID: UUID) async {
-        await sessionRetryRequests[requestID]?.task.value
+        await sessionRetryRequestStore[requestID]?.task.value
     }
 
     func loadCredentials(for server: Server) async -> TerminalCredentialLoadResult {
@@ -2663,8 +2658,8 @@ final class ConnectionSessionManager: ObservableObject {
         server: Server,
         onCompleted: @escaping @MainActor (TerminalCredentialLoadResult) -> Void = { _ in }
     ) -> UUID {
-        if let requestID = sessionCredentialLoadRequestBySession[session.id] {
-            sessionCredentialLoadRequests[requestID]?.onCompleted.append(onCompleted)
+        if let requestID = sessionCredentialLoadRequestStore.requestID(forScope: session.id) {
+            sessionCredentialLoadRequestStore.update(requestID) { $0.onCompleted.append(onCompleted) }
             return requestID
         }
 
@@ -2672,35 +2667,34 @@ final class ConnectionSessionManager: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.sessionCredentialLoadRequests.removeValue(forKey: requestID)
-                if self.sessionCredentialLoadRequestBySession[session.id] == requestID {
-                    self.sessionCredentialLoadRequestBySession.removeValue(forKey: session.id)
-                }
+                self.sessionCredentialLoadRequestStore.remove(id: requestID, ifMappedTo: session.id)
             }
 
             guard self.canRunSessionCredentialLoad(session: session, server: server) else { return }
             let result = await self.loadCredentials(for: server)
             guard self.canRunSessionCredentialLoad(session: session, server: server) else { return }
 
-            let callbacks = self.sessionCredentialLoadRequests[requestID]?.onCompleted ?? []
+            let callbacks = self.sessionCredentialLoadRequestStore[requestID]?.onCompleted ?? []
             callbacks.forEach { $0(result) }
         }
-        sessionCredentialLoadRequests[requestID] = SessionCredentialLoadRequest(
-            sessionId: session.id,
-            task: task,
-            onCompleted: [onCompleted]
+        sessionCredentialLoadRequestStore.insert(
+            SessionCredentialLoadRequest(
+                sessionId: session.id,
+                task: task,
+                onCompleted: [onCompleted]
+            ),
+            id: requestID,
+            scopeID: session.id
         )
-        sessionCredentialLoadRequestBySession[session.id] = requestID
         return requestID
     }
 
     func waitForSessionCredentialLoadRequest(_ requestID: UUID) async {
-        await sessionCredentialLoadRequests[requestID]?.task.value
+        await sessionCredentialLoadRequestStore[requestID]?.task.value
     }
 
     private func cancelSessionCredentialLoadRequest(for sessionId: UUID) {
-        guard let requestID = sessionCredentialLoadRequestBySession.removeValue(forKey: sessionId) else { return }
-        sessionCredentialLoadRequests[requestID]?.task.cancel()
+        sessionCredentialLoadRequestStore.removeScopeMapping(forScope: sessionId)?.task.cancel()
     }
 
     func retrustHostAndReconnect(session: ConnectionSession, server: Server) async -> Bool {
@@ -2726,8 +2720,8 @@ final class ConnectionSessionManager: ObservableObject {
         server: Server,
         onCompleted: @escaping @MainActor (Bool) -> Void = { _ in }
     ) -> UUID {
-        if let requestID = sessionHostRetrustRequestBySession[session.id] {
-            sessionHostRetrustRequests[requestID]?.onCompleted.append(onCompleted)
+        if let requestID = sessionHostRetrustRequestStore.requestID(forScope: session.id) {
+            sessionHostRetrustRequestStore.update(requestID) { $0.onCompleted.append(onCompleted) }
             return requestID
         }
 
@@ -2735,14 +2729,11 @@ final class ConnectionSessionManager: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.sessionHostRetrustRequests.removeValue(forKey: requestID)
-                if self.sessionHostRetrustRequestBySession[session.id] == requestID {
-                    self.sessionHostRetrustRequestBySession.removeValue(forKey: session.id)
-                }
+                self.sessionHostRetrustRequestStore.remove(id: requestID, ifMappedTo: session.id)
             }
 
             guard self.canRunSessionHostRetrust(session: session, server: server) else {
-                let callbacks = self.sessionHostRetrustRequests[requestID]?.onCompleted ?? []
+                let callbacks = self.sessionHostRetrustRequestStore[requestID]?.onCompleted ?? []
                 callbacks.forEach { $0(false) }
                 return
             }
@@ -2758,22 +2749,25 @@ final class ConnectionSessionManager: ObservableObject {
             let didReconnect = await self.retrustHostAndReconnect(session: session, server: server)
             #endif
 
-            let callbacks = self.sessionHostRetrustRequests[requestID]?.onCompleted ?? []
+            let callbacks = self.sessionHostRetrustRequestStore[requestID]?.onCompleted ?? []
             callbacks.forEach {
                 $0(self.canRunSessionHostRetrust(session: session, server: server) ? didReconnect : false)
             }
         }
-        sessionHostRetrustRequests[requestID] = SessionHostRetrustRequest(
-            sessionId: session.id,
-            task: task,
-            onCompleted: [onCompleted]
+        sessionHostRetrustRequestStore.insert(
+            SessionHostRetrustRequest(
+                sessionId: session.id,
+                task: task,
+                onCompleted: [onCompleted]
+            ),
+            id: requestID,
+            scopeID: session.id
         )
-        sessionHostRetrustRequestBySession[session.id] = requestID
         return requestID
     }
 
     func waitForSessionHostRetrustRequest(_ requestID: UUID) async {
-        await sessionHostRetrustRequests[requestID]?.task.value
+        await sessionHostRetrustRequestStore[requestID]?.task.value
     }
 
     func installMoshServerAndReconnect(session: ConnectionSession) async throws {
@@ -3383,21 +3377,18 @@ extension ConnectionSessionManager {
         moshInstallRequestStore.allRequests.forEach { $0.task.cancel() }
         moshInstallRequestStore.removeAll()
         lastMoshInstallFailure = nil
-        sessionRetryRequests.values.forEach { $0.task.cancel() }
-        sessionRetryRequests.removeAll()
-        sessionRetryRequestBySession.removeAll()
+        sessionRetryRequestStore.allRequests.forEach { $0.task.cancel() }
+        sessionRetryRequestStore.removeAll()
         activeConnectionOpenRequests.values.compactMap(\.task).forEach { $0.cancel() }
         activeConnectionOpenRequests.removeAll()
         activeConnectionOpenRequestBySession.removeAll()
         foregroundReconnectRequests.values.compactMap(\.task).forEach { $0.cancel() }
         foregroundReconnectRequests.removeAll()
         foregroundReconnectRequestBySession.removeAll()
-        sessionHostRetrustRequests.values.forEach { $0.task.cancel() }
-        sessionHostRetrustRequests.removeAll()
-        sessionHostRetrustRequestBySession.removeAll()
-        sessionCredentialLoadRequests.values.forEach { $0.task.cancel() }
-        sessionCredentialLoadRequests.removeAll()
-        sessionCredentialLoadRequestBySession.removeAll()
+        sessionHostRetrustRequestStore.allRequests.forEach { $0.task.cancel() }
+        sessionHostRetrustRequestStore.removeAll()
+        sessionCredentialLoadRequestStore.allRequests.forEach { $0.task.cancel() }
+        sessionCredentialLoadRequestStore.removeAll()
         surfaceAttachRequests.values.forEach { $0.task.cancel() }
         surfaceAttachRequests.removeAll()
         surfaceAttachRequestBySession.removeAll()
