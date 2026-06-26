@@ -57,6 +57,40 @@ struct RemoteTmuxManagerSuperfileBoundaryTests {
         )
     }
 
+    @Test
+    func managerDoesNotOwnWindowsPowerShellHelperImplementation() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/RemoteTmuxManager.swift")
+        )
+        let windowsSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/RemoteTmuxManager+WindowsPowerShell.swift")
+        )
+
+        // Given RemoteTmuxManager owns remote execution and lifecycle timeouts,
+        // pure Windows PowerShell/path command helpers should live in a focused
+        // extension file instead of inflating the actor root.
+        for functionName in [
+            "windowsShellCommand",
+            "windowsConfigPathPowerShellExpression",
+            "windowsConfigDirectoryPowerShellExpression",
+            "windowsWorkingDirectoryExpression",
+            "normalizedWindowsPath",
+            "powerShellQuoted",
+            "indentPowerShell",
+            "escapeForDoubleQuotes"
+        ] {
+            #expect(
+                !managerSource.contains("func \(functionName)"),
+                "RemoteTmuxManager.swift should not own \(functionName)."
+            )
+            #expect(
+                windowsSource.contains("func \(functionName)"),
+                "RemoteTmuxManager+WindowsPowerShell.swift should own \(functionName)."
+            )
+        }
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
