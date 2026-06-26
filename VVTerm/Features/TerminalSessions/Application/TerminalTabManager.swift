@@ -2727,59 +2727,17 @@ final class TerminalTabManager: ObservableObject {
         TerminalTabsSnapshot(servers: makeServerSnapshots())
     }
 
-    private func makeRestoredPaneStates(
-        from tabsByServer: [UUID: [TerminalTab]],
-        snapshotsByTabId: [UUID: TerminalTabsSnapshot.TabSnapshot]
-    ) -> [UUID: TerminalPaneState] {
-        var restoredPaneStates: [UUID: TerminalPaneState] = [:]
-
-        for tabs in tabsByServer.values {
-            for tab in tabs {
-                for paneId in tab.allPaneIds {
-                    var paneState = TerminalPaneState(
-                        paneId: paneId,
-                        tabId: tab.id,
-                        serverId: tab.serverId
-                    )
-                    if !tmuxResolver.isTmuxEnabled(for: tab.serverId) {
-                        paneState.tmuxStatus = .off
-                    }
-                    paneState.presentationOverrides = snapshotsByTabId[tab.id]?.panePresentationOverrides?[paneId] ?? .empty
-                    restoredPaneStates[paneId] = paneState
-                }
-            }
-        }
-
-        return restoredPaneStates
-    }
-
     private func applyRestoredSnapshot(_ snapshot: TerminalTabsSnapshot) {
-        var restoredTabsByServer: [UUID: [TerminalTab]] = [:]
-        var restoredSelectedTabs: [UUID: UUID] = [:]
-        var restoredSelectedViews: [UUID: String] = [:]
-        var snapshotsByTabId: [UUID: TerminalTabsSnapshot.TabSnapshot] = [:]
-
-        for server in snapshot.servers {
-            for tabSnapshot in server.tabs {
-                snapshotsByTabId[tabSnapshot.id] = tabSnapshot
+        let plan = TerminalTabsSnapshotRestorePlanner.plan(
+            from: snapshot,
+            isTmuxEnabled: { [tmuxResolver] serverId in
+                tmuxResolver.isTmuxEnabled(for: serverId)
             }
-            let tabs = server.tabs.map { $0.toTerminalTab() }
-            restoredTabsByServer[server.serverId] = tabs
-            if let selected = server.selectedTabId {
-                restoredSelectedTabs[server.serverId] = selected
-            }
-            if let view = server.selectedView {
-                restoredSelectedViews[server.serverId] = view
-            }
-        }
-
-        tabsByServer = restoredTabsByServer
-        selectedTabByServer = restoredSelectedTabs
-        selectedViewByServer = restoredSelectedViews
-        paneStates = makeRestoredPaneStates(
-            from: restoredTabsByServer,
-            snapshotsByTabId: snapshotsByTabId
         )
+        tabsByServer = plan.tabsByServer
+        selectedTabByServer = plan.selectedTabByServer
+        selectedViewByServer = plan.selectedViewByServer
+        paneStates = plan.paneStates
     }
 
     private func schedulePersist() {
