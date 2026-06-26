@@ -270,6 +270,30 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
         #expect(managerSource.contains("processExitRequestStore"))
     }
 
+    @Test
+    func richPasteUploadRequestIndexingUsesSharedScopedStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalScopedRequestStore.swift")
+        )
+
+        // Given rich-paste upload requests can keep superseded request IDs
+        // awaitable while tracking the latest visible request per session.
+        #expect(storeSource.contains("struct TerminalScopedRequestStore"))
+        #expect(storeSource.contains("removeAllRequests(forScope"))
+
+        // Then rich-paste upload should not keep bespoke session/request
+        // double dictionaries in the superfile.
+        #expect(
+            !managerSource.contains("richPasteUploadRequestBySession"),
+            "ConnectionSessionManager.swift should not own bespoke rich-paste upload request indexing."
+        )
+        #expect(managerSource.contains("richPasteUploadRequestStore"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

@@ -203,9 +203,8 @@ final class ConnectionSessionManager: ObservableObject {
     private var inputRequestBySession: [UUID: UUID] = [:]
     private var lastInputTaskBySession: [UUID: Task<Void, Never>] = [:]
     var pendingInputRequestIDs: Set<UUID> { Set(inputRequests.keys) }
-    private var richPasteUploadRequests: [UUID: RichPasteUploadRequest] = [:]
-    private var richPasteUploadRequestBySession: [UUID: UUID] = [:]
-    var pendingSessionRichPasteUploadRequestIDs: Set<UUID> { Set(richPasteUploadRequests.keys) }
+    private var richPasteUploadRequestStore = TerminalScopedRequestStore<RichPasteUploadRequest>()
+    var pendingSessionRichPasteUploadRequestIDs: Set<UUID> { richPasteUploadRequestStore.pendingRequestIDs }
     private var resizeRequestStore = TerminalScopedRequestStore<ResizeRequest>()
     var pendingResizeRequestIDs: Set<UUID> { resizeRequestStore.pendingRequestIDs }
     private var processExitRequestStore = TerminalScopedRequestStore<ProcessExitRequest>()
@@ -446,7 +445,7 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     func waitForSessionRichPasteUploadRequest(_ requestID: UUID) async {
-        await richPasteUploadRequests[requestID]?.task.value
+        await richPasteUploadRequestStore[requestID]?.task.value
     }
 
     func waitForResizeRequest(_ requestID: UUID) async {
@@ -905,20 +904,9 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func cancelSessionRichPasteUploadRequests(for sessionId: UUID) -> [Task<Void, Never>] {
-        let requestIDs = richPasteUploadRequests.compactMap { requestID, request in
-            request.sessionId == sessionId ? requestID : nil
-        }
-
-        var tasks: [Task<Void, Never>] = []
-        for requestID in requestIDs {
-            if let task = richPasteUploadRequests[requestID]?.task {
-                task.cancel()
-                tasks.append(task)
-            }
-        }
-
-        richPasteUploadRequestBySession.removeValue(forKey: sessionId)
-        return tasks
+        let requests = richPasteUploadRequestStore.removeAllRequests(forScope: sessionId)
+        requests.forEach { $0.task.cancel() }
+        return requests.map(\.task)
     }
 
     private func cancelResizeRequests(for sessionId: UUID) {
@@ -1972,9 +1960,8 @@ final class ConnectionSessionManager: ObservableObject {
     ) -> UUID? {
         guard sessionWithID(sessionId) != nil else { return nil }
 
-        if let previousRequestID = richPasteUploadRequestBySession[sessionId],
-           let previousRequest = richPasteUploadRequests[previousRequestID] {
-            previousRequest.task.cancel()
+        if let previousRequestID = richPasteUploadRequestStore.requestID(forScope: sessionId) {
+            richPasteUploadRequestStore[previousRequestID]?.task.cancel()
         }
 
         let requestID = UUID()
@@ -1982,10 +1969,7 @@ final class ConnectionSessionManager: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.richPasteUploadRequests.removeValue(forKey: requestID)
-                if self.richPasteUploadRequestBySession[sessionId] == requestID {
-                    self.richPasteUploadRequestBySession.removeValue(forKey: sessionId)
-                }
+                self.richPasteUploadRequestStore.remove(id: requestID, ifMappedTo: sessionId)
             }
 
             guard !Task.isCancelled else {
@@ -2003,7 +1987,7 @@ final class ConnectionSessionManager: ObservableObject {
                 lease: self.richPasteLease(for: sessionId),
                 upload: upload,
                 onProgress: { message in
-                    guard self.richPasteUploadRequestBySession[sessionId] == requestID else { return }
+                    guard self.richPasteUploadRequestStore.requestID(forScope: sessionId) == requestID else { return }
                     onProgress(message)
                 },
                 pasteUploadedPath: { [weak self] text in
@@ -2026,11 +2010,14 @@ final class ConnectionSessionManager: ObservableObject {
             onCompleted(result)
         }
 
-        richPasteUploadRequests[requestID] = RichPasteUploadRequest(
-            sessionId: sessionId,
-            task: task
+        richPasteUploadRequestStore.insert(
+            RichPasteUploadRequest(
+                sessionId: sessionId,
+                task: task
+            ),
+            id: requestID,
+            scopeID: sessionId
         )
-        richPasteUploadRequestBySession[sessionId] = requestID
         return requestID
     }
 
@@ -3369,13 +3356,12 @@ extension ConnectionSessionManager {
         inputRequests.removeAll()
         inputRequestBySession.removeAll()
         lastInputTaskBySession.removeAll()
-        let richPasteUploadTasks = richPasteUploadRequests.values.map(\.task)
+        let richPasteUploadTasks = richPasteUploadRequestStore.allRequests.map(\.task)
         richPasteUploadTasks.forEach { $0.cancel() }
         for task in richPasteUploadTasks {
             await task.value
         }
-        richPasteUploadRequests.removeAll()
-        richPasteUploadRequestBySession.removeAll()
+        richPasteUploadRequestStore.removeAll()
         resizeRequestStore.allRequests.forEach { $0.task.cancel() }
         resizeRequestStore.removeAll()
         processExitRequestStore.allRequests.forEach { $0.task.cancel() }
