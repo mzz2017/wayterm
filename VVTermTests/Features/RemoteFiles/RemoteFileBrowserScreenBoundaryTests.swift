@@ -86,6 +86,9 @@ struct RemoteFileBrowserScreenBoundaryTests {
         let tableSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Platform/RemoteFileBrowserMacTableView.swift")
         )
+        let cellSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Platform/RemoteFileBrowserMacTableCells.swift")
+        )
         let filePromiseSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Platform/RemoteFileBrowserMacFilePromise.swift")
         )
@@ -101,6 +104,14 @@ struct RemoteFileBrowserScreenBoundaryTests {
         #expect(
             !tableSource.contains("final class FilePromiseDelegate"),
             "RemoteFileBrowserMacTableView.swift should not own file-promise export glue."
+        )
+        #expect(
+            !tableSource.contains("final class RemoteFileBrowserMacNameCellView"),
+            "RemoteFileBrowserMacTableView.swift should not own macOS table cell controls."
+        )
+        #expect(
+            cellSource.contains("final class RemoteFileBrowserMacNameCellView"),
+            "RemoteFileBrowserMacTableCells.swift should own macOS table cell controls."
         )
         #expect(
             filePromiseSource.contains("final class FilePromiseDelegate"),
