@@ -344,6 +344,48 @@ struct TerminalTabManagerSuperfileBoundaryTests {
         #expect(managerSource.contains("connectWatchdogStore"))
     }
 
+    @Test
+    func paneTerminalIORequestLifecycleLivesOutsideTerminalTabManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let ioSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+TerminalIO.swift")
+        )
+
+        // Given pane input, rich-paste upload, and resize requests share
+        // application-owned async lifecycle tracking.
+        #expect(ioSource.contains("extension TerminalTabManager"))
+        #expect(ioSource.contains("func requestPaneInput"))
+        #expect(ioSource.contains("func requestPaneRichPasteUpload"))
+        #expect(ioSource.contains("func requestPaneResize"))
+        #expect(ioSource.contains("func cancelPaneRichPasteUploadRequests"))
+
+        // Then the superfile should not own pane terminal I/O request
+        // implementations directly.
+        #expect(
+            !managerSource.containsRegex(#"func\s+sendInput\s*\("#),
+            "TerminalTabManager.swift should not own pane input sending."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestPaneInput\s*\("#),
+            "TerminalTabManager.swift should not own pane input request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestPaneRichPasteUpload\s*\("#),
+            "TerminalTabManager.swift should not own pane rich-paste upload request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+resizePane\s*\("#),
+            "TerminalTabManager.swift should not own pane resize sending."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestPaneResize\s*\("#),
+            "TerminalTabManager.swift should not own pane resize request lifecycle."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
@@ -362,5 +404,11 @@ struct TerminalTabManagerSuperfileBoundaryTests {
 
     private enum SourceRootError: Error {
         case notFound
+    }
+}
+
+private extension String {
+    func containsRegex(_ pattern: String) -> Bool {
+        range(of: pattern, options: .regularExpression) != nil
     }
 }
