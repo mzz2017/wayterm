@@ -74,6 +74,36 @@ struct SSHClientSuperfileBoundaryTests {
         #expect(configSource.contains("keepAliveInterval"))
     }
 
+    @Test
+    func clientSupportValuesLiveOutsideSSHClientFile() throws {
+        let root = try sourceRoot()
+        let clientSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift")
+        )
+        let shellHandleSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/ShellHandle.swift")
+        )
+        let uploadStrategySource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHUploadStrategy.swift")
+        )
+
+        // Given the SSH client superfile source.
+        #expect(
+            !clientSource.contains("struct ShellHandle"),
+            "SSHClient.swift should not own the shell stream handle value."
+        )
+        #expect(
+            !clientSource.contains("enum SSHUploadStrategy"),
+            "SSHClient.swift should not own the upload policy value."
+        )
+
+        // Then shared client support values have dedicated Core/SSH files.
+        #expect(shellHandleSource.contains("struct ShellHandle"))
+        #expect(shellHandleSource.contains("ShellTransport"))
+        #expect(uploadStrategySource.contains("enum SSHUploadStrategy"))
+        #expect(uploadStrategySource.contains("execPreferred"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

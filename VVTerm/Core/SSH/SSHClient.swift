@@ -5,30 +5,6 @@ import MoshBootstrap
 
 // MARK: - SSH Client using libssh2
 
-nonisolated struct ShellHandle {
-    let id: UUID
-    let stream: AsyncStream<Data>
-    let transport: ShellTransport
-    let fallbackReason: MoshFallbackReason?
-
-    init(
-        id: UUID,
-        stream: AsyncStream<Data>,
-        transport: ShellTransport = .ssh,
-        fallbackReason: MoshFallbackReason? = nil
-    ) {
-        self.id = id
-        self.stream = stream
-        self.transport = transport
-        self.fallbackReason = fallbackReason
-    }
-}
-
-nonisolated enum SSHUploadStrategy: Sendable {
-    case automatic
-    case execPreferred
-}
-
 private nonisolated final class SSHClientAbortState: @unchecked Sendable {
     private let lock = NSLock()
     private var aborted = false
