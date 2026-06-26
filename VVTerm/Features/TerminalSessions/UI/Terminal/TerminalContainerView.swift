@@ -268,8 +268,39 @@ struct TerminalContainerView: View {
             ZStack {
                 terminalBackgroundLayer
                 terminalSurfaceLayer
-                stateOverlayLayer
-                voiceOverlayLayer
+                TerminalContainerStateOverlay(
+                    isTerminalInitializationFailed: ghosttyApp.readiness == .error,
+                    shouldShowInitializingOverlay: shouldShowInitializingOverlay,
+                    shouldShowStateOverlay: ghosttyApp.readiness != .error && !shouldShowInitializingOverlay,
+                    surfaceStyle: noticeSurfaceStyle,
+                    credentialLoadErrorMessage: credentialLoadErrorMessage,
+                    connectionState: connectionState,
+                    shouldUseInlineReconnectPresentation: shouldUseInlineReconnectPresentation,
+                    tmuxStatus: session.tmuxStatus,
+                    shouldShowMoshDurabilityHint: shouldShowMoshDurabilityHint,
+                    isHostKeyVerificationFailure: isHostKeyVerificationFailure,
+                    onRetry: { retryConnection() },
+                    onTrustNewHostKey: { showingRetrustHostConfirmation = true }
+                )
+                #if os(macOS) || os(iOS)
+                TerminalContainerVoiceOverlayLayer(
+                    voiceInput: voiceInput,
+                    target: voiceTarget,
+                    isConnected: session.connectionState.isConnected,
+                    isReady: isReady,
+                    isRecording: showingVoiceRecording,
+                    isVoiceButtonEnabled: voiceButtonEnabled,
+                    bottomInset: voiceOverlayBottomInset,
+                    onStart: { startVoiceRecording() },
+                    onSend: { transcribedText in
+                        handleVoiceTranscription(transcribedText)
+                        showingVoiceRecording = false
+                    },
+                    onCancel: {
+                        showingVoiceRecording = false
+                    }
+                )
+                #endif
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -446,7 +477,6 @@ struct TerminalContainerView: View {
                     #endif
                 }
 
-                terminalInitializationOverlay
             }
         }
     }
@@ -486,168 +516,6 @@ struct TerminalContainerView: View {
             },
             onVoiceTrigger: voiceTriggerHandler
         )
-        #endif
-    }
-
-    @ViewBuilder
-    private var terminalInitializationOverlay: some View {
-        if ghosttyApp.readiness == .error {
-            BlockingStatusView(surfaceStyle: noticeSurfaceStyle) {
-                VStack(spacing: 12) {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                    Text("Terminal initialization failed")
-                        .foregroundStyle(.red)
-                }
-                .multilineTextAlignment(.center)
-            }
-        } else if shouldShowInitializingOverlay {
-            BlockingStatusView(showsScrim: false, surfaceStyle: noticeSurfaceStyle) {
-                VStack(spacing: 12) {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                    Text("Initializing terminal...")
-                        .foregroundStyle(.secondary)
-                }
-                .multilineTextAlignment(.center)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var stateOverlayLayer: some View {
-        if ghosttyApp.readiness != .error && !shouldShowInitializingOverlay {
-            if let credentialLoadErrorMessage {
-                BlockingStatusView(surfaceStyle: noticeSurfaceStyle) {
-                    VStack(spacing: 16) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.largeTitle)
-                            .foregroundStyle(.red)
-                        Text("Connection Failed")
-                            .font(.headline)
-                        Text(credentialLoadErrorMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                        Button("Retry") {
-                            retryConnection()
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                    .multilineTextAlignment(.center)
-                }
-            } else {
-                switch connectionState {
-                case .connecting:
-                    if !shouldUseInlineReconnectPresentation {
-                        BlockingStatusView(showsScrim: false, surfaceStyle: noticeSurfaceStyle) {
-                            VStack(spacing: 16) {
-                                ProgressView()
-                                    .progressViewStyle(.circular)
-                                Text("Connecting...")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.vertical, 6)
-                            .multilineTextAlignment(.center)
-                        }
-                    }
-                case .reconnecting:
-                    if !shouldUseInlineReconnectPresentation {
-                        BlockingStatusView(showsScrim: false, surfaceStyle: noticeSurfaceStyle) {
-                            VStack(spacing: 16) {
-                                ProgressView()
-                                    .progressViewStyle(.circular)
-                                Text("Reconnecting...")
-                                    .foregroundStyle(.orange)
-                            }
-                            .multilineTextAlignment(.center)
-                        }
-                    }
-                case .disconnected:
-                    BlockingStatusView(surfaceStyle: noticeSurfaceStyle) {
-                        VStack(spacing: 16) {
-                            Image(systemName: "bolt.slash")
-                                .font(.largeTitle)
-                                .foregroundStyle(.secondary)
-                            Text("Disconnected")
-                                .foregroundStyle(.secondary)
-                            if session.tmuxStatus.indicatesTmux {
-                                Text("tmux session is still running on the server.")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.center)
-                            } else if shouldShowMoshDurabilityHint {
-                                Text("Without tmux, app backgrounding can interrupt running commands.")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.center)
-                            }
-                            Button("Reconnect") {
-                                retryConnection()
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                        .multilineTextAlignment(.center)
-                    }
-                case .failed(let error):
-                    BlockingStatusView(showsScrim: false, surfaceStyle: noticeSurfaceStyle) {
-                        VStack(spacing: 16) {
-                            Image(systemName: "exclamationmark.triangle")
-                                .font(.largeTitle)
-                                .foregroundStyle(.red)
-                            Text("Connection Failed")
-                                .font(.headline)
-                            Text(error)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                            if isHostKeyVerificationFailure {
-                                Button("Trust New Host Key") {
-                                    showingRetrustHostConfirmation = true
-                                }
-                                .buttonStyle(.borderedProminent)
-                            }
-                            Button("Retry") {
-                                retryConnection()
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                        .multilineTextAlignment(.center)
-                    }
-                case .connected, .idle:
-                    EmptyView()
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var voiceOverlayLayer: some View {
-        #if os(macOS)
-        if session.connectionState.isConnected && isReady {
-            if showingVoiceRecording {
-                voiceOverlay
-                    .padding(.bottom, voiceOverlayBottomInset)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else if voiceButtonEnabled {
-                voiceTriggerButton
-                    .padding(.bottom, voiceOverlayBottomInset)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                    .transition(.opacity)
-            }
-        }
-        #endif
-
-        #if os(iOS)
-        if session.connectionState.isConnected && isReady && showingVoiceRecording {
-            voiceOverlay
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                .padding(.horizontal, 16)
-                .padding(.bottom, voiceOverlayBottomInset)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                .zIndex(1)
-        }
         #endif
     }
 
@@ -798,38 +666,6 @@ struct TerminalContainerView: View {
 
     // MARK: - Voice Input (macOS / iOS)
 
-    #if os(macOS) || os(iOS)
-    private var voiceOverlay: some View {
-        VoiceRecordingView(
-            voiceInput: voiceInput,
-            target: voiceTarget,
-            onSend: { transcribedText in
-                handleVoiceTranscription(transcribedText)
-                showingVoiceRecording = false
-            },
-            onCancel: {
-                showingVoiceRecording = false
-            }
-        )
-    }
-    #endif
-
-    #if os(macOS)
-    private var voiceTriggerButton: some View {
-        Button {
-            startVoiceRecording()
-        } label: {
-            Image(systemName: "mic.fill")
-                .font(.system(size: 16, weight: .semibold))
-                .padding(10)
-                .background(.ultraThinMaterial, in: Circle())
-        }
-        .buttonStyle(.plain)
-        .help(Text("Voice input (Command+Shift+M)"))
-        .padding(14)
-    }
-    #endif
-
     #if os(macOS)
     private func setupKeyMonitor() {
         guard keyMonitor == nil else { return }
@@ -937,49 +773,4 @@ struct TerminalContainerView: View {
         return true
     }
 
-}
-
-// MARK: - Terminal Empty State View
-
-struct TerminalEmptyStateView: View {
-    let server: Server?
-    let onNewTerminal: () -> Void
-
-    var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-
-            VStack(spacing: 16) {
-                Image(systemName: "terminal")
-                    .font(.system(size: 56))
-                    .foregroundStyle(.secondary)
-
-                VStack(spacing: 8) {
-                    Text(server?.name ?? String(localized: "Terminal"))
-                        .font(.title2)
-                        .fontWeight(.semibold)
-
-                    Text("No terminals open")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Button(action: onNewTerminal) {
-                HStack(spacing: 8) {
-                    Image(systemName: "plus")
-                    Text("New Terminal")
-                        .fontWeight(.medium)
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(.tint, in: RoundedRectangle(cornerRadius: 10))
-                .foregroundStyle(.white)
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
 }
