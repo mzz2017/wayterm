@@ -152,6 +152,28 @@ struct SSHClientSuperfileBoundaryTests {
         #expect(authSource.contains("kbdintCallback"))
     }
 
+    @Test
+    func channelCleanupTaskRegistryLivesOutsideSSHClientFile() throws {
+        let root = try sourceRoot()
+        let clientSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift")
+        )
+        let registrySource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHChannelCleanupTaskRegistry.swift")
+        )
+
+        // Given the SSH client superfile source.
+        #expect(
+            !clientSource.contains("final class SSHChannelCleanupTaskRegistry"),
+            "SSHClient.swift should not own SSHSession channel cleanup task tracking."
+        )
+
+        // Then session cleanup task tracking has a dedicated Core/SSH file.
+        #expect(registrySource.contains("final class SSHChannelCleanupTaskRegistry"))
+        #expect(registrySource.contains("Task.detached"))
+        #expect(registrySource.contains("func tasks()"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

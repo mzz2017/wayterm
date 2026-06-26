@@ -423,6 +423,7 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         // Given the SSHSession implementation that owns libssh2 shell and exec
         // channels.
         let source = try sshClientSource()
+        let registrySource = try sshChannelCleanupTaskRegistrySource()
         let sessionSource = try slice(
             startingAt: "actor SSHSession {",
             endingBefore: "// MARK: - fd_set helpers for select()",
@@ -448,8 +449,12 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         // cancellation cleanup must be routed through a session-owned tracker
         // rather than untracked fire-and-forget tasks.
         XCTAssertTrue(
-            source.contains("SSHChannelCleanupTaskRegistry"),
+            registrySource.contains("final class SSHChannelCleanupTaskRegistry"),
             "SSHSession should own a channel cleanup task registry."
+        )
+        XCTAssertTrue(
+            registrySource.contains("Task.detached"),
+            "The cleanup registry should track asynchronous cleanup tasks created from synchronous callbacks."
         )
         XCTAssertTrue(
             startShellSource.contains("trackChannelCleanupTask"),
@@ -870,6 +875,13 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
     private func sshClientSource() throws -> String {
         try String(
             contentsOf: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift"),
+            encoding: .utf8
+        )
+    }
+
+    private func sshChannelCleanupTaskRegistrySource() throws -> String {
+        try String(
+            contentsOf: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHChannelCleanupTaskRegistry.swift"),
             encoding: .utf8
         )
     }
