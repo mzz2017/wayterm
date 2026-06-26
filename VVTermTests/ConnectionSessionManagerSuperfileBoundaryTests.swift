@@ -60,6 +60,33 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func snapshotStoreLivesOutsideConnectionSessionManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionsSnapshotStore.swift")
+        )
+
+        // Given the connection session manager source.
+        #expect(
+            !managerSource.contains("JSONEncoder().encode(makeSnapshot())"),
+            "ConnectionSessionManager.swift should not own snapshot encoding."
+        )
+        #expect(
+            !managerSource.contains("JSONDecoder().decode(ConnectionSessionsSnapshot.self"),
+            "ConnectionSessionManager.swift should not own snapshot decoding."
+        )
+
+        // Then connection session snapshot storage has a dedicated Application file.
+        #expect(storeSource.contains("struct ConnectionSessionsSnapshotStore"))
+        #expect(storeSource.contains("func save"))
+        #expect(storeSource.contains("func load"))
+        #expect(storeSource.contains("func remove"))
+    }
+
+    @Test
     func supportTypesLiveOutsideConnectionSessionManagerFile() throws {
         let root = try sourceRoot()
         let managerSource = try source(

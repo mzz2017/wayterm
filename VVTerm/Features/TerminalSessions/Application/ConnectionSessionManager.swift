@@ -262,7 +262,7 @@ final class ConnectionSessionManager: ObservableObject {
     /// Each Ghostty surface uses ~50-100MB (font atlas, Metal textures, scrollback)
     private let maxTerminals = 20
 
-    private let persistenceKey = "connectionSessionsSnapshot.v1"
+    private let snapshotStore = ConnectionSessionsSnapshotStore()
     private var persistTask: Task<Void, Never>?
     private var isRestoring = false
 
@@ -2989,17 +2989,15 @@ extension ConnectionSessionManager {
 
     private func persistSnapshot() {
         do {
-            let data = try JSONEncoder().encode(makeSnapshot())
-            UserDefaults.standard.set(data, forKey: persistenceKey)
+            try snapshotStore.save(makeSnapshot())
         } catch {
             logger.error("Failed to persist session snapshot: \(error.localizedDescription)")
         }
     }
 
     private func restoreSnapshot() {
-        guard let data = UserDefaults.standard.data(forKey: persistenceKey) else { return }
         do {
-            let snapshot = try JSONDecoder().decode(ConnectionSessionsSnapshot.self, from: data)
+            guard let snapshot = try snapshotStore.load() else { return }
             isRestoring = true
             applyRestoredSnapshot(snapshot)
         } catch {
@@ -3453,7 +3451,7 @@ extension ConnectionSessionManager {
         processExitOperationForTesting = nil
         isRestoring = false
 
-        UserDefaults.standard.removeObject(forKey: persistenceKey)
+        snapshotStore.remove()
         for terminal in terminals {
             terminal.cleanup()
         }
