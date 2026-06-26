@@ -111,18 +111,6 @@ final class RemoteFileBrowserStore: ObservableObject {
         let task: Task<Void, Never>
     }
 
-    private struct MutationRequest {
-        let serverId: UUID?
-        let task: Task<Void, Never>
-        var isCancelled: Bool
-    }
-
-    private struct TransferRequest {
-        let serverId: UUID?
-        let task: Task<Void, Never>
-        var isCancelled: Bool
-    }
-
     private struct MoveDestinationLoadRequest {
         let key: MoveDestinationLoadRequestKey
         var task: Task<Void, Never>?
@@ -147,6 +135,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     let serverProvider: ServerProvider
     let workingDirectoryProvider: WorkingDirectoryProvider
     private let serviceAccessCoordinator: RemoteFileServiceAccessCoordinator
+    private let requestLifecycleCoordinator = RemoteFileRequestLifecycleCoordinator()
 
     var persistedStates: [String: RemoteFileBrowserPersistedState] = [:]
     var directoryRequestIDs: [UUID: UUID] = [:]
@@ -157,8 +146,6 @@ final class RemoteFileBrowserStore: ObservableObject {
     var navigationRequestByTab: [UUID: UUID] = [:]
     private var moveDestinationLoadRequests: [UUID: MoveDestinationLoadRequest] = [:]
     private var moveDestinationLoadRequestByKey: [MoveDestinationLoadRequestKey: UUID] = [:]
-    private var mutationRequests: [UUID: MutationRequest] = [:]
-    private var transferRequests: [UUID: TransferRequest] = [:]
 
     static let directoryEntryLimit = 2_000
     static let defaultPreviewBytes = 512 * 1_024
@@ -167,15 +154,11 @@ final class RemoteFileBrowserStore: ObservableObject {
     static let maxMediaPreviewBytes = 64 * 1_024 * 1_024
 
     var pendingMutationRequestIDs: Set<UUID> {
-        Set(mutationRequests.compactMap { requestID, request in
-            request.isCancelled ? nil : requestID
-        })
+        requestLifecycleCoordinator.pendingMutationRequestIDs
     }
 
     var pendingTransferRequestIDs: Set<UUID> {
-        Set(transferRequests.compactMap { requestID, request in
-            request.isCancelled ? nil : requestID
-        })
+        requestLifecycleCoordinator.pendingTransferRequestIDs
     }
 
     var pendingPreviewLoadRequestIDs: Set<UUID> {
@@ -273,31 +256,16 @@ final class RemoteFileBrowserStore: ObservableObject {
         onSuccess: @escaping @MainActor (Result) -> Void,
         onFailure: @escaping @MainActor (Error) -> Void = { _ in }
     ) -> UUID {
-        let requestID = UUID()
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                self.mutationRequests.removeValue(forKey: requestID)
-            }
-
-            do {
-                let result = try await operation()
-                guard !Task.isCancelled, !isMutationRequestCancelled(requestID) else { return }
-                onSuccess(result)
-            } catch is CancellationError {
-                // Disconnect-driven cancellation is lifecycle state, not a user-facing mutation failure.
-            } catch {
-                guard !Task.isCancelled, !isMutationRequestCancelled(requestID) else { return }
-                onFailure(error)
-            }
-        }
-
-        mutationRequests[requestID] = MutationRequest(serverId: serverId, task: task, isCancelled: false)
-        return requestID
+        requestLifecycleCoordinator.requestMutation(
+            serverId: serverId,
+            operation: operation,
+            onSuccess: onSuccess,
+            onFailure: onFailure
+        )
     }
 
     func waitForMutationRequest(_ requestID: UUID) async {
-        await mutationRequests[requestID]?.task.value
+        await requestLifecycleCoordinator.waitForMutationRequest(requestID)
     }
 
     @discardableResult
@@ -308,34 +276,17 @@ final class RemoteFileBrowserStore: ObservableObject {
         onSuccess: @escaping @MainActor @Sendable (Result) -> Void,
         onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in }
     ) -> UUID {
-        let requestID = UUID()
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                self.transferRequests.removeValue(forKey: requestID)
-            }
-
-            do {
-                let result = try await operation { progress in
-                    guard !Task.isCancelled, !self.isTransferRequestCancelled(requestID) else { return }
-                    onProgress(progress)
-                }
-                guard !Task.isCancelled, !isTransferRequestCancelled(requestID) else { return }
-                onSuccess(result)
-            } catch is CancellationError {
-                // Disconnect-driven cancellation is lifecycle state, not a user-facing transfer failure.
-            } catch {
-                guard !Task.isCancelled, !isTransferRequestCancelled(requestID) else { return }
-                onFailure(error)
-            }
-        }
-
-        transferRequests[requestID] = TransferRequest(serverId: serverId, task: task, isCancelled: false)
-        return requestID
+        requestLifecycleCoordinator.requestTransfer(
+            serverId: serverId,
+            operation: operation,
+            onProgress: onProgress,
+            onSuccess: onSuccess,
+            onFailure: onFailure
+        )
     }
 
     func waitForTransferRequest(_ requestID: UUID) async {
-        await transferRequests[requestID]?.task.value
+        await requestLifecycleCoordinator.waitForTransferRequest(requestID)
     }
 
     func waitForPreviewLoadRequest(_ requestID: UUID) async {
@@ -631,29 +582,11 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     func cancelMutationRequests(for serverId: UUID) {
-        for (requestID, request) in mutationRequests where request.serverId == serverId {
-            var canceledRequest = request
-            canceledRequest.isCancelled = true
-            mutationRequests[requestID] = canceledRequest
-            request.task.cancel()
-        }
+        requestLifecycleCoordinator.cancelMutationRequests(for: serverId)
     }
 
     func cancelTransferRequests(for serverId: UUID) {
-        for (requestID, request) in transferRequests where request.serverId == serverId {
-            var canceledRequest = request
-            canceledRequest.isCancelled = true
-            transferRequests[requestID] = canceledRequest
-            request.task.cancel()
-        }
-    }
-
-    private func isMutationRequestCancelled(_ requestID: UUID) -> Bool {
-        mutationRequests[requestID]?.isCancelled ?? true
-    }
-
-    private func isTransferRequestCancelled(_ requestID: UUID) -> Bool {
-        transferRequests[requestID]?.isCancelled ?? true
+        requestLifecycleCoordinator.cancelTransferRequests(for: serverId)
     }
 
     private func cancelMoveDestinationLoadRequests(for serverId: UUID) {
