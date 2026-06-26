@@ -109,7 +109,13 @@ struct RemoteFileInspectorView: View {
         if let selectedEntry {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: chrome == .sidebar ? 12 : 16) {
-                    inspectorHeader(for: selectedEntry)
+                    RemoteFileInspectorHeader(
+                        entry: selectedEntry,
+                        chrome: chrome,
+                        sectionBackgroundColor: sectionBackgroundColor,
+                        actions: inspectorActions,
+                        onClose: onClose
+                    )
                     if showsPreviewTab {
                         inspectorTabs
                     }
@@ -119,7 +125,7 @@ struct RemoteFileInspectorView: View {
 
                 if activeTab == .metadata {
                     Form {
-                        metadataFormSection(for: selectedEntry)
+                        RemoteFileInspectorMetadataFormSection(entry: selectedEntry)
                     }
                     .formStyle(.grouped)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -176,14 +182,20 @@ struct RemoteFileInspectorView: View {
             Form {
                 if let selectedEntry {
                     if activeTab == .metadata {
-                        metadataFormSection(for: selectedEntry)
+                        RemoteFileInspectorMetadataFormSection(entry: selectedEntry)
 
-                        if showsPrimaryActions(for: selectedEntry) {
-                            primaryActionsFormSection(for: selectedEntry)
+                        if inspectorActions.showsPrimaryActions(for: selectedEntry) {
+                            RemoteFileInspectorPrimaryActionsFormSection(
+                                entry: selectedEntry,
+                                actions: inspectorActions
+                            )
                         }
 
                         if onDelete != nil {
-                            deleteFormSection(for: selectedEntry)
+                            RemoteFileInspectorDeleteFormSection(
+                                entry: selectedEntry,
+                                actions: inspectorActions
+                            )
                         }
                     } else {
                         previewFormSection(for: selectedEntry)
@@ -487,7 +499,7 @@ struct RemoteFileInspectorView: View {
             }
             .buttonStyle(.borderedProminent)
             .frame(maxWidth: .infinity)
-        } else if canShare(payload.entry) {
+        } else if inspectorActions.canShare(payload.entry) {
             Button {
                 onShare?(payload.entry)
             } label: {
@@ -497,7 +509,7 @@ struct RemoteFileInspectorView: View {
             .frame(maxWidth: .infinity)
         }
         #else
-        if canDownload(payload.entry) {
+        if inspectorActions.canDownload(payload.entry) {
             Button {
                 onDownload?(payload.entry)
             } label: {
@@ -535,222 +547,6 @@ struct RemoteFileInspectorView: View {
             .fill(useSectionBackground ? previewBackground : Color.clear)
     }
 
-    private func metadataSection(for entry: RemoteFileEntry) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(String(localized: "Information"))
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.primary)
-
-            VStack(spacing: 0) {
-                metadataRow(String(localized: "Name"), value: entry.name)
-                metadataDivider
-                metadataRow(String(localized: "Kind"), value: kindLabel(for: entry))
-                metadataDivider
-                metadataRow(String(localized: "Location"), value: entry.path)
-                metadataDivider
-                metadataRow(String(localized: "Size"), value: sizeLabel(for: entry))
-                metadataDivider
-                metadataRow(String(localized: "Modified"), value: modifiedLabel(for: entry))
-
-                if let permissions = entry.formattedPermissions {
-                    metadataDivider
-                    metadataRow(String(localized: "Permissions"), value: permissions)
-                }
-
-                if let target = entry.symlinkTarget {
-                    metadataDivider
-                    metadataRow(String(localized: "Symlink"), value: target)
-                }
-            }
-
-            if showsPrimaryActions(for: entry) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(String(localized: "Actions"))
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(.primary)
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        if canDownload(entry) {
-                            inspectorActionButton(
-                                title: String(localized: "Download…"),
-                                systemImage: "arrow.down.circle"
-                            ) {
-                                onDownload?(entry)
-                            }
-                        }
-
-                        if onRename != nil {
-                            inspectorActionButton(
-                                title: String(localized: "Rename…"),
-                                systemImage: "pencil"
-                            ) {
-                                onRename?(entry)
-                            }
-                        }
-
-                        if onMove != nil {
-                            inspectorActionButton(
-                                title: String(localized: "Move…"),
-                                systemImage: "arrow.right.circle"
-                            ) {
-                                onMove?(entry)
-                            }
-                        }
-
-                        if canEditPermissions(entry) {
-                            inspectorActionButton(
-                                title: String(localized: "Permissions…"),
-                                systemImage: "lock.shield"
-                            ) {
-                                onEditPermissions?(entry)
-                            }
-                        }
-                    }
-                }
-            }
-
-            if onDelete != nil {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(String(localized: "Remove"))
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(.primary)
-
-                    inspectorActionButton(
-                        title: String(localized: "Delete"),
-                        systemImage: "trash",
-                        tint: .red
-                    ) {
-                        onDelete?(entry)
-                    }
-                }
-            }
-        }
-    }
-
-    private func metadataFormSection(for entry: RemoteFileEntry) -> some View {
-        Section(String(localized: "Information")) {
-            metadataFormRow(String(localized: "Name"), value: entry.name)
-            metadataFormRow(String(localized: "Kind"), value: kindLabel(for: entry))
-            metadataFormMultilineRow(String(localized: "Location"), value: entry.path)
-            metadataFormRow(String(localized: "Size"), value: sizeLabel(for: entry))
-            metadataFormRow(String(localized: "Modified"), value: modifiedLabel(for: entry))
-
-            if let permissions = entry.formattedPermissions {
-                metadataFormRow(String(localized: "Permissions"), value: permissions)
-            }
-
-            if let target = entry.symlinkTarget {
-                metadataFormMultilineRow(String(localized: "Symlink"), value: target)
-            }
-        }
-    }
-
-    private func primaryActionsFormSection(for entry: RemoteFileEntry) -> some View {
-        Section(String(localized: "Actions")) {
-            if canDownload(entry) {
-                Button {
-                    onDownload?(entry)
-                } label: {
-                    Label(String(localized: "Download"), systemImage: "arrow.down.circle")
-                }
-            }
-
-            if canShare(entry) {
-                Button {
-                    onShare?(entry)
-                } label: {
-                    Label(String(localized: "Share"), systemImage: "square.and.arrow.up")
-                }
-            }
-
-            if onRename != nil {
-                Button {
-                    onRename?(entry)
-                } label: {
-                    Label(String(localized: "Rename"), systemImage: "pencil")
-                }
-            }
-
-            if onMove != nil {
-                Button {
-                    onMove?(entry)
-                } label: {
-                    Label(String(localized: "Move"), systemImage: "arrow.right.circle")
-                }
-            }
-
-            if canEditPermissions(entry) {
-                Button {
-                    onEditPermissions?(entry)
-                } label: {
-                    Label(String(localized: "Permissions"), systemImage: "lock.shield")
-                }
-            }
-        }
-    }
-
-    private func deleteFormSection(for entry: RemoteFileEntry) -> some View {
-        Section {
-            Button(role: .destructive) {
-                onDelete?(entry)
-            } label: {
-                Label {
-                    Text(String(localized: "Delete"))
-                } icon: {
-                    Image(systemName: "trash")
-                        .foregroundStyle(.red)
-                }
-            }
-        }
-    }
-
-    private func inspectorHeader(for entry: RemoteFileEntry) -> some View {
-        HStack(alignment: .top, spacing: chrome == .sidebar ? 12 : 14) {
-            RoundedRectangle(cornerRadius: inspectorHeaderIconCornerRadius, style: .continuous)
-                .fill(sectionBackground)
-                .frame(width: inspectorHeaderIconSize, height: inspectorHeaderIconSize)
-                .overlay {
-                    Image(systemName: entry.iconName)
-                        .font(.system(size: inspectorHeaderSymbolSize, weight: .medium))
-                        .foregroundStyle(inspectorIconTint(for: entry))
-                }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(entry.name)
-                    .font(inspectorHeaderTitleFont)
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-
-                Text(inspectorSubtitle(for: entry))
-                    .font(inspectorHeaderSubtitleFont)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            if chrome == .sidebar {
-                HStack(spacing: 6) {
-                    Menu {
-                        sidebarInspectorActionMenu(for: entry)
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .font(.system(size: 16, weight: .semibold))
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .help(Text("File Actions"))
-
-                    if onClose != nil {
-                        closeInspectorButton
-                    }
-                }
-            }
-        }
-    }
-
     private var closeInspectorButton: some View {
         Button {
             onClose?()
@@ -760,109 +556,6 @@ struct RemoteFileInspectorView: View {
         }
         .buttonStyle(.borderless)
         .help(Text("Close Preview"))
-    }
-
-    @ViewBuilder
-    private func sidebarInspectorActionMenu(for entry: RemoteFileEntry) -> some View {
-        if canDownload(entry) {
-            Button {
-                onDownload?(entry)
-            } label: {
-                Label(String(localized: "Download…"), systemImage: "arrow.down.circle")
-            }
-        }
-
-        if canShare(entry) {
-            Button {
-                onShare?(entry)
-            } label: {
-                Label(String(localized: "Share…"), systemImage: "square.and.arrow.up")
-            }
-        }
-
-        if canDownload(entry) || canShare(entry) {
-            Divider()
-        }
-
-        if canEditPermissions(entry) {
-            Button {
-                onEditPermissions?(entry)
-            } label: {
-                Label(String(localized: "Permissions…"), systemImage: "lock.shield")
-            }
-        }
-
-        if onRename != nil {
-            Button {
-                onRename?(entry)
-            } label: {
-                Label(String(localized: "Rename…"), systemImage: "pencil")
-            }
-        }
-
-        if onMove != nil {
-            Button {
-                onMove?(entry)
-            } label: {
-                Label(String(localized: "Move…"), systemImage: "arrow.right.circle")
-            }
-        }
-
-        Divider()
-
-        Button {
-            Clipboard.copy(entry.name)
-        } label: {
-            Label(String(localized: "Copy Name"), systemImage: "textformat")
-        }
-
-        Button {
-            Clipboard.copy(entry.path)
-        } label: {
-            Label(String(localized: "Copy Path"), systemImage: "document.on.document")
-        }
-
-        if onDelete != nil {
-            Divider()
-
-            Button(role: .destructive) {
-                onDelete?(entry)
-            } label: {
-                Label(String(localized: "Delete"), systemImage: "trash")
-            }
-        }
-    }
-
-    private func inspectorSubtitle(for entry: RemoteFileEntry) -> String {
-        let kind = kindLabel(for: entry)
-        let size = sizeLabel(for: entry)
-        guard size != "—" else { return kind }
-        return "\(kind) - \(size)"
-    }
-
-    private func metadataFormRow(_ key: String, value: String) -> some View {
-        LabeledContent {
-            Text(value)
-                .multilineTextAlignment(.trailing)
-                .lineLimit(1)
-                .textSelection(.enabled)
-        } label: {
-            Text(key)
-        }
-    }
-
-    private func metadataFormMultilineRow(_ key: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(key)
-                .foregroundStyle(.primary)
-
-            Text(value)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-        }
-        .padding(.vertical, 2)
     }
 
     @ViewBuilder
@@ -985,140 +678,19 @@ struct RemoteFileInspectorView: View {
         .padding(.vertical, 20)
     }
 
-    private func inspectorIconTint(for entry: RemoteFileEntry) -> Color {
-        switch entry.type {
-        case .directory:
-            return .accentColor
-        case .symlink:
-            return .secondary
-        case .other:
-            return .secondary
-        case .file:
-            return .primary
-        }
-    }
-
-    private func metadataRow(_ key: String, value: String) -> some View {
-        HStack(alignment: .top, spacing: 18) {
-            Text(key)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: metadataLabelWidth, alignment: .leading)
-
-            Text(value)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.primary)
-                .multilineTextAlignment(.leading)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.vertical, 11)
-    }
-
-    private func inspectorActionButton(
-        title: String,
-        systemImage: String,
-        tint: Color = .primary,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: systemImage)
-                    .font(.body.weight(.semibold))
-                    .frame(width: 18)
-
-                Text(title)
-                    .font(.body.weight(.semibold))
-
-                Spacer(minLength: 12)
-            }
-            .foregroundStyle(tint)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(sectionBackground)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var metadataDivider: some View {
-        Divider()
-    }
-
-    private func canDownload(_ entry: RemoteFileEntry) -> Bool {
-        entry.type != .directory && onDownload != nil
-    }
-
-    private var inspectorHeaderIconSize: CGFloat {
-        chrome == .sidebar ? 36 : 56
-    }
-
-    private var inspectorHeaderIconCornerRadius: CGFloat {
-        chrome == .sidebar ? 9 : 14
-    }
-
-    private var inspectorHeaderSymbolSize: CGFloat {
-        chrome == .sidebar ? 17 : 26
-    }
-
-    private var inspectorHeaderTitleFont: Font {
-        chrome == .sidebar ? .headline.weight(.semibold) : .title2.weight(.semibold)
-    }
-
-    private var inspectorHeaderSubtitleFont: Font {
-        chrome == .sidebar ? .subheadline : .title3
-    }
-
-    private func canShare(_ entry: RemoteFileEntry) -> Bool {
-        entry.type != .directory && onShare != nil
-    }
-
-    private func canEditPermissions(_ entry: RemoteFileEntry) -> Bool {
-        guard onEditPermissions != nil, entry.permissions != nil else { return false }
-        return entry.type != .symlink
-    }
-
-    private func showsPrimaryActions(for entry: RemoteFileEntry) -> Bool {
-        canDownload(entry) || canShare(entry) || onRename != nil || onMove != nil || canEditPermissions(entry)
-    }
-
-    private func modifiedLabel(for entry: RemoteFileEntry) -> String {
-        guard let modifiedAt = entry.modifiedAt else { return "—" }
-        return modifiedAt.formatted(date: .abbreviated, time: .shortened)
-    }
-
-    private func sizeLabel(for entry: RemoteFileEntry) -> String {
-        guard entry.type != .directory, let size = entry.size else { return "—" }
-        return ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
-    }
-
-    private func kindLabel(for entry: RemoteFileEntry) -> String {
-        switch entry.type {
-        case .directory:
-            return String(localized: "Folder")
-        case .symlink:
-            return String(localized: "Symlink")
-        case .other:
-            return String(localized: "Document")
-        case .file:
-            return entry.metadataTypeLabel == RemoteFileType.file.displayName
-                ? String(localized: "Document")
-                : entry.metadataTypeLabel
-        }
-    }
-
     private var previewBackground: Color {
         previewBackgroundColor
     }
 
-    private var sectionBackground: Color {
-        sectionBackgroundColor
-    }
-
-    private var metadataLabelWidth: CGFloat {
-        chrome == .sidebar ? 108 : 120
+    private var inspectorActions: RemoteFileInspectorActions {
+        RemoteFileInspectorActions(
+            onDownload: onDownload,
+            onShare: onShare,
+            onRename: onRename,
+            onMove: onMove,
+            onEditPermissions: onEditPermissions,
+            onDelete: onDelete
+        )
     }
 
     private var showsPreviewTab: Bool {

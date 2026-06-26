@@ -47,6 +47,57 @@ struct RemoteFilePreviewViewsBoundaryTests {
         )
     }
 
+    @Test
+    func inspectorDoesNotOwnMetadataAndActionRenderingViews() throws {
+        let root = try sourceRoot()
+        let inspectorSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Preview/RemoteFilePreviewViews.swift")
+        )
+        let metadataSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Preview/RemoteFileInspectorMetadataViews.swift")
+        )
+
+        // Given metadata and file action rendering is separate from preview
+        // loading/editing state in the inspector root.
+        for typeName in [
+            "RemoteFileInspectorActions",
+            "RemoteFileInspectorHeader",
+            "RemoteFileInspectorMetadataFormSection",
+            "RemoteFileInspectorPrimaryActionsFormSection",
+            "RemoteFileInspectorDeleteFormSection",
+            "RemoteFileInspectorActionMenu",
+            "RemoteFileInspectorMetadataPolicy"
+        ] {
+            #expect(
+                !inspectorSource.contains("struct \(typeName)") && !inspectorSource.contains("enum \(typeName)"),
+                "RemoteFilePreviewViews.swift should not define \(typeName)."
+            )
+            #expect(
+                metadataSource.contains("struct \(typeName)") || metadataSource.contains("enum \(typeName)"),
+                "RemoteFileInspectorMetadataViews.swift should define \(typeName)."
+            )
+        }
+
+        for functionName in [
+            "canDownload",
+            "canShare",
+            "canEditPermissions",
+            "showsPrimaryActions",
+            "kindLabel",
+            "sizeLabel",
+            "modifiedLabel"
+        ] {
+            #expect(
+                !inspectorSource.contains("func \(functionName)"),
+                "RemoteFileInspectorView should not own \(functionName)."
+            )
+            #expect(
+                metadataSource.contains("func \(functionName)"),
+                "RemoteFileInspectorMetadataViews should own \(functionName)."
+            )
+        }
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
