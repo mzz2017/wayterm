@@ -1,0 +1,633 @@
+//
+//  SSHSession+RemoteFiles.swift
+//  VVTerm
+//
+//  Remote file and SFTP operations for SSHSession.
+//
+
+import Foundation
+import os
+
+extension SSHSession {
+    // MARK: - Remote Files
+
+    func listDirectory(at path: String, maxEntries: Int? = nil) async throws -> [RemoteFileEntry] {
+        let sftp = try await ensureSFTPSession()
+        let normalizedPath = RemoteFilePath.normalize(path)
+        let handle = try await openDirectoryHandle(at: normalizedPath, sftp: sftp)
+        defer { closeSFTPHandle(handle, after: "list directory") }
+
+        let limit = maxEntries ?? .max
+        var entries: [RemoteFileEntry] = []
+        var nameBuffer = [CChar](repeating: 0, count: 4096)
+
+        while entries.count < limit {
+            try Task.checkCancellation()
+            var attributes = LIBSSH2_SFTP_ATTRIBUTES()
+
+            let bytesRead = driver.readSFTPDirectory(
+                handle: handle,
+                into: &nameBuffer,
+                attributes: &attributes
+            )
+
+            if bytesRead > 0 {
+                let name = Self.string(from: nameBuffer, length: bytesRead)
+                guard name != "." && name != ".." else { continue }
+
+                let entryPath = RemoteFilePath.appending(name, to: normalizedPath)
+                let baseEntry = RemoteFileEntry.from(
+                    name: name,
+                    path: entryPath,
+                    attributes: attributes
+                )
+                let symlinkTarget = baseEntry.type == .symlink ? (try? await readlink(at: entryPath)) : nil
+                entries.append(
+                    RemoteFileEntry.from(
+                        name: name,
+                        path: entryPath,
+                        attributes: attributes,
+                        symlinkTarget: symlinkTarget
+                    )
+                )
+                continue
+            }
+
+            if bytesRead == 0 {
+                break
+            }
+
+            if bytesRead == Int(LIBSSH2_ERROR_EAGAIN) {
+                await waitForSocket()
+                continue
+            }
+
+            throw remoteFileError(from: sftp, operation: "read directory", path: normalizedPath)
+        }
+
+        return entries
+    }
+
+    func stat(at path: String) async throws -> RemoteFileEntry {
+        try await stat(at: path, statType: Int32(LIBSSH2_SFTP_STAT))
+    }
+
+    func lstat(at path: String) async throws -> RemoteFileEntry {
+        try await stat(at: path, statType: Int32(LIBSSH2_SFTP_LSTAT))
+    }
+
+    func readlink(at path: String) async throws -> String {
+        let sftp = try await ensureSFTPSession()
+        return try await readSymlinkTarget(at: path, linkType: Int32(LIBSSH2_SFTP_READLINK), sftp: sftp)
+    }
+
+    func readFile(at path: String, maxBytes: Int, offset: UInt64 = 0) async throws -> Data {
+        guard maxBytes > 0 else { return Data() }
+
+        let sftp = try await ensureSFTPSession()
+        let normalizedPath = RemoteFilePath.normalize(path)
+        let handle = try await openFileHandle(
+            at: normalizedPath,
+            sftp: sftp,
+            flags: UInt32(LIBSSH2_FXF_READ),
+            mode: 0
+        )
+        defer { closeSFTPHandle(handle, after: "read file") }
+
+        if offset > 0 {
+            driver.seekSFTPFile(handle: handle, offset: offset)
+        }
+
+        var data = Data()
+        data.reserveCapacity(min(maxBytes, 32 * 1024))
+
+        while data.count < maxBytes {
+            try Task.checkCancellation()
+            let remaining = maxBytes - data.count
+            let chunkSize = min(32 * 1024, remaining)
+            var buffer = [CChar](repeating: 0, count: chunkSize)
+
+            let bytesRead = driver.readSFTPFile(handle: handle, into: &buffer)
+
+            if bytesRead > 0 {
+                buffer.withUnsafeBufferPointer { bufferPtr in
+                    guard let baseAddress = bufferPtr.baseAddress else { return }
+                    data.append(Data(bytes: UnsafeRawPointer(baseAddress), count: bytesRead))
+                }
+                continue
+            }
+
+            if bytesRead == 0 {
+                break
+            }
+
+            if bytesRead == Int(LIBSSH2_ERROR_EAGAIN) {
+                await waitForSocket()
+                continue
+            }
+
+            throw remoteFileError(from: sftp, operation: "read file", path: normalizedPath)
+        }
+
+        return data
+    }
+
+    func downloadFile(at path: String, to localURL: URL) async throws {
+        let sftp = try await ensureSFTPSession()
+        let normalizedPath = RemoteFilePath.normalize(path)
+        let handle = try await openFileHandle(
+            at: normalizedPath,
+            sftp: sftp,
+            flags: UInt32(LIBSSH2_FXF_READ),
+            mode: 0
+        )
+        defer { closeSFTPHandle(handle, after: "download file") }
+
+        let fileManager = FileManager.default
+        let destinationDirectory = localURL.deletingLastPathComponent()
+        try fileManager.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+        if fileManager.fileExists(atPath: localURL.path) {
+            try fileManager.removeItem(at: localURL)
+        }
+        guard fileManager.createFile(atPath: localURL.path, contents: nil) else {
+            throw RemoteFileBrowserError.failed(String(localized: "Unable to create the local download file."))
+        }
+
+        let localFileHandle = try FileHandle(forWritingTo: localURL)
+        do {
+            while true {
+                try Task.checkCancellation()
+                var buffer = [CChar](repeating: 0, count: 64 * 1024)
+
+                let bytesRead = driver.readSFTPFile(handle: handle, into: &buffer)
+
+                if bytesRead > 0 {
+                    try localFileHandle.write(contentsOf: Data(buffer.prefix(bytesRead).map { UInt8(bitPattern: $0) }))
+                    continue
+                }
+
+                if bytesRead == 0 {
+                    break
+                }
+
+                if bytesRead == Int(LIBSSH2_ERROR_EAGAIN) {
+                    await waitForSocket()
+                    continue
+                }
+
+                throw remoteFileError(from: sftp, operation: "download file", path: normalizedPath)
+            }
+        } catch {
+            try? localFileHandle.close()
+            try? fileManager.removeItem(at: localURL)
+            throw error
+        }
+
+        try localFileHandle.close()
+    }
+
+    func writeFile(_ data: Data, to path: String, permissions: Int32 = 0o644) async throws {
+        let sftp = try await ensureSFTPSession()
+        let normalizedPath = RemoteFilePath.normalize(path)
+        let handle = try await openFileHandle(
+            at: normalizedPath,
+            sftp: sftp,
+            flags: UInt32(LIBSSH2_FXF_WRITE | LIBSSH2_FXF_TRUNC | LIBSSH2_FXF_CREAT),
+            mode: permissions,
+            operation: "write file"
+        )
+        defer { closeSFTPHandle(handle, after: "write file") }
+
+        var totalBytesWritten = 0
+        while totalBytesWritten < data.count {
+            try Task.checkCancellation()
+
+            let bytesWritten = driver.writeSFTPFile(
+                handle: handle,
+                data: data,
+                offset: totalBytesWritten,
+                maxLength: min(64 * 1024, data.count - totalBytesWritten)
+            )
+
+            if bytesWritten > 0 {
+                totalBytesWritten += bytesWritten
+                continue
+            }
+
+            if bytesWritten == Int(LIBSSH2_ERROR_EAGAIN) {
+                await waitForSocket()
+                continue
+            }
+
+            throw remoteFileError(from: sftp, operation: "write file", path: normalizedPath)
+        }
+    }
+
+    private func closeSFTPHandle(_ handle: OpaquePointer, after operation: String) {
+        let closeResult = driver.closeSFTPHandle(handle)
+        guard closeResult != 0 else { return }
+        guard let session = libssh2Session else {
+            logger.debug(
+                "libssh2 sftp handle close after \(operation, privacy: .public) returned \(closeResult) [message: no active session]"
+            )
+            return
+        }
+
+        let rawError = driver.lastError(
+            session: session,
+            operation: .sftpCloseHandle,
+            fallbackCode: closeResult
+        )
+        logger.debug(
+            "libssh2 sftp handle close after \(operation, privacy: .public) returned \(rawError.code) [message: \(rawError.message ?? "none", privacy: .public)]"
+        )
+    }
+
+    func resolveHomeDirectory() async throws -> String {
+        let sftp = try await ensureSFTPSession()
+        let path = try await readSymlinkTarget(at: ".", linkType: Int32(LIBSSH2_SFTP_REALPATH), sftp: sftp)
+        return path.isEmpty ? "/" : path
+    }
+
+    func fileSystemStatus(at path: String) async throws -> RemoteFileFilesystemStatus {
+        let sftp = try await ensureSFTPSession()
+        let normalizedPath = RemoteFilePath.normalize(path)
+        var status = LIBSSH2_SFTP_STATVFS()
+
+        while true {
+            try Task.checkCancellation()
+
+            let result = driver.statSFTPFileSystem(sftp: sftp, path: normalizedPath, status: &status)
+
+            if result == 0 {
+                let fragmentSize = UInt64(status.f_frsize)
+                let blockSize = fragmentSize > 0 ? fragmentSize : UInt64(status.f_bsize)
+                return RemoteFileFilesystemStatus(
+                    blockSize: blockSize,
+                    totalBlocks: UInt64(status.f_blocks),
+                    freeBlocks: UInt64(status.f_bfree),
+                    availableBlocks: UInt64(status.f_bavail)
+                )
+            }
+
+            if result == Int32(LIBSSH2_ERROR_EAGAIN) {
+                await waitForSocket()
+                continue
+            }
+
+            throw remoteFileError(from: sftp, operation: "read filesystem status", path: normalizedPath)
+        }
+    }
+
+    func createDirectory(at path: String, permissions: Int32 = 0o755) async throws {
+        let sftp = try await ensureSFTPSession()
+        let normalizedPath = RemoteFilePath.normalize(path)
+        try await performSFTPMutation(
+            at: normalizedPath,
+            sftp: sftp,
+            operation: "create directory"
+        ) { sftpHandle, mutationPath in
+            driver.makeSFTPDirectory(sftp: sftpHandle, path: mutationPath, permissions: permissions)
+        }
+    }
+
+    func setPermissions(at path: String, permissions: UInt32) async throws {
+        let sftp = try await ensureSFTPSession()
+        let normalizedPath = RemoteFilePath.normalize(path)
+        var attributes = LIBSSH2_SFTP_ATTRIBUTES()
+        attributes.flags = UInt(LIBSSH2_SFTP_ATTR_PERMISSIONS)
+        attributes.permissions = UInt(permissions)
+
+        while true {
+            try Task.checkCancellation()
+
+            let result = driver.statSFTPPath(
+                sftp: sftp,
+                path: normalizedPath,
+                statType: Int32(LIBSSH2_SFTP_SETSTAT),
+                attributes: &attributes
+            )
+
+            if result == 0 {
+                return
+            }
+
+            if result == Int32(LIBSSH2_ERROR_EAGAIN) {
+                await waitForSocket()
+                continue
+            }
+
+            throw remoteFileError(from: sftp, operation: "set permissions", path: normalizedPath)
+        }
+    }
+
+    func renameItem(at sourcePath: String, to destinationPath: String) async throws {
+        let sftp = try await ensureSFTPSession()
+        let normalizedSource = RemoteFilePath.normalize(sourcePath)
+        let normalizedDestination = RemoteFilePath.normalize(destinationPath)
+        let renameFlagCandidates: [Int] = [
+            Int(LIBSSH2_SFTP_RENAME_OVERWRITE) |
+                Int(LIBSSH2_SFTP_RENAME_ATOMIC) |
+                Int(LIBSSH2_SFTP_RENAME_NATIVE),
+            Int(LIBSSH2_SFTP_RENAME_OVERWRITE) |
+                Int(LIBSSH2_SFTP_RENAME_NATIVE),
+            Int(LIBSSH2_SFTP_RENAME_OVERWRITE),
+            0
+        ]
+
+        var lastError: Error?
+
+        for flags in renameFlagCandidates {
+            do {
+                try await performSFTPMutation(
+                    at: normalizedSource,
+                    sftp: sftp,
+                    operation: "rename"
+                ) { sftpHandle, sourcePath in
+                    driver.renameSFTPPath(
+                        sftp: sftpHandle,
+                        sourcePath: sourcePath,
+                        destinationPath: normalizedDestination,
+                        flags: flags
+                    )
+                }
+                return
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? RemoteFileBrowserError.failed(String(localized: "Failed to rename item."))
+    }
+
+    func deleteFile(at path: String) async throws {
+        let sftp = try await ensureSFTPSession()
+        let normalizedPath = RemoteFilePath.normalize(path)
+        try await performSFTPMutation(
+            at: normalizedPath,
+            sftp: sftp,
+            operation: "delete file"
+        ) { sftpHandle, mutationPath in
+            driver.unlinkSFTPFile(sftp: sftpHandle, path: mutationPath)
+        }
+    }
+
+    func deleteDirectory(at path: String) async throws {
+        let sftp = try await ensureSFTPSession()
+        let normalizedPath = RemoteFilePath.normalize(path)
+        try await performSFTPMutation(
+            at: normalizedPath,
+            sftp: sftp,
+            operation: "delete directory"
+        ) { sftpHandle, mutationPath in
+            driver.removeSFTPDirectory(sftp: sftpHandle, path: mutationPath)
+        }
+    }
+
+
+    private func ensureSFTPSession() async throws -> OpaquePointer {
+        if let sftpSession {
+            return sftpSession
+        }
+
+        guard let session = libssh2Session else {
+            throw RemoteFileBrowserError.disconnected
+        }
+
+        while true {
+            try Task.checkCancellation()
+
+            if let sftpSession = driver.initSFTPSession(session: session) {
+                self.sftpSession = sftpSession
+                return sftpSession
+            }
+
+            let rawError = driver.lastError(session: session, operation: .sftpInit, fallbackCode: 0)
+            if rawError.code == LIBSSH2_ERROR_EAGAIN {
+                await waitForSocket()
+                continue
+            }
+
+            throw remoteFileError(from: nil, operation: "start SFTP session", path: nil)
+        }
+    }
+
+    private func openDirectoryHandle(at path: String, sftp: OpaquePointer) async throws -> OpaquePointer {
+        try await openSFTPHandle(
+            at: path,
+            sftp: sftp,
+            flags: 0,
+            mode: 0,
+            openType: Int32(LIBSSH2_SFTP_OPENDIR),
+            operation: "open directory"
+        )
+    }
+
+    private func openFileHandle(
+        at path: String,
+        sftp: OpaquePointer,
+        flags: UInt32,
+        mode: Int32,
+        operation: String = "open file"
+    ) async throws -> OpaquePointer {
+        try await openSFTPHandle(
+            at: path,
+            sftp: sftp,
+            flags: flags,
+            mode: mode,
+            openType: Int32(LIBSSH2_SFTP_OPENFILE),
+            operation: operation
+        )
+    }
+
+    private func openSFTPHandle(
+        at path: String,
+        sftp: OpaquePointer,
+        flags: UInt32,
+        mode: Int32,
+        openType: Int32,
+        operation: String
+    ) async throws -> OpaquePointer {
+        guard let session = libssh2Session else {
+            throw RemoteFileBrowserError.disconnected
+        }
+
+        while true {
+            try Task.checkCancellation()
+
+            if let handle = driver.openSFTPHandle(
+                sftp: sftp,
+                path: path,
+                flags: flags,
+                mode: mode,
+                openType: openType
+            ) {
+                return handle
+            }
+
+            let rawError = driver.lastError(session: session, operation: .sftpOpen, fallbackCode: 0)
+            if rawError.code == LIBSSH2_ERROR_EAGAIN {
+                await waitForSocket()
+                continue
+            }
+
+            throw remoteFileError(from: sftp, operation: operation, path: path)
+        }
+    }
+
+    private func performSFTPMutation(
+        at path: String,
+        sftp: OpaquePointer,
+        operation: String,
+        mutation: (OpaquePointer, String) -> Int
+    ) async throws {
+        guard libssh2Session != nil else {
+            throw RemoteFileBrowserError.disconnected
+        }
+
+        while true {
+            try Task.checkCancellation()
+
+            let result = mutation(sftp, path)
+
+            if result == 0 {
+                return
+            }
+
+            if result == Int(LIBSSH2_ERROR_EAGAIN) {
+                await waitForSocket()
+                continue
+            }
+
+            throw remoteFileError(from: sftp, operation: operation, path: path)
+        }
+    }
+
+    private func stat(at path: String, statType: Int32) async throws -> RemoteFileEntry {
+        let sftp = try await ensureSFTPSession()
+        let normalizedPath = RemoteFilePath.normalize(path)
+        var attributes = LIBSSH2_SFTP_ATTRIBUTES()
+
+        while true {
+            try Task.checkCancellation()
+
+            let result = driver.statSFTPPath(
+                sftp: sftp,
+                path: normalizedPath,
+                statType: statType,
+                attributes: &attributes
+            )
+
+            if result == 0 {
+                let entryName = Self.fileName(for: normalizedPath)
+                var symlinkTarget: String?
+                let entry = RemoteFileEntry.from(name: entryName, path: normalizedPath, attributes: attributes)
+                if statType == Int32(LIBSSH2_SFTP_LSTAT), entry.type == .symlink {
+                    symlinkTarget = try? await readlink(at: normalizedPath)
+                }
+                return RemoteFileEntry.from(
+                    name: entryName,
+                    path: normalizedPath,
+                    attributes: attributes,
+                    symlinkTarget: symlinkTarget
+                )
+            }
+
+            if result == Int32(LIBSSH2_ERROR_EAGAIN) {
+                await waitForSocket()
+                continue
+            }
+
+            throw remoteFileError(
+                from: sftp,
+                operation: statType == Int32(LIBSSH2_SFTP_LSTAT) ? "lstat" : "stat",
+                path: normalizedPath
+            )
+        }
+    }
+
+    private func readSymlinkTarget(
+        at path: String,
+        linkType: Int32,
+        sftp: OpaquePointer
+    ) async throws -> String {
+        guard let session = libssh2Session else {
+            throw RemoteFileBrowserError.disconnected
+        }
+
+        let requestPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedPath = requestPath.isEmpty ? "." : requestPath
+        var buffer = [CChar](repeating: 0, count: 4096)
+
+        while true {
+            try Task.checkCancellation()
+
+            let result = driver.readSFTPSymlink(
+                sftp: sftp,
+                path: normalizedPath,
+                targetBuffer: &buffer,
+                linkType: linkType
+            )
+
+            if result >= 0 {
+                return Self.string(from: buffer, length: result)
+            }
+
+            let rawError = driver.lastError(session: session, operation: .sftpSymlink, fallbackCode: Int32(result))
+            if rawError.code == LIBSSH2_ERROR_EAGAIN {
+                await waitForSocket()
+                continue
+            }
+
+            throw remoteFileError(
+                from: sftp,
+                operation: linkType == Int32(LIBSSH2_SFTP_REALPATH) ? "resolve path" : "read link",
+                path: normalizedPath
+            )
+        }
+    }
+
+    func closeSFTPSession() {
+        guard let sftpSession else { return }
+        let shutdownResult = driver.shutdownSFTPSession(sftpSession)
+        if shutdownResult != 0, shutdownResult != LIBSSH2_ERROR_EAGAIN {
+            if let session = libssh2Session {
+                let rawError = driver.lastError(
+                    session: session,
+                    operation: .sftpShutdown,
+                    fallbackCode: shutdownResult
+                )
+                logger.debug(
+                    "libssh2 sftp shutdown returned \(rawError.code) [message: \(rawError.message ?? "none", privacy: .public)]"
+                )
+            } else {
+                logger.debug("libssh2 sftp shutdown returned \(shutdownResult) [message: no active session]")
+            }
+        }
+        self.sftpSession = nil
+    }
+
+    private static func fileName(for path: String) -> String {
+        let normalized = RemoteFilePath.normalize(path)
+        guard normalized != "/" else { return "/" }
+        return normalized.split(separator: "/").last.map(String.init) ?? normalized
+    }
+
+    private static func string(from buffer: [CChar], length: Int) -> String {
+        let bytes = buffer.prefix(length).map { UInt8(bitPattern: $0) }
+        return String(decoding: bytes, as: UTF8.self)
+    }
+
+    private func remoteFileError(
+        from sftp: OpaquePointer?,
+        operation: String,
+        path: String?
+    ) -> RemoteFileBrowserError {
+        let code = sftp.map { driver.lastSFTPError($0) } ?? 0
+        return SSHRemoteFileErrorMapper.remoteFileError(
+            lastError: code,
+            operation: operation,
+            path: path
+        )
+    }
+}

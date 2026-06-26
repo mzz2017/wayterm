@@ -422,7 +422,7 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
     func testShellAndExecCleanupTasksAreTrackedBySessionOwner() throws {
         // Given the SSHSession implementation that owns libssh2 shell and exec
         // channels.
-        let source = try sshClientSource()
+        let source = try sshSessionSource()
         let registrySource = try sshChannelCleanupTaskRegistrySource()
         let sessionSource = try slice(
             startingAt: "actor SSHSession {",
@@ -872,9 +872,9 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         )
     }
 
-    private func sshClientSource() throws -> String {
+    private func sshSessionSource() throws -> String {
         try String(
-            contentsOf: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift"),
+            contentsOf: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHSession.swift"),
             encoding: .utf8
         )
     }

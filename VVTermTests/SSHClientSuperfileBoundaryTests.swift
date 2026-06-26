@@ -244,6 +244,33 @@ struct SSHClientSuperfileBoundaryTests {
         #expect(mapperSource.contains("func remoteFileError"))
     }
 
+    @Test
+    func sessionActorLivesOutsideSSHClientFile() throws {
+        let root = try sourceRoot()
+        let clientSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift")
+        )
+        let sessionSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHSession.swift")
+        )
+
+        // Given the SSH client superfile source.
+        #expect(
+            !clientSource.contains("nonisolated actor SSHSession"),
+            "SSHClient.swift should not own the libssh2 session lifecycle actor."
+        )
+
+        // Then libssh2 session lifecycle has a dedicated Core/SSH owner file.
+        #expect(sessionSource.contains("nonisolated actor SSHSession"))
+        #expect(sessionSource.contains("func connect() async throws"))
+        #expect(sessionSource.contains("func disconnect() async"))
+        #expect(sessionSource.contains("func startShell"))
+        #expect(
+            sessionSource.split(separator: "\n", omittingEmptySubsequences: false).count < 1_200,
+            "SSHSession.swift should not become a replacement superfile."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
