@@ -599,38 +599,20 @@ final class TerminalTabManager: ObservableObject {
             return nil
         }
 
-        let paneExists: Bool
-        if let layout = currentTab.layout {
-            paneExists = layout.findPane(paneId)
-        } else {
-            paneExists = currentTab.rootPaneId == paneId
-        }
-        guard paneExists else {
+        guard let closePlan = TerminalTabClosePanePolicy.plan(tab: currentTab, paneId: paneId) else {
             logger.warning("closePane: pane not found \(paneId)")
             return nil
         }
 
-        // If this is the only pane, close the tab
-        if currentTab.paneCount <= 1 {
+        if closePlan == .closeTab {
             return closeTabUI(currentTab)
         }
 
         // Update layout FIRST (before cleanup) to avoid "Initializing" flash
         // When cleanupPane triggers @Published, the pane won't be rendered anymore
-        var updatedTab = currentTab
-        if let currentLayout = currentTab.layout,
-           let newLayout = currentLayout.removingPane(paneId) {
-            // Always keep the layout - even for single pane
-            // This ensures allPaneIds returns the correct remaining pane
-            // (not rootPaneId which might have been closed)
-            updatedTab.layout = newLayout.equalized()
-
-            // Update focus if needed
-            if updatedTab.focusedPaneId == paneId {
-                updatedTab.focusedPaneId = newLayout.allPaneIds().first ?? currentTab.rootPaneId
-            }
+        if case .closePane(let updatedTab) = closePlan {
+            updateTab(updatedTab)
         }
-        updateTab(updatedTab)
 
         // Now clean up the pane (after layout is updated)
         let paneCloseResult = preparePaneClose(paneId)
