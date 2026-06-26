@@ -28,7 +28,7 @@ final class TerminalTabManager: ObservableObject {
     private typealias PaneRetryRequest = TerminalTabManagerSupport.PaneRetryRequest
     private typealias PaneHostRetrustRequest = TerminalTabManagerSupport.PaneHostRetrustRequest
     private typealias PaneCredentialLoadRequest = TerminalTabManagerSupport.PaneCredentialLoadRequest
-    private typealias SurfaceAttachRequest = TerminalTabManagerSupport.SurfaceAttachRequest
+    typealias SurfaceAttachRequest = TerminalTabManagerSupport.SurfaceAttachRequest
     typealias InputRequest = TerminalTabManagerSupport.InputRequest
     typealias RichPasteUploadRequest = TerminalTabManagerSupport.RichPasteUploadRequest
     typealias ResizeRequest = TerminalTabManagerSupport.ResizeRequest
@@ -109,7 +109,7 @@ final class TerminalTabManager: ObservableObject {
     // MARK: - Terminal Registry
 
     /// Terminal UI surfaces keyed by pane entity. SSH runtime ownership is separate.
-    private let terminalSurfaceRegistry = TerminalSurfaceRegistry()
+    let terminalSurfaceRegistry = TerminalSurfaceRegistry()
     private var shellRegistry = SSHShellRegistry(staleThreshold: 120)
     /// Server IDs with an in-flight tab-open request to avoid queued duplicates.
     private var tabOpenRequestStore = TerminalOpenRequestStore()
@@ -126,7 +126,7 @@ final class TerminalTabManager: ObservableObject {
     var pendingPaneHostRetrustRequestIDs: Set<UUID> { paneHostRetrustRequestStore.pendingRequestIDs }
     private var paneCredentialLoadRequestStore = TerminalScopedRequestStore<PaneCredentialLoadRequest>()
     var pendingPaneCredentialLoadRequestIDs: Set<UUID> { paneCredentialLoadRequestStore.pendingScopedRequestIDs }
-    private var surfaceAttachRequestStore = TerminalScopedRequestStore<SurfaceAttachRequest>()
+    var surfaceAttachRequestStore = TerminalScopedRequestStore<SurfaceAttachRequest>()
     var pendingSurfaceAttachRequestIDs: Set<UUID> { surfaceAttachRequestStore.pendingRequestIDs }
     var inputRequestStore = TerminalSerialRequestStore<InputRequest>()
     var pendingInputRequestIDs: Set<UUID> { inputRequestStore.pendingRequestIDs }
@@ -179,6 +179,10 @@ final class TerminalTabManager: ObservableObject {
 
     /// Bumps when a terminal view is registered/unregistered so views refresh.
     @Published private(set) var terminalRegistryVersion: Int = 0
+
+    func bumpTerminalRegistryVersion() {
+        terminalRegistryVersion &+= 1
+    }
 
     /// Servers that already ran tmux cleanup (per app launch)
     private var tmuxCleanupStore = TerminalTmuxCleanupStore()
@@ -606,31 +610,6 @@ final class TerminalTabManager: ObservableObject {
         updateTmuxFocus(for: tab)
     }
 
-    // MARK: - Terminal Registry
-
-    /// Register a terminal view for a pane
-    func registerTerminal(_ terminal: GhosttyTerminalView, for paneId: UUID) {
-        terminalSurfaceRegistry.register(terminal, for: .pane(paneId))
-        scheduleTerminalRegistryVersionUpdate()
-    }
-
-    /// Unregister a terminal view
-    func unregisterTerminal(for paneId: UUID) {
-        terminalSurfaceRegistry.removeSurface(for: .pane(paneId), cleanup: true)
-        scheduleTerminalRegistryVersionUpdate()
-    }
-
-    private func scheduleTerminalRegistryVersionUpdate() {
-        Task { @MainActor [weak self] in
-            self?.terminalRegistryVersion &+= 1
-        }
-    }
-
-    /// Get terminal for a pane
-    func getTerminal(for paneId: UUID) -> GhosttyTerminalView? {
-        terminalSurfaceRegistry.surface(for: .pane(paneId))
-    }
-
     /// Send text to the terminal surface for a given split pane.
     func sendText(_ text: String, toPane paneId: UUID) {
         guard let terminal = terminalSurfaceRegistry.surface(for: .pane(paneId)) else { return }
@@ -678,96 +657,7 @@ final class TerminalTabManager: ObservableObject {
         return TerminalConnectionRuntime(entityId: entityId)
     }
 
-    func attachSurface(_ terminal: GhosttyTerminalView, toPane paneId: UUID) async {
-        if terminalSurfaceRegistry.surface(for: .pane(paneId)) !== terminal {
-            registerTerminal(terminal, for: paneId)
-        }
-
-        await startRuntimeIfNeeded(forPane: paneId, terminal: terminal)
-    }
-
-    @discardableResult
-    func requestSurfaceAttach(
-        paneId: UUID,
-        terminal: GhosttyTerminalView,
-        context: TerminalSurfaceAttachContext
-    ) -> UUID? {
-        requestSurfaceAttach(
-            paneId: paneId,
-            context: context,
-            attachOperation: { [weak self, weak terminal] in
-                guard let self, let terminal else { return }
-                await self.attachSurface(terminal, toPane: paneId)
-            }
-        )
-    }
-
-    @discardableResult
-    private func requestSurfaceAttach(
-        paneId: UUID,
-        context: TerminalSurfaceAttachContext,
-        attachOperation: @escaping @MainActor () async -> Void
-    ) -> UUID? {
-        if let requestID = surfaceAttachRequestStore.requestID(forScope: paneId) {
-            guard shouldAcceptSurfaceAttach(paneId: paneId, context: context) else {
-                surfaceAttachRequestStore.update(requestID) { $0.context = context }
-                return nil
-            }
-            surfaceAttachRequestStore.update(requestID) { $0.context = context }
-            return requestID
-        }
-
-        guard shouldAcceptSurfaceAttach(paneId: paneId, context: context) else { return nil }
-
-        let requestID = UUID()
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                self.surfaceAttachRequestStore.remove(id: requestID, ifMappedTo: paneId)
-            }
-
-            let latestContext = self.surfaceAttachRequestStore[requestID]?.context ?? context
-            guard self.shouldAcceptSurfaceAttach(paneId: paneId, context: latestContext) else { return }
-            await attachOperation()
-        }
-
-        surfaceAttachRequestStore.insert(
-            SurfaceAttachRequest(paneId: paneId, context: context, task: task),
-            id: requestID,
-            scopeID: paneId
-        )
-        return requestID
-    }
-
-    private func shouldAcceptSurfaceAttach(
-        paneId: UUID,
-        context: TerminalSurfaceAttachContext
-    ) -> Bool {
-        guard paneStates[paneId] != nil else { return false }
-        guard context.isAppActive, context.isViewActive else { return false }
-        guard shellId(for: paneId) == nil else { return false }
-        guard !isShellStartInFlight(for: paneId) else { return false }
-        return true
-    }
-
-    func detachSurface(fromPane paneId: UUID, reason: TerminalSurfaceDetachReason) async {
-        switch reason {
-        case .viewDisappeared:
-            detachSurfaceForPaneViewDisappeared(paneId)
-        case .sessionClosed:
-            detachSurfaceForClosedPane(paneId)
-        }
-    }
-
-    func detachSurfaceForPaneViewDisappeared(_ paneId: UUID) {
-        terminalSurfaceRegistry.detachSurface(for: .pane(paneId), cleanup: false)
-    }
-
-    func detachSurfaceForClosedPane(_ paneId: UUID) {
-        unregisterTerminal(for: paneId)
-    }
-
-    private func startRuntimeIfNeeded(forPane paneId: UUID, terminal: GhosttyTerminalView) async {
+    func startRuntimeIfNeeded(forPane paneId: UUID, terminal: GhosttyTerminalView) async {
         guard let runtime = runtimeStateForStarting(paneId: paneId) else { return }
         await startRuntimeIfNeeded(runtime, terminal: terminal)
     }

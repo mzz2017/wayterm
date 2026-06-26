@@ -1,0 +1,117 @@
+import Foundation
+
+extension TerminalTabManager {
+    // MARK: - Pane Terminal Surface Lifecycle
+
+    /// Register a terminal view for a pane.
+    func registerTerminal(_ terminal: GhosttyTerminalView, for paneId: UUID) {
+        terminalSurfaceRegistry.register(terminal, for: .pane(paneId))
+        scheduleTerminalRegistryVersionUpdate()
+    }
+
+    /// Unregister a terminal view.
+    func unregisterTerminal(for paneId: UUID) {
+        terminalSurfaceRegistry.removeSurface(for: .pane(paneId), cleanup: true)
+        scheduleTerminalRegistryVersionUpdate()
+    }
+
+    private func scheduleTerminalRegistryVersionUpdate() {
+        Task { @MainActor [weak self] in
+            self?.bumpTerminalRegistryVersion()
+        }
+    }
+
+    /// Get terminal for a pane.
+    func getTerminal(for paneId: UUID) -> GhosttyTerminalView? {
+        terminalSurfaceRegistry.surface(for: .pane(paneId))
+    }
+
+    func attachSurface(_ terminal: GhosttyTerminalView, toPane paneId: UUID) async {
+        if terminalSurfaceRegistry.surface(for: .pane(paneId)) !== terminal {
+            registerTerminal(terminal, for: paneId)
+        }
+
+        await startRuntimeIfNeeded(forPane: paneId, terminal: terminal)
+    }
+
+    @discardableResult
+    func requestSurfaceAttach(
+        paneId: UUID,
+        terminal: GhosttyTerminalView,
+        context: TerminalSurfaceAttachContext
+    ) -> UUID? {
+        requestSurfaceAttach(
+            paneId: paneId,
+            context: context,
+            attachOperation: { [weak self, weak terminal] in
+                guard let self, let terminal else { return }
+                await self.attachSurface(terminal, toPane: paneId)
+            }
+        )
+    }
+
+    @discardableResult
+    func requestSurfaceAttach(
+        paneId: UUID,
+        context: TerminalSurfaceAttachContext,
+        attachOperation: @escaping @MainActor () async -> Void
+    ) -> UUID? {
+        if let requestID = surfaceAttachRequestStore.requestID(forScope: paneId) {
+            guard shouldAcceptSurfaceAttach(paneId: paneId, context: context) else {
+                surfaceAttachRequestStore.update(requestID) { $0.context = context }
+                return nil
+            }
+            surfaceAttachRequestStore.update(requestID) { $0.context = context }
+            return requestID
+        }
+
+        guard shouldAcceptSurfaceAttach(paneId: paneId, context: context) else { return nil }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.surfaceAttachRequestStore.remove(id: requestID, ifMappedTo: paneId)
+            }
+
+            let latestContext = self.surfaceAttachRequestStore[requestID]?.context ?? context
+            guard self.shouldAcceptSurfaceAttach(paneId: paneId, context: latestContext) else { return }
+            await attachOperation()
+        }
+
+        surfaceAttachRequestStore.insert(
+            SurfaceAttachRequest(paneId: paneId, context: context, task: task),
+            id: requestID,
+            scopeID: paneId
+        )
+        return requestID
+    }
+
+    private func shouldAcceptSurfaceAttach(
+        paneId: UUID,
+        context: TerminalSurfaceAttachContext
+    ) -> Bool {
+        guard paneStates[paneId] != nil else { return false }
+        guard context.isAppActive, context.isViewActive else { return false }
+        guard shellId(for: paneId) == nil else { return false }
+        guard !isShellStartInFlight(for: paneId) else { return false }
+        return true
+    }
+
+    func detachSurface(fromPane paneId: UUID, reason: TerminalSurfaceDetachReason) async {
+        switch reason {
+        case .viewDisappeared:
+            detachSurfaceForPaneViewDisappeared(paneId)
+        case .sessionClosed:
+            detachSurfaceForClosedPane(paneId)
+        }
+    }
+
+    func detachSurfaceForPaneViewDisappeared(_ paneId: UUID) {
+        terminalSurfaceRegistry.detachSurface(for: .pane(paneId), cleanup: false)
+    }
+
+    func detachSurfaceForClosedPane(_ paneId: UUID) {
+        unregisterTerminal(for: paneId)
+    }
+}

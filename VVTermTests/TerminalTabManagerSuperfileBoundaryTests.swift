@@ -386,6 +386,50 @@ struct TerminalTabManagerSuperfileBoundaryTests {
         )
     }
 
+    @Test
+    func paneTerminalSurfaceLifecycleLivesOutsideTerminalTabManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let surfaceSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+TerminalSurfaces.swift")
+        )
+
+        // Given pane terminal surface attach and detach are UI-surface
+        // lifecycle concerns in the TerminalSessions Application layer.
+        #expect(surfaceSource.contains("extension TerminalTabManager"))
+        #expect(surfaceSource.contains("func registerTerminal"))
+        #expect(surfaceSource.contains("func unregisterTerminal"))
+        #expect(surfaceSource.contains("func getTerminal"))
+        #expect(surfaceSource.contains("func requestSurfaceAttach"))
+        #expect(surfaceSource.contains("func attachSurface"))
+        #expect(surfaceSource.contains("func detachSurface"))
+
+        // Then the superfile should not own pane terminal surface
+        // registration or attach/detach request lifecycle directly.
+        #expect(
+            !managerSource.containsRegex(#"func\s+registerTerminal\s*\("#),
+            "TerminalTabManager.swift should not own pane terminal registration."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+unregisterTerminal\s*\("#),
+            "TerminalTabManager.swift should not own pane terminal unregister cleanup."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestSurfaceAttach\s*\("#),
+            "TerminalTabManager.swift should not own pane surface attach request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+attachSurface\s*\("#),
+            "TerminalTabManager.swift should not own pane surface attach execution."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+detachSurface\s*\("#),
+            "TerminalTabManager.swift should not own pane surface detach lifecycle."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
