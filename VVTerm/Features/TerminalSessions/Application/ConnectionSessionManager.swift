@@ -210,8 +210,7 @@ final class ConnectionSessionManager: ObservableObject {
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
     private var serverDisconnectTasks: [UUID: Task<Void, Never>] = [:]
     /// Application-owned connect watchdog timers keyed by session.
-    private var connectWatchdogTasks: [UUID: Task<Void, Never>] = [:]
-    private var connectWatchdogGenerations: [UUID: UUID] = [:]
+    private var connectWatchdogStore = TerminalConnectWatchdogStore()
     private var credentialsProvider: @MainActor (Server) async throws -> ServerCredentials = { server in
         try KeychainManager.shared.getCredentials(for: server)
     }
@@ -602,25 +601,23 @@ final class ConnectionSessionManager: ObservableObject {
         timeoutMessage: String,
         onRetry: @escaping @MainActor () async -> Void
     ) {
-        connectWatchdogTasks[sessionId]?.cancel()
-        connectWatchdogTasks[sessionId] = nil
+        connectWatchdogStore.removeTask(for: sessionId)?.cancel()
 
         guard shouldScheduleConnectWatchdog(
             forSessionId: sessionId,
             isReady: isReady,
             terminalExists: terminalExists
         ) else {
-            connectWatchdogGenerations.removeValue(forKey: sessionId)
+            connectWatchdogStore.clear(for: sessionId)?.cancel()
             return
         }
 
-        let generation = UUID()
-        connectWatchdogGenerations[sessionId] = generation
+        let generation = connectWatchdogStore.beginGeneration(for: sessionId)
         let task = Task { @MainActor [weak self] in
             try? await Task.sleep(for: timeout)
             guard !Task.isCancelled else { return }
             guard let self else { return }
-            guard self.connectWatchdogGenerations[sessionId] == generation else { return }
+            guard self.connectWatchdogStore.isCurrent(generation, for: sessionId) else { return }
 
             let action = self.handleConnectWatchdogTimeout(
                 forSessionId: sessionId,
@@ -631,8 +628,7 @@ final class ConnectionSessionManager: ObservableObject {
 
             switch action {
             case .retry:
-                self.connectWatchdogTasks[sessionId] = nil
-                self.connectWatchdogGenerations.removeValue(forKey: sessionId)
+                self.connectWatchdogStore.clear(for: sessionId)
                 await onRetry()
             case .continueWatching:
                 self.scheduleConnectWatchdog(
@@ -644,11 +640,10 @@ final class ConnectionSessionManager: ObservableObject {
                     onRetry: onRetry
                 )
             case .none:
-                self.connectWatchdogTasks[sessionId] = nil
-                self.connectWatchdogGenerations.removeValue(forKey: sessionId)
+                self.connectWatchdogStore.clear(for: sessionId)
             }
         }
-        connectWatchdogTasks[sessionId] = task
+        connectWatchdogStore.setTask(task, for: sessionId)
     }
 
     func handleConnectWatchdogTimeout(
@@ -3344,9 +3339,7 @@ extension ConnectionSessionManager {
         processExitRequestStore.allRequests.forEach { $0.task.cancel() }
         processExitRequestStore.removeAll()
         sessionReconnectsInFlight.removeAll()
-        connectWatchdogTasks.values.forEach { $0.cancel() }
-        connectWatchdogTasks.removeAll()
-        connectWatchdogGenerations.removeAll()
+        connectWatchdogStore.removeAll().forEach { $0.cancel() }
         credentialsProvider = { server in
             try KeychainManager.shared.getCredentials(for: server)
         }
