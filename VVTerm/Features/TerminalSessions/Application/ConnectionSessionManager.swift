@@ -206,12 +206,10 @@ final class ConnectionSessionManager: ObservableObject {
     private var richPasteUploadRequests: [UUID: RichPasteUploadRequest] = [:]
     private var richPasteUploadRequestBySession: [UUID: UUID] = [:]
     var pendingSessionRichPasteUploadRequestIDs: Set<UUID> { Set(richPasteUploadRequests.keys) }
-    private var resizeRequests: [UUID: ResizeRequest] = [:]
-    private var resizeRequestBySession: [UUID: UUID] = [:]
-    var pendingResizeRequestIDs: Set<UUID> { Set(resizeRequests.keys) }
-    private var processExitRequests: [UUID: ProcessExitRequest] = [:]
-    private var processExitRequestBySession: [UUID: UUID] = [:]
-    var pendingProcessExitRequestIDs: Set<UUID> { Set(processExitRequests.keys) }
+    private var resizeRequestStore = TerminalScopedRequestStore<ResizeRequest>()
+    var pendingResizeRequestIDs: Set<UUID> { resizeRequestStore.pendingRequestIDs }
+    private var processExitRequestStore = TerminalScopedRequestStore<ProcessExitRequest>()
+    var pendingProcessExitRequestIDs: Set<UUID> { processExitRequestStore.pendingRequestIDs }
     private var sessionReconnectsInFlight: Set<UUID> = []
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
     private var serverDisconnectTasks: [UUID: Task<Void, Never>] = [:]
@@ -452,11 +450,11 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     func waitForResizeRequest(_ requestID: UUID) async {
-        await resizeRequests[requestID]?.task.value
+        await resizeRequestStore[requestID]?.task.value
     }
 
     func waitForProcessExitRequest(_ requestID: UUID) async {
-        await processExitRequests[requestID]?.task.value
+        await processExitRequestStore[requestID]?.task.value
     }
 
     func waitForActiveConnectionOpenRequest(_ requestID: UUID) async {
@@ -924,27 +922,11 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func cancelResizeRequests(for sessionId: UUID) {
-        let requestIDs = resizeRequests.compactMap { requestID, request in
-            request.sessionId == sessionId ? requestID : nil
-        }
-
-        for requestID in requestIDs {
-            resizeRequests.removeValue(forKey: requestID)?.task.cancel()
-        }
-
-        resizeRequestBySession.removeValue(forKey: sessionId)
+        resizeRequestStore.removeMappedRequest(forScope: sessionId)?.task.cancel()
     }
 
     private func cancelProcessExitRequests(for sessionId: UUID) {
-        let requestIDs = processExitRequests.compactMap { requestID, request in
-            request.sessionId == sessionId ? requestID : nil
-        }
-
-        for requestID in requestIDs {
-            processExitRequests.removeValue(forKey: requestID)?.task.cancel()
-        }
-
-        processExitRequestBySession.removeValue(forKey: sessionId)
+        processExitRequestStore.removeMappedRequest(forScope: sessionId)?.task.cancel()
     }
 
     private func cancelSessionRetryRequest(for sessionId: UUID) {
@@ -1091,8 +1073,7 @@ final class ConnectionSessionManager: ObservableObject {
     func requestSessionProcessExit(forSession sessionId: UUID) -> UUID? {
         guard sessionWithID(sessionId) != nil else { return nil }
 
-        if let existingRequestID = processExitRequestBySession[sessionId],
-           processExitRequests[existingRequestID] != nil {
+        if let existingRequestID = processExitRequestStore.requestID(forScope: sessionId) {
             return existingRequestID
         }
 
@@ -1100,10 +1081,7 @@ final class ConnectionSessionManager: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.processExitRequests.removeValue(forKey: requestID)
-                if self.processExitRequestBySession[sessionId] == requestID {
-                    self.processExitRequestBySession.removeValue(forKey: sessionId)
-                }
+                self.processExitRequestStore.remove(id: requestID, ifMappedTo: sessionId)
             }
 
             guard !Task.isCancelled else { return }
@@ -1119,8 +1097,11 @@ final class ConnectionSessionManager: ObservableObject {
             self.handleShellExit(for: sessionId)
         }
 
-        processExitRequests[requestID] = ProcessExitRequest(sessionId: sessionId, task: task)
-        processExitRequestBySession[sessionId] = requestID
+        processExitRequestStore.insert(
+            ProcessExitRequest(sessionId: sessionId, task: task),
+            id: requestID,
+            scopeID: sessionId
+        )
         return requestID
     }
 
@@ -2119,10 +2100,8 @@ final class ConnectionSessionManager: ObservableObject {
         guard size.isValid else { return nil }
         guard sessionWithID(sessionId) != nil else { return nil }
 
-        if let existingRequestID = resizeRequestBySession[sessionId],
-           var request = resizeRequests[existingRequestID] {
-            request.size = size
-            resizeRequests[existingRequestID] = request
+        if let existingRequestID = resizeRequestStore.requestID(forScope: sessionId) {
+            resizeRequestStore.update(existingRequestID) { $0.size = size }
             return existingRequestID
         }
 
@@ -2130,16 +2109,13 @@ final class ConnectionSessionManager: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.resizeRequests.removeValue(forKey: requestID)
-                if self.resizeRequestBySession[sessionId] == requestID {
-                    self.resizeRequestBySession.removeValue(forKey: sessionId)
-                }
+                self.resizeRequestStore.remove(id: requestID, ifMappedTo: sessionId)
             }
 
             var appliedSize: TerminalResizeRequestSize?
             while !Task.isCancelled {
                 guard self.sessionWithID(sessionId) != nil else { return }
-                guard let request = self.resizeRequests[requestID] else { return }
+                guard let request = self.resizeRequestStore[requestID] else { return }
                 let size = request.size
                 guard size != appliedSize else { return }
 
@@ -2157,8 +2133,11 @@ final class ConnectionSessionManager: ObservableObject {
             }
         }
 
-        resizeRequests[requestID] = ResizeRequest(sessionId: sessionId, size: size, task: task)
-        resizeRequestBySession[sessionId] = requestID
+        resizeRequestStore.insert(
+            ResizeRequest(sessionId: sessionId, size: size, task: task),
+            id: requestID,
+            scopeID: sessionId
+        )
         return requestID
     }
 
@@ -3397,12 +3376,10 @@ extension ConnectionSessionManager {
         }
         richPasteUploadRequests.removeAll()
         richPasteUploadRequestBySession.removeAll()
-        resizeRequests.values.forEach { $0.task.cancel() }
-        resizeRequests.removeAll()
-        resizeRequestBySession.removeAll()
-        processExitRequests.values.forEach { $0.task.cancel() }
-        processExitRequests.removeAll()
-        processExitRequestBySession.removeAll()
+        resizeRequestStore.allRequests.forEach { $0.task.cancel() }
+        resizeRequestStore.removeAll()
+        processExitRequestStore.allRequests.forEach { $0.task.cancel() }
+        processExitRequestStore.removeAll()
         sessionReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
