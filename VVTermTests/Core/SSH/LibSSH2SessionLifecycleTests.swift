@@ -425,7 +425,7 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         let source = try sshClientSource()
         let sessionSource = try slice(
             startingAt: "actor SSHSession {",
-            endingBefore: "enum SSHError: LocalizedError",
+            endingBefore: "nonisolated struct SSHSessionConfig",
             in: source
         )
         let startShellSource = try slice(
