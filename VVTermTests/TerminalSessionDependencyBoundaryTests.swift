@@ -67,15 +67,18 @@ struct TerminalSessionDependencyBoundaryTests {
         #expect(managerSource.contains("typealias ServerLockPolicy"))
         #expect(managerSource.contains("typealias ServerUnlocker"))
         #expect(managerSource.contains("typealias LastConnectedUpdater"))
+        #expect(managerSource.contains("typealias IsProProvider"))
         #expect(openSource.contains("serverLockPolicy(server)"))
         #expect(openSource.contains("await serverUnlocker(server)"))
         #expect(openSource.contains("scheduleLastConnectedUpdate(for: server)"))
+        #expect(managerSource.contains("if isProProvider() { return true }"))
 
         // Then the open lifecycle file does not reach directly into Servers or
         // Security singletons for those cross-feature concerns.
         #expect(!openSource.contains("ServerManager.shared.isServerLocked"))
         #expect(!openSource.contains("AppLockManager.shared.ensureServerUnlocked"))
         #expect(!openSource.contains("ServerManager.shared.updateLastConnected"))
+        #expect(!managerSource.contains("if StoreManager.shared.isPro { return true }"))
     }
 
     @Test

@@ -33,6 +33,7 @@ final class ConnectionSessionManager: ObservableObject {
     typealias ServerLockPolicy = @MainActor (Server) -> Bool
     typealias ServerUnlocker = @MainActor (Server) async -> Bool
     typealias LastConnectedUpdater = @MainActor (Server) async -> Void
+    typealias IsProProvider = @MainActor () -> Bool
 
     @Published var sessions: [ConnectionSession] = [] {
         didSet {
@@ -226,6 +227,9 @@ final class ConnectionSessionManager: ObservableObject {
     var lastConnectedUpdater: LastConnectedUpdater = { server in
         await ServerManager.shared.updateLastConnected(for: server)
     }
+    var isProProvider: IsProProvider = {
+        StoreManager.shared.isPro
+    }
     var credentialsProvider: @MainActor (Server) async throws -> ServerCredentials = { server in
         try KeychainManager.shared.getCredentials(for: server)
     }
@@ -356,7 +360,7 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     var canOpenNewTab: Bool {
-        if StoreManager.shared.isPro { return true }
+        if isProProvider() { return true }
         return sessions.filter(\.isTabRoot).count < FreeTierLimits.maxTabs
     }
 

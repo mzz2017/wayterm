@@ -83,6 +83,9 @@ extension ConnectionSessionManager {
         lastConnectedUpdater = { server in
             await ServerManager.shared.updateLastConnected(for: server)
         }
+        isProProvider = {
+            StoreManager.shared.isPro
+        }
         credentialsProvider = { server in
             try KeychainManager.shared.getCredentials(for: server)
         }
@@ -266,6 +269,12 @@ extension ConnectionSessionManager {
         _ updater: @escaping LastConnectedUpdater
     ) {
         lastConnectedUpdater = updater
+    }
+
+    func setIsProProviderForTesting(
+        _ provider: @escaping IsProProvider
+    ) {
+        isProProvider = provider
     }
 
     func waitForLastConnectedUpdateForTesting(serverId: UUID) async {
