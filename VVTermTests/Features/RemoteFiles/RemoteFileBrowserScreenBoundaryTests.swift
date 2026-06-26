@@ -327,6 +327,29 @@ struct RemoteFileBrowserScreenBoundaryTests {
     }
 
     @Test
+    func browserSheetCollectionDoesNotOwnPermissionEditorImplementation() throws {
+        let root = try sourceRoot()
+        let sheetCollectionSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Sheets/RemoteFileBrowserSheets.swift")
+        )
+        let permissionEditorSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Sheets/RemoteFilePermissionEditorSheet.swift")
+        )
+
+        // Given the RemoteFiles sheet collection is already a shared file for
+        // multiple dialogs, large self-contained editors should have their own
+        // UI file instead of re-growing the collection into a superfile.
+        #expect(
+            !sheetCollectionSource.contains("struct RemoteFilePermissionEditorSheet"),
+            "RemoteFileBrowserSheets.swift should not own the permission editor implementation."
+        )
+        #expect(
+            permissionEditorSource.contains("struct RemoteFilePermissionEditorSheet"),
+            "RemoteFilePermissionEditorSheet.swift should own the permission editor implementation."
+        )
+    }
+
+    @Test
     func screenDoesNotOwnMacOSInlineEditRouting() throws {
         let root = try sourceRoot()
         let screenSource = try source(
