@@ -204,6 +204,46 @@ struct ServerManagerSuperfileBoundaryTests {
         }
     }
 
+    @Test
+    func credentialAndDeletionDefaultsLiveOutsideServerManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager.swift")
+        )
+        let credentialSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager+CredentialLifecycle.swift")
+        )
+
+        // Given default Keychain and teardown adapters are credential/deletion
+        // lifecycle glue, not core server list orchestration.
+        #expect(credentialSource.contains("extension ServerManager"))
+        #expect(credentialSource.contains("func defaultDeletionTeardown"))
+        #expect(credentialSource.contains("func defaultCredentialDeletion"))
+        #expect(credentialSource.contains("func defaultCredentialStore"))
+        #expect(credentialSource.contains("KeychainManager.shared"))
+        #expect(credentialSource.contains("ConnectionSessionManager.shared.disconnectServerAndWait"))
+        #expect(credentialSource.contains("TerminalTabManager.shared.disconnectServerAndWait"))
+
+        // Then the ServerManager superfile should not directly own default
+        // credential persistence or deletion teardown adapters.
+        #expect(
+            !managerSource.containsRegex(#"func\s+defaultDeletionTeardown\s*\("#),
+            "ServerManager.swift should not own default server deletion teardown."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+defaultCredentialDeletion\s*\("#),
+            "ServerManager.swift should not own default credential deletion."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+defaultCredentialStore\s*\("#),
+            "ServerManager.swift should not own default credential storage."
+        )
+        #expect(
+            !managerSource.contains("KeychainManager.shared"),
+            "ServerManager.swift should not directly depend on KeychainManager."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
