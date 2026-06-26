@@ -22,9 +22,7 @@ final class SSHSFTPAdapter {
 
     init(
         remoteConnectionLeaseProvider: RemoteConnectionLeaseProvider = .none,
-        credentialsProvider: @escaping CredentialsProvider = { server in
-            try KeychainManager.shared.getCredentials(for: server)
-        },
+        credentialsProvider: @escaping CredentialsProvider,
         ownedClientFactory: @escaping OwnedClientFactory = {
             SSHClient()
         }
@@ -36,9 +34,7 @@ final class SSHSFTPAdapter {
 
     convenience init(
         borrowedLeaseProvider: @escaping BorrowedLeaseProvider,
-        credentialsProvider: @escaping CredentialsProvider = { server in
-            try KeychainManager.shared.getCredentials(for: server)
-        },
+        credentialsProvider: @escaping CredentialsProvider,
         ownedClientFactory: @escaping OwnedClientFactory = {
             SSHClient()
         }

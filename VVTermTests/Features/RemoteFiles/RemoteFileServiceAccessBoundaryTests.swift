@@ -57,6 +57,31 @@ struct RemoteFileServiceAccessBoundaryTests {
     }
 
     @Test
+    func sftpAdapterReceivesCredentialsFromAppBoundary() throws {
+        let root = try sourceRoot()
+        let adapterSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift")
+        )
+        let appSource = try source(
+            at: root.appendingPathComponent("VVTerm/App/VVTermApp.swift")
+        )
+
+        // Given SFTP work needs server credentials but RemoteFiles should not
+        // own the Keychain dependency directly.
+        #expect(adapterSource.contains("typealias CredentialsProvider"))
+        #expect(adapterSource.contains("credentialsProvider: @escaping CredentialsProvider,"))
+        #expect(!adapterSource.contains("KeychainManager.shared"))
+        #expect(!storeSource.contains("KeychainManager.shared"))
+
+        // Then App composition wires the concrete credential source.
+        #expect(appSource.contains("credentialsProvider: { server in"))
+        #expect(appSource.contains("try KeychainManager.shared.getCredentials(for: server)"))
+    }
+
+    @Test
     func tabManagerReceivesEntitlementPolicyFromAppBoundary() throws {
         let root = try sourceRoot()
         let tabManagerSource = try source(

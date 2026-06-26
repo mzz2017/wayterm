@@ -144,6 +144,9 @@ private extension VVTermApp {
             remoteConnectionLeaseProvider: RemoteConnectionLeaseProvider { serverId in
                 ConnectionSessionManager.shared.sharedStatsLease(for: serverId)
                     ?? TerminalTabManager.shared.sharedStatsLease(for: serverId)
+            },
+            credentialsProvider: { server in
+                try KeychainManager.shared.getCredentials(for: server)
             }
         )
 
