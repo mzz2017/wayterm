@@ -40,7 +40,7 @@ struct TerminalRetrustIntentBoundaryTests {
     func splitTerminalRetrustSendsIntentWithoutOwningRetrustTask() throws {
         let root = try sourceRoot()
         let source = try source(
-            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift")
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalPaneView.swift")
         )
         let retrustSlice = try slice(
             startingAt: "private func retrustHostAndRetry()",

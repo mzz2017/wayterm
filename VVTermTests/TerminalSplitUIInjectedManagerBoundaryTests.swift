@@ -20,7 +20,7 @@ struct TerminalSplitUIInjectedManagerBoundaryTests {
         )
         let tabView = try slice(
             startingAt: "struct TerminalTabView",
-            endingBefore: "// MARK: - Terminal Pane View",
+            endingBefore: "#endif",
             in: source
         )
 
@@ -44,7 +44,7 @@ struct TerminalSplitUIInjectedManagerBoundaryTests {
     func terminalPaneViewUsesInjectedManagerForPaneLifecycleIntents() throws {
         let root = try sourceRoot()
         let source = try source(
-            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift")
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalPaneView.swift")
         )
         let paneView = try slice(
             startingAt: "struct TerminalPaneView",
@@ -83,12 +83,16 @@ struct TerminalSplitUIInjectedManagerBoundaryTests {
     @Test
     func splitTerminalViewHasNoTerminalTabManagerSingletonReachThrough() throws {
         let root = try sourceRoot()
-        let source = try source(
+        let terminalViewSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift")
         )
+        let paneSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalPaneView.swift")
+        )
 
-        // Then the split terminal UI file should not resolve the tab manager singleton.
-        #expect(!source.contains("TerminalTabManager.shared"))
+        // Then split terminal UI files should not resolve the tab manager singleton.
+        #expect(!terminalViewSource.contains("TerminalTabManager.shared"))
+        #expect(!paneSource.contains("TerminalTabManager.shared"))
     }
 
     private func slice(startingAt marker: String, endingBefore endMarker: String, in source: String) throws -> String {

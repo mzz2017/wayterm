@@ -67,7 +67,7 @@ struct TerminalVoiceInputIntentBoundaryTests {
         )
         let textSendSlice = try slice(
             startingAt: "private var voiceOverlay",
-            endingBefore: "// MARK: - Terminal Pane View",
+            endingBefore: "#endif",
             in: source
         )
 

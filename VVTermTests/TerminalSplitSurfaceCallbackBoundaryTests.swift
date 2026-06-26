@@ -94,7 +94,7 @@ struct TerminalSplitSurfaceCallbackBoundaryTests {
     func terminalPaneViewInjectsTabManagerIntoWrapper() throws {
         let root = try sourceRoot()
         let source = try source(
-            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift")
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalPaneView.swift")
         )
         let paneView = try slice(
             startingAt: "struct TerminalPaneView",
@@ -121,17 +121,28 @@ struct TerminalSplitSurfaceCallbackBoundaryTests {
         let terminalViewSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift")
         )
+        let terminalPaneSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalPaneView.swift")
+        )
         let wrapperSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/SSHTerminalPaneWrapper.swift")
         )
 
-        // Given TerminalView owns split layout and pane presentation.
+        // Given TerminalView owns split layout and TerminalPaneView owns pane presentation.
         #expect(
-            terminalViewSource.contains("SSHTerminalPaneWrapper("),
+            terminalPaneSource.contains("SSHTerminalPaneWrapper("),
             "TerminalPaneView should still compose the split pane representable."
         )
 
-        // Then the lifecycle-heavy NSViewRepresentable should live in its own sibling file.
+        // Then TerminalView should not own pane presentation or the lifecycle-heavy NSViewRepresentable.
+        #expect(
+            !terminalViewSource.contains("struct TerminalPaneView: View"),
+            "TerminalView.swift should not define the split pane view."
+        )
+        #expect(
+            terminalPaneSource.contains("struct TerminalPaneView: View"),
+            "TerminalPaneView.swift should define the split pane view."
+        )
         #expect(
             !terminalViewSource.contains("struct SSHTerminalPaneWrapper: NSViewRepresentable"),
             "TerminalView.swift should not define the split pane representable."

@@ -49,7 +49,7 @@ struct TerminalCredentialLoadIntentBoundaryTests {
     func splitTerminalSendsCredentialLoadIntentWithoutOwningTasks() throws {
         let root = try sourceRoot()
         let source = try source(
-            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift")
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalPaneView.swift")
         )
 
         // Given the split terminal SwiftUI source needs credentials before

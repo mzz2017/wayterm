@@ -41,7 +41,7 @@ struct TerminalRetryIntentBoundaryTests {
     func splitTerminalRetrySendsIntentWithoutOwningRetryTasks() throws {
         let root = try sourceRoot()
         let source = try source(
-            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift")
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalPaneView.swift")
         )
         let retrySlice = try slice(
             startingAt: "private func retryConnection()",
