@@ -1293,19 +1293,9 @@ class GhosttyTerminalView: UIView {
 
     // MARK: - Scroll Gesture
 
-    /// Scroll speed multiplier for iOS touch scrolling
-    private static let scrollMultiplier: Double = 1.5
-
-    /// Momentum deceleration rate (0.0-1.0, higher = slower deceleration)
-    private static let momentumDeceleration: Double = 0.92
-
-    /// Minimum velocity to trigger momentum scrolling
-    private static let minimumMomentumVelocity: Double = 50.0
-
     /// Display link for momentum animation
     private var momentumDisplayLink: CADisplayLink?
-    private var momentumVelocity: CGPoint = .zero
-    private var momentumPhase: Ghostty.Input.Momentum = .none
+    private var momentumScrollState = TerminalMomentumScrollState()
 
     func setNativeHostScrollContainerEnabled(_ enabled: Bool) {
         isNativeHostScrollContainerEnabled = enabled
@@ -1363,8 +1353,8 @@ class GhosttyTerminalView: UIView {
             surface.sendMousePos(.init(x: pos.x, y: pos.y, mods: []))
             // Send scroll delta directly with increased multiplier for snappy feel
             let scrollEvent = Ghostty.Input.MouseScrollEvent(
-                x: Double(translation.x) * Self.scrollMultiplier,
-                y: Double(translation.y) * Self.scrollMultiplier,
+                x: Double(translation.x) * TerminalScrollGesturePresentation.scrollMultiplier,
+                y: Double(translation.y) * TerminalScrollGesturePresentation.scrollMultiplier,
                 mods: Ghostty.Input.ScrollMods(precision: true, momentum: .none)
             )
             surface.sendMouseScroll(scrollEvent)
@@ -1386,20 +1376,11 @@ class GhosttyTerminalView: UIView {
     }
 
     private func startMomentumScrolling(velocity: CGPoint) {
-        // Only start momentum if velocity is significant
-        guard abs(velocity.y) > Self.minimumMomentumVelocity || abs(velocity.x) > Self.minimumMomentumVelocity else {
+        guard momentumScrollState.start(gestureVelocity: velocity) else {
             sendMomentumEnd()
             return
         }
 
-        // Scale velocity for momentum (divide by 60 for per-frame amount at 60fps)
-        momentumVelocity = CGPoint(
-            x: velocity.x / 60.0 * Self.scrollMultiplier * 0.5,
-            y: velocity.y / 60.0 * Self.scrollMultiplier * 0.5
-        )
-
-        // Create display link for smooth animation
-        momentumPhase = .began
         momentumDisplayLink = CADisplayLink(target: self, selector: #selector(momentumScrollTick))
         momentumDisplayLink?.add(to: .main, forMode: .common)
     }
@@ -1410,36 +1391,20 @@ class GhosttyTerminalView: UIView {
             return
         }
 
-        // Apply deceleration
-        momentumVelocity.x *= Self.momentumDeceleration
-        momentumVelocity.y *= Self.momentumDeceleration
-
-        // Stop if velocity is very low
-        if abs(momentumVelocity.x) < 0.5 && abs(momentumVelocity.y) < 0.5 {
+        guard let scrollEvent = momentumScrollState.nextFrameEvent() else {
             stopMomentumScrolling()
             sendMomentumEnd()
             return
         }
 
-        // Send momentum scroll event (began -> changed)
-        let scrollEvent = Ghostty.Input.MouseScrollEvent(
-            x: Double(momentumVelocity.x),
-            y: Double(momentumVelocity.y),
-            mods: Ghostty.Input.ScrollMods(
-                precision: true,
-                momentum: momentumPhase == .began ? .began : .changed
-            )
-        )
         surface.sendMouseScroll(scrollEvent)
-        momentumPhase = .changed
         requestRender()
     }
 
     private func stopMomentumScrolling() {
         momentumDisplayLink?.invalidate()
         momentumDisplayLink = nil
-        momentumVelocity = .zero
-        momentumPhase = .none
+        momentumScrollState.reset()
     }
 
     private func sendMomentumEnd() {
@@ -1450,7 +1415,7 @@ class GhosttyTerminalView: UIView {
             mods: Ghostty.Input.ScrollMods(precision: true, momentum: .ended)
         )
         surface.sendMouseScroll(endEvent)
-        momentumPhase = .none
+        momentumScrollState.reset()
     }
 
     @objc private func handlePinchGesture(_ recognizer: UIPinchGestureRecognizer) {

@@ -117,6 +117,31 @@ struct GhosttyIOSSuperfileBoundaryTests {
         #expect(zoomSource.contains("TerminalZoomPresentation"))
     }
 
+    @Test
+    func momentumScrollStateLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+        )
+        let momentumSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalMomentumScrollState+iOS.swift")
+        )
+
+        // Given the iOS Ghostty terminal main view source.
+        #expect(
+            !mainSource.contains("private var momentumVelocity"),
+            "GhosttyTerminalView+iOS.swift should not own raw momentum velocity state."
+        )
+        #expect(
+            !mainSource.contains("private var momentumPhase"),
+            "GhosttyTerminalView+iOS.swift should not own raw Ghostty momentum phase state."
+        )
+
+        // Then inertial scroll state and phase calculation have a dedicated file.
+        #expect(momentumSource.contains("struct TerminalMomentumScrollState"))
+        #expect(momentumSource.contains("nextFrameEvent"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
