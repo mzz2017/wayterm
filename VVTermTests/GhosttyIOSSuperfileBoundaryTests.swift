@@ -74,6 +74,49 @@ struct GhosttyIOSSuperfileBoundaryTests {
         #expect(keySource.contains("TerminalAccessoryShortcutModifiers"))
     }
 
+    @Test
+    func findNavigatorLifecycleLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+        )
+        let lifecycleSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalFindNavigatorLifecycle+iOS.swift")
+        )
+
+        // Given the iOS Ghostty terminal main view source.
+        #expect(
+            !mainSource.contains("struct TerminalFindNavigatorLifecycle"),
+            "GhosttyTerminalView+iOS.swift should not own the find navigator lifecycle helper."
+        )
+
+        // Then the find navigator lifecycle state machine has a dedicated file.
+        #expect(lifecycleSource.contains("struct TerminalFindNavigatorLifecycle"))
+        #expect(lifecycleSource.contains("consumeSuppressedGhosttySearchEnd"))
+    }
+
+    @Test
+    func zoomIndicatorViewLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+        )
+        let zoomSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalZoomIndicatorView+iOS.swift")
+        )
+
+        // Given the iOS Ghostty terminal main view source.
+        #expect(
+            !mainSource.contains("final class TerminalZoomIndicatorView"),
+            "GhosttyTerminalView+iOS.swift should not own the zoom indicator view class."
+        )
+
+        // Then the zoom indicator rendering helper has a dedicated UIKit file.
+        #expect(zoomSource.contains("final class TerminalZoomIndicatorView"))
+        #expect(zoomSource.contains("UIVisualEffectView"))
+        #expect(zoomSource.contains("TerminalZoomPresentation"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
