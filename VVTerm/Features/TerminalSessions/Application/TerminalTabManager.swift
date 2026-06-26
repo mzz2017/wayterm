@@ -127,9 +127,8 @@ final class TerminalTabManager: ObservableObject {
     var pendingPaneHostRetrustRequestIDs: Set<UUID> { paneHostRetrustRequestStore.pendingRequestIDs }
     private var paneCredentialLoadRequestStore = TerminalScopedRequestStore<PaneCredentialLoadRequest>()
     var pendingPaneCredentialLoadRequestIDs: Set<UUID> { paneCredentialLoadRequestStore.pendingScopedRequestIDs }
-    private var surfaceAttachRequests: [UUID: SurfaceAttachRequest] = [:]
-    private var surfaceAttachRequestByPane: [UUID: UUID] = [:]
-    var pendingSurfaceAttachRequestIDs: Set<UUID> { Set(surfaceAttachRequests.keys) }
+    private var surfaceAttachRequestStore = TerminalScopedRequestStore<SurfaceAttachRequest>()
+    var pendingSurfaceAttachRequestIDs: Set<UUID> { surfaceAttachRequestStore.pendingRequestIDs }
     private var inputRequests: [UUID: InputRequest] = [:]
     private var inputRequestByPane: [UUID: UUID] = [:]
     private var lastInputTaskByPane: [UUID: Task<Void, Never>] = [:]
@@ -358,7 +357,7 @@ final class TerminalTabManager: ObservableObject {
     }
 
     func waitForSurfaceAttachRequest(_ requestID: UUID) async {
-        await surfaceAttachRequests[requestID]?.task.value
+        await surfaceAttachRequestStore[requestID]?.task.value
     }
 
     func waitForInputRequest(_ requestID: UUID) async {
@@ -729,12 +728,12 @@ final class TerminalTabManager: ObservableObject {
         context: TerminalSurfaceAttachContext,
         attachOperation: @escaping @MainActor () async -> Void
     ) -> UUID? {
-        if let requestID = surfaceAttachRequestByPane[paneId] {
+        if let requestID = surfaceAttachRequestStore.requestID(forScope: paneId) {
             guard shouldAcceptSurfaceAttach(paneId: paneId, context: context) else {
-                surfaceAttachRequests[requestID]?.context = context
+                surfaceAttachRequestStore.update(requestID) { $0.context = context }
                 return nil
             }
-            surfaceAttachRequests[requestID]?.context = context
+            surfaceAttachRequestStore.update(requestID) { $0.context = context }
             return requestID
         }
 
@@ -744,19 +743,19 @@ final class TerminalTabManager: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.surfaceAttachRequests.removeValue(forKey: requestID)
-                if self.surfaceAttachRequestByPane[paneId] == requestID {
-                    self.surfaceAttachRequestByPane.removeValue(forKey: paneId)
-                }
+                self.surfaceAttachRequestStore.remove(id: requestID, ifMappedTo: paneId)
             }
 
-            let latestContext = self.surfaceAttachRequests[requestID]?.context ?? context
+            let latestContext = self.surfaceAttachRequestStore[requestID]?.context ?? context
             guard self.shouldAcceptSurfaceAttach(paneId: paneId, context: latestContext) else { return }
             await attachOperation()
         }
 
-        surfaceAttachRequests[requestID] = SurfaceAttachRequest(paneId: paneId, context: context, task: task)
-        surfaceAttachRequestByPane[paneId] = requestID
+        surfaceAttachRequestStore.insert(
+            SurfaceAttachRequest(paneId: paneId, context: context, task: task),
+            id: requestID,
+            scopeID: paneId
+        )
         return requestID
     }
 
@@ -2794,9 +2793,8 @@ extension TerminalTabManager {
         paneHostRetrustRequestStore.removeAll()
         paneCredentialLoadRequestStore.allRequests.forEach { $0.task.cancel() }
         paneCredentialLoadRequestStore.removeAll()
-        surfaceAttachRequests.values.forEach { $0.task.cancel() }
-        surfaceAttachRequests.removeAll()
-        surfaceAttachRequestByPane.removeAll()
+        surfaceAttachRequestStore.allRequests.forEach { $0.task.cancel() }
+        surfaceAttachRequestStore.removeAll()
         inputRequests.values.forEach { $0.task.cancel() }
         inputRequests.removeAll()
         inputRequestByPane.removeAll()

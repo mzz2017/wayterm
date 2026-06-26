@@ -115,6 +115,27 @@ struct TerminalTabManagerSuperfileBoundaryTests {
         #expect(managerSource.contains("moshInstallRequestStore"))
     }
 
+    @Test
+    func paneSurfaceAttachRequestIndexingUsesSharedStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalScopedRequestStore.swift")
+        )
+
+        // Given pane-scoped surface attach indexing has a shared Application helper.
+        #expect(storeSource.contains("struct TerminalScopedRequestStore"))
+
+        // Then surface attach should not keep bespoke pane/request double dictionaries in the superfile.
+        #expect(
+            !managerSource.contains("surfaceAttachRequestByPane"),
+            "TerminalTabManager.swift should not own bespoke surface attach request indexing."
+        )
+        #expect(managerSource.contains("surfaceAttachRequestStore"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
