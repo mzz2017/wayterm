@@ -251,6 +251,50 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func sessionCloseLifecycleLivesOutsideConnectionSessionManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let closeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Closing.swift")
+        )
+
+        // Given session close and disconnect paths own teardown ordering,
+        // request cancellation, shell teardown handlers, and background
+        // suspension cleanup.
+        #expect(closeSource.contains("extension ConnectionSessionManager"))
+        #expect(closeSource.contains("func closeSession"))
+        #expect(closeSource.contains("func disconnectAllAndWait"))
+        #expect(closeSource.contains("func suspendAllForBackground"))
+        #expect(closeSource.contains("func requestSessionProcessExit"))
+        #expect(closeSource.contains("func trackShellTeardownForClosedSession"))
+        #expect(closeSource.contains("func waitForServerTeardownTasks"))
+
+        // Then the superfile should not own session close/teardown lifecycle directly.
+        #expect(
+            !managerSource.containsRegex(#"func\s+closeSession\s*\("#),
+            "ConnectionSessionManager.swift should not own session close lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+disconnectAllAndWait\s*\("#),
+            "ConnectionSessionManager.swift should not own disconnect-all teardown."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+suspendAllForBackground\s*\("#),
+            "ConnectionSessionManager.swift should not own background suspension teardown."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+requestSessionProcessExit\s*\("#),
+            "ConnectionSessionManager.swift should not own process-exit request lifecycle."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+trackShellTeardownForClosedSession\s*\("#),
+            "ConnectionSessionManager.swift should not own shell teardown tracking."
+        )
+    }
+
+    @Test
     func installRequestIndexingUsesSharedScopedStore() throws {
         let root = try sourceRoot()
         let managerSource = try source(

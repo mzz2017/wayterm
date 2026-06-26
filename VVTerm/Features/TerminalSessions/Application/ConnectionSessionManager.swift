@@ -12,22 +12,22 @@ import UIKit
 final class ConnectionSessionManager: ObservableObject {
     static let shared = ConnectionSessionManager()
 
-    private typealias SSHUnregisterResult = ConnectionSessionManagerSupport.SSHUnregisterResult
-    private typealias SessionCloseResult = ConnectionSessionManagerSupport.SessionCloseResult
-    private typealias ShellTeardownRequest = ConnectionSessionManagerSupport.ShellTeardownRequest
-    private typealias TmuxInstallRequest = ConnectionSessionManagerSupport.TmuxInstallRequest
-    private typealias MoshInstallRequest = ConnectionSessionManagerSupport.MoshInstallRequest
-    private typealias SessionRetryRequest = ConnectionSessionManagerSupport.SessionRetryRequest
-    private typealias ActiveConnectionOpenRequest = ConnectionSessionManagerSupport.ActiveConnectionOpenRequest
-    private typealias ForegroundReconnectRequest = ConnectionSessionManagerSupport.ForegroundReconnectRequest
+    typealias SSHUnregisterResult = ConnectionSessionManagerSupport.SSHUnregisterResult
+    typealias SessionCloseResult = ConnectionSessionManagerSupport.SessionCloseResult
+    typealias ShellTeardownRequest = ConnectionSessionManagerSupport.ShellTeardownRequest
+    typealias TmuxInstallRequest = ConnectionSessionManagerSupport.TmuxInstallRequest
+    typealias MoshInstallRequest = ConnectionSessionManagerSupport.MoshInstallRequest
+    typealias SessionRetryRequest = ConnectionSessionManagerSupport.SessionRetryRequest
+    typealias ActiveConnectionOpenRequest = ConnectionSessionManagerSupport.ActiveConnectionOpenRequest
+    typealias ForegroundReconnectRequest = ConnectionSessionManagerSupport.ForegroundReconnectRequest
     private typealias ForegroundReconnectCallback = ConnectionSessionManagerSupport.ForegroundReconnectCallback
-    private typealias SessionHostRetrustRequest = ConnectionSessionManagerSupport.SessionHostRetrustRequest
-    private typealias SessionCredentialLoadRequest = ConnectionSessionManagerSupport.SessionCredentialLoadRequest
+    typealias SessionHostRetrustRequest = ConnectionSessionManagerSupport.SessionHostRetrustRequest
+    typealias SessionCredentialLoadRequest = ConnectionSessionManagerSupport.SessionCredentialLoadRequest
     typealias SurfaceAttachRequest = ConnectionSessionManagerSupport.SurfaceAttachRequest
     typealias InputRequest = ConnectionSessionManagerSupport.InputRequest
     typealias RichPasteUploadRequest = ConnectionSessionManagerSupport.RichPasteUploadRequest
     typealias ResizeRequest = ConnectionSessionManagerSupport.ResizeRequest
-    private typealias ProcessExitRequest = ConnectionSessionManagerSupport.ProcessExitRequest
+    typealias ProcessExitRequest = ConnectionSessionManagerSupport.ProcessExitRequest
     typealias SessionRuntimeState = ConnectionSessionManagerSupport.SessionRuntimeState
 
     @Published var sessions: [ConnectionSession] = [] {
@@ -174,25 +174,25 @@ final class ConnectionSessionManager: ObservableObject {
     var terminalsNeedingReconnectReset: Set<UUID> = []
 
     /// Shell lifecycle handlers indexed by session ID.
-    private var shellHandlerStore = TerminalShellHandlerStore()
+    var shellHandlerStore = TerminalShellHandlerStore()
     /// Server IDs and request tasks with an in-flight open request, used to collapse repeated clicks.
     private var connectionOpenRequestStore = TerminalOpenRequestStore()
     private(set) var lastConnectionOpenFailure: Error?
     var pendingConnectionOpenRequestIDs: Set<UUID> { connectionOpenRequestStore.pendingRequestIDs }
-    private var tmuxInstallRequestStore = TerminalScopedRequestStore<TmuxInstallRequest>()
+    var tmuxInstallRequestStore = TerminalScopedRequestStore<TmuxInstallRequest>()
     var pendingTmuxInstallRequestIDs: Set<UUID> { tmuxInstallRequestStore.pendingRequestIDs }
-    private var moshInstallRequestStore = TerminalScopedRequestStore<MoshInstallRequest>()
+    var moshInstallRequestStore = TerminalScopedRequestStore<MoshInstallRequest>()
     private(set) var lastMoshInstallFailure: Error?
     var pendingMoshInstallRequestIDs: Set<UUID> { moshInstallRequestStore.pendingRequestIDs }
-    private var sessionRetryRequestStore = TerminalScopedRequestStore<SessionRetryRequest>()
+    var sessionRetryRequestStore = TerminalScopedRequestStore<SessionRetryRequest>()
     var pendingSessionRetryRequestIDs: Set<UUID> { sessionRetryRequestStore.pendingRequestIDs }
-    private var activeConnectionOpenRequestStore = TerminalScopedRequestStore<ActiveConnectionOpenRequest>()
+    var activeConnectionOpenRequestStore = TerminalScopedRequestStore<ActiveConnectionOpenRequest>()
     var pendingActiveConnectionOpenRequestIDs: Set<UUID> { activeConnectionOpenRequestStore.pendingScopedRequestIDs }
-    private var foregroundReconnectRequestStore = TerminalScopedRequestStore<ForegroundReconnectRequest>()
+    var foregroundReconnectRequestStore = TerminalScopedRequestStore<ForegroundReconnectRequest>()
     var pendingForegroundReconnectRequestIDs: Set<UUID> { foregroundReconnectRequestStore.pendingScopedRequestIDs }
-    private var sessionHostRetrustRequestStore = TerminalScopedRequestStore<SessionHostRetrustRequest>()
+    var sessionHostRetrustRequestStore = TerminalScopedRequestStore<SessionHostRetrustRequest>()
     var pendingSessionHostRetrustRequestIDs: Set<UUID> { sessionHostRetrustRequestStore.pendingRequestIDs }
-    private var sessionCredentialLoadRequestStore = TerminalScopedRequestStore<SessionCredentialLoadRequest>()
+    var sessionCredentialLoadRequestStore = TerminalScopedRequestStore<SessionCredentialLoadRequest>()
     var pendingSessionCredentialLoadRequestIDs: Set<UUID> { sessionCredentialLoadRequestStore.pendingScopedRequestIDs }
     var surfaceAttachRequestStore = TerminalScopedRequestStore<SurfaceAttachRequest>()
     var pendingSurfaceAttachRequestIDs: Set<UUID> { surfaceAttachRequestStore.pendingRequestIDs }
@@ -202,25 +202,25 @@ final class ConnectionSessionManager: ObservableObject {
     var pendingSessionRichPasteUploadRequestIDs: Set<UUID> { richPasteUploadRequestStore.pendingRequestIDs }
     var resizeRequestStore = TerminalScopedRequestStore<ResizeRequest>()
     var pendingResizeRequestIDs: Set<UUID> { resizeRequestStore.pendingRequestIDs }
-    private var processExitRequestStore = TerminalScopedRequestStore<ProcessExitRequest>()
+    var processExitRequestStore = TerminalScopedRequestStore<ProcessExitRequest>()
     var pendingProcessExitRequestIDs: Set<UUID> { processExitRequestStore.pendingRequestIDs }
     private var reconnectInFlightStore = TerminalReconnectInFlightStore()
     /// Server disconnect cleanups in progress. New opens wait for the matching cleanup.
-    private var serverDisconnectTaskStore = TerminalServerTaskStore()
+    var serverDisconnectTaskStore = TerminalServerTaskStore()
     /// Application-owned connect watchdog timers keyed by session.
     private var connectWatchdogStore = TerminalConnectWatchdogStore()
     private var credentialsProvider: @MainActor (Server) async throws -> ServerCredentials = { server in
         try KeychainManager.shared.getCredentials(for: server)
     }
     /// Per-server teardown work from ordinary tab closes. New opens wait for this too.
-    private var serverTeardownTaskStore = TerminalTeardownTaskStore()
+    var serverTeardownTaskStore = TerminalTeardownTaskStore()
     /// Application-owned tab SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
     var sessionRuntimes: [UUID: SessionRuntimeState] = [:]
     let terminalConnectionRegistry = TerminalConnectionRegistry()
     #if DEBUG
     private var testingTerminalConnectionClientFactory: (@MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient)?
-    private var rejectedShellCleanupOperationForTesting: (@MainActor @Sendable () async -> Void)?
-    private var tmuxKillOperationForTesting: (@MainActor @Sendable () async -> Void)?
+    var rejectedShellCleanupOperationForTesting: (@MainActor @Sendable () async -> Void)?
+    var tmuxKillOperationForTesting: (@MainActor @Sendable () async -> Void)?
     private var tmuxInstallOperationForTesting: (@MainActor (UUID) async -> Void)?
     private var moshInstallAndReconnectOperationForTesting: (@MainActor (ConnectionSession) async throws -> Void)?
     private var sessionRetryOperationForTesting: (@MainActor (ConnectionSession, Server?) async -> TerminalReconnectRequestResult)?
@@ -232,7 +232,7 @@ final class ConnectionSessionManager: ObservableObject {
     var richPasteLeaseProviderForTesting: (@MainActor (UUID) -> RemoteConnectionLease?)?
     var richPasteUploadOperationForTesting: TerminalRichPasteUploadOperation?
     var resizeOperationForTesting: (@MainActor (TerminalResizeRequestSize, TerminalEntityID) async -> Void)?
-    private var processExitOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
+    var processExitOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
     #endif
     @Published private(set) var isSuspendingForBackground = false
 
@@ -257,7 +257,15 @@ final class ConnectionSessionManager: ObservableObject {
         sessions.first { $0.id == sessionId }
     }
 
-    private func indexOfSession(_ sessionId: UUID) -> Int? {
+    func setSuspendingForBackground(_ isSuspending: Bool) {
+        isSuspendingForBackground = isSuspending
+    }
+
+    func clearRuntimeTitle(for sessionId: UUID) {
+        runtimeTitleBySession.removeValue(forKey: sessionId)
+    }
+
+    func indexOfSession(_ sessionId: UUID) -> Int? {
         sessions.firstIndex { $0.id == sessionId }
     }
 
@@ -316,7 +324,7 @@ final class ConnectionSessionManager: ObservableObject {
         sessions[index].workingDirectory = workingDirectory
     }
 
-    private func setPresentationOverrides(_ presentationOverrides: TerminalPresentationOverrides, for sessionId: UUID) {
+    func setPresentationOverrides(_ presentationOverrides: TerminalPresentationOverrides, for sessionId: UUID) {
         guard let index = indexOfSession(sessionId) else { return }
         sessions[index].presentationOverrides = presentationOverrides
     }
@@ -330,7 +338,7 @@ final class ConnectionSessionManager: ObservableObject {
         sessions[index].tmuxStatus = status
     }
 
-    private func setTransport(
+    func setTransport(
         _ transport: ShellTransport,
         fallbackReason: MoshFallbackReason?,
         for sessionId: UUID
@@ -716,386 +724,6 @@ final class ConnectionSessionManager: ObservableObject {
         runtimeTitleBySession[session.id] ?? session.title
     }
 
-    // MARK: - Close Terminal
-
-    /// Closes a terminal session and removes it from the list
-    func closeSession(_ session: ConnectionSession, notingSessionEnd: Bool = true) {
-        guard let closeResult = closeSessionUI(session, notingSessionEnd: notingSessionEnd) else { return }
-        let teardownTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            for task in closeResult.richPasteUploadTasks {
-                await task.value
-            }
-            await self.runShellTeardown(closeResult.shellTeardownRequest)
-            await self.unregisterSSHClient(
-                for: closeResult.sessionId,
-                killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
-            )
-        }
-        trackServerTeardownTask(teardownTask, for: closeResult.serverId)
-    }
-
-    /// Closes a terminal session and waits for shell cancellation and SSH teardown to finish.
-    func closeSessionAndWait(_ session: ConnectionSession, notingSessionEnd: Bool = true) async {
-        await waitForServerTeardownTasks(session.serverId)
-        guard let closeResult = closeSessionUI(session, notingSessionEnd: notingSessionEnd) else { return }
-        for task in closeResult.richPasteUploadTasks {
-            await task.value
-        }
-        await runShellTeardown(closeResult.shellTeardownRequest)
-        await unregisterSSHClient(
-            for: closeResult.sessionId,
-            killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
-        )
-    }
-
-    private func closeSessionUI(_ session: ConnectionSession, notingSessionEnd: Bool) -> SessionCloseResult? {
-        let sessionId = session.id
-        let title = session.title
-        let wasSelected = selectedSessionId == sessionId
-
-        guard sessionWithID(sessionId) != nil else { return nil }
-
-        let tmuxSessionToKill = managedTmuxSessionNameToKill(for: sessionId, status: session.tmuxStatus)
-
-        let replacementSessionId = replacementSessionIDAfterClosing(
-            sessionId: sessionId,
-            serverId: session.serverId,
-            wasSelected: wasSelected
-        )
-
-        let runtimeTeardown = clearRuntimeStateForClosedSession(sessionId)
-        terminalConnectionRegistry.updateState(
-            .disconnected,
-            for: .session(sessionId),
-            serverId: session.serverId
-        )
-
-        // Remove from UI immediately
-        sessions.removeAll { $0.id == sessionId }
-
-        // Select another session if this was selected (prefer same server)
-        if wasSelected {
-            selectedSessionId = replacementSessionId
-        }
-
-        handleTerminalCloseUI(
-            sessionId: sessionId,
-            wasSelected: wasSelected,
-            replacementSessionId: replacementSessionId
-        )
-
-        if let selectedId = replacementSessionId ?? selectedSessionId,
-           let selectedSession = sessionWithID(selectedId) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                self?.redrawSessionAfterClose(selectedSession)
-            }
-        }
-
-        if notingSessionEnd {
-            EngagementTracker.shared.noteTerminalSessionEnded(
-                otherTerminalsActive: !activeSessions.isEmpty,
-                isPro: StoreManager.shared.isPro
-            )
-        }
-
-        logger.info("Closed terminal session \(title)")
-        return SessionCloseResult(
-            sessionId: sessionId,
-            serverId: session.serverId,
-            tmuxSessionNameToKill: tmuxSessionToKill,
-            richPasteUploadTasks: runtimeTeardown.richPasteUploadTasks,
-            shellTeardownRequest: runtimeTeardown.shellTeardownRequest
-        )
-    }
-
-    private func replacementSessionIDAfterClosing(
-        sessionId: UUID,
-        serverId: UUID,
-        wasSelected: Bool
-    ) -> UUID? {
-        guard wasSelected else { return nil }
-
-        let serverSessions = sessions.filter { $0.serverId == serverId }
-        if let index = serverSessions.firstIndex(where: { $0.id == sessionId }) {
-            if index + 1 < serverSessions.count {
-                return serverSessions[index + 1].id
-            }
-            if index > 0 {
-                return serverSessions[index - 1].id
-            }
-        }
-
-        return sessions.first(where: { $0.id != sessionId })?.id
-    }
-
-    private func clearRuntimeStateForClosedSession(_ sessionId: UUID) -> (
-        shellTeardownRequest: ShellTeardownRequest?,
-        richPasteUploadTasks: [Task<Void, Never>]
-    ) {
-        cancelInstallRequests(for: sessionId)
-        cancelSessionRetryRequest(for: sessionId)
-        cancelActiveConnectionOpenRequest(for: sessionId)
-        cancelForegroundReconnectRequest(for: sessionId)
-        cancelSessionHostRetrustRequest(for: sessionId)
-        cancelSessionCredentialLoadRequest(for: sessionId)
-        cancelInputRequests(for: sessionId)
-        let richPasteUploadTasks = cancelSessionRichPasteUploadRequests(for: sessionId)
-        cancelResizeRequests(for: sessionId)
-        cancelProcessExitRequests(for: sessionId)
-        let shellTeardownRequest = takeShellTeardownRequestForClosedSession(sessionId)
-        terminalsNeedingReconnectReset.remove(sessionId)
-        terminalBrowseModeBySession.removeValue(forKey: sessionId)
-        clearTmuxRuntimeState(for: sessionId)
-        runtimeTitleBySession.removeValue(forKey: sessionId)
-        return (shellTeardownRequest, richPasteUploadTasks)
-    }
-
-    private func cancelInstallRequests(for sessionId: UUID) {
-        if let request = tmuxInstallRequestStore.removeMappedRequest(forScope: sessionId) {
-            request.task.cancel()
-            request.onCompleted.forEach { $0() }
-        }
-
-        if let request = moshInstallRequestStore.removeMappedRequest(forScope: sessionId) {
-            request.task.cancel()
-            request.onCompleted.forEach { $0() }
-        }
-    }
-
-    private func cancelProcessExitRequests(for sessionId: UUID) {
-        processExitRequestStore.removeMappedRequest(forScope: sessionId)?.task.cancel()
-    }
-
-    private func cancelSessionRetryRequest(for sessionId: UUID) {
-        if let request = sessionRetryRequestStore.removeMappedRequest(forScope: sessionId) {
-            request.task.cancel()
-            request.onCompleted.forEach { $0(.skipped) }
-        }
-    }
-
-    private func cancelActiveConnectionOpenRequest(for sessionId: UUID) {
-        activeConnectionOpenRequestStore.removeScopeMapping(forScope: sessionId)?.task?.cancel()
-    }
-
-    private func cancelForegroundReconnectRequest(for sessionId: UUID) {
-        foregroundReconnectRequestStore.removeScopeMapping(forScope: sessionId)?.task?.cancel()
-    }
-
-    private func cancelSessionHostRetrustRequest(for sessionId: UUID) {
-        if let request = sessionHostRetrustRequestStore.removeMappedRequest(forScope: sessionId) {
-            request.task.cancel()
-            request.onCompleted.forEach { $0(false) }
-        }
-    }
-
-    private func handleTerminalCloseUI(
-        sessionId: UUID,
-        wasSelected: Bool,
-        replacementSessionId: UUID?
-    ) {
-        if let terminal = terminalSurfaceRegistry.surface(for: .session(sessionId)), terminal.window != nil {
-            terminal.pauseRendering()
-            if !wasSelected {
-                _ = terminal.resignFirstResponder()
-            }
-        } else {
-            unregisterTerminal(for: sessionId)
-        }
-
-        guard let replacementSessionId,
-              let replacementTerminal = terminalSurfaceRegistry.surface(for: .session(replacementSessionId)),
-              replacementTerminal.window != nil else {
-            return
-        }
-
-        DispatchQueue.main.async {
-            #if os(iOS)
-            guard UIApplication.shared.applicationState == .active else { return }
-            replacementTerminal.requestKeyboardFocus(for: .initialActivation)
-            #else
-            _ = replacementTerminal.window?.makeFirstResponder(replacementTerminal)
-            #endif
-        }
-    }
-
-    private func redrawSessionAfterClose(_ session: ConnectionSession) {
-        guard let terminal = terminalSurfaceRegistry.surface(for: .session(session.id)) else { return }
-        terminal.resumeRendering()
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak terminal] in
-            guard let terminal = terminal else { return }
-            terminal.forceRefresh()
-
-            if let size = terminal.terminalSize(),
-               let self {
-                Task {
-                    await self.resizeSession(session.id, cols: Int(size.columns), rows: Int(size.rows))
-                }
-            }
-
-            // Nudge the shell to redraw the prompt after layout changes without adding a new line.
-            #if os(iOS)
-            terminal.sendText("\u{0C}")
-            #endif
-        }
-    }
-
-    // MARK: - Disconnect All
-
-    /// Fully disconnects all sessions for a server and clears connection state
-    /// Closes every session during app termination — lifecycle teardown,
-    /// not a user-initiated session end.
-    func disconnectAll() {
-        let sessionsToClose = sessions
-        for session in sessionsToClose {
-            closeSession(session, notingSessionEnd: false)
-        }
-        logger.info("Disconnected all sessions")
-    }
-
-    /// Closes every session and waits for SSH and shell teardown to finish.
-    func disconnectAllAndWait() async {
-        await waitForAllServerTeardownTasks()
-        let sessionsToClose = sessions
-        for session in sessionsToClose {
-            await closeSessionAndWait(session, notingSessionEnd: false)
-        }
-        await waitForAllServerTeardownTasks()
-        logger.info("Disconnected all sessions after awaiting teardown")
-    }
-
-    /// Disconnects all sessions without removing tabs (used when app backgrounds)
-    func suspendAllForBackground() async {
-        guard !isSuspendingForBackground else { return }
-        isSuspendingForBackground = true
-        defer { isSuspendingForBackground = false }
-
-        pauseCachedTerminalsForBackground()
-        let sessionsToSuspend = sessions
-        var unregisterResults: [SSHUnregisterResult] = []
-        unregisterResults.reserveCapacity(sessionsToSuspend.count)
-        for session in sessionsToSuspend {
-            if terminalConnectionRegistry.isOpeningOrStreaming(.session(session.id)) {
-                updateSessionState(session.id, to: .disconnected)
-                markTerminalForReconnectReset(for: session.id)
-            }
-            // Cancel any in-flight connects while preserving terminal state
-            await shellHandlerStore.suspendHandler(for: session.id)?()
-            unregisterResults.append(takeSSHClientRegistration(for: session.id))
-        }
-
-        if unregisterResults.contains(where: { $0.shellToClose != nil || $0.clientToDisconnect != nil }) {
-            await withTaskGroup(of: Void.self) { group in
-                for unregisterResult in unregisterResults {
-                    group.addTask {
-                        await ConnectionSessionManager.finishSSHCleanup(for: unregisterResult)
-                    }
-                }
-            }
-        }
-
-        logger.info("Suspended all sessions for background")
-    }
-
-    /// Handle shell exit without removing the session (keeps tab for reconnect)
-    func handleShellExit(for sessionId: UUID) {
-        setPresentationOverrides(.empty, for: sessionId)
-        terminalSurfaceRegistry.surface(for: .session(sessionId))?.applyPresentationOverrides(.empty)
-        updateSessionState(sessionId, to: .disconnected)
-        markTerminalForReconnectReset(for: sessionId)
-        scheduleSSHUnregister(for: sessionId)
-    }
-
-    @discardableResult
-    func requestSessionProcessExit(forSession sessionId: UUID) -> UUID? {
-        guard sessionWithID(sessionId) != nil else { return nil }
-
-        if let existingRequestID = processExitRequestStore.requestID(forScope: sessionId) {
-            return existingRequestID
-        }
-
-        let requestID = UUID()
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                self.processExitRequestStore.remove(id: requestID, ifMappedTo: sessionId)
-            }
-
-            guard !Task.isCancelled else { return }
-            guard self.sessionWithID(sessionId) != nil else { return }
-
-            #if DEBUG
-            if let processExitOperationForTesting = self.processExitOperationForTesting {
-                await processExitOperationForTesting(.session(sessionId))
-                return
-            }
-            #endif
-
-            self.handleShellExit(for: sessionId)
-        }
-
-        processExitRequestStore.insert(
-            ProcessExitRequest(sessionId: sessionId, task: task),
-            id: requestID,
-            scopeID: sessionId
-        )
-        return requestID
-    }
-
-    /// Disconnect all sessions for a specific server
-    func disconnectServer(_ serverId: UUID) {
-        let sessionsToClose = sessions.filter { $0.serverId == serverId }
-        for session in sessionsToClose {
-            closeSession(session)
-        }
-        logger.info("Disconnected all sessions for server \(serverId)")
-    }
-
-    /// Disconnect all sessions for a server and wait until SSH clients/shells are unregistered.
-    /// Use this for explicit user disconnects that may be followed immediately by a new connect.
-    func disconnectServerAndWait(_ serverId: UUID) async {
-        if let existingTask = serverDisconnectTaskStore.task(forServer: serverId) {
-            await existingTask.value
-            return
-        }
-
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.performDisconnectServerAndWait(serverId)
-        }
-        serverDisconnectTaskStore.setTask(task, forServer: serverId)
-        await task.value
-        serverDisconnectTaskStore.removeTask(forServer: serverId)
-    }
-
-    private func performDisconnectServerAndWait(_ serverId: UUID) async {
-        await waitForServerTeardownTasks(serverId)
-
-        let sessionsToClose = sessions.filter { $0.serverId == serverId }
-        var closeResults: [SessionCloseResult] = []
-        closeResults.reserveCapacity(sessionsToClose.count)
-
-        for session in sessionsToClose {
-            if let closeResult = closeSessionUI(session, notingSessionEnd: true) {
-                closeResults.append(closeResult)
-            }
-        }
-
-        for closeResult in closeResults {
-            for task in closeResult.richPasteUploadTasks {
-                await task.value
-            }
-            await runShellTeardown(closeResult.shellTeardownRequest)
-            await unregisterSSHClient(
-                for: closeResult.sessionId,
-                killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
-            )
-        }
-
-        logger.info("Disconnected all sessions for server \(serverId)")
-    }
-
     // MARK: - Tab Navigation
 
     func selectSession(_ session: ConnectionSession) {
@@ -1119,31 +747,6 @@ final class ConnectionSessionManager: ObservableObject {
     func selectSession(at index: Int) {
         guard index >= 0 && index < sessions.count else { return }
         selectedSessionId = sessions[index].id
-    }
-
-    // MARK: - Close Operations
-
-    func closeOtherSessions(except session: ConnectionSession) {
-        let toClose = sessions.filter { $0.id != session.id }
-        for s in toClose {
-            closeSession(s)
-        }
-    }
-
-    func closeSessionsToLeft(of session: ConnectionSession) {
-        guard let index = indexOfSession(session.id) else { return }
-        let toClose = Array(sessions[..<index])
-        for s in toClose {
-            closeSession(s)
-        }
-    }
-
-    func closeSessionsToRight(of session: ConnectionSession) {
-        guard let index = indexOfSession(session.id) else { return }
-        let toClose = Array(sessions[(index + 1)...])
-        for s in toClose {
-            closeSession(s)
-        }
     }
 
     // MARK: - SSH Client Registration
@@ -1233,24 +836,6 @@ final class ConnectionSessionManager: ObservableObject {
             }
         }
         return true
-    }
-
-    func unregisterSSHClient(for sessionId: UUID) async {
-        await unregisterSSHClient(for: sessionId, killingManagedTmuxSessionNamed: nil)
-    }
-
-    private func unregisterSSHClient(
-        for sessionId: UUID,
-        killingManagedTmuxSessionNamed tmuxSessionName: String?
-    ) async {
-        let unregisterResult = takeSSHClientRegistration(for: sessionId)
-        if let tmuxSessionName,
-           let client = unregisterResult.shellToClose?.client {
-            let preferred = sessions.first(where: { $0.id == sessionId })
-                .map { tmuxResolver.multiplexer(for: $0.serverId) } ?? .tmux
-            await RemoteTmuxManager.shared.killSession(named: tmuxSessionName, using: client, preferred: preferred)
-        }
-        await Self.finishSSHCleanup(for: unregisterResult)
     }
 
     private func sshClient(for session: ConnectionSession) -> SSHClient? {
@@ -1369,175 +954,6 @@ final class ConnectionSessionManager: ObservableObject {
     func sharedStatsLease(for serverId: UUID) -> RemoteConnectionLease? {
         sharedStatsClient(for: serverId).map {
             RemoteConnectionLease(client: $0, ownership: .borrowed)
-        }
-    }
-
-    // MARK: - Shell Cancel Handler Registration
-
-    func registerShellCancelHandler(_ handler: @escaping @MainActor (_ mode: ShellTeardownMode) async -> Void, for sessionId: UUID) {
-        shellHandlerStore.registerCancelHandler(handler, for: sessionId)
-    }
-
-    func unregisterShellCancelHandler(for sessionId: UUID) {
-        shellHandlerStore.unregisterCancelHandler(for: sessionId)
-    }
-
-    func registerShellSuspendHandler(_ handler: @escaping @MainActor () async -> Void, for sessionId: UUID) {
-        shellHandlerStore.registerSuspendHandler(handler, for: sessionId)
-    }
-
-    func unregisterShellSuspendHandler(for sessionId: UUID) {
-        shellHandlerStore.unregisterSuspendHandler(for: sessionId)
-    }
-
-    private func pauseCachedTerminalsForBackground() {
-        #if os(iOS)
-        for terminal in terminalSurfaceRegistry.allSurfaces {
-            terminal.pauseRendering()
-            if terminal.isFirstResponder {
-                terminal.markKeyboardFocusForReconnect()
-            }
-            _ = terminal.resignFirstResponder()
-        }
-        #endif
-    }
-
-    func cancelAndClearShellHandlers(for sessionId: UUID) -> Task<Void, Never>? {
-        let handler = shellHandlerStore.takeCancelHandler(for: sessionId)
-        guard let handler else {
-            logger.info("No shell cancel handler registered for closed session [sessionId: \(sessionId.uuidString, privacy: .public)]")
-            return nil
-        }
-        logger.info("Running shell cancel handler for closed session [sessionId: \(sessionId.uuidString, privacy: .public)]")
-        return Task(priority: .high) { @MainActor in
-            await handler(.fullDisconnect)
-        }
-    }
-
-    private func takeShellTeardownRequestForClosedSession(_ sessionId: UUID) -> ShellTeardownRequest? {
-        let handler = shellHandlerStore.takeCancelHandler(for: sessionId)
-        guard let handler else {
-            logger.info("No shell cancel handler registered for closed session [sessionId: \(sessionId.uuidString, privacy: .public)]")
-            return nil
-        }
-        return ShellTeardownRequest(sessionId: sessionId, handler: handler)
-    }
-
-    private func runShellTeardown(_ request: ShellTeardownRequest?) async {
-        guard let request else { return }
-        logger.info("Running shell cancel handler for closed session [sessionId: \(request.sessionId.uuidString, privacy: .public)]")
-        await request.handler(.fullDisconnect)
-    }
-
-    func trackShellTeardownForClosedSession(
-        sessionId: UUID,
-        serverId: UUID,
-        reason: String,
-        operation: @escaping @MainActor () async -> Void
-    ) {
-        let task = Task(priority: .high) { @MainActor [logger] in
-            logger.info("External shell teardown started [sessionId: \(sessionId.uuidString, privacy: .public), serverId: \(serverId.uuidString, privacy: .public), reason: \(reason, privacy: .public)]")
-            await operation()
-            logger.info("External shell teardown finished [sessionId: \(sessionId.uuidString, privacy: .public), serverId: \(serverId.uuidString, privacy: .public), reason: \(reason, privacy: .public)]")
-        }
-        trackServerTeardownTask(task, for: serverId)
-    }
-
-    private func waitForServerTeardownTasks(_ serverId: UUID) async {
-        while !serverTeardownTaskStore.tasks(forServer: serverId).isEmpty {
-            logger.info("Open waiting for tab teardown cleanup [serverId: \(serverId.uuidString, privacy: .public), count: \(self.serverTeardownTaskStore.count(forServer: serverId))]")
-            for entry in serverTeardownTaskStore.tasks(forServer: serverId) {
-                await entry.task.value
-                finishServerTeardownTask(entry.id, for: serverId)
-            }
-        }
-    }
-
-    private func waitForAllServerTeardownTasks() async {
-        while !serverTeardownTaskStore.isEmpty {
-            for serverId in serverTeardownTaskStore.serverIDs {
-                await waitForServerTeardownTasks(serverId)
-            }
-        }
-    }
-
-    func trackServerTeardownTask(_ task: Task<Void, Never>, for serverId: UUID) {
-        let taskId = serverTeardownTaskStore.insert(task, forServer: serverId)
-        logger.info("Tracking server teardown [serverId: \(serverId.uuidString, privacy: .public), taskId: \(taskId.uuidString, privacy: .public), count: \(self.serverTeardownTaskStore.count(forServer: serverId))]")
-
-        Task { @MainActor [weak self] in
-            await task.value
-            guard let self else { return }
-            self.finishServerTeardownTask(taskId, for: serverId)
-        }
-    }
-
-    private func finishServerTeardownTask(_ taskId: UUID, for serverId: UUID) {
-        guard let remainingTasks = serverTeardownTaskStore.finish(taskId, forServer: serverId) else { return }
-        logger.info("Finished server teardown [serverId: \(serverId.uuidString, privacy: .public), taskId: \(taskId.uuidString, privacy: .public), remaining: \(remainingTasks)]")
-    }
-
-    private func trackShellCleanup(
-        for serverId: UUID,
-        reason: String,
-        priority: TaskPriority = .utility,
-        operation: @escaping @Sendable () async -> Void
-    ) {
-#if DEBUG
-        let testingOperation = rejectedShellCleanupOperationForTesting
-#endif
-        let task = Task.detached(priority: priority) { [logger] in
-            logger.info("Shell cleanup started [serverId: \(serverId.uuidString, privacy: .public), reason: \(reason, privacy: .public)]")
-#if DEBUG
-            if let testingOperation {
-                await testingOperation()
-            } else {
-                await operation()
-            }
-#else
-            await operation()
-#endif
-            logger.info("Shell cleanup finished [serverId: \(serverId.uuidString, privacy: .public), reason: \(reason, privacy: .public)]")
-        }
-        trackServerTeardownTask(task, for: serverId)
-    }
-
-    func trackTmuxKill(
-        for serverId: UUID,
-        sessionName: String,
-        client: SSHClient,
-        preferred: TerminalMultiplexer
-    ) {
-#if DEBUG
-        let testingOperation = tmuxKillOperationForTesting
-#endif
-        let task = Task.detached(priority: .utility) { [logger] in
-            logger.info("Managed tmux kill started [serverId: \(serverId.uuidString, privacy: .public), sessionName: \(sessionName, privacy: .public)]")
-#if DEBUG
-            if let testingOperation {
-                await testingOperation()
-            } else {
-                await RemoteTmuxManager.shared.killSession(named: sessionName, using: client, preferred: preferred)
-            }
-#else
-            await RemoteTmuxManager.shared.killSession(named: sessionName, using: client, preferred: preferred)
-#endif
-            logger.info("Managed tmux kill finished [serverId: \(serverId.uuidString, privacy: .public), sessionName: \(sessionName, privacy: .public)]")
-        }
-        trackServerTeardownTask(task, for: serverId)
-    }
-
-    @discardableResult
-    func scheduleSSHUnregister(
-        for sessionId: UUID,
-        priority: TaskPriority = .utility,
-        killingManagedTmuxSessionNamed tmuxSessionName: String? = nil
-    ) -> Task<Void, Never> {
-        Task.detached(priority: priority) { [weak self] in
-            await self?.unregisterSSHClient(
-                for: sessionId,
-                killingManagedTmuxSessionNamed: tmuxSessionName
-            )
         }
     }
 
@@ -2112,7 +1528,7 @@ final class ConnectionSessionManager: ObservableObject {
         await sessionCredentialLoadRequestStore[requestID]?.task.value
     }
 
-    private func cancelSessionCredentialLoadRequest(for sessionId: UUID) {
+    func cancelSessionCredentialLoadRequest(for sessionId: UUID) {
         sessionCredentialLoadRequestStore.removeScopeMapping(forScope: sessionId)?.task.cancel()
     }
 
@@ -2302,41 +1718,6 @@ final class ConnectionSessionManager: ObservableObject {
 
     func waitForMoshInstallRequest(_ requestID: UUID) async {
         await moshInstallRequestStore[requestID]?.task.value
-    }
-
-    private func takeSSHClientRegistration(for sessionId: UUID) -> SSHUnregisterResult {
-        let unregisterResult = shellRegistry.unregister(for: sessionId)
-        var shellToClose: (client: SSHClient, shellId: UUID)?
-        var clientToDisconnect: SSHClient?
-
-        if let registration = unregisterResult.registration {
-            shellToClose = (client: registration.client, shellId: registration.shellId)
-            if !shellRegistry.hasClientReferences(registration.client) {
-                clientToDisconnect = registration.client
-            }
-        } else if let pendingStart = unregisterResult.pendingStart,
-                  !shellRegistry.hasClientReferences(pendingStart.client) {
-            clientToDisconnect = pendingStart.client
-        }
-
-        if unregisterResult.registration != nil {
-            setTransport(.ssh, fallbackReason: nil, for: sessionId)
-        }
-
-        return SSHUnregisterResult(
-            shellToClose: shellToClose,
-            clientToDisconnect: clientToDisconnect
-        )
-    }
-
-    private static func finishSSHCleanup(for unregisterResult: SSHUnregisterResult) async {
-        if let shellToClose = unregisterResult.shellToClose {
-            await shellToClose.client.closeShell(shellToClose.shellId)
-        }
-
-        if let clientToDisconnect = unregisterResult.clientToDisconnect {
-            await clientToDisconnect.disconnect()
-        }
     }
 
 }
