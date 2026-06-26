@@ -104,6 +104,28 @@ struct SSHClientSuperfileBoundaryTests {
         #expect(uploadStrategySource.contains("execPreferred"))
     }
 
+    @Test
+    func connectionOperationServiceLivesOutsideSSHClientFile() throws {
+        let root = try sourceRoot()
+        let clientSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift")
+        )
+        let serviceSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHConnectionOperationService.swift")
+        )
+
+        // Given the SSH client superfile source.
+        #expect(
+            !clientSource.contains("actor SSHConnectionOperationService"),
+            "SSHClient.swift should not own the reusable SSH connection operation service."
+        )
+
+        // Then reusable connection operation orchestration has a dedicated Core/SSH file.
+        #expect(serviceSource.contains("actor SSHConnectionOperationService"))
+        #expect(serviceSource.contains("runWithConnection"))
+        #expect(serviceSource.contains("withTemporaryConnection"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
