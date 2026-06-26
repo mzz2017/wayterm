@@ -61,7 +61,7 @@ struct TerminalRichPasteIntentBoundaryTests {
         let root = try sourceRoot()
         let combinedSource = try [
             "VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift",
-            "VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift"
+            "VVTerm/Features/TerminalSessions/UI/Splits/SSHTerminalPaneWrapper.swift"
         ].map { path in
             try source(at: root.appendingPathComponent(path))
         }.joined(separator: "\n")

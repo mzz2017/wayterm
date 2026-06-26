@@ -16,7 +16,7 @@ struct TerminalSplitSurfaceCallbackBoundaryTests {
     func splitPaneWrapperUsesInjectedManagerForSurfaceCallbacks() throws {
         let root = try sourceRoot()
         let source = try source(
-            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift")
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/SSHTerminalPaneWrapper.swift")
         )
         let wrapper = try slice(
             startingAt: "struct SSHTerminalPaneWrapper",
@@ -56,7 +56,7 @@ struct TerminalSplitSurfaceCallbackBoundaryTests {
     func splitPaneCoordinatorUsesInjectedManagerForRuntimeCallbacks() throws {
         let root = try sourceRoot()
         let source = try source(
-            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift")
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/SSHTerminalPaneWrapper.swift")
         )
         let coordinator = try slice(
             startingAt: "func makeCoordinator()",
@@ -98,7 +98,7 @@ struct TerminalSplitSurfaceCallbackBoundaryTests {
         )
         let paneView = try slice(
             startingAt: "struct TerminalPaneView",
-            endingBefore: "struct SSHTerminalPaneWrapper",
+            endingBefore: "private func updateTerminalBackgroundColor",
             in: source
         )
 
@@ -112,6 +112,33 @@ struct TerminalSplitSurfaceCallbackBoundaryTests {
         #expect(
             paneView.contains("tabManager: tabManager"),
             "TerminalPaneView should inject tabManager into SSHTerminalPaneWrapper."
+        )
+    }
+
+    @Test
+    func terminalViewDoesNotOwnSplitPaneRepresentable() throws {
+        let root = try sourceRoot()
+        let terminalViewSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift")
+        )
+        let wrapperSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/SSHTerminalPaneWrapper.swift")
+        )
+
+        // Given TerminalView owns split layout and pane presentation.
+        #expect(
+            terminalViewSource.contains("SSHTerminalPaneWrapper("),
+            "TerminalPaneView should still compose the split pane representable."
+        )
+
+        // Then the lifecycle-heavy NSViewRepresentable should live in its own sibling file.
+        #expect(
+            !terminalViewSource.contains("struct SSHTerminalPaneWrapper: NSViewRepresentable"),
+            "TerminalView.swift should not define the split pane representable."
+        )
+        #expect(
+            wrapperSource.contains("struct SSHTerminalPaneWrapper: NSViewRepresentable"),
+            "SSHTerminalPaneWrapper.swift should define the split pane representable."
         )
     }
 

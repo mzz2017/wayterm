@@ -31,7 +31,7 @@ struct TerminalResizeBoundaryTests {
     func splitTerminalWrapperUsesResizeRequestBoundary() throws {
         let root = try sourceRoot()
         let source = try source(
-            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift")
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/SSHTerminalPaneWrapper.swift")
         )
         let wrapper = try slice(
             startingAt: "struct SSHTerminalPaneWrapper",
