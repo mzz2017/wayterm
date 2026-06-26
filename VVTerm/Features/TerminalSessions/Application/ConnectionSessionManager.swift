@@ -216,7 +216,7 @@ final class ConnectionSessionManager: ObservableObject {
         try KeychainManager.shared.getCredentials(for: server)
     }
     /// Per-server teardown work from ordinary tab closes. New opens wait for this too.
-    private var serverTeardownTasks: [UUID: [UUID: Task<Void, Never>]] = [:]
+    private var serverTeardownTaskStore = TerminalTeardownTaskStore()
     /// Application-owned tab SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
     private var sessionRuntimes: [UUID: SessionRuntimeState] = [:]
     private let terminalConnectionRegistry = TerminalConnectionRegistry()
@@ -1585,27 +1585,26 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func waitForServerTeardownTasks(_ serverId: UUID) async {
-        while let tasksById = serverTeardownTasks[serverId], !tasksById.isEmpty {
-            logger.info("Open waiting for tab teardown cleanup [serverId: \(serverId.uuidString, privacy: .public), count: \(tasksById.count)]")
-            for (taskId, task) in tasksById {
-                await task.value
-                finishServerTeardownTask(taskId, for: serverId)
+        while !serverTeardownTaskStore.tasks(forServer: serverId).isEmpty {
+            logger.info("Open waiting for tab teardown cleanup [serverId: \(serverId.uuidString, privacy: .public), count: \(self.serverTeardownTaskStore.count(forServer: serverId))]")
+            for entry in serverTeardownTaskStore.tasks(forServer: serverId) {
+                await entry.task.value
+                finishServerTeardownTask(entry.id, for: serverId)
             }
         }
     }
 
     private func waitForAllServerTeardownTasks() async {
-        while !serverTeardownTasks.isEmpty {
-            for serverId in Array(serverTeardownTasks.keys) {
+        while !serverTeardownTaskStore.isEmpty {
+            for serverId in serverTeardownTaskStore.serverIDs {
                 await waitForServerTeardownTasks(serverId)
             }
         }
     }
 
     private func trackServerTeardownTask(_ task: Task<Void, Never>, for serverId: UUID) {
-        let taskId = UUID()
-        serverTeardownTasks[serverId, default: [:]][taskId] = task
-        logger.info("Tracking server teardown [serverId: \(serverId.uuidString, privacy: .public), taskId: \(taskId.uuidString, privacy: .public), count: \(self.serverTeardownTasks[serverId]?.count ?? 0)]")
+        let taskId = serverTeardownTaskStore.insert(task, forServer: serverId)
+        logger.info("Tracking server teardown [serverId: \(serverId.uuidString, privacy: .public), taskId: \(taskId.uuidString, privacy: .public), count: \(self.serverTeardownTaskStore.count(forServer: serverId))]")
 
         Task { @MainActor [weak self] in
             await task.value
@@ -1615,11 +1614,7 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func finishServerTeardownTask(_ taskId: UUID, for serverId: UUID) {
-        guard serverTeardownTasks[serverId]?.removeValue(forKey: taskId) != nil else { return }
-        if serverTeardownTasks[serverId]?.isEmpty == true {
-            serverTeardownTasks.removeValue(forKey: serverId)
-        }
-        let remainingTasks = serverTeardownTasks[serverId]?.count ?? 0
+        guard let remainingTasks = serverTeardownTaskStore.finish(taskId, forServer: serverId) else { return }
         logger.info("Finished server teardown [serverId: \(serverId.uuidString, privacy: .public), taskId: \(taskId.uuidString, privacy: .public), remaining: \(remainingTasks)]")
     }
 

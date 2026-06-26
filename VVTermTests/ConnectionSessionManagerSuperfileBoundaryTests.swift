@@ -346,6 +346,28 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
         #expect(managerSource.contains("inputRequestStore"))
     }
 
+    @Test
+    func serverTeardownTaskTrackingUsesTeardownTaskStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTeardownTaskStore.swift")
+        )
+
+        // Given connection close/open ordering waits on per-server teardown tasks.
+        #expect(storeSource.contains("struct TerminalTeardownTaskStore"))
+        #expect(storeSource.contains("tasks(forServer"))
+
+        // Then teardown task indexing should not remain a bespoke nested dictionary in the superfile.
+        #expect(
+            !managerSource.contains("serverTeardownTasks"),
+            "ConnectionSessionManager.swift should not own bespoke server teardown task indexing."
+        )
+        #expect(managerSource.contains("serverTeardownTaskStore"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
