@@ -34,6 +34,39 @@ final class ConnectionSessionManager: ObservableObject {
     typealias ServerUnlocker = @MainActor (Server) async -> Bool
     typealias LastConnectedUpdater = @MainActor (Server) async -> Void
     typealias IsProProvider = @MainActor () -> Bool
+    typealias CredentialsProvider = @MainActor (Server) async throws -> ServerCredentials
+
+    struct Dependencies {
+        var serverProvider: ServerProvider
+        var serverLockPolicy: ServerLockPolicy
+        var serverUnlocker: ServerUnlocker
+        var lastConnectedUpdater: LastConnectedUpdater
+        var isProProvider: IsProProvider
+        var credentialsProvider: CredentialsProvider
+
+        static var live: Self {
+            Self(
+                serverProvider: { serverId in
+                    ServerManager.shared.servers.first { $0.id == serverId }
+                },
+                serverLockPolicy: { server in
+                    ServerManager.shared.isServerLocked(server)
+                },
+                serverUnlocker: { server in
+                    await AppLockManager.shared.ensureServerUnlocked(server)
+                },
+                lastConnectedUpdater: { server in
+                    await ServerManager.shared.updateLastConnected(for: server)
+                },
+                isProProvider: {
+                    StoreManager.shared.isPro
+                },
+                credentialsProvider: { server in
+                    try KeychainManager.shared.getCredentials(for: server)
+                }
+            )
+        }
+    }
 
     @Published var sessions: [ConnectionSession] = [] {
         didSet {
@@ -78,9 +111,13 @@ final class ConnectionSessionManager: ObservableObject {
     @Published var terminalFindNavigatorVisibleBySession: [UUID: Bool] = [:]
     @Published private(set) var runtimeTitleBySession: [UUID: String] = [:]
 
-    let tmuxResolver = TmuxAttachResolver(serverProvider: { serverId in
-        ServerManager.shared.servers.first { $0.id == serverId }
-    })
+    private var dependencies: Dependencies {
+        didSet {
+            tmuxResolver.setServerProvider(dependencies.serverProvider)
+        }
+    }
+
+    let tmuxResolver: TmuxAttachResolver
 
     /// Legacy single server ID for backward compatibility
     var connectedServerId: UUID? {
@@ -217,23 +254,29 @@ final class ConnectionSessionManager: ObservableObject {
     var lastConnectedUpdateTaskStore = TerminalServerTaskStore()
     /// Application-owned connect watchdog timers keyed by session.
     var connectWatchdogStore = TerminalConnectWatchdogStore()
-    var serverProvider: ServerProvider = { serverId in
-        ServerManager.shared.servers.first { $0.id == serverId }
+    var serverProvider: ServerProvider {
+        get { dependencies.serverProvider }
+        set { updateDependencies { $0.serverProvider = newValue } }
     }
-    var serverLockPolicy: ServerLockPolicy = { server in
-        ServerManager.shared.isServerLocked(server)
+    var serverLockPolicy: ServerLockPolicy {
+        get { dependencies.serverLockPolicy }
+        set { updateDependencies { $0.serverLockPolicy = newValue } }
     }
-    var serverUnlocker: ServerUnlocker = { server in
-        await AppLockManager.shared.ensureServerUnlocked(server)
+    var serverUnlocker: ServerUnlocker {
+        get { dependencies.serverUnlocker }
+        set { updateDependencies { $0.serverUnlocker = newValue } }
     }
-    var lastConnectedUpdater: LastConnectedUpdater = { server in
-        await ServerManager.shared.updateLastConnected(for: server)
+    var lastConnectedUpdater: LastConnectedUpdater {
+        get { dependencies.lastConnectedUpdater }
+        set { updateDependencies { $0.lastConnectedUpdater = newValue } }
     }
-    var isProProvider: IsProProvider = {
-        StoreManager.shared.isPro
+    var isProProvider: IsProProvider {
+        get { dependencies.isProProvider }
+        set { updateDependencies { $0.isProProvider = newValue } }
     }
-    var credentialsProvider: @MainActor (Server) async throws -> ServerCredentials = { server in
-        try KeychainManager.shared.getCredentials(for: server)
+    var credentialsProvider: CredentialsProvider {
+        get { dependencies.credentialsProvider }
+        set { updateDependencies { $0.credentialsProvider = newValue } }
     }
     /// Per-server teardown work from ordinary tab closes. New opens wait for this too.
     var serverTeardownTaskStore = TerminalTeardownTaskStore()
@@ -273,7 +316,20 @@ final class ConnectionSessionManager: ObservableObject {
     var isRestoring = false
 
     private init() {
+        let dependencies = Dependencies.live
+        self.dependencies = dependencies
+        tmuxResolver = TmuxAttachResolver(serverProvider: dependencies.serverProvider)
         restoreSnapshot()
+    }
+
+    private func updateDependencies(_ update: (inout Dependencies) -> Void) {
+        var updated = dependencies
+        update(&updated)
+        dependencies = updated
+    }
+
+    func restoreLiveDependencies() {
+        dependencies = .live
     }
 
     func sessionWithID(_ sessionId: UUID) -> ConnectionSession? {

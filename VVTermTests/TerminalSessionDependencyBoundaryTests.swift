@@ -24,12 +24,16 @@ struct TerminalSessionDependencyBoundaryTests {
 
         // Given session runtime/reconnect flows need a Server for a session ID.
         #expect(managerSource.contains("typealias ServerProvider"))
+        #expect(managerSource.contains("typealias CredentialsProvider"))
+        #expect(managerSource.contains("struct Dependencies"))
         #expect(managerSource.contains("var serverProvider: ServerProvider"))
         #expect(runtimeSource.contains("serverProvider(session.serverId)"))
+        #expect(runtimeSource.contains("try await credentialsProvider(server)"))
         #expect(reconnectSource.contains("serverProvider(session.serverId)"))
 
         // Then those lifecycle files do not reach directly into Servers state.
         #expect(!runtimeSource.contains("ServerManager.shared.servers"))
+        #expect(!runtimeSource.contains("KeychainManager.shared.getCredentials"))
         #expect(!reconnectSource.contains("ServerManager.shared.servers"))
     }
 
@@ -45,11 +49,15 @@ struct TerminalSessionDependencyBoundaryTests {
 
         // Given split-pane runtime startup also needs server metadata.
         #expect(managerSource.contains("typealias ServerProvider"))
+        #expect(managerSource.contains("typealias CredentialsProvider"))
+        #expect(managerSource.contains("struct Dependencies"))
         #expect(managerSource.contains("var serverProvider: ServerProvider"))
         #expect(runtimeSource.contains("serverProvider(paneState.serverId)"))
+        #expect(runtimeSource.contains("try await credentialsProvider(server)"))
 
         // Then pane runtime startup does not reach directly into Servers state.
         #expect(!runtimeSource.contains("ServerManager.shared.servers"))
+        #expect(!runtimeSource.contains("KeychainManager.shared.getCredentials"))
     }
 
     @Test
@@ -68,6 +76,7 @@ struct TerminalSessionDependencyBoundaryTests {
         #expect(managerSource.contains("typealias ServerUnlocker"))
         #expect(managerSource.contains("typealias LastConnectedUpdater"))
         #expect(managerSource.contains("typealias IsProProvider"))
+        #expect(managerSource.contains("static var live: Self"))
         #expect(openSource.contains("serverLockPolicy(server)"))
         #expect(openSource.contains("await serverUnlocker(server)"))
         #expect(openSource.contains("scheduleLastConnectedUpdate(for: server)"))
@@ -95,6 +104,7 @@ struct TerminalSessionDependencyBoundaryTests {
         // need entitlement state.
         #expect(managerSource.contains("typealias IsProProvider"))
         #expect(managerSource.contains("typealias DefaultViewProvider"))
+        #expect(managerSource.contains("struct Dependencies"))
         #expect(managerSource.contains("var isProProvider: IsProProvider"))
         #expect(managerSource.contains("var defaultViewProvider: DefaultViewProvider"))
         #expect(openSource.contains("self.defaultViewProvider()"))
@@ -131,10 +141,12 @@ struct TerminalSessionDependencyBoundaryTests {
         #expect(resolverSource.contains("typealias ServerProvider"))
         #expect(resolverSource.contains("init(serverProvider: @escaping ServerProvider)"))
         #expect(resolverSource.contains("serverProvider(serverId)"))
-        #expect(connectionManagerSource.contains("TmuxAttachResolver(serverProvider:"))
-        #expect(tabManagerSource.contains("TmuxAttachResolver(serverProvider:"))
-        #expect(connectionTestingSource.contains("tmuxResolver.setServerProvider(provider)"))
-        #expect(tabTestingSource.contains("tmuxResolver.setServerProvider(provider)"))
+        #expect(connectionManagerSource.contains("TmuxAttachResolver(serverProvider: dependencies.serverProvider)"))
+        #expect(tabManagerSource.contains("TmuxAttachResolver(serverProvider: dependencies.serverProvider)"))
+        #expect(connectionManagerSource.contains("tmuxResolver.setServerProvider(dependencies.serverProvider)"))
+        #expect(tabManagerSource.contains("tmuxResolver.setServerProvider(dependencies.serverProvider)"))
+        #expect(connectionTestingSource.contains("restoreLiveDependencies()"))
+        #expect(tabTestingSource.contains("restoreLiveDependencies()"))
 
         // Then the resolver does not reach directly into Servers feature state.
         #expect(!resolverSource.contains("ServerManager.shared.servers"))

@@ -71,25 +71,7 @@ extension ConnectionSessionManager {
         for task in lastConnectedUpdateTasks {
             await task.value
         }
-        serverProvider = { serverId in
-            ServerManager.shared.servers.first { $0.id == serverId }
-        }
-        tmuxResolver.setServerProvider(serverProvider)
-        serverLockPolicy = { server in
-            ServerManager.shared.isServerLocked(server)
-        }
-        serverUnlocker = { server in
-            await AppLockManager.shared.ensureServerUnlocked(server)
-        }
-        lastConnectedUpdater = { server in
-            await ServerManager.shared.updateLastConnected(for: server)
-        }
-        isProProvider = {
-            StoreManager.shared.isPro
-        }
-        credentialsProvider = { server in
-            try KeychainManager.shared.getCredentials(for: server)
-        }
+        restoreLiveDependencies()
         serverDisconnectTaskStore.removeAll()
         terminalsNeedingReconnectReset.removeAll()
         setSuspendingForBackground(false)
@@ -243,7 +225,7 @@ extension ConnectionSessionManager {
     }
 
     func setCredentialsProviderForTesting(
-        _ provider: @escaping @MainActor (Server) async throws -> ServerCredentials
+        _ provider: @escaping CredentialsProvider
     ) {
         credentialsProvider = provider
     }
@@ -252,7 +234,6 @@ extension ConnectionSessionManager {
         _ provider: @escaping ServerProvider
     ) {
         serverProvider = provider
-        tmuxResolver.setServerProvider(provider)
     }
 
     func setServerLockPolicyForTesting(

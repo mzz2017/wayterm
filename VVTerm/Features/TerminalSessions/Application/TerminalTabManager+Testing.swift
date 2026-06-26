@@ -63,22 +63,7 @@ extension TerminalTabManager {
         processExitRequestStore.removeAll()
         reconnectInFlightStore.removeAll()
         connectWatchdogStore.removeAll().forEach { $0.cancel() }
-        isProProvider = {
-            StoreManager.shared.isPro
-        }
-        defaultViewProvider = {
-            ViewTabConfigurationManager.shared.effectiveDefaultTab()
-        }
-        serverProvider = { serverId in
-            ServerManager.shared.servers.first { $0.id == serverId }
-        }
-        tmuxResolver.setServerProvider(serverProvider)
-        credentialsProvider = { server in
-            try KeychainManager.shared.getCredentials(for: server)
-        }
-        serverUnlocker = { server in
-            await AppLockManager.shared.ensureServerUnlocked(server)
-        }
+        restoreLiveDependencies()
         serverTeardownTaskStore.removeAll()
         paneRuntimes.removeAll()
         terminalConnectionRegistry.removeAll()
@@ -203,7 +188,7 @@ extension TerminalTabManager {
     }
 
     func setCredentialsProviderForTesting(
-        _ provider: @escaping @MainActor (Server) async throws -> ServerCredentials
+        _ provider: @escaping CredentialsProvider
     ) {
         credentialsProvider = provider
     }
@@ -212,7 +197,6 @@ extension TerminalTabManager {
         _ provider: @escaping ServerProvider
     ) {
         serverProvider = provider
-        tmuxResolver.setServerProvider(provider)
     }
 
     func setIsProProviderForTesting(
@@ -228,7 +212,7 @@ extension TerminalTabManager {
     }
 
     func setServerUnlockerForTesting(
-        _ unlocker: @escaping @MainActor (Server) async -> Bool
+        _ unlocker: @escaping ServerUnlocker
     ) {
         serverUnlocker = unlocker
     }

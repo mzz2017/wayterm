@@ -37,6 +37,36 @@ final class TerminalTabManager: ObservableObject {
     typealias ServerProvider = @MainActor (UUID) -> Server?
     typealias IsProProvider = @MainActor () -> Bool
     typealias DefaultViewProvider = @MainActor () -> String
+    typealias ServerUnlocker = @MainActor (Server) async -> Bool
+    typealias CredentialsProvider = @MainActor (Server) async throws -> ServerCredentials
+
+    struct Dependencies {
+        var isProProvider: IsProProvider
+        var defaultViewProvider: DefaultViewProvider
+        var serverUnlocker: ServerUnlocker
+        var serverProvider: ServerProvider
+        var credentialsProvider: CredentialsProvider
+
+        static var live: Self {
+            Self(
+                isProProvider: {
+                    StoreManager.shared.isPro
+                },
+                defaultViewProvider: {
+                    ViewTabConfigurationManager.shared.effectiveDefaultTab()
+                },
+                serverUnlocker: { server in
+                    await AppLockManager.shared.ensureServerUnlocked(server)
+                },
+                serverProvider: { serverId in
+                    ServerManager.shared.servers.first { $0.id == serverId }
+                },
+                credentialsProvider: { server in
+                    try KeychainManager.shared.getCredentials(for: server)
+                }
+            )
+        }
+    }
 
     // MARK: - Published State
 
@@ -139,25 +169,36 @@ final class TerminalTabManager: ObservableObject {
     var pendingResizeRequestIDs: Set<UUID> { resizeRequestStore.pendingRequestIDs }
     var processExitRequestStore = TerminalScopedRequestStore<ProcessExitRequest>()
     var pendingProcessExitRequestIDs: Set<UUID> { processExitRequestStore.pendingRequestIDs }
-    var isProProvider: IsProProvider = {
-        StoreManager.shared.isPro
+    private var dependencies: Dependencies {
+        didSet {
+            tmuxResolver.setServerProvider(dependencies.serverProvider)
+        }
     }
-    var defaultViewProvider: DefaultViewProvider = {
-        ViewTabConfigurationManager.shared.effectiveDefaultTab()
+
+    var isProProvider: IsProProvider {
+        get { dependencies.isProProvider }
+        set { updateDependencies { $0.isProProvider = newValue } }
     }
-    var serverUnlocker: @MainActor (Server) async -> Bool = { server in
-        await AppLockManager.shared.ensureServerUnlocked(server)
+    var defaultViewProvider: DefaultViewProvider {
+        get { dependencies.defaultViewProvider }
+        set { updateDependencies { $0.defaultViewProvider = newValue } }
+    }
+    var serverUnlocker: ServerUnlocker {
+        get { dependencies.serverUnlocker }
+        set { updateDependencies { $0.serverUnlocker = newValue } }
     }
     var reconnectInFlightStore = TerminalReconnectInFlightStore()
     /// In-flight SSH teardown tasks by server, used to serialize close/open ordering.
     var serverTeardownTaskStore = TerminalTeardownTaskStore()
     /// Application-owned connect watchdog timers keyed by pane.
     var connectWatchdogStore = TerminalConnectWatchdogStore()
-    var serverProvider: ServerProvider = { serverId in
-        ServerManager.shared.servers.first { $0.id == serverId }
+    var serverProvider: ServerProvider {
+        get { dependencies.serverProvider }
+        set { updateDependencies { $0.serverProvider = newValue } }
     }
-    var credentialsProvider: @MainActor (Server) async throws -> ServerCredentials = { server in
-        try KeychainManager.shared.getCredentials(for: server)
+    var credentialsProvider: CredentialsProvider {
+        get { dependencies.credentialsProvider }
+        set { updateDependencies { $0.credentialsProvider = newValue } }
     }
     /// Application-owned pane SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
     var paneRuntimes: [UUID: PaneRuntimeState] = [:]
@@ -187,9 +228,7 @@ final class TerminalTabManager: ObservableObject {
 
     @Published var tmuxAttachPrompt: TmuxAttachPrompt?
 
-    let tmuxResolver = TmuxAttachResolver(serverProvider: { serverId in
-        ServerManager.shared.servers.first { $0.id == serverId }
-    })
+    let tmuxResolver: TmuxAttachResolver
 
     /// Bumps when a terminal view is registered/unregistered so views refresh.
     @Published var terminalRegistryVersion: Int = 0
@@ -208,7 +247,20 @@ final class TerminalTabManager: ObservableObject {
     var isRestoring = false
 
     private init() {
+        let dependencies = Dependencies.live
+        self.dependencies = dependencies
+        tmuxResolver = TmuxAttachResolver(serverProvider: dependencies.serverProvider)
         restoreSnapshot()
+    }
+
+    private func updateDependencies(_ update: (inout Dependencies) -> Void) {
+        var updated = dependencies
+        update(&updated)
+        dependencies = updated
+    }
+
+    func restoreLiveDependencies() {
+        dependencies = .live
     }
 
     func setLastMoshInstallFailure(_ error: Error?) {

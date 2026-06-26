@@ -177,7 +177,7 @@ extension ConnectionSessionManager {
     }
 
     func startRuntimeIfNeeded(for sessionId: UUID, terminal: GhosttyTerminalView) async {
-        guard let runtime = runtimeStateForStarting(sessionId: sessionId) else { return }
+        guard let runtime = await runtimeStateForStarting(sessionId: sessionId) else { return }
         await startRuntimeIfNeeded(runtime, terminal: terminal)
     }
 
@@ -317,7 +317,7 @@ extension ConnectionSessionManager {
         return TerminalConnectionRuntime(entityId: entityId)
     }
 
-    private func runtimeStateForStarting(sessionId: UUID) -> SessionRuntimeState? {
+    private func runtimeStateForStarting(sessionId: UUID) async -> SessionRuntimeState? {
         if let runtime = sessionRuntimes[sessionId] {
             return runtime
         }
@@ -329,7 +329,7 @@ extension ConnectionSessionManager {
         }
 
         do {
-            let credentials = try KeychainManager.shared.getCredentials(for: server)
+            let credentials = try await credentialsProvider(server)
             configureRuntime(for: sessionId, server: server, credentials: credentials, onProcessExit: {})
             return sessionRuntimes[sessionId]
         } catch {

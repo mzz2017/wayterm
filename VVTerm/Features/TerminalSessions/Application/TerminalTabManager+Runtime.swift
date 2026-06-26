@@ -28,7 +28,7 @@ extension TerminalTabManager {
     }
 
     func startRuntimeIfNeeded(forPane paneId: UUID, terminal: GhosttyTerminalView) async {
-        guard let runtime = runtimeStateForStarting(paneId: paneId) else { return }
+        guard let runtime = await runtimeStateForStarting(paneId: paneId) else { return }
         await startRuntimeIfNeeded(runtime, terminal: terminal)
     }
 
@@ -276,7 +276,7 @@ extension TerminalTabManager {
         return TerminalConnectionRuntime(entityId: entityId)
     }
 
-    private func runtimeStateForStarting(paneId: UUID) -> PaneRuntimeState? {
+    private func runtimeStateForStarting(paneId: UUID) async -> PaneRuntimeState? {
         if let runtime = paneRuntimes[paneId] {
             return runtime
         }
@@ -288,7 +288,7 @@ extension TerminalTabManager {
         }
 
         do {
-            let credentials = try KeychainManager.shared.getCredentials(for: server)
+            let credentials = try await credentialsProvider(server)
             configureRuntime(forPane: paneId, server: server, credentials: credentials, onProcessExit: {})
             return paneRuntimes[paneId]
         } catch {
