@@ -35,6 +35,44 @@ struct ServerFormSuperfileBoundaryTests {
         )
     }
 
+    @Test
+    func serverFormSheetDoesNotOwnTransportSelectionOrCredentialBuilder() throws {
+        let root = try sourceRoot()
+        let formSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift")
+        )
+        let selectionSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/ServerDetail/ServerTransportSelection.swift")
+        )
+        let credentialBuilderSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerFormCredentialBuilder.swift")
+        )
+
+        // Given transport selection is UI support and credential assembly is
+        // application-layer form orchestration, the root form should only call
+        // into those collaborators.
+        #expect(
+            !formSource.contains("enum ServerTransportSelection"),
+            "ServerFormSheet.swift should not own the transport selection support type."
+        )
+        #expect(
+            !formSource.contains("struct ServerFormCredentialBuilder"),
+            "ServerFormSheet.swift should not own credential assembly policy."
+        )
+        #expect(
+            selectionSource.contains("enum ServerTransportSelection"),
+            "ServerTransportSelection.swift should own transport selection UI support."
+        )
+        #expect(
+            credentialBuilderSource.contains("struct ServerFormCredentialBuilder"),
+            "Servers Application should own server form credential assembly."
+        )
+        #expect(
+            credentialBuilderSource.contains("connectionMode: SSHConnectionMode"),
+            "Credential assembly should depend on connection mode, not UI selection state."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

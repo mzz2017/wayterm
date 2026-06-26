@@ -106,7 +106,7 @@ struct ServerConnectionModeTests {
 
         let credentials = ServerFormCredentialBuilder.build(
             serverId: UUID(),
-            transportSelection: .tailscale,
+            connectionMode: .tailscale,
             authMethod: .password,
             password: "secret",
             sshKey: "PRIVATE",
@@ -127,7 +127,7 @@ struct ServerConnectionModeTests {
     func moshPasswordSelectionPreservesPasswordCredentials() {
         let passwordCredentials = ServerFormCredentialBuilder.build(
             serverId: UUID(),
-            transportSelection: .mosh,
+            connectionMode: .mosh,
             authMethod: .password,
             password: "secret",
             sshKey: "",
@@ -145,7 +145,7 @@ struct ServerConnectionModeTests {
     func moshKeySelectionPreservesKeyCredentials() {
         let keyCredentials = ServerFormCredentialBuilder.build(
             serverId: UUID(),
-            transportSelection: .mosh,
+            connectionMode: .mosh,
             authMethod: .sshKeyWithPassphrase,
             password: "",
             sshKey: "PRIVATE_KEY",
@@ -164,7 +164,7 @@ struct ServerConnectionModeTests {
     func cloudflareServiceTokenPreservesSSHAndAccessCredentials() {
         let credentials = ServerFormCredentialBuilder.build(
             serverId: UUID(),
-            transportSelection: .cloudflare,
+            connectionMode: .cloudflare,
             authMethod: .password,
             password: "ssh-password",
             sshKey: "",

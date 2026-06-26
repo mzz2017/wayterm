@@ -3,125 +3,6 @@ import SwiftUI
 import UIKit
 #endif
 
-enum ServerTransportSelection: String, CaseIterable, Identifiable, Equatable {
-    case standard
-    case tailscale
-    case mosh
-    case cloudflare
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .standard:
-            return String(localized: "SSH")
-        case .tailscale:
-            return String(localized: "Tailscale")
-        case .mosh:
-            return String(localized: "Mosh")
-        case .cloudflare:
-            return String(localized: "Cloudflare")
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .standard:
-            return "terminal"
-        case .tailscale:
-            return "network"
-        case .mosh:
-            return "antenna.radiowaves.left.and.right"
-        case .cloudflare:
-            return "shield.lefthalf.filled"
-        }
-    }
-
-    var connectionMode: SSHConnectionMode {
-        switch self {
-        case .standard:
-            return .standard
-        case .tailscale:
-            return .tailscale
-        case .mosh:
-            return .mosh
-        case .cloudflare:
-            return .cloudflare
-        }
-    }
-
-    init(server: Server) {
-        switch server.connectionMode {
-        case .tailscale:
-            self = .tailscale
-        case .mosh:
-            self = .mosh
-        case .cloudflare:
-            self = .cloudflare
-        case .standard:
-            self = .standard
-        }
-    }
-}
-
-struct ServerFormCredentialBuilder {
-    static func build(
-        serverId: UUID,
-        transportSelection: ServerTransportSelection,
-        authMethod: AuthMethod,
-        password: String,
-        sshKey: String,
-        sshPassphrase: String,
-        sshPublicKey: String,
-        cloudflareAccessMode: CloudflareAccessMode?,
-        cloudflareClientID: String,
-        cloudflareClientSecret: String
-    ) -> ServerCredentials {
-        var credentials = ServerCredentials(serverId: serverId)
-
-        guard transportSelection != .tailscale else {
-            return credentials
-        }
-
-        switch authMethod {
-        case .password:
-            credentials.password = password
-        case .sshKey:
-            credentials.sshKey = sshKey.data(using: .utf8)
-            credentials.publicKey = resolvedPublicKeyData(
-                sshPublicKey: sshPublicKey, sshKey: sshKey, passphrase: nil)
-        case .sshKeyWithPassphrase:
-            credentials.sshKey = sshKey.data(using: .utf8)
-            credentials.sshPassphrase = sshPassphrase
-            credentials.publicKey = resolvedPublicKeyData(
-                sshPublicKey: sshPublicKey, sshKey: sshKey,
-                passphrase: sshPassphrase.isEmpty ? nil : sshPassphrase)
-        }
-
-        if transportSelection == .cloudflare, cloudflareAccessMode == .serviceToken {
-            let clientID = cloudflareClientID.trimmingCharacters(in: .whitespacesAndNewlines)
-            let clientSecret = cloudflareClientSecret.trimmingCharacters(in: .whitespacesAndNewlines)
-            credentials.cloudflareClientID = clientID.isEmpty ? nil : clientID
-            credentials.cloudflareClientSecret = clientSecret.isEmpty ? nil : clientSecret
-        }
-
-        return credentials
-    }
-
-    /// Use the explicit public key when present; otherwise derive it from the private
-    /// key so libssh2 always receives a public key (its nil-derivation is unreliable).
-    static func resolvedPublicKeyData(sshPublicKey: String, sshKey: String, passphrase: String?) -> Data? {
-        if !sshPublicKey.isEmpty {
-            return sshPublicKey.data(using: .utf8)
-        }
-        guard !sshKey.isEmpty,
-              let derived = SSHPublicKeyDeriver.publicKey(fromPrivateKeyPEM: sshKey, passphrase: passphrase) else {
-            return nil
-        }
-        return derived.data(using: .utf8)
-    }
-}
-
 struct ServerFormSheet: View {
     @ObservedObject var serverManager: ServerManager
     @ObservedObject private var storeManager = StoreManager.shared
@@ -1125,7 +1006,7 @@ struct ServerFormSheet: View {
     private func buildCredentials(for serverId: UUID) -> ServerCredentials {
         ServerFormCredentialBuilder.build(
             serverId: serverId,
-            transportSelection: transportSelection,
+            connectionMode: transportSelection.connectionMode,
             authMethod: selectedAuthMethod,
             password: password,
             sshKey: sshKey,
