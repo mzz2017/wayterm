@@ -173,10 +173,8 @@ final class ConnectionSessionManager: ObservableObject {
     /// Sessions whose preserved terminal must be reset before attaching a fresh shell.
     private var terminalsNeedingReconnectReset: Set<UUID> = []
 
-    /// Shell cancel handlers indexed by session ID - called before closing to cancel async tasks
-    private var shellCancelHandlers: [UUID: @MainActor (_ mode: ShellTeardownMode) async -> Void] = [:]
-    /// Shell suspend handlers indexed by session ID - cancel in-flight connects without destroying terminals
-    private var shellSuspendHandlers: [UUID: @MainActor () async -> Void] = [:]
+    /// Shell lifecycle handlers indexed by session ID.
+    private var shellHandlerStore = TerminalShellHandlerStore()
     /// Server IDs and request tasks with an in-flight open request, used to collapse repeated clicks.
     private var connectionOpenRequestStore = TerminalOpenRequestStore()
     private(set) var lastConnectionOpenFailure: Error?
@@ -1013,7 +1011,7 @@ final class ConnectionSessionManager: ObservableObject {
                 markTerminalForReconnectReset(for: session.id)
             }
             // Cancel any in-flight connects while preserving terminal state
-            await shellSuspendHandlers[session.id]?()
+            await shellHandlerStore.suspendHandler(for: session.id)?()
             unregisterResults.append(takeSSHClientRegistration(for: session.id))
         }
 
@@ -1487,19 +1485,19 @@ final class ConnectionSessionManager: ObservableObject {
     // MARK: - Shell Cancel Handler Registration
 
     func registerShellCancelHandler(_ handler: @escaping @MainActor (_ mode: ShellTeardownMode) async -> Void, for sessionId: UUID) {
-        shellCancelHandlers[sessionId] = handler
+        shellHandlerStore.registerCancelHandler(handler, for: sessionId)
     }
 
     func unregisterShellCancelHandler(for sessionId: UUID) {
-        shellCancelHandlers.removeValue(forKey: sessionId)
+        shellHandlerStore.unregisterCancelHandler(for: sessionId)
     }
 
     func registerShellSuspendHandler(_ handler: @escaping @MainActor () async -> Void, for sessionId: UUID) {
-        shellSuspendHandlers[sessionId] = handler
+        shellHandlerStore.registerSuspendHandler(handler, for: sessionId)
     }
 
     func unregisterShellSuspendHandler(for sessionId: UUID) {
-        shellSuspendHandlers.removeValue(forKey: sessionId)
+        shellHandlerStore.unregisterSuspendHandler(for: sessionId)
     }
 
     private func pauseCachedTerminalsForBackground() {
@@ -1537,8 +1535,7 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func cancelAndClearShellHandlers(for sessionId: UUID) -> Task<Void, Never>? {
-        let handler = shellCancelHandlers.removeValue(forKey: sessionId)
-        shellSuspendHandlers.removeValue(forKey: sessionId)
+        let handler = shellHandlerStore.takeCancelHandler(for: sessionId)
         guard let handler else {
             logger.info("No shell cancel handler registered for closed session [sessionId: \(sessionId.uuidString, privacy: .public)]")
             return nil
@@ -1550,8 +1547,7 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     private func takeShellTeardownRequestForClosedSession(_ sessionId: UUID) -> ShellTeardownRequest? {
-        let handler = shellCancelHandlers.removeValue(forKey: sessionId)
-        shellSuspendHandlers.removeValue(forKey: sessionId)
+        let handler = shellHandlerStore.takeCancelHandler(for: sessionId)
         guard let handler else {
             logger.info("No shell cancel handler registered for closed session [sessionId: \(sessionId.uuidString, privacy: .public)]")
             return nil
@@ -2347,7 +2343,7 @@ final class ConnectionSessionManager: ObservableObject {
         markTerminalForReconnectReset(for: session.id)
 
         // Cancel in-flight shell work but keep the terminal surface for reuse
-        await shellSuspendHandlers[session.id]?()
+        await shellHandlerStore.suspendHandler(for: session.id)?()
 
         // Disconnect existing SSH client
         await unregisterSSHClient(for: session.id)
@@ -3305,8 +3301,7 @@ extension ConnectionSessionManager {
         selectedSessionByServer = [:]
         tmuxAttachPrompt = nil
         shellRegistry.removeAll()
-        shellCancelHandlers.removeAll()
-        shellSuspendHandlers.removeAll()
+        shellHandlerStore.removeAll()
         connectionOpenRequestStore.removeAll().forEach { $0.cancel() }
         lastConnectionOpenFailure = nil
         tmuxInstallRequestStore.allRequests.forEach { $0.task.cancel() }

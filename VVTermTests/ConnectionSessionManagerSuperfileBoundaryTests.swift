@@ -118,6 +118,32 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func shellHandlerTrackingUsesShellHandlerStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalShellHandlerStore.swift")
+        )
+
+        // Given shell cancel and suspend handlers share a session lifecycle boundary.
+        #expect(storeSource.contains("struct TerminalShellHandlerStore"))
+        #expect(storeSource.contains("takeCancelHandler"))
+
+        // Then handler bookkeeping should not remain as bespoke twin dictionaries in the superfile.
+        #expect(
+            !managerSource.contains("shellCancelHandlers"),
+            "ConnectionSessionManager.swift should not own bespoke shell cancel handler indexing."
+        )
+        #expect(
+            !managerSource.contains("shellSuspendHandlers"),
+            "ConnectionSessionManager.swift should not own bespoke shell suspend handler indexing."
+        )
+        #expect(managerSource.contains("shellHandlerStore"))
+    }
+
+    @Test
     func reliabilityManagerLivesOutsideConnectionSessionManagerFile() throws {
         let root = try sourceRoot()
         let managerSource = try source(
