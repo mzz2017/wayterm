@@ -123,15 +123,12 @@ final class TerminalTabManager: ObservableObject {
     private var moshInstallRequestByPane: [UUID: UUID] = [:]
     private(set) var lastMoshInstallFailure: Error?
     var pendingMoshInstallRequestIDs: Set<UUID> { Set(moshInstallRequests.keys) }
-    private var paneRetryRequests: [UUID: PaneRetryRequest] = [:]
-    private var paneRetryRequestByPane: [UUID: UUID] = [:]
-    var pendingPaneRetryRequestIDs: Set<UUID> { Set(paneRetryRequests.keys) }
-    private var paneHostRetrustRequests: [UUID: PaneHostRetrustRequest] = [:]
-    private var paneHostRetrustRequestByPane: [UUID: UUID] = [:]
-    var pendingPaneHostRetrustRequestIDs: Set<UUID> { Set(paneHostRetrustRequests.keys) }
-    private var paneCredentialLoadRequests: [UUID: PaneCredentialLoadRequest] = [:]
-    private var paneCredentialLoadRequestByPane: [UUID: UUID] = [:]
-    var pendingPaneCredentialLoadRequestIDs: Set<UUID> { Set(paneCredentialLoadRequestByPane.values) }
+    private var paneRetryRequestStore = TerminalPaneRequestStore<PaneRetryRequest>()
+    var pendingPaneRetryRequestIDs: Set<UUID> { paneRetryRequestStore.pendingRequestIDs }
+    private var paneHostRetrustRequestStore = TerminalPaneRequestStore<PaneHostRetrustRequest>()
+    var pendingPaneHostRetrustRequestIDs: Set<UUID> { paneHostRetrustRequestStore.pendingRequestIDs }
+    private var paneCredentialLoadRequestStore = TerminalPaneRequestStore<PaneCredentialLoadRequest>()
+    var pendingPaneCredentialLoadRequestIDs: Set<UUID> { paneCredentialLoadRequestStore.pendingPaneRequestIDs }
     private var surfaceAttachRequests: [UUID: SurfaceAttachRequest] = [:]
     private var surfaceAttachRequestByPane: [UUID: UUID] = [:]
     var pendingSurfaceAttachRequestIDs: Set<UUID> { Set(surfaceAttachRequests.keys) }
@@ -1548,8 +1545,8 @@ final class TerminalTabManager: ObservableObject {
         server: Server,
         onCompleted: @escaping @MainActor (TerminalReconnectRequestResult) -> Void = { _ in }
     ) -> UUID {
-        if let requestID = paneRetryRequestByPane[paneId] {
-            paneRetryRequests[requestID]?.onCompleted.append(onCompleted)
+        if let requestID = paneRetryRequestStore.requestID(forPane: paneId) {
+            paneRetryRequestStore.update(requestID) { $0.onCompleted.append(onCompleted) }
             return requestID
         }
 
@@ -1557,10 +1554,7 @@ final class TerminalTabManager: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.paneRetryRequests.removeValue(forKey: requestID)
-                if self.paneRetryRequestByPane[paneId] == requestID {
-                    self.paneRetryRequestByPane.removeValue(forKey: paneId)
-                }
+                self.paneRetryRequestStore.remove(id: requestID, ifMappedTo: paneId)
             }
 
             #if DEBUG
@@ -1574,20 +1568,23 @@ final class TerminalTabManager: ObservableObject {
             let result = await self.retryPaneConnection(paneId: paneId, server: server)
             #endif
 
-            let callbacks = self.paneRetryRequests[requestID]?.onCompleted ?? []
+            let callbacks = self.paneRetryRequestStore[requestID]?.onCompleted ?? []
             callbacks.forEach { $0(Task.isCancelled ? .skipped : result) }
         }
-        paneRetryRequests[requestID] = PaneRetryRequest(
-            paneId: paneId,
-            task: task,
-            onCompleted: [onCompleted]
+        paneRetryRequestStore.insert(
+            PaneRetryRequest(
+                paneId: paneId,
+                task: task,
+                onCompleted: [onCompleted]
+            ),
+            id: requestID,
+            paneId: paneId
         )
-        paneRetryRequestByPane[paneId] = requestID
         return requestID
     }
 
     func waitForPaneRetryRequest(_ requestID: UUID) async {
-        await paneRetryRequests[requestID]?.task.value
+        await paneRetryRequestStore[requestID]?.task.value
     }
 
     private func canStartPaneReconnect(_ paneId: UUID) -> Bool {
@@ -1618,8 +1615,8 @@ final class TerminalTabManager: ObservableObject {
         server: Server,
         onCompleted: @escaping @MainActor (TerminalCredentialLoadResult) -> Void = { _ in }
     ) -> UUID {
-        if let requestID = paneCredentialLoadRequestByPane[paneId] {
-            paneCredentialLoadRequests[requestID]?.onCompleted.append(onCompleted)
+        if let requestID = paneCredentialLoadRequestStore.requestID(forPane: paneId) {
+            paneCredentialLoadRequestStore.update(requestID) { $0.onCompleted.append(onCompleted) }
             return requestID
         }
 
@@ -1627,30 +1624,30 @@ final class TerminalTabManager: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.paneCredentialLoadRequests.removeValue(forKey: requestID)
-                if self.paneCredentialLoadRequestByPane[paneId] == requestID {
-                    self.paneCredentialLoadRequestByPane.removeValue(forKey: paneId)
-                }
+                self.paneCredentialLoadRequestStore.remove(id: requestID, ifMappedTo: paneId)
             }
 
             guard self.canRunPaneCredentialLoad(paneId: paneId, server: server) else { return }
             let result = await self.loadCredentials(for: server)
             guard self.canRunPaneCredentialLoad(paneId: paneId, server: server) else { return }
 
-            let callbacks = self.paneCredentialLoadRequests[requestID]?.onCompleted ?? []
+            let callbacks = self.paneCredentialLoadRequestStore[requestID]?.onCompleted ?? []
             callbacks.forEach { $0(result) }
         }
-        paneCredentialLoadRequests[requestID] = PaneCredentialLoadRequest(
-            paneId: paneId,
-            task: task,
-            onCompleted: [onCompleted]
+        paneCredentialLoadRequestStore.insert(
+            PaneCredentialLoadRequest(
+                paneId: paneId,
+                task: task,
+                onCompleted: [onCompleted]
+            ),
+            id: requestID,
+            paneId: paneId
         )
-        paneCredentialLoadRequestByPane[paneId] = requestID
         return requestID
     }
 
     func waitForPaneCredentialLoadRequest(_ requestID: UUID) async {
-        await paneCredentialLoadRequests[requestID]?.task.value
+        await paneCredentialLoadRequestStore[requestID]?.task.value
     }
 
     func retrustHostAndReconnect(paneId: UUID, server: Server) async -> Bool {
@@ -1672,8 +1669,8 @@ final class TerminalTabManager: ObservableObject {
         server: Server,
         onCompleted: @escaping @MainActor (Bool) -> Void = { _ in }
     ) -> UUID {
-        if let requestID = paneHostRetrustRequestByPane[paneId] {
-            paneHostRetrustRequests[requestID]?.onCompleted.append(onCompleted)
+        if let requestID = paneHostRetrustRequestStore.requestID(forPane: paneId) {
+            paneHostRetrustRequestStore.update(requestID) { $0.onCompleted.append(onCompleted) }
             return requestID
         }
 
@@ -1681,14 +1678,11 @@ final class TerminalTabManager: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.paneHostRetrustRequests.removeValue(forKey: requestID)
-                if self.paneHostRetrustRequestByPane[paneId] == requestID {
-                    self.paneHostRetrustRequestByPane.removeValue(forKey: paneId)
-                }
+                self.paneHostRetrustRequestStore.remove(id: requestID, ifMappedTo: paneId)
             }
 
             guard self.canRunPaneHostRetrust(paneId: paneId, server: server) else {
-                let callbacks = self.paneHostRetrustRequests[requestID]?.onCompleted ?? []
+                let callbacks = self.paneHostRetrustRequestStore[requestID]?.onCompleted ?? []
                 callbacks.forEach { $0(false) }
                 return
             }
@@ -1704,22 +1698,25 @@ final class TerminalTabManager: ObservableObject {
             let didReconnect = await self.retrustHostAndReconnect(paneId: paneId, server: server)
             #endif
 
-            let callbacks = self.paneHostRetrustRequests[requestID]?.onCompleted ?? []
+            let callbacks = self.paneHostRetrustRequestStore[requestID]?.onCompleted ?? []
             callbacks.forEach {
                 $0(self.canRunPaneHostRetrust(paneId: paneId, server: server) ? didReconnect : false)
             }
         }
-        paneHostRetrustRequests[requestID] = PaneHostRetrustRequest(
-            paneId: paneId,
-            task: task,
-            onCompleted: [onCompleted]
+        paneHostRetrustRequestStore.insert(
+            PaneHostRetrustRequest(
+                paneId: paneId,
+                task: task,
+                onCompleted: [onCompleted]
+            ),
+            id: requestID,
+            paneId: paneId
         )
-        paneHostRetrustRequestByPane[paneId] = requestID
         return requestID
     }
 
     func waitForPaneHostRetrustRequest(_ requestID: UUID) async {
-        await paneHostRetrustRequests[requestID]?.task.value
+        await paneHostRetrustRequestStore[requestID]?.task.value
     }
 
     func installMoshServerAndReconnect(for paneId: UUID) async throws {
@@ -2119,24 +2116,21 @@ final class TerminalTabManager: ObservableObject {
     }
 
     private func cancelPaneRetryRequest(for paneId: UUID) {
-        if let requestID = paneRetryRequestByPane.removeValue(forKey: paneId),
-           let request = paneRetryRequests.removeValue(forKey: requestID) {
+        if let request = paneRetryRequestStore.removeMappedRequest(forPane: paneId) {
             request.task.cancel()
             request.onCompleted.forEach { $0(.skipped) }
         }
     }
 
     private func cancelPaneHostRetrustRequest(for paneId: UUID) {
-        if let requestID = paneHostRetrustRequestByPane.removeValue(forKey: paneId),
-           let request = paneHostRetrustRequests.removeValue(forKey: requestID) {
+        if let request = paneHostRetrustRequestStore.removeMappedRequest(forPane: paneId) {
             request.task.cancel()
             request.onCompleted.forEach { $0(false) }
         }
     }
 
     private func cancelPaneCredentialLoadRequest(for paneId: UUID) {
-        guard let requestID = paneCredentialLoadRequestByPane.removeValue(forKey: paneId) else { return }
-        paneCredentialLoadRequests[requestID]?.task.cancel()
+        paneCredentialLoadRequestStore.removePaneMapping(forPane: paneId)?.task.cancel()
     }
 
     private func finishTabClose(_ closeResult: TabCloseResult) async {
@@ -2798,15 +2792,12 @@ extension TerminalTabManager {
         moshInstallRequests.removeAll()
         moshInstallRequestByPane.removeAll()
         lastMoshInstallFailure = nil
-        paneRetryRequests.values.forEach { $0.task.cancel() }
-        paneRetryRequests.removeAll()
-        paneRetryRequestByPane.removeAll()
-        paneHostRetrustRequests.values.forEach { $0.task.cancel() }
-        paneHostRetrustRequests.removeAll()
-        paneHostRetrustRequestByPane.removeAll()
-        paneCredentialLoadRequests.values.forEach { $0.task.cancel() }
-        paneCredentialLoadRequests.removeAll()
-        paneCredentialLoadRequestByPane.removeAll()
+        paneRetryRequestStore.allRequests.forEach { $0.task.cancel() }
+        paneRetryRequestStore.removeAll()
+        paneHostRetrustRequestStore.allRequests.forEach { $0.task.cancel() }
+        paneHostRetrustRequestStore.removeAll()
+        paneCredentialLoadRequestStore.allRequests.forEach { $0.task.cancel() }
+        paneCredentialLoadRequestStore.removeAll()
         surfaceAttachRequests.values.forEach { $0.task.cancel() }
         surfaceAttachRequests.removeAll()
         surfaceAttachRequestByPane.removeAll()
