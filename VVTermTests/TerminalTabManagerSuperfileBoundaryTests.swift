@@ -157,6 +157,27 @@ struct TerminalTabManagerSuperfileBoundaryTests {
         #expect(managerSource.contains("resizeRequestStore"))
     }
 
+    @Test
+    func paneProcessExitRequestIndexingUsesSharedStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalScopedRequestStore.swift")
+        )
+
+        // Given pane-scoped process-exit indexing has a shared Application helper.
+        #expect(storeSource.contains("struct TerminalScopedRequestStore"))
+
+        // Then process-exit should not keep bespoke pane/request double dictionaries in the superfile.
+        #expect(
+            !managerSource.contains("processExitRequestByPane"),
+            "TerminalTabManager.swift should not own bespoke process-exit request indexing."
+        )
+        #expect(managerSource.contains("processExitRequestStore"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

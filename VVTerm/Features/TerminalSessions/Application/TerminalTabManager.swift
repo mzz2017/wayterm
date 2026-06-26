@@ -138,9 +138,8 @@ final class TerminalTabManager: ObservableObject {
     var pendingPaneRichPasteUploadRequestIDs: Set<UUID> { Set(richPasteUploadRequests.keys) }
     private var resizeRequestStore = TerminalScopedRequestStore<ResizeRequest>()
     var pendingResizeRequestIDs: Set<UUID> { resizeRequestStore.pendingRequestIDs }
-    private var processExitRequests: [UUID: ProcessExitRequest] = [:]
-    private var processExitRequestByPane: [UUID: UUID] = [:]
-    var pendingProcessExitRequestIDs: Set<UUID> { Set(processExitRequests.keys) }
+    private var processExitRequestStore = TerminalScopedRequestStore<ProcessExitRequest>()
+    var pendingProcessExitRequestIDs: Set<UUID> { processExitRequestStore.pendingRequestIDs }
     private var serverUnlocker: @MainActor (Server) async -> Bool = { server in
         await AppLockManager.shared.ensureServerUnlocked(server)
     }
@@ -372,7 +371,7 @@ final class TerminalTabManager: ObservableObject {
     }
 
     func waitForProcessExitRequest(_ requestID: UUID) async {
-        await processExitRequests[requestID]?.task.value
+        await processExitRequestStore[requestID]?.task.value
     }
 
     /// Open a new tab for a server
@@ -1838,8 +1837,7 @@ final class TerminalTabManager: ObservableObject {
     func requestPaneProcessExit(forPane paneId: UUID) -> UUID? {
         guard paneStates[paneId] != nil else { return nil }
 
-        if let existingRequestID = processExitRequestByPane[paneId],
-           processExitRequests[existingRequestID] != nil {
+        if let existingRequestID = processExitRequestStore.requestID(forScope: paneId) {
             return existingRequestID
         }
 
@@ -1847,10 +1845,7 @@ final class TerminalTabManager: ObservableObject {
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
-                self.processExitRequests.removeValue(forKey: requestID)
-                if self.processExitRequestByPane[paneId] == requestID {
-                    self.processExitRequestByPane.removeValue(forKey: paneId)
-                }
+                self.processExitRequestStore.remove(id: requestID, ifMappedTo: paneId)
             }
 
             guard !Task.isCancelled else { return }
@@ -1866,8 +1861,11 @@ final class TerminalTabManager: ObservableObject {
             await self.handlePaneExit(for: paneId)
         }
 
-        processExitRequests[requestID] = ProcessExitRequest(paneId: paneId, task: task)
-        processExitRequestByPane[paneId] = requestID
+        processExitRequestStore.insert(
+            ProcessExitRequest(paneId: paneId, task: task),
+            id: requestID,
+            scopeID: paneId
+        )
         return requestID
     }
 
@@ -2090,15 +2088,7 @@ final class TerminalTabManager: ObservableObject {
     }
 
     private func cancelProcessExitRequests(for paneId: UUID) {
-        let requestIDs = processExitRequests.compactMap { requestID, request in
-            request.paneId == paneId ? requestID : nil
-        }
-
-        for requestID in requestIDs {
-            processExitRequests.removeValue(forKey: requestID)?.task.cancel()
-        }
-
-        processExitRequestByPane.removeValue(forKey: paneId)
+        processExitRequestStore.removeMappedRequest(forScope: paneId)?.task.cancel()
     }
 
     private func cancelPaneRetryRequest(for paneId: UUID) {
@@ -2797,9 +2787,8 @@ extension TerminalTabManager {
         richPasteUploadRequestByPane.removeAll()
         resizeRequestStore.allRequests.forEach { $0.task.cancel() }
         resizeRequestStore.removeAll()
-        processExitRequests.values.forEach { $0.task.cancel() }
-        processExitRequests.removeAll()
-        processExitRequestByPane.removeAll()
+        processExitRequestStore.allRequests.forEach { $0.task.cancel() }
+        processExitRequestStore.removeAll()
         paneReconnectsInFlight.removeAll()
         connectWatchdogTasks.values.forEach { $0.cancel() }
         connectWatchdogTasks.removeAll()
