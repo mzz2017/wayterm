@@ -200,6 +200,32 @@ struct TerminalTabManagerSuperfileBoundaryTests {
         #expect(managerSource.contains("richPasteUploadRequestStore"))
     }
 
+    @Test
+    func paneInputRequestIndexingUsesSerialStore() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalSerialRequestStore.swift")
+        )
+
+        // Given pane input needs per-pane serial task chaining.
+        #expect(storeSource.contains("struct TerminalSerialRequestStore"))
+        #expect(storeSource.contains("lastTask(forScope"))
+
+        // Then input should not keep bespoke pane/request/task dictionaries in the superfile.
+        #expect(
+            !managerSource.contains("inputRequestByPane"),
+            "TerminalTabManager.swift should not own bespoke input request indexing."
+        )
+        #expect(
+            !managerSource.contains("lastInputTaskByPane"),
+            "TerminalTabManager.swift should not own bespoke input task-chain indexing."
+        )
+        #expect(managerSource.contains("inputRequestStore"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
