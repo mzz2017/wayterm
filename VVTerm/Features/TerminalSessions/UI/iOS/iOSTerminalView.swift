@@ -520,7 +520,7 @@ struct iOSTerminalView: View {
     @ViewBuilder
     private var emptyStateContent: some View {
         if isConnecting, let serverName = (connectingServer ?? selectedServer)?.name {
-            connectingStateView(serverName: serverName)
+            IOSTerminalConnectingStateView(serverName: serverName)
         } else if selectedView == "terminal" {
             TerminalEmptyStateView(server: selectedServer) {
                 openNewTab()
@@ -748,127 +748,14 @@ struct iOSTerminalView: View {
 
     @ViewBuilder
     private var floatingTerminalControls: some View {
-        if shouldShowFloatingReturnButton {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
-                    floatingKeyboardVoiceControls(showsTitle: true)
-                    Spacer(minLength: 14)
-                    floatingReturnControl()
-                }
-
-                HStack(spacing: 10) {
-                    floatingKeyboardVoiceControls(showsTitle: false)
-                    Spacer(minLength: 14)
-                    floatingReturnControl()
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 16)
-        } else {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
-                    floatingKeyboardVoiceControls(showsTitle: true)
-                }
-
-                HStack(spacing: 10) {
-                    floatingKeyboardVoiceControls(showsTitle: false)
-                }
-            }
-            .padding(.horizontal, 16)
-        }
-    }
-
-    @ViewBuilder
-    private func floatingKeyboardVoiceControls(showsTitle: Bool) -> some View {
-        HStack(spacing: 10) {
-            floatingKeyboardControl(showsTitle: showsTitle)
-            if shouldShowFloatingVoiceButton {
-                floatingVoiceControl(showsTitle: showsTitle)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func floatingKeyboardControl(showsTitle: Bool) -> some View {
-        floatingTerminalControlButton(
-            title: "Keyboard",
-            systemImage: "keyboard",
-            accessibilityLabel: "Show Keyboard",
-            showsTitle: showsTitle
-        ) {
-            showKeyboardForCurrentSession()
-        }
-    }
-
-    @ViewBuilder
-    private func floatingVoiceControl(showsTitle: Bool) -> some View {
-        floatingTerminalControlButton(
-            title: "Voice input",
-            systemImage: "mic.fill",
-            accessibilityLabel: "Voice input",
-            showsTitle: showsTitle
-        ) {
-            startVoiceInputForCurrentSession()
-        }
-    }
-
-    @ViewBuilder
-    private func floatingReturnControl() -> some View {
-        floatingTerminalControlButton(
-            title: "Enter",
-            systemImage: "arrow.turn.down.left",
-            accessibilityLabel: "Enter",
-            showsTitle: false,
-            isPrimary: true
-        ) {
-            sendReturnForCurrentSession()
-        }
-    }
-
-    @ViewBuilder
-    private func floatingTerminalControlButton(
-        title: LocalizedStringKey,
-        systemImage: String,
-        accessibilityLabel: LocalizedStringKey,
-        showsTitle: Bool,
-        isPrimary: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        let button = Button(action: action) {
-            HStack(spacing: showsTitle ? 6 : 0) {
-                Image(systemName: systemImage)
-                if showsTitle {
-                    Text(title)
-                }
-            }
-            .font(.system(size: 15, weight: .semibold, design: .rounded))
-            .foregroundStyle(isPrimary ? Color.accentColor : Color.primary)
-            .padding(.horizontal, showsTitle ? 2 : 0)
-        }
-        .accessibilityLabel(Text(accessibilityLabel))
-
-        button
-            .buttonStyle(.glass(tint: Color.accentColor.opacity(isPrimary ? 0.5 : (colorScheme == .dark ? 0.24 : 0.14))))
-            .buttonBorderShape(.capsule)
-            .controlSize(.large)
-    }
-
-    @ViewBuilder
-    private func connectingStateView(serverName: String) -> some View {
-        BlockingStatusView(showsScrim: false) {
-            VStack(spacing: 12) {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .scaleEffect(1.1)
-                Text(String(format: String(localized: "Connecting to %@..."), serverName))
-                    .font(.headline)
-                Text(String(localized: "Preparing server details..."))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        IOSTerminalFloatingControls(
+            showsReturnButton: shouldShowFloatingReturnButton,
+            showsVoiceButton: shouldShowFloatingVoiceButton,
+            colorScheme: colorScheme,
+            onKeyboard: showKeyboardForCurrentSession,
+            onVoiceInput: startVoiceInputForCurrentSession,
+            onReturn: sendReturnForCurrentSession
+        )
     }
 
     @ViewBuilder
