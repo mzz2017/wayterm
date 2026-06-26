@@ -259,6 +259,46 @@ struct RemoteFileBrowserScreenBoundaryTests {
         )
     }
 
+    @Test
+    func screenDoesNotOwnMacOSInlineEditRouting() throws {
+        let root = try sourceRoot()
+        let screenSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
+        )
+        let inlineEditSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen+MacOSInlineEdit.swift")
+        )
+        let policySource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFileInlineEditPolicy.swift")
+        )
+
+        // Given macOS inline create/rename is platform-specific intent routing
+        // over application-owned RemoteFiles operations.
+        for functionName in [
+            "beginMacOSInlineCreateFolder",
+            "createMacOSInlineFolder",
+            "cancelMacOSInlineEdit",
+            "submitMacOSInlineEdit",
+            "selectMacOSEntry",
+            "uniqueMacOSFolderName"
+        ] {
+            #expect(
+                !screenSource.contains("func \(functionName)"),
+                "RemoteFileBrowserScreen.swift should not own \(functionName) inline-edit routing."
+            )
+            #expect(
+                inlineEditSource.contains("func \(functionName)"),
+                "RemoteFileBrowserScreen+MacOSInlineEdit.swift should own \(functionName) inline-edit routing."
+            )
+        }
+
+        // Then folder-name collision policy lives in Application, not the root UI screen.
+        #expect(
+            policySource.contains("enum RemoteFileInlineEditPolicy"),
+            "RemoteFiles Application should own inline edit naming policy."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

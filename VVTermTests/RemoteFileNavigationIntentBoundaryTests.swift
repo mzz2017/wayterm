@@ -15,35 +15,38 @@ struct RemoteFileNavigationIntentBoundaryTests {
     func browserScreenDelegatesNavigationTaskOwnershipToStore() throws {
         // Given the shared RemoteFiles browser SwiftUI source.
         let root = try sourceRoot()
-        let source = try source(
-            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
-        )
+        let browserSource = try [
+            "VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift",
+            "VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen+MacOSInlineEdit.swift"
+        ].map { path in
+            try source(at: root.appendingPathComponent(path))
+        }.joined(separator: "\n")
 
         // Then initial load, entry open, entry activation, and breadcrumb
         // navigation must send intent to the store request API instead of
         // owning async navigation tasks in SwiftUI.
         #expect(
-            source.contains("browser.requestNavigation("),
+            browserSource.contains("browser.requestNavigation("),
             "RemoteFileBrowserScreen should delegate navigation task ownership to RemoteFileBrowserStore.requestNavigation."
         )
         #expect(
-            !containsRegex(#"await\s+browser\.loadInitialPath"#, in: source),
+            !containsRegex(#"await\s+browser\.loadInitialPath"#, in: browserSource),
             "RemoteFileBrowserScreen should not directly await initial remote directory loading from SwiftUI."
         )
         #expect(
-            !containsRegex(#"Task\s*(?:\([^)]*\))?\s*\{\s*await\s+browser\.(openDirectory|activate|openBreadcrumb)"#, in: source),
+            !containsRegex(#"Task\s*(?:\([^)]*\))?\s*\{\s*await\s+browser\.(openDirectory|activate|openBreadcrumb)"#, in: browserSource),
             "RemoteFileBrowserScreen should not own Task wrappers around directory open, activation, or breadcrumbs."
         )
         #expect(
-            !containsRegex(#"await\s+browser\.(openDirectory|activate|openBreadcrumb)"#, in: source),
+            !containsRegex(#"await\s+browser\.(openDirectory|activate|openBreadcrumb)"#, in: browserSource),
             "RemoteFileBrowserScreen should not directly await async navigation helpers."
         )
         #expect(
-            source.contains("onCompleted: { result in"),
+            browserSource.contains("onCompleted: { result in"),
             "Navigation-dependent flows such as macOS inline folder creation should continue from requestNavigation completion."
         )
         #expect(
-            !containsRegex(#"Task\s*\{\s*if\s+snapshot\.currentPath\s*!=\s*destinationPath[\s\S]*browser\.requestNavigation[\s\S]*browser\.createDirectory"#, in: source),
+            !containsRegex(#"Task\s*\{\s*if\s+snapshot\.currentPath\s*!=\s*destinationPath[\s\S]*browser\.requestNavigation[\s\S]*browser\.createDirectory"#, in: browserSource),
             "RemoteFileBrowserScreen should not fire navigation intent and then continue folder creation before navigation completion."
         )
     }
