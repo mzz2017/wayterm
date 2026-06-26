@@ -245,20 +245,6 @@ struct RemoteFileImportPicker: UIViewControllerRepresentable {
 }
 #endif
 
-struct RemoteFileDragPayload: Codable, Sendable {
-    let serverId: UUID
-    let entries: [RemoteFileEntry]
-
-    init(serverId: UUID, entry: RemoteFileEntry) {
-        self.init(serverId: serverId, entries: [entry])
-    }
-
-    init(serverId: UUID, entries: [RemoteFileEntry]) {
-        self.serverId = serverId
-        self.entries = entries
-    }
-}
-
 extension UTType {
     static let vvtermRemoteFileEntry = UTType(exportedAs: "app.vivy.vvterm.remote-file-entry")
 }

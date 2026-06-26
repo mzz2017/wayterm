@@ -1396,18 +1396,7 @@ struct RemoteFileBrowserScreen: View {
             payloads.append(try await loadDroppedRemotePayload(from: provider))
         }
 
-        var seenPaths: Set<String> = []
-        let uniquePayloads: [RemoteFileDragPayload] = payloads.compactMap { payload in
-            let uniqueEntries = payload.entries.filter { entry in
-                seenPaths.insert(entry.path).inserted
-            }
-            guard !uniqueEntries.isEmpty else { return nil }
-            return RemoteFileDragPayload(serverId: payload.serverId, entries: uniqueEntries)
-        }
-        guard !uniquePayloads.isEmpty else {
-            throw RemoteFileBrowserError.failed(String(localized: "No valid remote items were dropped."))
-        }
-        return uniquePayloads
+        return try RemoteFileDropPolicy.uniquePayloads(from: payloads)
     }
 
     func loadDroppedRemotePayload(from provider: NSItemProvider) async throws -> RemoteFileDragPayload {
@@ -1444,32 +1433,20 @@ struct RemoteFileBrowserScreen: View {
         to destinationDirectoryPath: String,
         onProgress: (@MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void)? = nil
     ) async throws {
-        let uniqueEntries = payloads
-            .flatMap(\.entries)
-            .reduce(into: [RemoteFileEntry]()) { entries, entry in
-                guard !entries.contains(where: { $0.path == entry.path }) else { return }
-                entries.append(entry)
-            }
-        let totalUnitCount = max(1, uniqueEntries.count)
+        let moves = try RemoteFileDropPolicy.movePlans(for: payloads, to: destinationDirectoryPath)
+        try await performDroppedRemoteMoves(moves, onProgress: onProgress)
+    }
 
-        for (index, sourceEntry) in uniqueEntries.enumerated() {
-            let destinationDirectory = RemoteFilePath.normalize(destinationDirectoryPath)
-            let destinationPath = RemoteFilePath.appending(sourceEntry.name, to: destinationDirectory)
+    func performDroppedRemoteMoves(
+        _ moves: [RemoteFileDropPolicy.MovePlan],
+        onProgress: (@MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void)? = nil
+    ) async throws {
+        let totalUnitCount = max(1, moves.count)
 
-            guard destinationPath != sourceEntry.path else { continue }
-
-            if sourceEntry.type == .directory {
-                let normalizedSource = RemoteFilePath.normalize(sourceEntry.path)
-                if destinationDirectory == normalizedSource || destinationDirectory.hasPrefix(normalizedSource + "/") {
-                    throw RemoteFileBrowserError.failed(
-                        String(localized: "A folder cannot be moved into itself or one of its descendants.")
-                    )
-                }
-            }
-
+        for (index, move) in moves.enumerated() {
             try await browser.renameItem(
-                at: sourceEntry.path,
-                to: destinationPath,
+                at: move.sourcePath,
+                to: move.destinationPath,
                 in: fileTab,
                 server: server
             )
@@ -1477,7 +1454,7 @@ struct RemoteFileBrowserScreen: View {
                 RemoteFileBrowserStore.TransferProgress(
                     completedUnitCount: index + 1,
                     totalUnitCount: totalUnitCount,
-                    currentItemName: sourceEntry.name
+                    currentItemName: move.entry.name
                 )
             )
         }
@@ -1488,36 +1465,23 @@ struct RemoteFileBrowserScreen: View {
         to destinationDirectoryPath: String,
         onProgress: (@MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void)? = nil
     ) async throws {
-        let sourceServerIDs = Set(payloads.map(\.serverId))
-        guard sourceServerIDs.count == 1, let sourceServerId = sourceServerIDs.first else {
-            throw RemoteFileBrowserError.failed(
-                String(localized: "A single drop can only contain items from one remote server.")
-            )
-        }
-
-        if sourceServerId == server.id {
-            try await moveDroppedRemoteItems(
-                payloads,
+        switch try RemoteFileDropPolicy.plan(
+            payloads: payloads,
+            to: destinationDirectoryPath,
+            destinationServerId: server.id
+        ) {
+        case .move(let moves):
+            try await performDroppedRemoteMoves(moves, onProgress: onProgress)
+        case .copy(let sourceServerId, let entries):
+            try await browser.copyEntries(
+                entries,
+                from: sourceServerId,
                 to: destinationDirectoryPath,
+                destinationTab: fileTab,
+                destinationServer: server,
                 onProgress: onProgress
             )
-            return
         }
-
-        let uniqueEntries = payloads
-            .flatMap(\.entries)
-            .reduce(into: [RemoteFileEntry]()) { entries, entry in
-                guard !entries.contains(where: { $0.path == entry.path }) else { return }
-                entries.append(entry)
-            }
-        try await browser.copyEntries(
-            uniqueEntries,
-            from: sourceServerId,
-            to: destinationDirectoryPath,
-            destinationTab: fileTab,
-            destinationServer: server,
-            onProgress: onProgress
-        )
     }
 
     func dragSuggestedName(for entries: [RemoteFileEntry]) -> String? {
