@@ -21,96 +21,19 @@ import AppKit
 final class TerminalTabManager: ObservableObject {
     static let shared = TerminalTabManager()
 
-    private struct PaneCloseResult: Sendable {
-        let paneId: UUID
-        let tmuxSessionNameToKill: String?
-        let richPasteUploadTasks: [Task<Void, Never>]
-    }
-
-    private struct TabCloseResult: Sendable {
-        let serverId: UUID
-        let paneCloseResults: [PaneCloseResult]
-    }
-
-    private struct TmuxInstallRequest {
-        let paneId: UUID
-        let task: Task<Void, Never>
-        var onCompleted: [@MainActor () -> Void]
-    }
-
-    private struct MoshInstallRequest {
-        let paneId: UUID
-        let task: Task<Void, Never>
-        var onCompleted: [@MainActor () -> Void]
-        var onFailed: [@MainActor (Error) -> Void]
-    }
-
-    private struct PaneRetryRequest {
-        let paneId: UUID
-        let task: Task<Void, Never>
-        var onCompleted: [@MainActor (TerminalReconnectRequestResult) -> Void]
-    }
-
-    private struct PaneHostRetrustRequest {
-        let paneId: UUID
-        let task: Task<Void, Never>
-        var onCompleted: [@MainActor (Bool) -> Void]
-    }
-
-    private struct PaneCredentialLoadRequest {
-        let paneId: UUID
-        let task: Task<Void, Never>
-        var onCompleted: [@MainActor (TerminalCredentialLoadResult) -> Void]
-    }
-
-    private struct SurfaceAttachRequest {
-        let paneId: UUID
-        var context: TerminalSurfaceAttachContext
-        let task: Task<Void, Never>
-    }
-
-    private struct InputRequest {
-        let paneId: UUID
-        let task: Task<Void, Never>
-    }
-
-    private struct RichPasteUploadRequest {
-        let paneId: UUID
-        let task: Task<Void, Never>
-    }
-
-    private struct ResizeRequest {
-        let paneId: UUID
-        var size: TerminalResizeRequestSize
-        let task: Task<Void, Never>
-    }
-
-    private struct ProcessExitRequest {
-        let paneId: UUID
-        let task: Task<Void, Never>
-    }
-
-    private final class PaneRuntimeState {
-        let paneId: UUID
-        var server: Server
-        var credentials: ServerCredentials
-        let runtime: TerminalConnectionRuntime
-        var onProcessExit: () -> Void
-
-        init(
-            paneId: UUID,
-            server: Server,
-            credentials: ServerCredentials,
-            runtime: TerminalConnectionRuntime,
-            onProcessExit: @escaping () -> Void
-        ) {
-            self.paneId = paneId
-            self.server = server
-            self.credentials = credentials
-            self.runtime = runtime
-            self.onProcessExit = onProcessExit
-        }
-    }
+    private typealias PaneCloseResult = TerminalTabManagerSupport.PaneCloseResult
+    private typealias TabCloseResult = TerminalTabManagerSupport.TabCloseResult
+    private typealias TmuxInstallRequest = TerminalTabManagerSupport.TmuxInstallRequest
+    private typealias MoshInstallRequest = TerminalTabManagerSupport.MoshInstallRequest
+    private typealias PaneRetryRequest = TerminalTabManagerSupport.PaneRetryRequest
+    private typealias PaneHostRetrustRequest = TerminalTabManagerSupport.PaneHostRetrustRequest
+    private typealias PaneCredentialLoadRequest = TerminalTabManagerSupport.PaneCredentialLoadRequest
+    private typealias SurfaceAttachRequest = TerminalTabManagerSupport.SurfaceAttachRequest
+    private typealias InputRequest = TerminalTabManagerSupport.InputRequest
+    private typealias RichPasteUploadRequest = TerminalTabManagerSupport.RichPasteUploadRequest
+    private typealias ResizeRequest = TerminalTabManagerSupport.ResizeRequest
+    private typealias ProcessExitRequest = TerminalTabManagerSupport.ProcessExitRequest
+    private typealias PaneRuntimeState = TerminalTabManagerSupport.PaneRuntimeState
 
     // MARK: - Published State
 

@@ -31,6 +31,37 @@ struct TerminalTabManagerSuperfileBoundaryTests {
         #expect(snapshotSource.contains("struct TabSnapshot"))
     }
 
+    @Test
+    func supportTypesLiveOutsideTerminalTabManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let supportSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManagerSupport.swift")
+        )
+
+        // Given the terminal tab manager source.
+        #expect(
+            !managerSource.contains("struct PaneCloseResult"),
+            "TerminalTabManager.swift should not own pane close result support shape."
+        )
+        #expect(
+            !managerSource.contains("struct SurfaceAttachRequest"),
+            "TerminalTabManager.swift should not own pending surface attach request shape."
+        )
+        #expect(
+            !managerSource.contains("final class PaneRuntimeState"),
+            "TerminalTabManager.swift should not own pane runtime support storage."
+        )
+
+        // Then tab-manager-only support types have a dedicated Application file.
+        #expect(supportSource.contains("enum TerminalTabManagerSupport"))
+        #expect(supportSource.contains("struct PaneCloseResult"))
+        #expect(supportSource.contains("struct SurfaceAttachRequest"))
+        #expect(supportSource.contains("final class PaneRuntimeState"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
