@@ -7,7 +7,6 @@ import Testing
 // types and persistence snapshots should live in dedicated support files so
 // future connection behavior changes do not expand the manager superfile.
 // Update only when this ownership intentionally moves again.
-
 @Suite(.serialized)
 struct ConnectionSessionManagerSuperfileBoundaryTests {
     @Test
@@ -486,6 +485,40 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
         #expect(managerSource.contains("connectWatchdogStore"))
     }
 
+    @Test
+    func terminalSurfaceManagementLivesOutsideConnectionSessionManagerFile() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let surfaceSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+TerminalSurfaces.swift")
+        )
+
+        // Given terminal surface ownership remains in the TerminalSessions
+        // Application layer.
+        #expect(surfaceSource.contains("extension ConnectionSessionManager"))
+        #expect(surfaceSource.contains("func registerTerminal"))
+        #expect(surfaceSource.contains("func unregisterTerminal"))
+        #expect(surfaceSource.contains("func getTerminal"))
+        #expect(surfaceSource.contains("func evictOldTerminalsIfNeeded"))
+
+        // Then the superfile should not own the terminal surface registration
+        // and LRU implementation directly.
+        #expect(
+            !managerSource.containsRegex(#"func\s+registerTerminal\s*\("#),
+            "ConnectionSessionManager.swift should not own terminal surface registration."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+unregisterTerminal\s*\("#),
+            "ConnectionSessionManager.swift should not own terminal surface unregister cleanup."
+        )
+        #expect(
+            !managerSource.containsRegex(#"func\s+evictOldTerminalsIfNeeded\s*\("#),
+            "ConnectionSessionManager.swift should not own terminal surface LRU eviction."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
@@ -504,5 +537,11 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
 
     private enum SourceRootError: Error {
         case notFound
+    }
+}
+
+private extension String {
+    func containsRegex(_ pattern: String) -> Bool {
+        range(of: pattern, options: .regularExpression) != nil
     }
 }

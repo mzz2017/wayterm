@@ -165,13 +165,13 @@ final class ConnectionSessionManager: ObservableObject {
         return action
     }
 
-    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ConnectionSession")
+    let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ConnectionSession")
     private var shellRegistry = SSHShellRegistry(staleThreshold: 120)
 
     /// Terminal UI surfaces indexed by session entity. SSH runtime ownership is separate.
-    private let terminalSurfaceRegistry = TerminalSurfaceRegistry()
+    let terminalSurfaceRegistry = TerminalSurfaceRegistry()
     /// Sessions whose preserved terminal must be reset before attaching a fresh shell.
-    private var terminalsNeedingReconnectReset: Set<UUID> = []
+    var terminalsNeedingReconnectReset: Set<UUID> = []
 
     /// Shell lifecycle handlers indexed by session ID.
     private var shellHandlerStore = TerminalShellHandlerStore()
@@ -243,7 +243,7 @@ final class ConnectionSessionManager: ObservableObject {
 
     /// Maximum number of terminal surfaces to keep in memory
     /// Each Ghostty surface uses ~50-100MB (font atlas, Metal textures, scrollback)
-    private let maxTerminals = 20
+    let maxTerminals = 20
 
     private let snapshotStore = ConnectionSessionsSnapshotStore()
     private var persistTask: Task<Void, Never>?
@@ -253,7 +253,7 @@ final class ConnectionSessionManager: ObservableObject {
         restoreSnapshot()
     }
 
-    private func sessionWithID(_ sessionId: UUID) -> ConnectionSession? {
+    func sessionWithID(_ sessionId: UUID) -> ConnectionSession? {
         sessions.first { $0.id == sessionId }
     }
 
@@ -1402,86 +1402,6 @@ final class ConnectionSessionManager: ObservableObject {
         }
     }
 
-    // MARK: - Terminal Registration (with LRU caching)
-
-    func registerTerminal(_ terminal: GhosttyTerminalView, for sessionId: UUID) {
-        // Evict oldest terminals if we're at capacity
-        evictOldTerminalsIfNeeded()
-
-        #if os(iOS)
-        terminal.onKeyboardBrowseModeChange = { [weak self] isBrowsing in
-            Task { @MainActor [weak self] in
-                self?.setTerminalBrowseMode(isBrowsing, for: sessionId)
-            }
-        }
-        terminal.onFindNavigatorVisibilityChange = { [weak self] isVisible in
-            Task { @MainActor [weak self] in
-                self?.setTerminalFindNavigatorVisible(isVisible, for: sessionId)
-            }
-        }
-        #endif
-        terminalSurfaceRegistry.register(terminal, for: .session(sessionId))
-        #if os(iOS)
-        Task { @MainActor [weak self, weak terminal] in
-            guard let self, let terminal, self.terminalSurfaceRegistry.surface(for: .session(sessionId)) === terminal else { return }
-            self.setTerminalBrowseMode(terminal.isKeyboardInBrowseMode, for: sessionId)
-            self.setTerminalFindNavigatorVisible(terminal.isFindNavigatorVisible, for: sessionId)
-        }
-        #endif
-
-        logger.debug("Registered terminal for session, total: \(self.terminalSurfaceRegistry.count)/\(self.maxTerminals)")
-    }
-
-    func unregisterTerminal(for sessionId: UUID) {
-        terminalSurfaceRegistry.removeSurface(for: .session(sessionId), cleanup: true)
-        terminalsNeedingReconnectReset.remove(sessionId)
-        #if os(iOS)
-        Task { @MainActor [weak self] in
-            self?.terminalBrowseModeBySession.removeValue(forKey: sessionId)
-            self?.terminalFindNavigatorVisibleBySession.removeValue(forKey: sessionId)
-        }
-        #else
-        terminalBrowseModeBySession.removeValue(forKey: sessionId)
-        terminalFindNavigatorVisibleBySession.removeValue(forKey: sessionId)
-        #endif
-        logger.debug("Unregistered terminal, remaining: \(self.terminalSurfaceRegistry.count)")
-    }
-
-    /// Update access order for LRU tracking
-    private func touchTerminal(_ sessionId: UUID) {
-        terminalSurfaceRegistry.touch(.session(sessionId))
-    }
-
-    private func setTerminalBrowseMode(_ isBrowsing: Bool, for sessionId: UUID) {
-        if terminalBrowseModeBySession[sessionId] != isBrowsing {
-            terminalBrowseModeBySession[sessionId] = isBrowsing
-        }
-    }
-
-    private func setTerminalFindNavigatorVisible(_ isVisible: Bool, for sessionId: UUID) {
-        if terminalFindNavigatorVisibleBySession[sessionId] != isVisible {
-            terminalFindNavigatorVisibleBySession[sessionId] = isVisible
-        }
-    }
-
-    /// Evict least recently used terminals if over capacity
-    private func evictOldTerminalsIfNeeded() {
-        let selectedEntityId = selectedSessionId.map(TerminalEntityID.session)
-        terminalSurfaceRegistry.evictOldest(maxCount: maxTerminals, preserving: selectedEntityId) { [weak self] entityId in
-            guard let self else { return }
-            guard case .session(let oldestId) = entityId else { return }
-            logger.info("Evicting oldest terminal to free memory (count: \(self.terminalSurfaceRegistry.count))")
-            let unregisterTask = scheduleSSHUnregister(for: oldestId)
-            let shellTeardownTask = cancelAndClearShellHandlers(for: oldestId)
-            guard let serverId = sessionWithID(oldestId)?.serverId else { return }
-            let teardownTask = Task(priority: .utility) {
-                await unregisterTask.value
-                await shellTeardownTask?.value
-            }
-            trackServerTeardownTask(teardownTask, for: serverId)
-        }
-    }
-
     // MARK: - Shell Cancel Handler Registration
 
     func registerShellCancelHandler(_ handler: @escaping @MainActor (_ mode: ShellTeardownMode) async -> Void, for sessionId: UUID) {
@@ -1512,29 +1432,7 @@ final class ConnectionSessionManager: ObservableObject {
         #endif
     }
 
-    func getTerminal(for sessionId: UUID) -> GhosttyTerminalView? {
-        terminalSurfaceRegistry.accessedSurface(for: .session(sessionId))
-    }
-
-    /// Returns a terminal without mutating LRU state.
-    func peekTerminal(for sessionId: UUID) -> GhosttyTerminalView? {
-        terminalSurfaceRegistry.surface(for: .session(sessionId))
-    }
-
-    /// Returns whether a terminal exists without mutating LRU state.
-    func hasTerminal(for sessionId: UUID) -> Bool {
-        terminalSurfaceRegistry.hasSurface(for: .session(sessionId))
-    }
-
-    func markTerminalForReconnectReset(for sessionId: UUID) {
-        terminalsNeedingReconnectReset.insert(sessionId)
-    }
-
-    func consumeTerminalReconnectReset(for sessionId: UUID) -> Bool {
-        terminalsNeedingReconnectReset.remove(sessionId) != nil
-    }
-
-    private func cancelAndClearShellHandlers(for sessionId: UUID) -> Task<Void, Never>? {
+    func cancelAndClearShellHandlers(for sessionId: UUID) -> Task<Void, Never>? {
         let handler = shellHandlerStore.takeCancelHandler(for: sessionId)
         guard let handler else {
             logger.info("No shell cancel handler registered for closed session [sessionId: \(sessionId.uuidString, privacy: .public)]")
@@ -1593,7 +1491,7 @@ final class ConnectionSessionManager: ObservableObject {
         }
     }
 
-    private func trackServerTeardownTask(_ task: Task<Void, Never>, for serverId: UUID) {
+    func trackServerTeardownTask(_ task: Task<Void, Never>, for serverId: UUID) {
         let taskId = serverTeardownTaskStore.insert(task, forServer: serverId)
         logger.info("Tracking server teardown [serverId: \(serverId.uuidString, privacy: .public), taskId: \(taskId.uuidString, privacy: .public), count: \(self.serverTeardownTaskStore.count(forServer: serverId))]")
 
@@ -1660,7 +1558,7 @@ final class ConnectionSessionManager: ObservableObject {
     }
 
     @discardableResult
-    private func scheduleSSHUnregister(
+    func scheduleSSHUnregister(
         for sessionId: UUID,
         priority: TaskPriority = .utility,
         killingManagedTmuxSessionNamed tmuxSessionName: String? = nil
