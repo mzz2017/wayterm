@@ -103,17 +103,6 @@ struct iOSTerminalView: View {
         )
     }
 
-    private var isCloseAlertPresented: Binding<Bool> {
-        Binding(
-            get: { pendingCloseSession != nil },
-            set: { newValue in
-                if !newValue {
-                    pendingCloseSession = nil
-                }
-            }
-        )
-    }
-
     private var effectiveSelectedSessionId: UUID? {
         IOSTerminalViewPolicy.effectiveSelectedSessionId(
             selectedSessionId: sessionManager.selectedSessionId,
@@ -155,18 +144,6 @@ struct iOSTerminalView: View {
                 pendingVoiceReturnBySession[$0] == true
             } ?? false
         )
-    }
-
-    private var shouldShowFloatingTerminalControls: Bool {
-        floatingControlsVisibility.shouldShowControls
-    }
-
-    private var shouldShowFloatingVoiceButton: Bool {
-        floatingControlsVisibility.shouldShowVoiceButton
-    }
-
-    private var shouldShowFloatingReturnButton: Bool {
-        floatingControlsVisibility.shouldShowReturnButton
     }
 
     private var canUseZenMode: Bool {
@@ -320,7 +297,26 @@ struct iOSTerminalView: View {
     }
 
     var body: some View {
-        alertContent
+        baseContent
+            .iosTerminalPresentation(
+                isTabLimitPresented: $showingTabLimitAlert,
+                isFileTabLimitPresented: $showingFileTabLimitAlert,
+                isSettingsPresented: $showingSettings,
+                serverToEdit: $serverToEdit,
+                serverManager: serverManager,
+                tmuxAttachPrompt: tmuxAttachPromptBinding,
+                onResolveTmuxAttachPrompt: { prompt, selection in
+                    sessionManager.resolveTmuxAttachPrompt(sessionId: prompt.id, selection: selection)
+                },
+                pendingCloseSession: $pendingCloseSession,
+                onConfirmCloseSession: { session in
+                    sessionManager.closeSession(session)
+                    pendingCloseSession = nil
+                },
+                onCancelCloseSession: {
+                    pendingCloseSession = nil
+                }
+            )
             .onAppear {
                 updateTerminalBackgroundColor()
                 if currentServerId == nil {
@@ -406,8 +402,41 @@ struct iOSTerminalView: View {
     }
 
     private var baseContent: some View {
-        mainContent
-            .background(backgroundView)
+        IOSTerminalContentLayer(
+            effectiveZenModeEnabled: effectiveZenModeEnabled,
+            selectedView: selectedView,
+            isConnecting: isConnecting,
+            connectingServer: connectingServer,
+            selectedServer: selectedServer,
+            serverSessions: serverSessions,
+            selectedSessionId: selectedSessionIdBinding,
+            titleForSession: { sessionManager.displayTitle(for: $0) },
+            onCloseSession: { pendingCloseSession = $0 },
+            serverFileTabs: serverFileTabs,
+            selectedFileTabId: selectedFileTabIdBinding,
+            fileTabTitle: displayedFileTabTitle(for:),
+            onSelectFileTab: { fileTabs.selectTab($0) },
+            onCloseFileTab: closeFileTab,
+            selectedFileTab: selectedFileTab,
+            fileTabServerId: fileTabServerId,
+            fileBrowser: fileBrowser,
+            fileTabs: fileTabs,
+            terminalBackgroundColor: terminalBackgroundColor,
+            statsLeaseProvider: { serverId in sessionManager.sharedStatsLease(for: serverId) },
+            serverManager: serverManager,
+            sessionManager: sessionManager,
+            viewTabConfig: viewTabConfig,
+            shouldShowTerminalBySession: $shouldShowTerminalBySession,
+            voiceRecordingBySession: $voiceRecordingBySession,
+            pendingVoiceReturnBySession: $pendingVoiceReturnBySession,
+            reconnectTokenForSession: { reconnectTokenBySession[$0.id] ?? $0.id },
+            onActivateTerminal: activateTerminal,
+            onRefreshTerminal: refreshTerminal(for:),
+            onFocusTerminal: focusTerminal(for:),
+            onEnsureInitialFileTab: ensureInitialFileTabIfNeeded,
+            onNewTerminalTab: openNewTab,
+            onNewFileTab: openNewFileTab
+        )
             .overlay(alignment: .top) {
                 if selectedView == "terminal" && !effectiveZenModeEnabled {
                     NavBarBackdrop(color: terminalBackgroundColor)
@@ -458,7 +487,7 @@ struct iOSTerminalView: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                if shouldShowFloatingTerminalControls {
+                if floatingControlsVisibility.shouldShowControls {
                     floatingTerminalControls
                         .padding(.bottom, 4)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -494,209 +523,8 @@ struct iOSTerminalView: View {
                 )
             }
             .toolbar(effectiveZenModeEnabled ? .hidden : .visible, for: .navigationBar)
-            .animation(.spring(response: 0.28, dampingFraction: 0.84), value: shouldShowFloatingTerminalControls)
-            .animation(.spring(response: 0.28, dampingFraction: 0.84), value: shouldShowFloatingReturnButton)
-    }
-
-    private var sheetContent: some View {
-        baseContent
-            .limitReachedAlert(.tabs, isPresented: $showingTabLimitAlert)
-            .limitReachedAlert(.fileTabs, isPresented: $showingFileTabLimitAlert)
-            .sheet(isPresented: $showingSettings) {
-                SettingsView()
-                    .modifier(AppearanceModifier())
-            }
-            .sheet(item: $serverToEdit) { server in
-                NavigationStack {
-                    ServerFormSheet(
-                        serverManager: serverManager,
-                        workspace: serverManager.workspaces.first { $0.id == server.workspaceId },
-                        server: server,
-                        onSave: { _ in serverToEdit = nil }
-                    )
-                }
-            }
-            .sheet(item: tmuxAttachPromptBinding) { prompt in
-                TmuxAttachPromptSheet(
-                    prompt: prompt,
-                    onConfirm: { selection in
-                        sessionManager.resolveTmuxAttachPrompt(sessionId: prompt.id, selection: selection)
-                    }
-                )
-            }
-    }
-
-    private var alertContent: some View {
-        sheetContent
-            .alert(String(localized: "Close Tab?"), isPresented: isCloseAlertPresented, presenting: pendingCloseSession) { session in
-                Button("Close", role: .destructive) {
-                    sessionManager.closeSession(session)
-                    pendingCloseSession = nil
-                }
-                Button("Cancel", role: .cancel) {
-                    pendingCloseSession = nil
-                }
-            } message: { session in
-                Text(String(format: String(localized: "This will disconnect \"%@\"."), session.title))
-            }
-    }
-
-    @ViewBuilder
-    private var mainContent: some View {
-        VStack(spacing: 0) {
-            headerTabsBar
-            sessionContent
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
-
-    @ViewBuilder
-    private var headerTabsBar: some View {
-        if !effectiveZenModeEnabled {
-            if selectedView == "terminal" && serverSessions.count > 1 {
-                iOSTerminalTabsBar(
-                    sessions: serverSessions,
-                    selectedSessionId: selectedSessionIdBinding,
-                    titleForSession: { sessionManager.displayTitle(for: $0) },
-                    onClose: { pendingCloseSession = $0 }
-                )
-            }
-
-            if selectedView == "files" && serverFileTabs.count > 1 {
-                iOSRemoteFileTabsBar(
-                    tabs: serverFileTabs,
-                    selectedTabId: selectedFileTabIdBinding,
-                    titleForTab: displayedFileTabTitle(for:),
-                    onSelect: { fileTabs.selectTab($0) },
-                    onClose: closeFileTab
-                )
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var sessionContent: some View {
-        if serverSessions.isEmpty {
-            emptyStateContent
-        } else {
-            activeSessionsContent
-        }
-    }
-
-    @ViewBuilder
-    private var emptyStateContent: some View {
-        if isConnecting, let serverName = (connectingServer ?? selectedServer)?.name {
-            IOSTerminalConnectingStateView(serverName: serverName)
-        } else if selectedView == "terminal" {
-            TerminalEmptyStateView(server: selectedServer) {
-                openNewTab()
-            }
-        } else if selectedView == "files", let server = selectedServer {
-            if let selectedFileTab {
-                RemoteFileBrowserScreen(
-                    browser: fileBrowser,
-                    server: server,
-                    fileTab: selectedFileTab,
-                    initialPath: selectedFileTab.seedPath
-                ) { currentPath in
-                    fileTabs.updateLastKnownPath(currentPath, for: selectedFileTab.id)
-                }
-                .id(selectedFileTab.id)
-            } else {
-                RemoteFileTabsEmptyState {
-                    openNewFileTab()
-                }
-            }
-        } else if let server = selectedServer {
-            ServerStatsView(
-                server: server,
-                isVisible: true,
-                backgroundColor: Color(UIColor.systemGroupedBackground),
-                borrowedLeaseProvider: { sessionManager.sharedStatsLease(for: server.id) },
-                statsCollector: ServerStatsCollector(connectionProvider: StatsSSHConnectionProvider.makeProvider())
-            )
-        }
-    }
-
-    private var activeSessionsContent: some View {
-        ZStack {
-            if selectedView == "stats", let server = selectedServer {
-                ServerStatsView(
-                    server: server,
-                    isVisible: true,
-                    backgroundColor: Color(UIColor.systemGroupedBackground),
-                    borrowedLeaseProvider: { sessionManager.sharedStatsLease(for: server.id) },
-                    statsCollector: ServerStatsCollector(connectionProvider: StatsSSHConnectionProvider.makeProvider())
-                )
-                .zIndex(1)
-            }
-
-            if selectedView == "files" {
-                if let server = selectedServer {
-                    if let selectedFileTab {
-                        RemoteFileBrowserScreen(
-                            browser: fileBrowser,
-                            server: server,
-                            fileTab: selectedFileTab,
-                            initialPath: selectedFileTab.seedPath
-                        ) { currentPath in
-                            fileTabs.updateLastKnownPath(currentPath, for: selectedFileTab.id)
-                        }
-                        .id(selectedFileTab.id)
-                        .zIndex(1)
-                    } else {
-                        RemoteFileTabsEmptyState {
-                            openNewFileTab()
-                        }
-                        .zIndex(1)
-                    }
-                }
-            }
-
-            if selectedView == "terminal", let session = selectedSession ?? serverSessions.first {
-                IOSTerminalSessionPage(
-                    session: session,
-                    serverManager: serverManager,
-                    sessionManager: sessionManager,
-                    viewTabConfig: viewTabConfig,
-                    fileTabs: fileTabs,
-                    fileBrowser: fileBrowser,
-                    selectedFileTab: selectedFileTab,
-                    shouldShowTerminalBySession: $shouldShowTerminalBySession,
-                    voiceRecordingBySession: $voiceRecordingBySession,
-                    pendingVoiceReturnBySession: $pendingVoiceReturnBySession,
-                    reconnectToken: reconnectTokenBySession[session.id] ?? session.id,
-                    onActivateTerminal: activateTerminal,
-                    onRefreshTerminal: refreshTerminal(for:),
-                    onFocusTerminal: focusTerminal(for:),
-                    onEnsureInitialFileTab: ensureInitialFileTabIfNeeded
-                )
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .transaction { transaction in
-            transaction.animation = nil
-        }
-        .overlay {
-            IOSTerminalTabSwipeOverlay(
-                selectedView: selectedView,
-                serverSessions: serverSessions,
-                fileTabServerId: fileTabServerId,
-                selectedSessionId: selectedSessionIdBinding,
-                fileTabs: fileTabs
-            )
-        }
-    }
-
-    @ViewBuilder
-    private var backgroundView: some View {
-        if selectedView == "terminal" {
-            terminalBackgroundColor
-                .ignoresSafeArea(.all)
-        } else {
-            Color(UIColor.systemBackground)
-                .ignoresSafeArea(.all)
-        }
+            .animation(.spring(response: 0.28, dampingFraction: 0.84), value: floatingControlsVisibility.shouldShowControls)
+            .animation(.spring(response: 0.28, dampingFraction: 0.84), value: floatingControlsVisibility.shouldShowReturnButton)
     }
 
     private func dismissKeyboardForCurrentSession() {
@@ -753,8 +581,8 @@ struct iOSTerminalView: View {
     @ViewBuilder
     private var floatingTerminalControls: some View {
         IOSTerminalFloatingControls(
-            showsReturnButton: shouldShowFloatingReturnButton,
-            showsVoiceButton: shouldShowFloatingVoiceButton,
+            showsReturnButton: floatingControlsVisibility.shouldShowReturnButton,
+            showsVoiceButton: floatingControlsVisibility.shouldShowVoiceButton,
             colorScheme: colorScheme,
             onKeyboard: showKeyboardForCurrentSession,
             onVoiceInput: startVoiceInputForCurrentSession,
@@ -961,14 +789,4 @@ struct iOSTerminalView: View {
     }
 
 }
-
-private extension ConnectionSession {
-    var iosTerminalSessionSnapshot: IOSTerminalSessionSnapshot {
-        IOSTerminalSessionSnapshot(
-            id: id,
-            serverId: serverId
-        )
-    }
-}
-
 #endif
