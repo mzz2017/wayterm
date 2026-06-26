@@ -140,6 +140,26 @@ struct TerminalSessionDependencyBoundaryTests {
         #expect(!resolverSource.contains("ServerManager.shared.servers"))
     }
 
+    @Test
+    func terminalCloseAnalyticsUsesInjectedEntitlementBoundary() throws {
+        let root = try sourceRoot()
+        let connectionClosingSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Closing.swift")
+        )
+        let tabClosingSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Closing.swift")
+        )
+
+        // Given close lifecycle records whether other terminals remain active
+        // and whether the user is Pro at the manager boundary.
+        #expect(connectionClosingSource.contains("isPro: isProProvider()"))
+        #expect(tabClosingSource.contains("isPro: isProProvider()"))
+
+        // Then close lifecycle files do not reach directly into Store state.
+        #expect(!connectionClosingSource.contains("StoreManager.shared.isPro"))
+        #expect(!tabClosingSource.contains("StoreManager.shared.isPro"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

@@ -371,7 +371,7 @@ extension ConnectionSessionManager {
         if notingSessionEnd {
             EngagementTracker.shared.noteTerminalSessionEnded(
                 otherTerminalsActive: !activeSessions.isEmpty,
-                isPro: StoreManager.shared.isPro
+                isPro: isProProvider()
             )
         }
 

@@ -41,7 +41,7 @@ extension TerminalTabManager {
 
         EngagementTracker.shared.noteTerminalSessionEnded(
             otherTerminalsActive: hasConnectedPanes,
-            isPro: StoreManager.shared.isPro
+            isPro: isProProvider()
         )
 
         logger.info("Closed tab \(currentTab.id)")
