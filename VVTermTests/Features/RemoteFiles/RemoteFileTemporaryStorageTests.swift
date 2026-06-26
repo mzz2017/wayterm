@@ -49,6 +49,39 @@ struct RemoteFileTemporaryStorageTests {
     }
 
     @Test
+    func dragExportFilesUseDraggedItemsSubdirectoryAndEntryName() throws {
+        let rootDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let storage = RemoteFileTemporaryStorage(rootDirectory: rootDirectory)
+        let entry = makeEntry(name: "report.pdf", path: "/tmp/report.pdf")
+
+        let url = try storage.makeDragExportFileURL(for: entry)
+
+        #expect(url.path.contains("/DraggedItems/"))
+        #expect(url.lastPathComponent == "report.pdf")
+    }
+
+    @Test
+    func dragExportDirectoriesUseFolderFallbackForUnnamedDirectories() throws {
+        let rootDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let storage = RemoteFileTemporaryStorage(rootDirectory: rootDirectory)
+        let entry = RemoteFileEntry(
+            name: "",
+            path: "/tmp/unnamed",
+            type: .directory,
+            size: nil,
+            modifiedAt: nil,
+            permissions: nil,
+            symlinkTarget: nil
+        )
+
+        let url = try storage.makeDragExportFileURL(for: entry)
+
+        #expect(url.lastPathComponent == "Folder")
+    }
+
+    @Test
     func removePreviewArtifactDeletesStoredFile() throws {
         let rootDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

@@ -24,6 +24,24 @@ nonisolated final class RemoteFileTemporaryStorage {
         try makeNamedFileURL(in: "Downloads", suggestedName: entry.name.isEmpty ? "download" : entry.name)
     }
 
+    func makeDragExportFileURL(for entry: RemoteFileEntry) throws -> URL {
+        let exportDirectory = try makeDragExportDirectory()
+        let fallbackName = entry.type == .directory ? "Folder" : "download"
+        let filename = entry.name.isEmpty ? fallbackName : entry.name
+        return exportDirectory.appendingPathComponent(filename, isDirectory: entry.type == .directory)
+    }
+
+    func makeDragExportDirectory(named folderName: String? = nil) throws -> URL {
+        let rootDirectory = rootDirectory.appendingPathComponent("DraggedItems", isDirectory: true)
+        try fileManager.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
+
+        let trimmedFolderName = folderName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let directoryName = trimmedFolderName.isEmpty ? UUID().uuidString : trimmedFolderName
+        let exportDirectory = rootDirectory.appendingPathComponent(directoryName, isDirectory: true)
+        try fileManager.createDirectory(at: exportDirectory, withIntermediateDirectories: true)
+        return exportDirectory
+    }
+
     func removeItem(at url: URL) {
         try? fileManager.removeItem(at: url)
     }

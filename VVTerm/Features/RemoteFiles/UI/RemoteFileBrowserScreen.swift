@@ -1306,7 +1306,7 @@ struct RemoteFileBrowserScreen: View {
     func registerFileRepresentation(for entry: RemoteFileEntry, in provider: NSItemProvider) {
         let typeIdentifier = dragFileTypeIdentifier(for: entry)
         let preparedTemporaryURL = Result {
-            try temporaryDragExportURL(for: entry)
+            try browser.makeDragExportFileURL(for: entry)
         }
         provider.registerFileRepresentation(
             forTypeIdentifier: typeIdentifier,
@@ -1335,27 +1335,6 @@ struct RemoteFileBrowserScreen: View {
         let pathExtension = URL(fileURLWithPath: entry.name).pathExtension
         return UTType(filenameExtension: pathExtension)?.identifier ?? UTType.data.identifier
     }
-
-    func temporaryDragExportURL(for entry: RemoteFileEntry) throws -> URL {
-        let exportDirectory = try temporaryDragExportDirectory()
-        let fallbackName = entry.type == .directory ? "Folder" : "download"
-        let filename = entry.name.isEmpty ? fallbackName : entry.name
-        return exportDirectory.appendingPathComponent(filename, isDirectory: entry.type == .directory)
-    }
-
-    func temporaryDragExportDirectory(named folderName: String? = nil) throws -> URL {
-        let fileManager = FileManager.default
-        let rootDirectory = fileManager.temporaryDirectory
-            .appendingPathComponent("VVTermDraggedItems", isDirectory: true)
-        try fileManager.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
-
-        let trimmedFolderName = folderName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let directoryName = trimmedFolderName.isEmpty ? UUID().uuidString : trimmedFolderName
-        let exportDirectory = rootDirectory.appendingPathComponent(directoryName, isDirectory: true)
-        try fileManager.createDirectory(at: exportDirectory, withIntermediateDirectories: true)
-        return exportDirectory
-    }
-
 
     func loadDroppedURLs(from providers: [NSItemProvider]) async throws -> [URL] {
         var urls: [URL] = []
