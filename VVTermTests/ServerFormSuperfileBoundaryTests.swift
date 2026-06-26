@@ -112,7 +112,8 @@ struct ServerFormSuperfileBoundaryTests {
             "ServerFormConnectionSection",
             "ServerFormSessionSection",
             "ServerFormSecuritySection",
-            "ServerFormNotesSection"
+            "ServerFormNotesSection",
+            "ServerFormAssignmentSection"
         ] {
             #expect(
                 formSource.contains("\(component)("),

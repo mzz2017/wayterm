@@ -250,6 +250,103 @@ struct ServerFormNotesSection: View {
     }
 }
 
+struct ServerFormAssignmentSection: View {
+    let assignmentWorkspaces: [Workspace]
+    let selectedWorkspace: Workspace?
+    let isWorkspaceLocked: (Workspace) -> Bool
+    @Binding var selectedWorkspaceId: UUID?
+    @Binding var selectedEnvironment: ServerEnvironment
+    let workspaceEnvironmentNotice: String?
+    let workspaceAvailabilityHelpText: String?
+    let onCreateWorkspace: () -> Void
+
+    var body: some View {
+        Section {
+            workspacePicker
+            environmentPicker
+            environmentNotice
+            createWorkspaceButton
+        } header: {
+            sectionHeader("Workspace")
+        } footer: {
+            if let workspaceAvailabilityHelpText {
+                Text(workspaceAvailabilityHelpText)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var workspacePicker: some View {
+        if assignmentWorkspaces.count > 1 {
+            Picker("Workspace", selection: $selectedWorkspaceId) {
+                ForEach(assignmentWorkspaces) { workspace in
+                    workspaceLabel(workspace, foregroundStyle: .primary)
+                        .tag(Optional(workspace.id))
+                }
+            }
+        } else {
+            LabeledContent("Workspace") {
+                if let selectedWorkspace {
+                    workspaceLabel(selectedWorkspace, foregroundStyle: .secondary)
+                } else {
+                    Text("No Workspace")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private var environmentPicker: some View {
+        Picker("Environment", selection: $selectedEnvironment) {
+            ForEach(selectedWorkspace?.environments ?? ServerEnvironment.builtInEnvironments) { env in
+                HStack {
+                    Circle()
+                        .fill(env.color)
+                        .frame(width: 8, height: 8)
+                    Text(env.displayName)
+                }
+                .tag(env)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var environmentNotice: some View {
+        if let workspaceEnvironmentNotice {
+            Text(workspaceEnvironmentNotice)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var createWorkspaceButton: some View {
+        if assignmentWorkspaces.count <= 1 {
+            Button {
+                onCreateWorkspace()
+            } label: {
+                Label("Create Workspace", systemImage: "folder.badge.plus")
+            }
+        }
+    }
+
+    private func workspaceLabel(_ workspace: Workspace, foregroundStyle: HierarchicalShapeStyle) -> some View {
+        HStack(spacing: 8) {
+            if isWorkspaceLocked(workspace) {
+                Image(systemName: "lock.fill")
+                    .foregroundStyle(.secondary)
+            } else {
+                Circle()
+                    .fill(Color.fromHex(workspace.colorHex))
+                    .frame(width: 8, height: 8)
+            }
+
+            Text(workspace.name)
+                .foregroundStyle(foregroundStyle)
+        }
+    }
+}
+
 private func sectionHeader(_ title: LocalizedStringKey) -> some View {
     #if os(iOS)
     Text(title)

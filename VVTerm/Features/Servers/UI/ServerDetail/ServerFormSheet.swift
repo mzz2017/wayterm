@@ -471,80 +471,16 @@ struct ServerFormSheet: View {
 
     @ViewBuilder
     private var assignmentSection: some View {
-        Section {
-            if assignmentWorkspaces.count > 1 {
-                Picker("Workspace", selection: $selectedWorkspaceId) {
-                    ForEach(assignmentWorkspaces) { workspace in
-                        HStack(spacing: 8) {
-                            if serverManager.isWorkspaceLocked(workspace) {
-                                Image(systemName: "lock.fill")
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Circle()
-                                    .fill(Color.fromHex(workspace.colorHex))
-                                    .frame(width: 8, height: 8)
-                            }
-
-                            Text(workspace.name)
-                        }
-                        .tag(Optional(workspace.id))
-                    }
-                }
-            } else {
-                LabeledContent("Workspace") {
-                    if let selectedWorkspace {
-                        HStack(spacing: 8) {
-                            if serverManager.isWorkspaceLocked(selectedWorkspace) {
-                                Image(systemName: "lock.fill")
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Circle()
-                                    .fill(Color.fromHex(selectedWorkspace.colorHex))
-                                    .frame(width: 8, height: 8)
-                            }
-
-                            Text(selectedWorkspace.name)
-                                .foregroundStyle(.secondary)
-                        }
-                    } else {
-                        Text("No Workspace")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            Picker("Environment", selection: $selectedEnvironment) {
-                ForEach(selectedWorkspace?.environments ?? ServerEnvironment.builtInEnvironments) { env in
-                    HStack {
-                        Circle()
-                            .fill(env.color)
-                            .frame(width: 8, height: 8)
-                        Text(env.displayName)
-                    }
-                    .tag(env)
-                }
-            }
-
-            if let workspaceEnvironmentNotice {
-                Text(workspaceEnvironmentNotice)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if assignmentWorkspaces.count <= 1 {
-                Button {
-                    showingCreateWorkspace = true
-                } label: {
-                    Label("Create Workspace", systemImage: "folder.badge.plus")
-                }
-            }
-        } header: {
-            sectionHeader("Workspace")
-        } footer: {
-            if let workspaceAvailabilityHelpText {
-                Text(workspaceAvailabilityHelpText)
-            }
-        }
+        ServerFormAssignmentSection(
+            assignmentWorkspaces: assignmentWorkspaces,
+            selectedWorkspace: selectedWorkspace,
+            isWorkspaceLocked: { serverManager.isWorkspaceLocked($0) },
+            selectedWorkspaceId: $selectedWorkspaceId,
+            selectedEnvironment: $selectedEnvironment,
+            workspaceEnvironmentNotice: workspaceEnvironmentNotice,
+            workspaceAvailabilityHelpText: workspaceAvailabilityHelpText,
+            onCreateWorkspace: { showingCreateWorkspace = true }
+        )
     }
 
     @ViewBuilder
