@@ -15,6 +15,51 @@ import Testing
 @MainActor
 struct ServerManagerBootstrapTests {
     @Test
+    func loadDataUsesInjectedCloudSyncServices() async throws {
+        // Given server sync is enabled and ServerManager receives fake CloudKit services.
+        let previousSyncSetting = UserDefaults.standard.object(forKey: SyncSettings.enabledKey)
+        UserDefaults.standard.set(true, forKey: SyncSettings.enabledKey)
+        defer {
+            if let previousSyncSetting {
+                UserDefaults.standard.set(previousSyncSetting, forKey: SyncSettings.enabledKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: SyncSettings.enabledKey)
+            }
+        }
+
+        let workspace = Workspace(id: UUID(), name: "Injected", order: 0)
+        let cloudKit = RecordingServerCloudSyncService(changes: CloudKitChanges(
+            servers: [],
+            workspaces: [workspace],
+            deletedServerIDs: [],
+            deletedWorkspaceIDs: [],
+            isFullFetch: true
+        ))
+        let syncCoordinator = RecordingServerPendingCloudSyncCoordinator()
+        let manager = ServerManager.makeForTesting(
+            cloudKit: cloudKit,
+            syncCoordinator: syncCoordinator
+        )
+
+        // When the application-layer load path runs.
+        await manager.loadData()
+
+        // Then CloudKit fetch and pending drain both use the injected services.
+        #expect(
+            cloudKit.fetchForceFullFetchRequests == [false],
+            "ServerManager.loadData should fetch through the injected server CloudKit service."
+        )
+        #expect(
+            syncCoordinator.didDrainPendingMutations,
+            "ServerManager.loadData should drain pending mutations through the injected coordinator."
+        )
+        #expect(
+            manager.workspaces.map(\.id) == [workspace.id],
+            "Injected CloudKit changes should become the authoritative server workspace state."
+        )
+    }
+
+    @Test
     func startupLoadRequestTracksOperationUntilCompletion() async throws {
         let gate = ServerStartupLoadGate()
         let waitProbe = ServerStartupLoadWaitProbe()
@@ -636,5 +681,54 @@ private actor ServerDeletionOrderProbe {
 
     func events() -> [String] {
         recordedEvents
+    }
+}
+
+@MainActor
+private final class RecordingServerCloudSyncService: ServerCloudSyncing {
+    var isAvailable = true
+    private let changes: CloudKitChanges
+    private(set) var fetchForceFullFetchRequests: [Bool] = []
+
+    init(changes: CloudKitChanges) {
+        self.changes = changes
+    }
+
+    func fetchChanges(forceFullFetch: Bool) async throws -> CloudKitChanges {
+        fetchForceFullFetchRequests.append(forceFullFetch)
+        return changes
+    }
+
+    func saveServer(_ server: Server) async throws {}
+
+    func saveWorkspace(_ workspace: Workspace) async throws {}
+
+    func isSchemaError(_ error: Error) -> Bool {
+        false
+    }
+}
+
+@MainActor
+private final class RecordingServerPendingCloudSyncCoordinator: ServerPendingCloudSyncCoordinating {
+    private(set) var didDrainPendingMutations = false
+
+    func snapshot() -> [PendingCloudKitMutation] {
+        []
+    }
+
+    func clearPendingMutations(for entities: Set<PendingCloudKitEntity>) {}
+
+    func removePendingMutation(_ mutationID: UUID) {}
+
+    func enqueueServerUpsert(_ server: Server) {}
+
+    func enqueueServerDelete(_ server: Server) {}
+
+    func enqueueWorkspaceUpsert(_ workspace: Workspace) {}
+
+    func enqueueWorkspaceDelete(_ workspace: Workspace) {}
+
+    func drainPendingMutations() async {
+        didDrainPendingMutations = true
     }
 }

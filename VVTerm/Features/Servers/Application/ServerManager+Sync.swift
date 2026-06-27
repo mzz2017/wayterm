@@ -223,7 +223,7 @@ extension ServerManager {
 
             // Only try to push local data if it's a schema error (record type not found)
             // This auto-creates schema in development mode
-            if cloudKit.isAvailable && CloudKitManager.isSchemaError(error) {
+            if cloudKit.isAvailable && cloudKit.isSchemaError(error) {
                 logger.info("Schema error detected, attempting to initialize schema...")
                 await initializeCloudKitSchema()
             }

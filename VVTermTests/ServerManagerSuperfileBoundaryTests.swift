@@ -76,6 +76,12 @@ struct ServerManagerSuperfileBoundaryTests {
         let syncSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager+Sync.swift")
         )
+        let dependencySource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManagerSyncDependencies.swift")
+        )
+        let liveSyncSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Infrastructure/ServerManager+LiveSync.swift")
+        )
         let syncStateServiceSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerSyncStateService.swift")
         )
@@ -102,6 +108,17 @@ struct ServerManagerSuperfileBoundaryTests {
         #expect(syncSource.contains("func repairOrphanedServers"))
         #expect(syncSource.contains("syncStateService.orphanRepairPlan"))
         #expect(syncSource.contains("func initializeCloudKitSchema"))
+        #expect(dependencySource.contains("protocol ServerCloudSyncing"))
+        #expect(dependencySource.contains("protocol ServerPendingCloudSyncCoordinating"))
+        #expect(dependencySource.contains("func clearPendingMutations(for entities: Set<PendingCloudKitEntity>)"))
+        #expect(managerSource.contains("let cloudKit: any ServerCloudSyncing"))
+        #expect(managerSource.contains("let syncCoordinator: any ServerPendingCloudSyncCoordinating"))
+        #expect(liveSyncSource.contains("extension CloudKitManager: ServerCloudSyncing"))
+        #expect(liveSyncSource.contains("extension CloudKitSyncCoordinator: ServerPendingCloudSyncCoordinating"))
+        #expect(liveSyncSource.contains("static let shared = ServerManager()"))
+        #expect(liveSyncSource.contains("CloudKitManager.shared"))
+        #expect(liveSyncSource.contains("CloudKitSyncCoordinator.shared"))
+        #expect(liveSyncSource.contains("StoreManager.shared.isPro"))
         #expect(syncStateServiceSource.contains("struct ServerSyncStateService"))
         #expect(syncStateServiceSource.contains("func backfillCandidates"))
         #expect(syncStateServiceSource.contains("func fullFetchState"))
@@ -153,6 +170,22 @@ struct ServerManagerSuperfileBoundaryTests {
         #expect(
             !managerSource.containsRegex(#"func\s+initializeCloudKitSchema\s*\("#),
             "ServerManager.swift should not own CloudKit schema initialization."
+        )
+        #expect(
+            !managerSource.contains("CloudKitManager.shared"),
+            "ServerManager.swift should receive CloudKit through the server sync service boundary."
+        )
+        #expect(
+            !managerSource.contains("CloudKitSyncCoordinator.shared"),
+            "ServerManager.swift should receive pending sync coordination through the server sync boundary."
+        )
+        #expect(
+            !managerSource.contains("StoreManager.shared"),
+            "ServerManager.swift should receive entitlement state through an injected provider."
+        )
+        #expect(
+            !syncSource.contains("CloudKitManager.isSchemaError"),
+            "ServerManager sync should ask its injected CloudKit service to classify schema errors."
         )
     }
 

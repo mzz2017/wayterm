@@ -1,5 +1,4 @@
 import Foundation
-import CloudKit
 import Combine
 import SwiftUI
 import os.log
@@ -114,8 +113,6 @@ final class ServerManager: ObservableObject {
     typealias KnownHostRemovalCandidate = ServerKnownHostRemovalCandidate
     typealias ServerKnownHostRemoval = @MainActor @Sendable ([KnownHostRemovalCandidate]) async -> Void
 
-    static let shared = ServerManager()
-
     @Published var servers: [Server] = []
     @Published var workspaces: [Workspace] = []
     @Published var isLoading = false
@@ -126,8 +123,8 @@ final class ServerManager: ObservableObject {
     @Published var serverSaveFailure: ServerSaveFailure?
     @Published var serverMoveFailure: ServerMoveFailure?
 
-    let cloudKit = CloudKitManager.shared
-    let syncCoordinator = CloudKitSyncCoordinator.shared
+    let cloudKit: any ServerCloudSyncing
+    let syncCoordinator: any ServerPendingCloudSyncCoordinating
     private(set) var deletionTeardown: ServerDeletionTeardown
     let deleteCredentials: ServerCredentialDeletion
     private let storeCredentials: ServerCredentialStore
@@ -156,7 +153,9 @@ final class ServerManager: ObservableObject {
     var pendingServerSaveRequestIDs: Set<UUID> { Set(serverSaveRequests.keys) }
     var pendingServerMoveRequestIDs: Set<UUID> { Set(serverMoveRequests.keys) }
 
-    private init(
+    init(
+        cloudKit: any ServerCloudSyncing,
+        syncCoordinator: any ServerPendingCloudSyncCoordinating,
         loadLocalDataOnInit: Bool = true,
         startStartupLoad: Bool = true,
         deletionTeardown: @escaping ServerDeletionTeardown = ServerManager.defaultDeletionTeardown,
@@ -164,11 +163,13 @@ final class ServerManager: ObservableObject {
         storeCredentials: @escaping ServerCredentialStore = ServerManager.defaultCredentialStore,
         removeKnownHostEntries: @escaping ServerKnownHostRemoval = ServerManager.defaultKnownHostRemoval,
         startupLoadAction: ServerStartupLoadAction? = nil,
-        isProProvider: @escaping IsProProvider = { StoreManager.shared.isPro },
+        isProProvider: @escaping IsProProvider,
         syncStateService: ServerSyncStateService = ServerSyncStateService(),
         persistsLocalData: Bool = true,
         recordsSyncMutations: Bool = true
     ) {
+        self.cloudKit = cloudKit
+        self.syncCoordinator = syncCoordinator
         self.deletionTeardown = deletionTeardown
         self.deleteCredentials = deleteCredentials
         self.storeCredentials = storeCredentials
@@ -199,9 +200,13 @@ final class ServerManager: ObservableObject {
         storeCredentials: @escaping ServerCredentialStore = { _, _ in },
         removeKnownHostEntries: @escaping ServerKnownHostRemoval = { _ in },
         startupLoadAction: ServerStartupLoadAction? = nil,
-        isProProvider: @escaping IsProProvider = { StoreManager.shared.isPro }
+        isProProvider: @escaping IsProProvider = { false },
+        cloudKit: (any ServerCloudSyncing)? = nil,
+        syncCoordinator: (any ServerPendingCloudSyncCoordinating)? = nil
     ) -> ServerManager {
         let manager = ServerManager(
+            cloudKit: cloudKit ?? DisabledServerCloudSyncService(),
+            syncCoordinator: syncCoordinator ?? NoopServerPendingCloudSyncCoordinator(),
             loadLocalDataOnInit: false,
             startStartupLoad: startStartupLoad,
             deletionTeardown: deletionTeardown,
