@@ -3,17 +3,35 @@ import Combine
 import AVFoundation
 
 @MainActor
+protocol AudioCaptureSessionManaging {
+    func activateForRecording() throws
+    func deactivateAfterRecording() throws
+}
+
+@MainActor
+struct NoopAudioCaptureSession: AudioCaptureSessionManaging {
+    func activateForRecording() throws {}
+    func deactivateAfterRecording() throws {}
+}
+
+@MainActor
 final class AudioCaptureService: ObservableObject {
     @Published var audioLevel: Float = 0.0
     @Published var recordingDuration: TimeInterval = 0
 
     var bufferHandler: ((AVAudioPCMBuffer) -> Void)?
+    private(set) var lastSessionDeactivationError: Error?
 
     private let targetSampleRate: Double = 16_000
+    private let audioSession: any AudioCaptureSessionManaging
     private var audioEngine: AVAudioEngine?
     private var converter: AVAudioConverter?
     private var recordedSamples: [Float] = []
     private var isRecording = false
+
+    init(audioSession: (any AudioCaptureSessionManaging)? = nil) {
+        self.audioSession = audioSession ?? NoopAudioCaptureSession()
+    }
 
     var sampleRate: Double { targetSampleRate }
 
@@ -23,12 +41,9 @@ final class AudioCaptureService: ObservableObject {
         recordedSamples.removeAll(keepingCapacity: true)
         audioLevel = 0
         recordingDuration = 0
+        lastSessionDeactivationError = nil
 
-        #if os(iOS)
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
-        try session.setActive(true, options: [])
-        #endif
+        try audioSession.activateForRecording()
 
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
@@ -61,10 +76,12 @@ final class AudioCaptureService: ObservableObject {
             engine.stop()
         }
 
-        #if os(iOS)
         // Release the session so system services (e.g. keyboard dictation) regain the mic.
-        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
-        #endif
+        do {
+            try audioSession.deactivateAfterRecording()
+        } catch {
+            lastSessionDeactivationError = error
+        }
 
         audioEngine = nil
         converter = nil

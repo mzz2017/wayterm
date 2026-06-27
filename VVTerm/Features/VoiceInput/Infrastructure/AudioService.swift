@@ -16,6 +16,7 @@ struct AudioServiceDependencies {
     var isWhisperSupported: @MainActor () -> Bool
     var isParakeetSupported: @MainActor () -> Bool
     var isModelAvailable: @MainActor (MLXModelKind, String) -> Bool
+    var audioCaptureSession: any AudioCaptureSessionManaging
 }
 
 @MainActor
@@ -31,7 +32,7 @@ class AudioService: NSObject, ObservableObject {
     // Services
     private let permissionManager = AudioPermissionManager()
     private let speechRecognitionService: SpeechRecognitionService
-    private let audioCaptureService = AudioCaptureService()
+    private let audioCaptureService: AudioCaptureService
     private let dependencies: AudioServiceDependencies
 
     private var activeProvider: TranscriptionProvider = .system
@@ -40,6 +41,7 @@ class AudioService: NSObject, ObservableObject {
         let resolvedDependencies = dependencies ?? .live
         self.dependencies = resolvedDependencies
         self.speechRecognitionService = SpeechRecognitionService(settings: resolvedDependencies.settings)
+        self.audioCaptureService = AudioCaptureService(audioSession: resolvedDependencies.audioCaptureSession)
         super.init()
         setupBindings()
     }

@@ -19,7 +19,14 @@ extension TranscriptionSettingsReader {
 
 extension AudioServiceDependencies {
     static var live: AudioServiceDependencies {
-        AudioServiceDependencies(
+        let audioCaptureSession: any AudioCaptureSessionManaging
+        #if os(iOS)
+        audioCaptureSession = LiveAudioCaptureSession()
+        #else
+        audioCaptureSession = NoopAudioCaptureSession()
+        #endif
+
+        return AudioServiceDependencies(
             settings: .live,
             whisperProvider: MLXWhisperProvider.shared,
             parakeetProvider: MLXParakeetProvider.shared,
@@ -27,7 +34,8 @@ extension AudioServiceDependencies {
             isParakeetSupported: { MLXParakeetProvider.isSupported },
             isModelAvailable: { kind, modelId in
                 MLXModelManager.isModelAvailable(kind: kind, modelId: modelId)
-            }
+            },
+            audioCaptureSession: audioCaptureSession
         )
     }
 }

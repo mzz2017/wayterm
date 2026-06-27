@@ -65,6 +65,12 @@ struct AudioServiceDependencyBoundaryTests {
         let speechRecognitionService = try source(
             at: voiceInput.appendingPathComponent("Infrastructure/SpeechRecognitionService.swift")
         )
+        let audioCaptureService = try source(
+            at: voiceInput.appendingPathComponent("Infrastructure/AudioCaptureService.swift")
+        )
+        let liveDependencies = try source(
+            at: root.appendingPathComponent("VVTerm/App/VoiceInputLiveDependencies.swift")
+        )
         let modelDownloadStore = try source(
             at: voiceInput.appendingPathComponent("Application/VoiceModelDownloadStore.swift")
         )
@@ -97,6 +103,27 @@ struct AudioServiceDependencyBoundaryTests {
             !modelDownloadStore.contains("TranscriptionSettingsStore.current"),
             "VoiceModelDownloadStore should receive model IDs through injected settings instead of reading global defaults."
         )
+        #expect(
+            !audioCaptureService.contains("AVAudioSession.sharedInstance()"),
+            "AudioCaptureService should receive audio session lifecycle through AudioCaptureSessionManaging injection."
+        )
+        #expect(
+            !audioCaptureService.contains("try?"),
+            "AudioCaptureService should not silently swallow audio session lifecycle failures."
+        )
+        #expect(
+            audioCaptureService.contains("func activateForRecording() throws"),
+            "VoiceInput should model audio session activation as a throwing lifecycle service."
+        )
+        #expect(
+            audioCaptureService.contains("lastSessionDeactivationError"),
+            "AudioCaptureService should preserve audio session deactivation failure diagnostics."
+        )
+        #expect(
+            liveDependencies.contains("audioCaptureSession = LiveAudioCaptureSession()")
+                && liveDependencies.contains("audioCaptureSession: audioCaptureSession"),
+            "App live VoiceInput dependencies should provide the iOS audio session lifecycle service."
+        )
     }
 
     private func makeDependencies(
@@ -120,7 +147,8 @@ struct AudioServiceDependencyBoundaryTests {
             isParakeetSupported: { isParakeetSupported },
             isModelAvailable: { kind, modelId in
                 availableModels[kind] == modelId
-            }
+            },
+            audioCaptureSession: NoopAudioCaptureSession()
         )
     }
 
