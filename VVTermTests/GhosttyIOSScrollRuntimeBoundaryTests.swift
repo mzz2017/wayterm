@@ -1,6 +1,11 @@
 import Foundation
 import Testing
 
+#if os(iOS)
+import CoreGraphics
+@testable import VVTerm
+#endif
+
 // Test Context:
 // Protects ownership of iOS terminal scroll gesture runtime state.
 // GhosttyTerminalView may route gesture intent, but TerminalIOSScrollRuntime
@@ -62,3 +67,52 @@ struct GhosttyIOSScrollRuntimeBoundaryTests {
         case notFound
     }
 }
+
+#if os(iOS)
+// Test Context:
+// These behavior tests protect the extracted scroll momentum policy. The runtime
+// owns deceleration phases and reset behavior; update these only when the
+// terminal's iOS momentum scrolling semantics intentionally change.
+@Suite(.serialized)
+@MainActor
+struct GhosttyIOSScrollRuntimeBehaviorTests {
+    @Test
+    func momentumStateRejectsSmallVelocityAndStaysInactive() {
+        var state = TerminalMomentumScrollState()
+
+        // Given a pan velocity below the momentum threshold.
+        let didStart = state.start(gestureVelocity: CGPoint(x: 0, y: 49))
+
+        // Then no momentum sequence is started or emitted.
+        #expect(!didStart, "Tiny flicks should not start terminal momentum scrolling.")
+        #expect(!state.isActive, "Momentum state should remain inactive after a rejected start.")
+        #expect(state.nextFrameEvent() == nil, "Inactive momentum state must not emit scroll frames.")
+    }
+
+    @Test
+    func momentumStateEmitsBeganThenChangedFramesBeforeReset() throws {
+        var state = TerminalMomentumScrollState()
+
+        // Given a pan velocity high enough to start momentum scrolling.
+        let didStart = state.start(gestureVelocity: CGPoint(x: 0, y: 120))
+
+        // Then the first emitted frame starts a precision momentum sequence.
+        #expect(didStart, "A real flick should start terminal momentum scrolling.")
+        let firstFrameCandidate = state.nextFrameEvent()
+        let firstFrame = try #require(firstFrameCandidate)
+        #expect(firstFrame.mods.precision, "Momentum scroll frames should preserve precision scrolling.")
+        #expect(firstFrame.mods.momentum == .began, "The first momentum frame should be marked as began.")
+        #expect(firstFrame.y > 0, "Positive pan velocity should produce positive terminal scroll delta.")
+
+        // And subsequent frames continue with decayed velocity until reset.
+        let secondFrameCandidate = state.nextFrameEvent()
+        let secondFrame = try #require(secondFrameCandidate)
+        #expect(secondFrame.mods.momentum == .changed, "Follow-up momentum frames should be marked as changed.")
+        #expect(abs(secondFrame.y) < abs(firstFrame.y), "Momentum velocity should decay between frames.")
+
+        state.reset()
+        #expect(!state.isActive, "Reset should clear active momentum state.")
+        #expect(state.nextFrameEvent() == nil, "Reset momentum state must not emit stale frames.")
+    }
+}
+#endif

@@ -51,30 +51,50 @@ final class TerminalIOSZoomRuntime {
         stopMomentumScrolling: StopMomentumScrolling,
         requestIndicatorLayout: RequestIndicatorLayout
     ) {
+        handlePinchGestureState(
+            recognizer.state,
+            scale: recognizer.scale,
+            canHandlePinchZoom: canHandlePinchZoom,
+            currentFontSize: currentFontSize,
+            performZoomAction: performZoomAction,
+            stopMomentumScrolling: stopMomentumScrolling,
+            requestIndicatorLayout: requestIndicatorLayout
+        )
+    }
+
+    func handlePinchGestureState(
+        _ state: UIGestureRecognizer.State,
+        scale: CGFloat,
+        canHandlePinchZoom: Bool,
+        currentFontSize: CurrentFontSize,
+        performZoomAction: PerformZoomAction?,
+        stopMomentumScrolling: StopMomentumScrolling,
+        requestIndicatorLayout: RequestIndicatorLayout
+    ) {
         guard canHandlePinchZoom else {
             isPinching = false
             return
         }
 
-        switch recognizer.state {
+        switch state {
         case .began:
             isPinching = true
-            pinchReferenceScale = recognizer.scale
+            pinchReferenceScale = scale
             stopMomentumScrolling()
             showIndicator(fontSize: currentFontSize(), requestLayout: requestIndicatorLayout)
         case .changed:
             guard isPinching else { return }
-            let relativeScale = recognizer.scale / pinchReferenceScale
+            let relativeScale = scale / pinchReferenceScale
             if relativeScale >= CGFloat(TerminalZoomPresentation.pinchZoomInThreshold) {
                 if let result = performZoomAction?(.zoomIn) {
                     showIndicator(fontSize: result.effectiveFontSize, requestLayout: requestIndicatorLayout)
                 }
-                pinchReferenceScale = recognizer.scale
+                pinchReferenceScale = scale
             } else if relativeScale <= CGFloat(TerminalZoomPresentation.pinchZoomOutThreshold) {
                 if let result = performZoomAction?(.zoomOut) {
                     showIndicator(fontSize: result.effectiveFontSize, requestLayout: requestIndicatorLayout)
                 }
-                pinchReferenceScale = recognizer.scale
+                pinchReferenceScale = scale
             }
         case .ended, .cancelled, .failed:
             isPinching = false
