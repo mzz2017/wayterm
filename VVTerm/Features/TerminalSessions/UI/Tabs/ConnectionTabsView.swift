@@ -17,6 +17,7 @@ struct ConnectionTerminalContainer: View {
     @ObservedObject var fileTabManager: RemoteFileTabManager
     @ObservedObject var storeManager: StoreManager
     @ObservedObject var viewTabConfig: ViewTabConfigurationManager
+    let disconnectCoordinator: ServerConnectionLifecycleCoordinator
     let serverManager: ServerManager
     let fileBrowser: RemoteFileBrowserStore
     let server: Server
@@ -617,7 +618,7 @@ struct ConnectionTerminalContainer: View {
     }
 
     private func disconnectFromServer() {
-        ServerConnectionLifecycleCoordinator.shared.requestServerDisconnect(
+        disconnectCoordinator.requestServerDisconnect(
             serverId: server.id,
             disconnectRemoteFiles: { serverId in
                 fileBrowser.disconnect(serverId: serverId)

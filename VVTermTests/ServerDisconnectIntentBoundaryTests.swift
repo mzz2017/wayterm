@@ -5,10 +5,10 @@ import Testing
 // These source-boundary tests protect server disconnect intent ownership for
 // iOS Active Connections, iOS current-server disconnect, and shared tab
 // container disconnect actions. The invariant is that SwiftUI sends synchronous
-// intent to an App/Application owner; it must not own the async sequence that
-// waits for RemoteFiles teardown, clears file tabs, disconnects terminal
-// managers, and runs navigation completion. Update these tests only if that
-// orchestration intentionally moves to another non-UI owner.
+// intent to an injected App/Application owner; it must not own the async
+// sequence that waits for RemoteFiles teardown, clears file tabs, disconnects
+// terminal managers, and runs navigation completion. Update these tests only if
+// that orchestration intentionally moves to another non-UI owner.
 @Suite(.serialized)
 struct ServerDisconnectIntentBoundaryTests {
     @Test
@@ -23,8 +23,16 @@ struct ServerDisconnectIntentBoundaryTests {
 
         // Given the iOS Active Connections disconnect action.
         #expect(
-            helper.contains("ServerConnectionLifecycleCoordinator.shared.requestServerDisconnect"),
-            "Active Connection disconnect should send intent to the App/Application coordinator."
+            source.contains("let disconnectCoordinator: ServerConnectionLifecycleCoordinator"),
+            "iOSServerListView should receive the App/Application disconnect coordinator."
+        )
+        #expect(
+            helper.contains("disconnectCoordinator.requestServerDisconnect"),
+            "Active Connection disconnect should send intent to the injected App/Application coordinator."
+        )
+        #expect(
+            !source.contains("ServerConnectionLifecycleCoordinator.shared"),
+            "iOSServerListView should not resolve the App/Application disconnect coordinator singleton."
         )
 
         // Then SwiftUI must not own the async teardown sequence.
@@ -44,8 +52,16 @@ struct ServerDisconnectIntentBoundaryTests {
 
         // Given the iOS terminal current-server disconnect action.
         #expect(
-            helper.contains("ServerConnectionLifecycleCoordinator.shared.requestServerDisconnect"),
-            "Current-server disconnect should send intent to the App/Application coordinator."
+            source.contains("let disconnectCoordinator: ServerConnectionLifecycleCoordinator"),
+            "iOSTerminalView should receive the App/Application disconnect coordinator."
+        )
+        #expect(
+            helper.contains("disconnectCoordinator.requestServerDisconnect"),
+            "Current-server disconnect should send intent to the injected App/Application coordinator."
+        )
+        #expect(
+            !source.contains("ServerConnectionLifecycleCoordinator.shared"),
+            "iOSTerminalView should not resolve the App/Application disconnect coordinator singleton."
         )
 
         // Then SwiftUI must not sequence RemoteFiles, file tabs, terminal
@@ -68,13 +84,43 @@ struct ServerDisconnectIntentBoundaryTests {
 
         // Given the shared tab-container server disconnect action.
         #expect(
-            helper.contains("ServerConnectionLifecycleCoordinator.shared.requestServerDisconnect"),
-            "Tab-container disconnect should send intent to the App/Application coordinator."
+            source.contains("let disconnectCoordinator: ServerConnectionLifecycleCoordinator"),
+            "ConnectionTabsView should receive the App/Application disconnect coordinator."
+        )
+        #expect(
+            helper.contains("disconnectCoordinator.requestServerDisconnect"),
+            "Tab-container disconnect should send intent to the injected App/Application coordinator."
+        )
+        #expect(
+            !source.contains("ServerConnectionLifecycleCoordinator.shared"),
+            "ConnectionTabsView should not resolve the App/Application disconnect coordinator singleton."
         )
 
         // Then SwiftUI must not own the multi-feature teardown ordering.
         #expect(!helper.containsRegex(#"Task\s*\{"#))
         #expect(!helper.contains("await tabManager.disconnectServerAndWait"))
+    }
+
+    @Test
+    func appRootsInjectSharedDisconnectCoordinatorIntoFeatureUI() throws {
+        let root = try sourceRoot()
+        let appSource = try source(at: root.appendingPathComponent("VVTerm/App/VVTermApp.swift"))
+        let macRootSource = try source(at: root.appendingPathComponent("VVTerm/App/ContentView.swift"))
+        let iosRootSource = try source(at: root.appendingPathComponent("VVTerm/App/iOS/iOSContentView.swift"))
+
+        // Given the disconnect coordinator owns multi-feature teardown ordering.
+        #expect(
+            appSource.contains("ServerConnectionLifecycleCoordinator.shared"),
+            "VVTermApp should be the composition boundary that resolves the shared disconnect coordinator."
+        )
+        #expect(
+            macRootSource.contains("disconnectCoordinator: disconnectCoordinator"),
+            "ContentView should pass the injected disconnect coordinator into macOS terminal composition."
+        )
+        #expect(
+            iosRootSource.contains("disconnectCoordinator: disconnectCoordinator"),
+            "iOSContentView should pass the injected disconnect coordinator into iOS server and terminal composition."
+        )
     }
 
     private func slice(startingAt marker: String, endingBefore endMarker: String, in source: String) throws -> String {

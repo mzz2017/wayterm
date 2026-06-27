@@ -34,6 +34,7 @@ struct VVTermApp: App {
     @StateObject private var remoteFileBrowserStore = VVTermApp.makeRemoteFileBrowserStore()
     @StateObject private var terminalThemeManager = TerminalThemeManager.shared
     @StateObject private var terminalAccessoryPreferencesManager = TerminalAccessoryPreferencesManager.shared
+    private let serverConnectionLifecycleCoordinator = ServerConnectionLifecycleCoordinator.shared
 
     // Welcome screen flag
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
@@ -79,7 +80,8 @@ struct VVTermApp: App {
                         #if os(iOS)
                         iOSContentView(
                             fileTabs: remoteFileTabManager,
-                            fileBrowser: remoteFileBrowserStore
+                            fileBrowser: remoteFileBrowserStore,
+                            disconnectCoordinator: serverConnectionLifecycleCoordinator
                         )
                             .environmentObject(ghosttyApp)
                             .environmentObject(terminalThemeManager)
@@ -97,7 +99,8 @@ struct VVTermApp: App {
                         #else
                         ContentView(
                             fileTabs: remoteFileTabManager,
-                            fileBrowser: remoteFileBrowserStore
+                            fileBrowser: remoteFileBrowserStore,
+                            disconnectCoordinator: serverConnectionLifecycleCoordinator
                         )
                             .environmentObject(ghosttyApp)
                             .environmentObject(terminalThemeManager)

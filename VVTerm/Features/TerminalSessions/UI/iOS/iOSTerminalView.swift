@@ -8,6 +8,7 @@ struct iOSTerminalView: View {
     @ObservedObject var fileTabs: RemoteFileTabManager
     @ObservedObject var storeManager: StoreManager
     @ObservedObject var viewTabConfig: ViewTabConfigurationManager
+    let disconnectCoordinator: ServerConnectionLifecycleCoordinator
     let fileBrowser: RemoteFileBrowserStore
     let connectingServer: Server?
     let isConnecting: Bool
@@ -682,7 +683,7 @@ struct iOSTerminalView: View {
             onBack()
             return
         }
-        ServerConnectionLifecycleCoordinator.shared.requestServerDisconnect(
+        disconnectCoordinator.requestServerDisconnect(
             serverId: serverId,
             disconnectRemoteFiles: { serverId in
                 fileBrowser.disconnect(serverId: serverId)

@@ -6,6 +6,7 @@ struct iOSServerListView: View {
     @ObservedObject var sessionManager: ConnectionSessionManager
     @ObservedObject var storeManager: StoreManager
     @ObservedObject var viewTabConfig: ViewTabConfigurationManager
+    let disconnectCoordinator: ServerConnectionLifecycleCoordinator
     let fileBrowser: RemoteFileBrowserStore
     @Binding var selectedWorkspace: Workspace?
     @Binding var selectedEnvironment: ServerEnvironment?
@@ -464,7 +465,7 @@ struct iOSServerListView: View {
     }
 
     private func disconnectActiveConnection(_ connection: ActiveConnection) {
-        ServerConnectionLifecycleCoordinator.shared.requestServerDisconnect(
+        disconnectCoordinator.requestServerDisconnect(
             serverId: connection.id,
             disconnectRemoteFiles: { serverId in
                 fileBrowser.disconnect(serverId: serverId)
