@@ -35,6 +35,7 @@ final class ConnectionSessionManager: ObservableObject {
     typealias LastConnectedUpdater = @MainActor (Server) async -> Void
     typealias IsProProvider = @MainActor () -> Bool
     typealias CredentialsProvider = @MainActor (Server) async throws -> ServerCredentials
+    typealias KnownHostRemover = @MainActor (_ host: String, _ port: Int) async -> Void
 
     struct Dependencies {
         var serverProvider: ServerProvider
@@ -45,6 +46,7 @@ final class ConnectionSessionManager: ObservableObject {
         var credentialsProvider: CredentialsProvider
         var tmuxService: any TerminalTmuxServicing
         var moshService: any TerminalMoshServicing
+        var knownHostRemover: KnownHostRemover
     }
 
     @Published var sessions: [ConnectionSession] = [] {
@@ -265,6 +267,10 @@ final class ConnectionSessionManager: ObservableObject {
     var moshService: any TerminalMoshServicing {
         get { dependencies.moshService }
         set { updateDependencies { $0.moshService = newValue } }
+    }
+    var knownHostRemover: KnownHostRemover {
+        get { dependencies.knownHostRemover }
+        set { updateDependencies { $0.knownHostRemover = newValue } }
     }
     /// Per-server teardown work from ordinary tab closes. New opens wait for this too.
     var serverTeardownTaskStore = TerminalTeardownTaskStore()

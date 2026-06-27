@@ -3,11 +3,11 @@ import Testing
 
 // Test Context:
 // These source-boundary tests protect TerminalSessions Application dependency
-// ownership. Runtime start, reconnect, tmux attach, entitlement, credential,
-// access, and persistence flows should route through manager-level dependency
-// providers instead of scattering direct cross-feature singleton reads across
-// lifecycle files. Update these tests only when the relevant AGENTS.md
-// architecture boundary intentionally changes.
+// ownership. Runtime start, reconnect, host trust, tmux attach, entitlement,
+// credential, access, and persistence flows should route through manager-level
+// dependency providers instead of scattering direct cross-feature singleton
+// reads across lifecycle files. Update these tests only when the relevant
+// AGENTS.md architecture boundary intentionally changes.
 
 struct TerminalSessionDependencyBoundaryTests {
     @Test
@@ -153,6 +153,49 @@ struct TerminalSessionDependencyBoundaryTests {
         #expect(liveDependencySource.contains("AppLockManager.shared.ensureServerUnlocked"))
         #expect(liveDependencySource.contains("KeychainManager.shared.getCredentials"))
         #expect(liveDependencySource.contains("ViewTabConfigurationManager.shared.effectiveDefaultTab"))
+    }
+
+    @Test
+    func hostRetrustUsesInjectedKnownHostBoundary() throws {
+        let root = try sourceRoot()
+        let connectionManagerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let tabManagerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let connectionReconnectSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Reconnect.swift")
+        )
+        let tabReconnectSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Reconnect.swift")
+        )
+        let connectionTestingSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Testing.swift")
+        )
+        let tabTestingSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Testing.swift")
+        )
+        let liveDependencySource = try source(
+            at: root.appendingPathComponent("VVTerm/App/TerminalSessionLiveDependencies.swift")
+        )
+        let reconnectSources = [connectionReconnectSource, tabReconnectSource].joined(separator: "\n")
+
+        // Given changed-host-key recovery must remove the stale trusted host
+        // entry before retrying the SSH lifecycle.
+        #expect(connectionManagerSource.contains("typealias KnownHostRemover"))
+        #expect(tabManagerSource.contains("typealias KnownHostRemover"))
+        #expect(connectionManagerSource.contains("knownHostRemover: KnownHostRemover"))
+        #expect(tabManagerSource.contains("knownHostRemover: KnownHostRemover"))
+        #expect(connectionReconnectSource.contains("await knownHostRemover(server.host, server.port)"))
+        #expect(tabReconnectSource.contains("await knownHostRemover(server.host, server.port)"))
+        #expect(connectionTestingSource.contains("func setKnownHostRemoverForTesting"))
+        #expect(tabTestingSource.contains("func setKnownHostRemoverForTesting"))
+
+        // Then TerminalSessions does not reach directly into Core's known-hosts
+        // actor except through the App-composed live adapter.
+        #expect(!reconnectSources.contains("KnownHostsStore.shared"))
+        #expect(liveDependencySource.contains("await KnownHostsStore.shared.remove(host: host, port: port)"))
     }
 
     @Test

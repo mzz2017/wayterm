@@ -39,6 +39,7 @@ final class TerminalTabManager: ObservableObject {
     typealias DefaultViewProvider = @MainActor () -> String
     typealias ServerUnlocker = @MainActor (Server) async -> Bool
     typealias CredentialsProvider = @MainActor (Server) async throws -> ServerCredentials
+    typealias KnownHostRemover = @MainActor (_ host: String, _ port: Int) async -> Void
 
     struct Dependencies {
         var isProProvider: IsProProvider
@@ -48,6 +49,7 @@ final class TerminalTabManager: ObservableObject {
         var credentialsProvider: CredentialsProvider
         var tmuxService: any TerminalTmuxServicing
         var moshService: any TerminalMoshServicing
+        var knownHostRemover: KnownHostRemover
     }
 
     // MARK: - Published State
@@ -190,6 +192,10 @@ final class TerminalTabManager: ObservableObject {
     var moshService: any TerminalMoshServicing {
         get { dependencies.moshService }
         set { updateDependencies { $0.moshService = newValue } }
+    }
+    var knownHostRemover: KnownHostRemover {
+        get { dependencies.knownHostRemover }
+        set { updateDependencies { $0.knownHostRemover = newValue } }
     }
     /// Application-owned pane SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
     var paneRuntimes: [UUID: PaneRuntimeState] = [:]

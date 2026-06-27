@@ -29,7 +29,10 @@ extension ConnectionSessionManager.Dependencies {
                 try KeychainManager.shared.getCredentials(for: server)
             },
             tmuxService: RemoteTmuxManager.shared,
-            moshService: RemoteMoshManager.shared
+            moshService: RemoteMoshManager.shared,
+            knownHostRemover: { host, port in
+                await KnownHostsStore.shared.remove(host: host, port: port)
+            }
         )
     }
 }
@@ -53,7 +56,10 @@ extension TerminalTabManager.Dependencies {
                 try KeychainManager.shared.getCredentials(for: server)
             },
             tmuxService: RemoteTmuxManager.shared,
-            moshService: RemoteMoshManager.shared
+            moshService: RemoteMoshManager.shared,
+            knownHostRemover: { host, port in
+                await KnownHostsStore.shared.remove(host: host, port: port)
+            }
         )
     }
 }

@@ -238,6 +238,12 @@ extension ConnectionSessionManager {
         moshService = service
     }
 
+    func setKnownHostRemoverForTesting(
+        _ remover: @escaping KnownHostRemover
+    ) {
+        knownHostRemover = remover
+    }
+
     func setServerProviderForTesting(
         _ provider: @escaping ServerProvider
     ) {
