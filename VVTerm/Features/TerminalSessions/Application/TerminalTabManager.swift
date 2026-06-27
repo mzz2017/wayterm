@@ -19,6 +19,7 @@ final class TerminalTabManager: ObservableObject {
     typealias PaneCloseResult = TerminalTabManagerSupport.PaneCloseResult
     typealias TabCloseResult = TerminalTabManagerSupport.TabCloseResult
     typealias TmuxInstallRequest = TerminalTabManagerSupport.TmuxInstallRequest
+    typealias TmuxLifecycleRequest = TerminalTabManagerSupport.TmuxLifecycleRequest
     typealias MoshInstallRequest = TerminalTabManagerSupport.MoshInstallRequest
     typealias PaneRetryRequest = TerminalTabManagerSupport.PaneRetryRequest
     typealias PaneHostRetrustRequest = TerminalTabManagerSupport.PaneHostRetrustRequest
@@ -137,6 +138,8 @@ final class TerminalTabManager: ObservableObject {
     var pendingTabOpenRequestIDs: Set<UUID> { tabOpenRequestStore.pendingRequestIDs }
     var tmuxInstallRequestStore = TerminalScopedRequestStore<TmuxInstallRequest>()
     var pendingTmuxInstallRequestIDs: Set<UUID> { tmuxInstallRequestStore.pendingRequestIDs }
+    var tmuxLifecycleRequestStore = TerminalScopedRequestStore<TmuxLifecycleRequest>()
+    var pendingTmuxLifecycleRequestIDs: Set<UUID> { tmuxLifecycleRequestStore.pendingRequestIDs }
     var moshInstallRequestStore = TerminalScopedRequestStore<MoshInstallRequest>()
     private(set) var lastMoshInstallFailure: Error?
     var pendingMoshInstallRequestIDs: Set<UUID> { moshInstallRequestStore.pendingRequestIDs }
@@ -229,6 +232,7 @@ final class TerminalTabManager: ObservableObject {
     var rejectedShellCleanupOperationForTesting: (@MainActor @Sendable () async -> Void)?
     var tmuxKillOperationForTesting: (@MainActor @Sendable () async -> Void)?
     var tmuxInstallOperationForTesting: (@MainActor (UUID) async -> Void)?
+    var tmuxLifecycleOperationForTesting: (@MainActor (UUID, UUID, UUID) async -> Void)?
     var moshInstallAndReconnectOperationForTesting: (@MainActor (UUID) async throws -> Void)?
     var paneRetryOperationForTesting: (@MainActor (UUID, Server) async -> TerminalReconnectRequestResult)?
     var paneHostRetrustOperationForTesting: (@MainActor (UUID, Server) async -> Bool)?

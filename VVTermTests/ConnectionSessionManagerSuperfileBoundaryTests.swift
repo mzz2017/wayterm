@@ -394,6 +394,14 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
             runtimeSource.contains("finishSessionShellTask"),
             "Session runtime startup should use an explicit awaited shell-task cleanup helper."
         )
+        #expect(
+            !runtimeSource.contains("Task { [weak self] in\n                await self?.handleTmuxLifecycle"),
+            "Session tmux lifecycle should be launched through a tracked request, not a bare runtime Task."
+        )
+        #expect(
+            runtimeSource.contains("requestTmuxLifecycle(sessionId:"),
+            "Session shell registration should route automatic tmux lifecycle through a request store."
+        )
 
         // And the superfile should not own session runtime/SSH lifecycle directly.
         #expect(

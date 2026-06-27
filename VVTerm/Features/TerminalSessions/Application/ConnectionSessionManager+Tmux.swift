@@ -217,6 +217,67 @@ extension ConnectionSessionManager {
         await tmuxService.sendScript(rebuilt, using: client, shellId: shellId)
     }
 
+    @discardableResult
+    func requestTmuxLifecycle(
+        sessionId: UUID,
+        serverId: UUID,
+        client: SSHClient,
+        shellId: UUID
+    ) -> UUID {
+        if let request = tmuxLifecycleRequestStore.removeMappedRequest(forScope: sessionId) {
+            request.task.cancel()
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.tmuxLifecycleRequestStore.remove(id: requestID, ifMappedTo: sessionId)
+            }
+
+            guard !Task.isCancelled else { return }
+            guard self.isCurrentTmuxLifecycleShell(sessionId: sessionId, client: client, shellId: shellId) else {
+                return
+            }
+
+            #if DEBUG
+            if let operation = self.tmuxLifecycleOperationForTesting {
+                await operation(sessionId, serverId, shellId)
+            } else {
+                await self.handleTmuxLifecycle(sessionId: sessionId, serverId: serverId, client: client, shellId: shellId)
+            }
+            #else
+            await self.handleTmuxLifecycle(sessionId: sessionId, serverId: serverId, client: client, shellId: shellId)
+            #endif
+        }
+
+        tmuxLifecycleRequestStore.insert(
+            TmuxLifecycleRequest(
+                sessionId: sessionId,
+                serverId: serverId,
+                shellId: shellId,
+                task: task
+            ),
+            id: requestID,
+            scopeID: sessionId
+        )
+        return requestID
+    }
+
+    func waitForTmuxLifecycleRequest(_ requestID: UUID) async {
+        await tmuxLifecycleRequestStore[requestID]?.task.value
+    }
+
+    private func isCurrentTmuxLifecycleShell(
+        sessionId: UUID,
+        client: SSHClient,
+        shellId: UUID
+    ) -> Bool {
+        guard let registration = shellRegistry.registration(for: sessionId) else { return false }
+        return registration.shellId == shellId
+            && ObjectIdentifier(registration.client) == ObjectIdentifier(client)
+    }
+
     func tmuxStartupPlan(
         for sessionId: UUID,
         serverId: UUID,

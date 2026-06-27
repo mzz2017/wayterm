@@ -82,9 +82,7 @@ extension ConnectionSessionManager {
         terminalsNeedingReconnectReset.remove(sessionId)
 
         if !skipTmuxLifecycle {
-            Task { [weak self] in
-                await self?.handleTmuxLifecycle(sessionId: sessionId, serverId: serverId, client: client, shellId: shellId)
-            }
+            requestTmuxLifecycle(sessionId: sessionId, serverId: serverId, client: client, shellId: shellId)
         }
         return true
     }

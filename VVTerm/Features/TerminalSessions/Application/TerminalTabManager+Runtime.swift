@@ -156,9 +156,7 @@ extension TerminalTabManager {
         setPaneTransport(transport, fallbackReason: fallbackReason, for: paneId)
 
         if !skipTmuxLifecycle {
-            Task { [weak self] in
-                await self?.handleTmuxLifecycle(paneId: paneId, serverId: serverId, client: client, shellId: shellId)
-            }
+            requestTmuxLifecycle(paneId: paneId, serverId: serverId, client: client, shellId: shellId)
         }
         return true
     }

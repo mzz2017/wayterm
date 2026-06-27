@@ -141,6 +141,7 @@ extension TerminalTabManager {
                 serverId: serverId
             )
         }
+        cancelTmuxLifecycleRequest(for: paneId)
         cancelInstallRequests(for: paneId)
         cancelPaneRetryRequest(for: paneId)
         cancelPaneHostRetrustRequest(for: paneId)
@@ -171,6 +172,10 @@ extension TerminalTabManager {
             request.task.cancel()
             request.onCompleted.forEach { $0() }
         }
+    }
+
+    private func cancelTmuxLifecycleRequest(for paneId: UUID) {
+        tmuxLifecycleRequestStore.removeMappedRequest(forScope: paneId)?.task.cancel()
     }
 
     private func cancelProcessExitRequests(for paneId: UUID) {

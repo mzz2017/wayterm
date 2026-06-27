@@ -225,6 +225,67 @@ extension TerminalTabManager {
         await tmuxService.sendScript(command, using: client, shellId: shellId)
     }
 
+    @discardableResult
+    func requestTmuxLifecycle(
+        paneId: UUID,
+        serverId: UUID,
+        client: SSHClient,
+        shellId: UUID
+    ) -> UUID {
+        if let request = tmuxLifecycleRequestStore.removeMappedRequest(forScope: paneId) {
+            request.task.cancel()
+        }
+
+        let requestID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.tmuxLifecycleRequestStore.remove(id: requestID, ifMappedTo: paneId)
+            }
+
+            guard !Task.isCancelled else { return }
+            guard self.isCurrentTmuxLifecycleShell(paneId: paneId, client: client, shellId: shellId) else {
+                return
+            }
+
+            #if DEBUG
+            if let operation = self.tmuxLifecycleOperationForTesting {
+                await operation(paneId, serverId, shellId)
+            } else {
+                await self.handleTmuxLifecycle(paneId: paneId, serverId: serverId, client: client, shellId: shellId)
+            }
+            #else
+            await self.handleTmuxLifecycle(paneId: paneId, serverId: serverId, client: client, shellId: shellId)
+            #endif
+        }
+
+        tmuxLifecycleRequestStore.insert(
+            TmuxLifecycleRequest(
+                paneId: paneId,
+                serverId: serverId,
+                shellId: shellId,
+                task: task
+            ),
+            id: requestID,
+            scopeID: paneId
+        )
+        return requestID
+    }
+
+    func waitForTmuxLifecycleRequest(_ requestID: UUID) async {
+        await tmuxLifecycleRequestStore[requestID]?.task.value
+    }
+
+    private func isCurrentTmuxLifecycleShell(
+        paneId: UUID,
+        client: SSHClient,
+        shellId: UUID
+    ) -> Bool {
+        guard let registration = shellRegistry.registration(for: paneId) else { return false }
+        return registration.shellId == shellId
+            && ObjectIdentifier(registration.client) == ObjectIdentifier(client)
+    }
+
     func tmuxStartupPlan(
         for paneId: UUID,
         serverId: UUID,

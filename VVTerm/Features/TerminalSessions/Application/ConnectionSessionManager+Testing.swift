@@ -36,6 +36,8 @@ extension ConnectionSessionManager {
         lastConnectionOpenFailure = nil
         tmuxInstallRequestStore.allRequests.forEach { $0.task.cancel() }
         tmuxInstallRequestStore.removeAll()
+        tmuxLifecycleRequestStore.allRequests.forEach { $0.task.cancel() }
+        tmuxLifecycleRequestStore.removeAll()
         moshInstallRequestStore.allRequests.forEach { $0.task.cancel() }
         moshInstallRequestStore.removeAll()
         setLastMoshInstallFailure(nil)
@@ -81,6 +83,7 @@ extension ConnectionSessionManager {
         rejectedShellCleanupOperationForTesting = nil
         tmuxKillOperationForTesting = nil
         tmuxInstallOperationForTesting = nil
+        tmuxLifecycleOperationForTesting = nil
         moshInstallAndReconnectOperationForTesting = nil
         sessionRetryOperationForTesting = nil
         activeConnectionOpenReconnectOperationForTesting = nil
@@ -187,6 +190,12 @@ extension ConnectionSessionManager {
         _ operation: (@MainActor (UUID) async -> Void)?
     ) {
         tmuxInstallOperationForTesting = operation
+    }
+
+    func setTmuxLifecycleOperationForTesting(
+        _ operation: (@MainActor (UUID, UUID, UUID) async -> Void)?
+    ) {
+        tmuxLifecycleOperationForTesting = operation
     }
 
     func setMoshInstallAndReconnectOperationForTesting(

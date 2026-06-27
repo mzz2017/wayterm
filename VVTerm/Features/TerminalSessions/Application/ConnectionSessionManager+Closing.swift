@@ -405,6 +405,7 @@ extension ConnectionSessionManager {
         shellTeardownRequest: ShellTeardownRequest?,
         richPasteUploadTasks: [Task<Void, Never>]
     ) {
+        cancelTmuxLifecycleRequest(for: sessionId)
         cancelInstallRequests(for: sessionId)
         cancelSessionRetryRequest(for: sessionId)
         cancelActiveConnectionOpenRequest(for: sessionId)
@@ -433,6 +434,10 @@ extension ConnectionSessionManager {
             request.task.cancel()
             request.onCompleted.forEach { $0() }
         }
+    }
+
+    private func cancelTmuxLifecycleRequest(for sessionId: UUID) {
+        tmuxLifecycleRequestStore.removeMappedRequest(forScope: sessionId)?.task.cancel()
     }
 
     private func cancelProcessExitRequests(for sessionId: UUID) {

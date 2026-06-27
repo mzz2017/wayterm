@@ -32,6 +32,13 @@ enum ConnectionSessionManagerSupport {
         var onCompleted: [@MainActor () -> Void]
     }
 
+    struct TmuxLifecycleRequest {
+        let sessionId: UUID
+        let serverId: UUID
+        let shellId: UUID
+        let task: Task<Void, Never>
+    }
+
     struct MoshInstallRequest {
         let sessionId: UUID
         let task: Task<Void, Never>

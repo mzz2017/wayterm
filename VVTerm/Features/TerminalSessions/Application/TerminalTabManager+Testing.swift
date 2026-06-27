@@ -38,6 +38,8 @@ extension TerminalTabManager {
         lastTabOpenFailure = nil
         tmuxInstallRequestStore.allRequests.forEach { $0.task.cancel() }
         tmuxInstallRequestStore.removeAll()
+        tmuxLifecycleRequestStore.allRequests.forEach { $0.task.cancel() }
+        tmuxLifecycleRequestStore.removeAll()
         moshInstallRequestStore.allRequests.forEach { $0.task.cancel() }
         moshInstallRequestStore.removeAll()
         setLastMoshInstallFailure(nil)
@@ -71,6 +73,7 @@ extension TerminalTabManager {
         rejectedShellCleanupOperationForTesting = nil
         tmuxKillOperationForTesting = nil
         tmuxInstallOperationForTesting = nil
+        tmuxLifecycleOperationForTesting = nil
         moshInstallAndReconnectOperationForTesting = nil
         paneRetryOperationForTesting = nil
         paneHostRetrustOperationForTesting = nil
@@ -167,6 +170,12 @@ extension TerminalTabManager {
         _ operation: (@MainActor (UUID) async -> Void)?
     ) {
         tmuxInstallOperationForTesting = operation
+    }
+
+    func setTmuxLifecycleOperationForTesting(
+        _ operation: (@MainActor (UUID, UUID, UUID) async -> Void)?
+    ) {
+        tmuxLifecycleOperationForTesting = operation
     }
 
     func setMoshInstallAndReconnectOperationForTesting(

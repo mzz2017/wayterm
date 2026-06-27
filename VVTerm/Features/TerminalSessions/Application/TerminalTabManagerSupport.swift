@@ -25,6 +25,13 @@ enum TerminalTabManagerSupport {
         var onCompleted: [@MainActor () -> Void]
     }
 
+    struct TmuxLifecycleRequest {
+        let paneId: UUID
+        let serverId: UUID
+        let shellId: UUID
+        let task: Task<Void, Never>
+    }
+
     struct MoshInstallRequest {
         let paneId: UUID
         let task: Task<Void, Never>

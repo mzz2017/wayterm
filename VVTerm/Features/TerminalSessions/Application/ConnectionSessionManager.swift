@@ -10,6 +10,7 @@ final class ConnectionSessionManager: ObservableObject {
     typealias SessionCloseResult = ConnectionSessionManagerSupport.SessionCloseResult
     typealias ShellTeardownRequest = ConnectionSessionManagerSupport.ShellTeardownRequest
     typealias TmuxInstallRequest = ConnectionSessionManagerSupport.TmuxInstallRequest
+    typealias TmuxLifecycleRequest = ConnectionSessionManagerSupport.TmuxLifecycleRequest
     typealias MoshInstallRequest = ConnectionSessionManagerSupport.MoshInstallRequest
     typealias SessionRetryRequest = ConnectionSessionManagerSupport.SessionRetryRequest
     typealias ActiveConnectionOpenRequest = ConnectionSessionManagerSupport.ActiveConnectionOpenRequest
@@ -206,6 +207,8 @@ final class ConnectionSessionManager: ObservableObject {
     var pendingConnectionOpenRequestIDs: Set<UUID> { connectionOpenRequestStore.pendingRequestIDs }
     var tmuxInstallRequestStore = TerminalScopedRequestStore<TmuxInstallRequest>()
     var pendingTmuxInstallRequestIDs: Set<UUID> { tmuxInstallRequestStore.pendingRequestIDs }
+    var tmuxLifecycleRequestStore = TerminalScopedRequestStore<TmuxLifecycleRequest>()
+    var pendingTmuxLifecycleRequestIDs: Set<UUID> { tmuxLifecycleRequestStore.pendingRequestIDs }
     var moshInstallRequestStore = TerminalScopedRequestStore<MoshInstallRequest>()
     private(set) var lastMoshInstallFailure: Error?
     var pendingMoshInstallRequestIDs: Set<UUID> { moshInstallRequestStore.pendingRequestIDs }
@@ -309,6 +312,7 @@ final class ConnectionSessionManager: ObservableObject {
     var rejectedShellCleanupOperationForTesting: (@MainActor @Sendable () async -> Void)?
     var tmuxKillOperationForTesting: (@MainActor @Sendable () async -> Void)?
     var tmuxInstallOperationForTesting: (@MainActor (UUID) async -> Void)?
+    var tmuxLifecycleOperationForTesting: (@MainActor (UUID, UUID, UUID) async -> Void)?
     var moshInstallAndReconnectOperationForTesting: (@MainActor (ConnectionSession) async throws -> Void)?
     var sessionRetryOperationForTesting: (@MainActor (ConnectionSession, Server?) async -> TerminalReconnectRequestResult)?
     var activeConnectionOpenReconnectOperationForTesting: (@MainActor (ConnectionSession) async -> Bool)?
