@@ -167,13 +167,10 @@ struct TerminalContainerView: View {
     #endif
 
     private var reconnectBannerMessage: String? {
-        guard shouldUseInlineReconnectPresentation else { return nil }
-
-        if case .reconnecting(let attempt) = connectionState {
-            return String(format: String(localized: "Reconnecting (attempt %lld)…"), Int64(attempt))
-        }
-
-        return String(localized: "Reconnecting…")
+        TerminalContainerPresentationPolicy.reconnectBannerMessage(
+            shouldUseInlineReconnectPresentation: shouldUseInlineReconnectPresentation,
+            connectionState: connectionState
+        )
     }
 
     private var topBannerNotice: NoticeItem? {

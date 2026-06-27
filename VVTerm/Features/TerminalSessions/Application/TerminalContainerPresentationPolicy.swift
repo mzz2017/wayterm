@@ -41,6 +41,19 @@ enum TerminalContainerPresentationPolicy {
         hasEstablishedConnection && terminalAlreadyExists && connectionState.isConnecting
     }
 
+    static func reconnectBannerMessage(
+        shouldUseInlineReconnectPresentation: Bool,
+        connectionState: ConnectionState
+    ) -> String? {
+        guard shouldUseInlineReconnectPresentation else { return nil }
+
+        if case .reconnecting(let attempt) = connectionState {
+            return String(format: String(localized: "Reconnecting (attempt %lld)…"), Int64(attempt))
+        }
+
+        return String(localized: "Reconnecting…")
+    }
+
     static func isHostKeyVerificationFailure(connectionState: ConnectionState) -> Bool {
         guard case .failed(let error) = connectionState else { return false }
         return error == SSHError.hostKeyVerificationFailed.localizedDescription

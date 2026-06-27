@@ -36,6 +36,34 @@ struct TerminalViewSuperfileBoundaryTests {
             "TerminalPaneView.swift should define TerminalPaneView."
         )
 
+        // Split panes share terminal presentation rules with the single-session
+        // container instead of duplicating mosh, reconnect, and host-key policy.
+        for presentationPolicyCall in [
+            "TerminalContainerPresentationPolicy.fallbackBannerMessage",
+            "TerminalContainerPresentationPolicy.shouldPromptMoshInstall",
+            "TerminalContainerPresentationPolicy.shouldShowMoshDurabilityHint",
+            "TerminalContainerPresentationPolicy.shouldUseInlineReconnectPresentation",
+            "TerminalContainerPresentationPolicy.reconnectBannerMessage",
+            "TerminalContainerPresentationPolicy.isHostKeyVerificationFailure"
+        ] {
+            #expect(
+                paneViewSource.contains(presentationPolicyCall),
+                "TerminalPaneView.swift should delegate split-pane presentation rule \(presentationPolicyCall)."
+            )
+        }
+
+        for duplicatedRule in [
+            "return paneState?.moshFallbackReason == .serverMissing",
+            "return paneState?.tmuxStatus == .off",
+            "hasEstablishedConnection && terminalExists && connectionState.isConnecting",
+            "error.contains(\"Host key verification failed\")"
+        ] {
+            #expect(
+                !paneViewSource.contains(duplicatedRule),
+                "TerminalPaneView.swift should not duplicate TerminalContainerPresentationPolicy rule \(duplicatedRule)."
+            )
+        }
+
         for paneIntent in [
             "requestPaneRetry(",
             "requestPaneCredentialLoad(",

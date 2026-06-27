@@ -53,9 +53,7 @@ struct TerminalPaneView: View {
     }
 
     private var isHostKeyVerificationFailure: Bool {
-        guard case .failed(let error) = connectionState else { return false }
-        return error == SSHError.hostKeyVerificationFailed.localizedDescription
-            || error.contains("Host key verification failed")
+        TerminalContainerPresentationPolicy.isHostKeyVerificationFailure(connectionState: connectionState)
     }
 
     private var retrustHostConfirmationMessage: String {
@@ -82,24 +80,34 @@ struct TerminalPaneView: View {
     }
 
     private var fallbackBannerMessage: String? {
-        guard paneState?.activeTransport == .sshFallback else { return nil }
-        guard !dismissFallbackBanner else { return nil }
-        return paneState?.moshFallbackReason?.bannerMessage ?? String(localized: "Using SSH fallback for this session.")
+        TerminalContainerPresentationPolicy.fallbackBannerMessage(
+            activeTransport: paneState?.activeTransport ?? .ssh,
+            fallbackReason: paneState?.moshFallbackReason,
+            isDismissed: dismissFallbackBanner
+        )
     }
 
     private var shouldPromptMoshInstall: Bool {
-        guard server.connectionMode == .mosh else { return false }
-        guard paneState?.activeTransport == .sshFallback else { return false }
-        return paneState?.moshFallbackReason == .serverMissing
+        TerminalContainerPresentationPolicy.shouldPromptMoshInstall(
+            serverConnectionMode: server.connectionMode,
+            activeTransport: paneState?.activeTransport ?? .ssh,
+            fallbackReason: paneState?.moshFallbackReason
+        )
     }
 
     private var shouldShowMoshDurabilityHint: Bool {
-        guard server.connectionMode == .mosh else { return false }
-        return paneState?.tmuxStatus == .off
+        TerminalContainerPresentationPolicy.shouldShowMoshDurabilityHint(
+            serverConnectionMode: server.connectionMode,
+            tmuxStatus: paneState?.tmuxStatus ?? .unknown
+        )
     }
 
     private var shouldUseInlineReconnectPresentation: Bool {
-        hasEstablishedConnection && terminalExists && connectionState.isConnecting
+        TerminalContainerPresentationPolicy.shouldUseInlineReconnectPresentation(
+            hasEstablishedConnection: hasEstablishedConnection,
+            terminalAlreadyExists: terminalExists,
+            connectionState: connectionState
+        )
     }
 
     private var noticeSurfaceStyle: NoticeSurfaceStyle {
@@ -107,13 +115,10 @@ struct TerminalPaneView: View {
     }
 
     private var reconnectBannerMessage: String? {
-        guard shouldUseInlineReconnectPresentation else { return nil }
-
-        if case .reconnecting(let attempt) = connectionState {
-            return String(format: String(localized: "Reconnecting (attempt %lld)…"), Int64(attempt))
-        }
-
-        return String(localized: "Reconnecting…")
+        TerminalContainerPresentationPolicy.reconnectBannerMessage(
+            shouldUseInlineReconnectPresentation: shouldUseInlineReconnectPresentation,
+            connectionState: connectionState
+        )
     }
 
     private var topBannerNotice: NoticeItem? {

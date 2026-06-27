@@ -117,4 +117,30 @@ struct TerminalContainerPresentationPolicyTests {
         )
         #expect(!firstConnect)
     }
+
+    @Test
+    func reconnectBannerMessageOnlyAppearsForInlineReconnectPresentation() {
+        // Given inline reconnect presentation is active for a retry attempt.
+        let message = TerminalContainerPresentationPolicy.reconnectBannerMessage(
+            shouldUseInlineReconnectPresentation: true,
+            connectionState: .reconnecting(attempt: 3)
+        )
+
+        // Then the banner carries the retry attempt for both terminal surfaces.
+        #expect(message?.contains("attempt 3") == true)
+
+        // And non-attempt reconnect states use the generic reconnecting message.
+        let generic = TerminalContainerPresentationPolicy.reconnectBannerMessage(
+            shouldUseInlineReconnectPresentation: true,
+            connectionState: .connecting
+        )
+        #expect(generic == String(localized: "Reconnecting…"))
+
+        // But no reconnect banner is produced when inline presentation is not active.
+        let hidden = TerminalContainerPresentationPolicy.reconnectBannerMessage(
+            shouldUseInlineReconnectPresentation: false,
+            connectionState: .reconnecting(attempt: 3)
+        )
+        #expect(hidden == nil)
+    }
 }
