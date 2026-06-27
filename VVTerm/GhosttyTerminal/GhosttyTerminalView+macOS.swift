@@ -27,7 +27,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     private var ghosttyApp: ghostty_app_t?
     private weak var ghosttyAppWrapper: Ghostty.App?
     internal var surface: Ghostty.Surface?
-    private var surfaceReference: Ghostty.SurfaceReference?
+    private let surfaceRegistration = GhosttySurfaceRegistration()
     private let worktreePath: String
     private let paneId: String?
     private let initialCommand: String?
@@ -141,11 +141,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
             ghostty_surface_set_focus(cSurface, false)
         }
 
-        // Unregister surface from app wrapper synchronously
-        if let wrapper = ghosttyAppWrapper, let ref = surfaceReference {
-            wrapper.unregisterSurface(ref)
-        }
-        surfaceReference = nil
+        surfaceRegistration.unregister()
 
         // Detach immediately, then release native resources off the UI thread.
         surface?.free()
@@ -211,15 +207,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
         // Tracking areas are automatically cleaned up by NSView
         // Appearance observation is automatically invalidated
 
-        // Surface reference cleanup needs to happen on main actor
-        // We capture the values before the Task to avoid capturing self
-        let wrapper = self.ghosttyAppWrapper
-        let ref = self.surfaceReference
-        if let wrapper = wrapper, let ref = ref {
-            Task { @MainActor in
-                wrapper.unregisterSurface(ref)
-            }
-        }
+        surfaceRegistration.unregisterLaterFromDeinit()
     }
 
     // MARK: - Setup
@@ -258,10 +246,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
         imeHandler.updateSurface(self.surface)
         inputHandler.updateSurface(self.surface)
 
-        // Register surface with app wrapper for config update tracking
-        if let wrapper = ghosttyAppWrapper {
-            self.surfaceReference = wrapper.registerSurface(cSurface, terminalView: self)
-        }
+        surfaceRegistration.register(cSurface, appWrapper: ghosttyAppWrapper, terminalView: self)
     }
 
     /// Setup mouse tracking area for the entire view

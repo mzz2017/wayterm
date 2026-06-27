@@ -29,7 +29,7 @@ class GhosttyTerminalView: UIView {
     private var ghosttyApp: ghostty_app_t?
     private weak var ghosttyAppWrapper: Ghostty.App?
     internal var surface: Ghostty.Surface?
-    private var surfaceReference: Ghostty.SurfaceReference?
+    private let surfaceRegistration = GhosttySurfaceRegistration()
     private let worktreePath: String
     private let paneId: String?
     private let initialCommand: String?
@@ -395,13 +395,7 @@ class GhosttyTerminalView: UIView {
     }
 
     deinit {
-        let wrapper = self.ghosttyAppWrapper
-        let ref = self.surfaceReference
-        if let wrapper = wrapper, let ref = ref {
-            Task { @MainActor in
-                wrapper.unregisterSurface(ref)
-            }
-        }
+        surfaceRegistration.unregisterLaterFromDeinit()
     }
 
     /// Explicitly cleanup the terminal before removal from view hierarchy.
@@ -435,11 +429,7 @@ class GhosttyTerminalView: UIView {
             ghostty_surface_set_occlusion(cSurface, false)
         }
 
-        // Unregister surface from app wrapper synchronously
-        if let wrapper = ghosttyAppWrapper, let ref = surfaceReference {
-            wrapper.unregisterSurface(ref)
-        }
-        surfaceReference = nil
+        surfaceRegistration.unregister()
 
         // Detach immediately, then release native resources off the UI thread.
         surface?.free()
@@ -550,10 +540,7 @@ class GhosttyTerminalView: UIView {
         // Wrap in Swift Surface class
         self.surface = Ghostty.Surface(cSurface: cSurface, callbackContext: callbackContext)
 
-        // Register surface with app wrapper for config update tracking
-        if let wrapper = ghosttyAppWrapper {
-            self.surfaceReference = wrapper.registerSurface(cSurface, terminalView: self)
-        }
+        surfaceRegistration.register(cSurface, appWrapper: ghosttyAppWrapper, terminalView: self)
 
         Self.logger.info("Ghostty surface created, sublayers: \(self.layer.sublayers?.count ?? 0)")
     }
