@@ -1254,20 +1254,9 @@ class GhosttyTerminalView: UIView {
     }
 
     private func buildNativeSelectionSnapshot() -> TerminalNativeTextSnapshot {
-        guard let surface = surface?.unsafeCValue,
-              let metrics = selectionGridMetrics() else {
-            return .empty
-        }
-
-        let rows = (0..<metrics.rows).map { readNativeSelectionLine(surface: surface, row: $0, columns: metrics.cols) }
-        return TerminalNativeTextSnapshot(lines: rows, cellSize: metrics.cellSize, columns: metrics.cols)
-    }
-
-    private func readNativeSelectionLine(surface: ghostty_surface_t, row: Int, columns: Int) -> String {
-        GhosttyTerminalTextReader.readViewportLine(
-            surface: surface,
-            row: row,
-            columns: columns
+        selectionRuntime.nativeTextSnapshot(
+            surface: surface?.unsafeCValue,
+            metrics: selectionGridMetrics()
         )
     }
 

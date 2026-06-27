@@ -28,14 +28,19 @@ struct GhosttyIOSSelectionRuntimeBoundaryTests {
         // actions are available.
         #expect(viewSource.contains("private let selectionRuntime = TerminalIOSSelectionRuntime()"))
         #expect(viewSource.contains("selectionRuntime.hasGhosttySelection"))
+        #expect(viewSource.contains("selectionRuntime.nativeTextSnapshot"))
 
         // Then the main UIKit view does not directly own the Ghostty selection
         // C/FFI query.
         #expect(!viewSource.contains("ghostty_surface_has_selection"))
+        #expect(!viewSource.contains("private func readNativeSelectionLine"))
+        #expect(!viewSource.contains("GhosttyTerminalTextReader.readViewportLine"))
 
         #expect(runtimeSource.contains("final class TerminalIOSSelectionRuntime"))
         #expect(runtimeSource.contains("func hasGhosttySelection"))
+        #expect(runtimeSource.contains("func nativeTextSnapshot"))
         #expect(runtimeSource.contains("ghostty_surface_has_selection"))
+        #expect(runtimeSource.contains("GhosttyTerminalTextReader.readViewportLine"))
     }
 
     private func source(at url: URL) throws -> String {
