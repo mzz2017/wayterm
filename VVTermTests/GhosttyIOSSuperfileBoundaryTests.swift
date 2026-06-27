@@ -79,6 +79,42 @@ struct GhosttyIOSSuperfileBoundaryTests {
     }
 
     @Test
+    func interactionDelegatesLiveOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+        )
+        let interactionDelegateSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+InteractionDelegates+iOS.swift")
+        )
+
+        // Given the iOS Ghostty terminal main view source.
+        #expect(
+            !mainSource.contains("extension GhosttyTerminalView: UITextInteractionDelegate"),
+            "GhosttyTerminalView+iOS.swift should not own native text-selection delegate callbacks."
+        )
+        #expect(
+            !mainSource.contains("extension GhosttyTerminalView: UIFindInteractionDelegate"),
+            "GhosttyTerminalView+iOS.swift should not own native find delegate callbacks."
+        )
+        #expect(
+            !mainSource.contains("extension GhosttyTerminalView: UIGestureRecognizerDelegate"),
+            "GhosttyTerminalView+iOS.swift should not own gesture-recognizer delegate callbacks."
+        )
+        #expect(
+            !mainSource.contains("extension GhosttyTerminalView: UIEditMenuInteractionDelegate"),
+            "GhosttyTerminalView+iOS.swift should not own edit-menu delegate callbacks."
+        )
+
+        // Then UIKit interaction delegate routing has a dedicated extension file.
+        #expect(interactionDelegateSource.contains("extension GhosttyTerminalView: UITextInteractionDelegate"))
+        #expect(interactionDelegateSource.contains("extension GhosttyTerminalView: UIFindInteractionDelegate"))
+        #expect(interactionDelegateSource.contains("extension GhosttyTerminalView: UITextSearching"))
+        #expect(interactionDelegateSource.contains("extension GhosttyTerminalView: UIGestureRecognizerDelegate"))
+        #expect(interactionDelegateSource.contains("extension GhosttyTerminalView: UIEditMenuInteractionDelegate"))
+    }
+
+    @Test
     func terminalKeyModelLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(

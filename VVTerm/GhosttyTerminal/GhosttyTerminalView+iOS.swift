@@ -95,31 +95,31 @@ class GhosttyTerminalView: UIView {
     private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "app.vivy.vvterm", category: "GhosttyTerminal")
 
     private var isSelecting = false
-    private var isNativeHostScrollContainerEnabled = false
+    var isNativeHostScrollContainerEnabled = false
     private let scrollRuntime = TerminalIOSScrollRuntime()
     private let zoomRuntime = TerminalIOSZoomRuntime()
-    private var nativeSelectionSnapshot = TerminalNativeTextSnapshot.empty
-    private var nativeSelectedRange: NSRange?
+    var nativeSelectionSnapshot = TerminalNativeTextSnapshot.empty
+    var nativeSelectedRange: NSRange?
     private weak var nativeTextInputDelegate: UITextInputDelegate?
     private lazy var nativeSelectionTokenizer = UITextInputStringTokenizer(textInput: self)
     private var nativeSelectionAffinity: UITextStorageDirection = .forward
-    private var nativeSelectionInteractionActive = false
-    private var prefersNativeSelectionFirstResponder = false
-    private var shouldRestoreIMEProxyFocusAfterNativeSelection = false
+    var nativeSelectionInteractionActive = false
+    var prefersNativeSelectionFirstResponder = false
+    var shouldRestoreIMEProxyFocusAfterNativeSelection = false
     private var nativeTextInteraction: UITextInteraction?
-    private var nativeFindInteraction: UIFindInteraction?
-    private let findRuntime = TerminalIOSFindRuntime()
-    private let nativeFindDocumentIdentifier = "terminal"
+    var nativeFindInteraction: UIFindInteraction?
+    let findRuntime = TerminalIOSFindRuntime()
+    let nativeFindDocumentIdentifier = "terminal"
     private let nativeFindOverlay = TerminalNativeFindOverlayView()
-    private var nativeFindDecorations: [TerminalNativeFindDecoration] = [] {
+    var nativeFindDecorations: [TerminalNativeFindDecoration] = [] {
         didSet {
             updateNativeFindOverlay()
         }
     }
-    private let touchSelectionState = TerminalIOSTouchSelectionState()
+    let touchSelectionState = TerminalIOSTouchSelectionState()
     private let touchSelectionOverlay = TerminalTouchSelectionOverlayView()
     private let touchSelectionLoupe = TerminalTouchSelectionLoupeView()
-    private lazy var selectionRecognizer: UILongPressGestureRecognizer = {
+    lazy var selectionRecognizer: UILongPressGestureRecognizer = {
         let recognizer = UILongPressGestureRecognizer(
             target: self,
             action: #selector(handleSelectionPress(_:))
@@ -148,7 +148,7 @@ class GhosttyTerminalView: UIView {
         return recognizer
     }()
 
-    private lazy var scrollRecognizer: UIPanGestureRecognizer = {
+    lazy var scrollRecognizer: UIPanGestureRecognizer = {
         let recognizer = UIPanGestureRecognizer(
             target: self,
             action: #selector(handlePanGesture(_:))
@@ -164,7 +164,7 @@ class GhosttyTerminalView: UIView {
         }
         return recognizer
     }()
-    private lazy var pinchRecognizer: UIPinchGestureRecognizer = {
+    lazy var pinchRecognizer: UIPinchGestureRecognizer = {
         let recognizer = UIPinchGestureRecognizer(
             target: self,
             action: #selector(handlePinchGesture(_:))
@@ -766,7 +766,7 @@ class GhosttyTerminalView: UIView {
         return true
     }
 
-    private var isTextInputSessionEligible: Bool {
+    var isTextInputSessionEligible: Bool {
         guard !isShuttingDown else { return false }
         guard window != nil, !isHidden, alpha > 0.01 else { return false }
         if let activationState = window?.windowScene?.activationState {
@@ -898,7 +898,7 @@ class GhosttyTerminalView: UIView {
         }
     }
 
-    private func notifyFindNavigatorVisibilityChange() {
+    func notifyFindNavigatorVisibilityChange() {
         onFindNavigatorVisibilityChange?(isFindNavigatorVisible)
     }
 
@@ -1173,7 +1173,7 @@ class GhosttyTerminalView: UIView {
         )
     }
 
-    private var canHandlePinchZoom: Bool {
+    var canHandlePinchZoom: Bool {
         if usesNativeTouchSelection, nativeSelectionInteractionActive || nativeSelectedRange != nil {
             return false
         }
@@ -1216,7 +1216,7 @@ class GhosttyTerminalView: UIView {
         nativeTextInputDelegate?.selectionDidChange(self)
     }
 
-    private func refreshNativeSelectionSnapshot(resetSelection: Bool = false) {
+    func refreshNativeSelectionSnapshot(resetSelection: Bool = false) {
         guard usesNativeTouchSelection else { return }
 
         nativeSelectionSnapshot = buildNativeSelectionSnapshot()
@@ -1301,7 +1301,7 @@ class GhosttyTerminalView: UIView {
         surfaceLifecycleRuntime.setFocus(false, surface: surface)
     }
 
-    private func endFindNavigatorLifecycle() -> Bool {
+    func endFindNavigatorLifecycle() -> Bool {
         let shouldRestoreTerminalFocus = findRuntime.endNavigatorLifecycle()
         if !shouldRestoreTerminalFocus, super.isFirstResponder {
             _ = super.resignFirstResponder()
@@ -1338,7 +1338,7 @@ class GhosttyTerminalView: UIView {
 
     @MainActor
     @discardableResult
-    private func performGhosttyFindQuery(
+    func performGhosttyFindQuery(
         _ query: String,
         keepNavigatorVisibleOnSearchEnd: Bool = false
     ) -> Bool {
@@ -1365,14 +1365,14 @@ class GhosttyTerminalView: UIView {
     }
 
     @MainActor
-    private func navigateGhosttyFind(_ direction: UITextStorageDirection) {
+    func navigateGhosttyFind(_ direction: UITextStorageDirection) {
         guard let surface else { return }
         let action = direction == .backward ? "navigate_search:previous" : "navigate_search:next"
         _ = surface.perform(action: action)
     }
 
     @MainActor
-    private func endGhosttyFindSearchForNavigatorDismissal() {
+    func endGhosttyFindSearchForNavigatorDismissal() {
         guard let surface else { return }
         findRuntime.resetReportedResults()
         findRuntime.suppressNextGhosttySearchEnd()
@@ -1382,7 +1382,7 @@ class GhosttyTerminalView: UIView {
     }
 
     @MainActor
-    private func invalidateGhosttyFindWithoutClosingNavigator() {
+    func invalidateGhosttyFindWithoutClosingNavigator() {
         performGhosttyFindQuery("", keepNavigatorVisibleOnSearchEnd: true)
     }
 
@@ -1437,11 +1437,11 @@ class GhosttyTerminalView: UIView {
         }
     }
 
-    private var usesNativeTouchSelection: Bool {
+    var usesNativeTouchSelection: Bool {
         UIDevice.current.userInterfaceIdiom == .phone
     }
 
-    private var usesAppOwnedTouchSelection: Bool {
+    var usesAppOwnedTouchSelection: Bool {
         UIDevice.current.userInterfaceIdiom == .phone && !usesNativeTouchSelection
     }
 
@@ -1484,7 +1484,7 @@ class GhosttyTerminalView: UIView {
         )
     }
 
-    private func isPointOnTouchSelectionHandle(_ point: CGPoint) -> Bool {
+    func isPointOnTouchSelectionHandle(_ point: CGPoint) -> Bool {
         guard usesAppOwnedTouchSelection, touchSelectionState.hasSelection else { return false }
 
         let startHandlePoint = touchSelectionOverlay.convert(point, from: self)
@@ -1565,7 +1565,7 @@ class GhosttyTerminalView: UIView {
         showEditMenu(at: menuPoint)
     }
 
-    private func currentSelectionText() -> String? {
+    func currentSelectionText() -> String? {
         if let nativeSelectionText = selectedNativeSelectionText() {
             return nativeSelectionText
         }
@@ -2563,238 +2563,6 @@ class GhosttyTerminalView: UIView {
         )
     }
 
-}
-
-// MARK: - Native Text Selection
-
-extension GhosttyTerminalView: UITextInteractionDelegate {
-    func interactionShouldBegin(_ interaction: UITextInteraction, at point: CGPoint) -> Bool {
-        guard usesNativeTouchSelection else { return false }
-        prefersNativeSelectionFirstResponder = true
-        shouldRestoreIMEProxyFocusAfterNativeSelection = imeProxyTextView.isFirstResponder
-        refreshNativeSelectionSnapshot()
-        return nativeSelectionSnapshot.length > 0
-    }
-
-    func interactionWillBegin(_ interaction: UITextInteraction) {
-        shouldRestoreIMEProxyFocusAfterNativeSelection = shouldRestoreIMEProxyFocusAfterNativeSelection
-            || imeProxyTextView.isFirstResponder
-        nativeSelectionInteractionActive = true
-        if !imeProxyTextView.isFirstResponder {
-            _ = becomeFirstResponder()
-        }
-        refreshNativeSelectionSnapshot()
-    }
-
-    func interactionDidEnd(_ interaction: UITextInteraction) {
-        nativeSelectionInteractionActive = false
-        if nativeSelectedRange == nil {
-            prefersNativeSelectionFirstResponder = false
-        }
-        refreshNativeSelectionSnapshot()
-        guard shouldRestoreIMEProxyFocusAfterNativeSelection else { return }
-        shouldRestoreIMEProxyFocusAfterNativeSelection = false
-        DispatchQueue.main.async { [weak self] in
-            guard let self,
-                  !self.isShuttingDown,
-                  self.isTextInputSessionEligible,
-                  !self.isFindNavigatorActive else {
-                return
-            }
-            _ = self.imeProxyTextView.becomeFirstResponder()
-        }
-    }
-}
-
-@available(iOS 16.0, *)
-extension GhosttyTerminalView: UIFindInteractionDelegate {
-    func findInteraction(_ interaction: UIFindInteraction, sessionFor view: UIView) -> UIFindSession? {
-        guard view === self, usesNativeTouchSelection else { return nil }
-        refreshNativeSelectionSnapshot()
-        return findRuntime.makeSession(
-            onSearch: { [weak self] query, _ in
-                guard let self else { return }
-                self.performGhosttyFindQuery(
-                    query,
-                    keepNavigatorVisibleOnSearchEnd: query.isEmpty && self.isFindNavigatorActive
-                )
-            },
-            onNavigate: { [weak self] direction in
-                self?.navigateGhosttyFind(direction)
-            },
-            onInvalidate: { [weak self] in
-                self?.invalidateGhosttyFindWithoutClosingNavigator()
-            },
-            updateResultCount: { [weak self] in
-                self?.nativeFindInteraction?.updateResultCount()
-            }
-        )
-    }
-
-    func findInteraction(_ interaction: UIFindInteraction, didBegin session: UIFindSession) {
-        if !findRuntime.isNavigatorLifecycleActive {
-            findRuntime.beginNavigatorLifecycle(restoreTerminalFocus: imeProxyTextView.isFirstResponder)
-        }
-        refreshNativeSelectionSnapshot()
-        findRuntime.applyStoredGhosttyFindResultsToNativeSession { [weak self] in
-            self?.nativeFindInteraction?.updateResultCount()
-        }
-        notifyFindNavigatorVisibilityChange()
-    }
-
-    func findInteraction(_ interaction: UIFindInteraction, didEnd session: UIFindSession) {
-        let shouldRestoreTerminalFocus = endFindNavigatorLifecycle()
-        nativeFindDecorations.removeAll()
-        findRuntime.clearSession { [weak self] in
-            self?.nativeFindInteraction?.updateResultCount()
-        }
-        notifyFindNavigatorVisibilityChange()
-        endGhosttyFindSearchForNavigatorDismissal()
-        if shouldRestoreTerminalFocus {
-            DispatchQueue.main.async { [weak self] in
-                guard let self, !self.isFindNavigatorActive else { return }
-                self.requestKeyboardFocus(for: .explicitUserRequest)
-            }
-        }
-    }
-}
-
-@available(iOS 16.0, *)
-extension GhosttyTerminalView: UITextSearching {
-    typealias DocumentIdentifier = String
-
-    func compare(_ foundRange: UITextRange, toRange: UITextRange, document: String?) -> ComparisonResult {
-        guard let lhs = nativeSelectionSnapshot.nativeRange(from: foundRange),
-              let rhs = nativeSelectionSnapshot.nativeRange(from: toRange) else {
-            return .orderedSame
-        }
-        if lhs.location < rhs.location { return .orderedAscending }
-        if lhs.location > rhs.location { return .orderedDescending }
-        if lhs.length < rhs.length { return .orderedAscending }
-        if lhs.length > rhs.length { return .orderedDescending }
-        return .orderedSame
-    }
-
-    func performTextSearch(queryString: String, options: UITextSearchOptions, resultAggregator: UITextSearchAggregator<String>) {
-        refreshNativeSelectionSnapshot()
-        nativeFindDecorations.removeAll()
-
-        let ranges = nativeSelectionSnapshot.searchRanges(query: queryString, options: options)
-        for range in ranges {
-            guard let textRange = nativeSelectionSnapshot.nativeRange(range) else { continue }
-            resultAggregator.foundRange(textRange, searchString: queryString, document: nativeFindDocumentIdentifier)
-        }
-        resultAggregator.finishedSearching()
-    }
-
-    func decorate(foundTextRange: UITextRange, document: String?, usingStyle style: UITextSearchFoundTextStyle) {
-        guard let range = nativeSelectionSnapshot.nativeRange(from: foundTextRange) else { return }
-        nativeFindDecorations.removeAll { NSEqualRanges($0.range, range) }
-        nativeFindDecorations.append(TerminalNativeFindDecoration(range: range, style: style))
-    }
-
-    func clearAllDecoratedFoundText() {
-        nativeFindDecorations.removeAll()
-    }
-
-    func willHighlight(foundTextRange: UITextRange, document: String?) {
-        requestRender()
-    }
-
-    func scrollRangeToVisible(_ range: UITextRange, inDocument document: String?) {
-        requestRender()
-    }
-
-    var selectedTextSearchDocument: String? {
-        nativeFindDocumentIdentifier
-    }
-
-    func compare(document: String, toDocument other: String) -> ComparisonResult {
-        document.compare(other)
-    }
-}
-
-// MARK: - Gesture Recognizer Delegate
-
-extension GhosttyTerminalView: UIGestureRecognizerDelegate {
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        if gestureRecognizer == pinchRecognizer {
-            return canHandlePinchZoom
-        }
-        if gestureRecognizer == scrollRecognizer {
-            if isNativeHostScrollContainerEnabled,
-               currentScrollOwner() == .hostScrollback {
-                return false
-            }
-            if usesNativeTouchSelection, nativeSelectionInteractionActive || nativeSelectedRange != nil {
-                return false
-            }
-            if touchSelectionState.hasSelection,
-               isPointOnTouchSelectionHandle(touch.location(in: self)) {
-                return false
-            }
-        }
-        return true
-    }
-
-    func gestureRecognizer(
-        _ gestureRecognizer: UIGestureRecognizer,
-        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
-    ) -> Bool {
-        if usesNativeTouchSelection,
-           nativeSelectionInteractionActive || nativeSelectedRange != nil,
-           gestureRecognizer == scrollRecognizer || otherGestureRecognizer == scrollRecognizer {
-            return false
-        }
-        if gestureRecognizer == pinchRecognizer || otherGestureRecognizer == pinchRecognizer {
-            return false
-        }
-        // Allow pan and long press to recognize simultaneously
-        // The handlers check isSelecting/isScrolling to avoid conflicts
-        return true
-    }
-
-    func gestureRecognizer(
-        _ gestureRecognizer: UIGestureRecognizer,
-        shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
-    ) -> Bool {
-        // Long press should win over pan when held long enough
-        if gestureRecognizer == scrollRecognizer && otherGestureRecognizer == selectionRecognizer {
-            // Only require failure if long press is about to recognize
-            return otherGestureRecognizer.state == .began
-        }
-        return false
-    }
-}
-
-// MARK: - Edit Menu Interaction Delegate
-
-extension GhosttyTerminalView: UIEditMenuInteractionDelegate {
-    func editMenuInteraction(
-        _ interaction: UIEditMenuInteraction,
-        menuFor configuration: UIEditMenuConfiguration,
-        suggestedActions: [UIMenuElement]
-    ) -> UIMenu? {
-        var actions: [UIMenuElement] = []
-
-        if let selectionText = currentSelectionText(), !selectionText.isEmpty {
-            actions.append(UIAction(title: String(localized: "Copy"), image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
-                self?.copy(nil)
-            })
-        }
-
-        actions.append(UIAction(title: String(localized: "Paste"), image: UIImage(systemName: "doc.on.clipboard")) { [weak self] _ in
-            self?.paste(nil)
-        })
-
-        if usesAppOwnedTouchSelection {
-            actions.append(UIAction(title: String(localized: "Select All"), image: UIImage(systemName: "selection.pin.in.out")) { [weak self] _ in
-                self?.selectAll(nil)
-            })
-        }
-
-        return UIMenu(children: actions)
-    }
 }
 
 // MARK: - Software Keyboard (UIKeyInput)
