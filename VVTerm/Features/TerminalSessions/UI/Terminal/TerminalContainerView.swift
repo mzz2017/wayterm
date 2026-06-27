@@ -106,28 +106,23 @@ struct TerminalContainerView: View {
     }
 
     private var fallbackBannerMessage: String? {
-        guard session.activeTransport == .sshFallback else { return nil }
-        guard !dismissFallbackBanner else { return nil }
-        return session.moshFallbackReason?.bannerMessage ?? String(localized: "Using SSH fallback for this session.")
+        TerminalContainerPresentationPolicy.fallbackBannerMessage(activeTransport: session.activeTransport, fallbackReason: session.moshFallbackReason, isDismissed: dismissFallbackBanner)
     }
 
     private var shouldPromptMoshInstall: Bool {
-        guard server?.connectionMode == .mosh else { return false }
-        guard session.activeTransport == .sshFallback else { return false }
-        return session.moshFallbackReason == .serverMissing
+        TerminalContainerPresentationPolicy.shouldPromptMoshInstall(serverConnectionMode: server?.connectionMode, activeTransport: session.activeTransport, fallbackReason: session.moshFallbackReason)
     }
 
     private var shouldShowMoshDurabilityHint: Bool {
-        guard server?.connectionMode == .mosh else { return false }
-        return session.tmuxStatus == .off
+        TerminalContainerPresentationPolicy.shouldShowMoshDurabilityHint(serverConnectionMode: server?.connectionMode, tmuxStatus: session.tmuxStatus)
     }
 
     private var shouldAllowTerminalInteraction: Bool {
-        session.connectionState.isConnected
+        TerminalContainerPresentationPolicy.shouldAllowTerminalInteraction(connectionState: session.connectionState)
     }
 
     private var shouldUseInlineReconnectPresentation: Bool {
-        hasEstablishedConnection && terminalAlreadyExists && session.connectionState.isConnecting
+        TerminalContainerPresentationPolicy.shouldUseInlineReconnectPresentation(hasEstablishedConnection: hasEstablishedConnection, terminalAlreadyExists: terminalAlreadyExists, connectionState: session.connectionState)
     }
 
     private var noticeSurfaceStyle: NoticeSurfaceStyle {
@@ -139,9 +134,7 @@ struct TerminalContainerView: View {
     }
 
     private var isHostKeyVerificationFailure: Bool {
-        guard case .failed(let error) = connectionState else { return false }
-        return error == SSHError.hostKeyVerificationFailed.localizedDescription
-            || error.contains("Host key verification failed")
+        TerminalContainerPresentationPolicy.isHostKeyVerificationFailure(connectionState: connectionState)
     }
 
     private var retrustHostConfirmationMessage: String {
@@ -156,31 +149,15 @@ struct TerminalContainerView: View {
     }
 
     private var shouldAttemptConnection: Bool {
-        terminalAlreadyExists || connectionState.isConnected || connectionState.isConnecting
-    }
-
-    private var isFailedState: Bool {
-        credentialLoadErrorMessage != nil || {
-            if case .failed = connectionState { return true }
-            return false
-        }()
-    }
-
-    private var hasServerAndCredentials: Bool {
-        server != nil && credentials != nil
+        TerminalContainerPresentationPolicy.shouldAttemptConnection(terminalAlreadyExists: terminalAlreadyExists, connectionState: connectionState)
     }
 
     private var shouldShowInitializing: Bool {
-        credentialLoadErrorMessage == nil
-            &&
-        !terminalAlreadyExists
-            && !isFailedState
-            && connectionState != .disconnected
-            && (ghosttyApp.readiness != .ready || !isReady)
+        TerminalContainerPresentationPolicy.shouldShowInitializing(credentialLoadErrorMessage: credentialLoadErrorMessage, terminalAlreadyExists: terminalAlreadyExists, connectionState: connectionState, isGhosttyReady: ghosttyApp.readiness == .ready, isTerminalReady: isReady)
     }
 
     private var shouldShowInitializingOverlay: Bool {
-        shouldShowInitializing && hasServerAndCredentials
+        TerminalContainerPresentationPolicy.shouldShowInitializingOverlay(shouldShowInitializing: shouldShowInitializing, hasServer: server != nil, hasCredentials: credentials != nil)
     }
 
     #if os(macOS) || os(iOS)
