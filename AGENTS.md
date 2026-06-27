@@ -215,6 +215,15 @@ Output: `Vendor/libssh2/{macos,ios,ios-simulator}/`
 
 ## Testing Notes
 
+### Test Quality
+
+- Prefer behavior and boundary tests that protect real invariants over tests that only assert file shape, line count, symbol names, or incidental implementation layout.
+- Structure-only tests are allowed only when they guard an explicit architecture rule from this file. Keep them narrow, documented, cheap to update, and named as boundary tests.
+- Do not add tests whose only value is making a refactor appear covered. Each new test should make clear what behavior, lifecycle ordering, ownership boundary, or architectural invariant it protects.
+- When refactoring, update or remove brittle tests if they no longer protect a meaningful invariant; do not preserve them as compatibility debt.
+- Async and lifecycle tests should assert ordering, awaited cleanup, cancellation, retry, or resource ownership behavior instead of merely checking that a method or callback exists.
+- If a test primarily enforces architecture, keep assertions close to the rule being protected and avoid coupling to unrelated source layout.
+
 ### iOS CLI tests
 - For full iOS CLI verification, prefer the repo wrapper. It serializes testing, disables Xcode's debug dylib layout, preboots the target simulator, and retries only simulator preflight launch failures:
 
