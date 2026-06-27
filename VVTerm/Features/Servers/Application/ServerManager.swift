@@ -126,7 +126,7 @@ final class ServerManager: ObservableObject {
 
     let cloudKit = CloudKitManager.shared
     let syncCoordinator = CloudKitSyncCoordinator.shared
-    let deletionTeardown: ServerDeletionTeardown
+    private(set) var deletionTeardown: ServerDeletionTeardown
     let deleteCredentials: ServerCredentialDeletion
     private let storeCredentials: ServerCredentialStore
     let startupLoadAction: ServerStartupLoadAction
@@ -260,6 +260,10 @@ final class ServerManager: ObservableObject {
 
         saveLocalData()
         logger.info("Seeded App Review demo data (\(self.servers.count) servers)")
+    }
+
+    func configureDeletionTeardown(_ deletionTeardown: @escaping ServerDeletionTeardown) {
+        self.deletionTeardown = deletionTeardown
     }
 
     // MARK: - Server CRUD

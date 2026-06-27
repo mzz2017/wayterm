@@ -224,6 +224,9 @@ struct ServerManagerSuperfileBoundaryTests {
         let credentialSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Servers/Infrastructure/ServerManager+CredentialLifecycle.swift")
         )
+        let appSource = try source(
+            at: root.appendingPathComponent("VVTerm/App/VVTermApp.swift")
+        )
 
         // Given default Keychain and teardown adapters are credential/deletion
         // lifecycle infrastructure glue, not core server list orchestration.
@@ -232,8 +235,27 @@ struct ServerManagerSuperfileBoundaryTests {
         #expect(credentialSource.contains("func defaultCredentialDeletion"))
         #expect(credentialSource.contains("func defaultCredentialStore"))
         #expect(credentialSource.contains("KeychainManager.shared"))
-        #expect(credentialSource.contains("ConnectionSessionManager.shared.disconnectServerAndWait"))
-        #expect(credentialSource.contains("TerminalTabManager.shared.disconnectServerAndWait"))
+        #expect(credentialSource.contains("static func defaultDeletionTeardown"))
+        #expect(
+            !credentialSource.contains("ConnectionSessionManager.shared"),
+            "Servers credential lifecycle defaults should not directly depend on TerminalSessions singletons."
+        )
+        #expect(
+            !credentialSource.contains("TerminalTabManager.shared"),
+            "Servers credential lifecycle defaults should not directly depend on TerminalSessions singletons."
+        )
+        #expect(
+            appSource.contains("ServerManager.shared.configureDeletionTeardown"),
+            "App composition should inject the cross-feature server deletion teardown dependency."
+        )
+        #expect(
+            appSource.contains("ConnectionSessionManager.shared.disconnectServerAndWait"),
+            "App composition should keep terminal session teardown wired for server deletion."
+        )
+        #expect(
+            appSource.contains("TerminalTabManager.shared.disconnectServerAndWait"),
+            "App composition should keep terminal tab teardown wired for server deletion."
+        )
 
         // Then the ServerManager superfile should not directly own default
         // credential persistence or deletion teardown adapters.

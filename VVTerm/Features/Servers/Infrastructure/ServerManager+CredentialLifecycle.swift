@@ -1,10 +1,7 @@
 import Foundation
 
 extension ServerManager {
-    static func defaultDeletionTeardown(for server: Server) async {
-        await ConnectionSessionManager.shared.disconnectServerAndWait(server.id)
-        await TerminalTabManager.shared.disconnectServerAndWait(server.id)
-    }
+    static func defaultDeletionTeardown(for _: Server) async {}
 
     static func defaultCredentialDeletion(for serverId: UUID) async throws {
         try KeychainManager.shared.deleteCredentials(for: serverId)
