@@ -10,12 +10,12 @@ import SwiftUI
 
 struct iOSServerRow: View {
     let server: Server
+    @ObservedObject var serverManager: ServerManager
     let onTap: () -> Void
     let onEdit: () -> Void
     var onMove: (() -> Void)? = nil
     var onLockedTap: (() -> Void)? = nil
 
-    @ObservedObject private var serverManager = ServerManager.shared
     @Environment(\.privacyModeEnabled) private var privacyModeEnabled
 
     private var isLocked: Bool {

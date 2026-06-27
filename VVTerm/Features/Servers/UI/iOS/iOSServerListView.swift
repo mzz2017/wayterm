@@ -314,6 +314,7 @@ struct iOSServerListView: View {
                 ForEach(filteredServers) { server in
                     iOSServerRow(
                         server: server,
+                        serverManager: serverManager,
                         onTap: { onServerSelected(server) },
                         onEdit: { serverToEdit = server },
                         onMove: { serverToMove = server },

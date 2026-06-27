@@ -43,6 +43,37 @@ struct ServerDeletionIntentBoundaryTests {
         )
     }
 
+    @Test
+    func iosServerRowsUseInjectedServerManagerForDeletionIntent() throws {
+        // Given iOS server rows own the destructive delete control surface.
+        let root = try sourceRoot()
+        let rowSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/iOS/iOSServerComponents.swift")
+        )
+        let listSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/iOS/iOSServerListView.swift")
+        )
+
+        // Then leaf row UI must use the app-owned ServerManager injected by the
+        // list boundary instead of resolving shared state directly.
+        #expect(
+            rowSource.contains("@ObservedObject var serverManager: ServerManager"),
+            "iOSServerRow should receive the Servers application manager from the list boundary."
+        )
+        #expect(
+            listSource.contains("serverManager: serverManager"),
+            "iOSServerListView should inject its app-owned ServerManager into iOSServerRow."
+        )
+        #expect(
+            !rowSource.contains("ServerManager.shared"),
+            "iOSServerRow should not resolve ServerManager.shared from leaf row UI."
+        )
+        #expect(
+            rowSource.contains("serverManager.requestServerDeletion(server)"),
+            "iOSServerRow should keep destructive delete actions routed through ServerManager's request API."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
