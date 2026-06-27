@@ -30,6 +30,8 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(viewSource.contains("inputRuntime.handleToolbarKey"))
         #expect(viewSource.contains("inputRuntime.handleToolbarCustomAction"))
         #expect(viewSource.contains("inputRuntime.ghosttyKeyMapping"))
+        #expect(viewSource.contains("inputRuntime.terminalKey"))
+        #expect(viewSource.contains("inputRuntime.ghosttyModifiers"))
 
         // Then the main UIKit view does not directly own those C/FFI calls,
         // visible preedit state, or the Ghostty action conversion helper.
@@ -41,6 +43,8 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(!viewSource.contains("private func sendToolbarControlShortcut"))
         #expect(!viewSource.contains("private func handleToolbarCustomAction"))
         #expect(!viewSource.contains("private func ghosttyKeyMapping"))
+        #expect(!viewSource.contains("private func terminalKey(forKeyCommandInput"))
+        #expect(!viewSource.contains("private func imeProxyGhosttyModifiers"))
         #expect(!viewSource.contains("private var renderedIMEPreeditText"))
         #expect(!viewSource.contains("private func shouldDisplayVisiblePreedit"))
         #expect(!viewSource.contains("private var allowIMEProxyProgrammaticResign"))
@@ -60,6 +64,8 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(runtimeSource.contains("func handleToolbarKey"))
         #expect(runtimeSource.contains("func handleToolbarCustomAction"))
         #expect(runtimeSource.contains("func ghosttyKeyMapping"))
+        #expect(runtimeSource.contains("func terminalKey(forKeyCommandInput"))
+        #expect(runtimeSource.contains("func ghosttyModifiers"))
         #expect(runtimeSource.contains("private func sendToolbarKey"))
         #expect(runtimeSource.contains("private func sendToolbarGhosttyKey"))
         #expect(runtimeSource.contains("private func sendToolbarControlShortcut"))

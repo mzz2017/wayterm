@@ -118,6 +118,40 @@ final class TerminalIOSInputRuntime {
         return nil
     }
 
+    func terminalKey(forKeyCommandInput input: String) -> TerminalKey? {
+        switch input {
+        case UIKeyCommand.inputEscape:
+            return .escape
+        case UIKeyCommand.inputUpArrow:
+            return .arrowUp
+        case UIKeyCommand.inputDownArrow:
+            return .arrowDown
+        case UIKeyCommand.inputLeftArrow:
+            return .arrowLeft
+        case UIKeyCommand.inputRightArrow:
+            return .arrowRight
+        case UIKeyCommand.inputHome:
+            return .home
+        case UIKeyCommand.inputEnd:
+            return .end
+        case UIKeyCommand.inputPageUp:
+            return .pageUp
+        case UIKeyCommand.inputPageDown:
+            return .pageDown
+        default:
+            return nil
+        }
+    }
+
+    func ghosttyModifiers(from mods: (ctrl: Bool, alt: Bool, command: Bool, shift: Bool)) -> Ghostty.Input.Mods {
+        var ghostMods: Ghostty.Input.Mods = []
+        if mods.ctrl { ghostMods.insert(.ctrl) }
+        if mods.alt { ghostMods.insert(.alt) }
+        if mods.command { ghostMods.insert(.super) }
+        if mods.shift { ghostMods.insert(.shift) }
+        return ghostMods
+    }
+
     @discardableResult
     func syncVisiblePreedit(
         _ text: String?,
