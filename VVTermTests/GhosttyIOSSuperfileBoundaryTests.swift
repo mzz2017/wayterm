@@ -254,6 +254,40 @@ struct GhosttyIOSSuperfileBoundaryTests {
     }
 
     @Test
+    func findNavigatorRoutingLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
+        )
+        let findSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Find/GhosttyTerminalView+FindNavigator+iOS.swift")
+        )
+
+        #expect(
+            !mainSource.contains("func setupNativeFindInteraction"),
+            "GhosttyTerminalView+iOS.swift should not own native find interaction setup."
+        )
+        #expect(
+            !mainSource.contains("func presentFindNavigator"),
+            "GhosttyTerminalView+iOS.swift should not own find navigator presentation."
+        )
+        #expect(
+            !mainSource.contains("func performGhosttyFindQuery"),
+            "GhosttyTerminalView+iOS.swift should not own Ghostty find action routing."
+        )
+        #expect(
+            !mainSource.contains("func handleGhosttySearchStarted"),
+            "GhosttyTerminalView+iOS.swift should not own Ghostty search lifecycle callbacks."
+        )
+
+        #expect(findSource.contains("func setupNativeFindInteraction"))
+        #expect(findSource.contains("func presentFindNavigator"))
+        #expect(findSource.contains("func performGhosttyFindQuery"))
+        #expect(findSource.contains("findRuntime.beginNavigatorLifecycle"))
+        #expect(findSource.contains("nativeFindInteraction?.updateResultCount"))
+    }
+
+    @Test
     func interactionDelegatesLiveOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
