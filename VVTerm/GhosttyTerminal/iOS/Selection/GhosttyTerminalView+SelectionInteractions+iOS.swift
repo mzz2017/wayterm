@@ -325,7 +325,7 @@ extension GhosttyTerminalView {
     
     /// Double-tap to select word
     @objc func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {
-        guard let surface = surface else { return }
+        guard surfaceOwner.hasLiveSurface else { return }
         let location = recognizer.location(in: self)
         let pos = ghosttyPoint(location)
     
@@ -333,11 +333,11 @@ extension GhosttyTerminalView {
         requestKeyboardFocus(for: .selectionGesture)
     
         // Double-click to select word (no modifiers)
-        surface.sendMousePos(.init(x: pos.x, y: pos.y, mods: []))
-        surface.sendMouseButton(.init(action: .press, button: .left, mods: []))
-        surface.sendMouseButton(.init(action: .release, button: .left, mods: []))
-        surface.sendMouseButton(.init(action: .press, button: .left, mods: []))
-        surface.sendMouseButton(.init(action: .release, button: .left, mods: []))
+        surfaceOwner.sendMousePosition(pos)
+        surfaceOwner.sendMouseButton(.init(action: .press, button: .left, mods: []))
+        surfaceOwner.sendMouseButton(.init(action: .release, button: .left, mods: []))
+        surfaceOwner.sendMouseButton(.init(action: .press, button: .left, mods: []))
+        surfaceOwner.sendMouseButton(.init(action: .release, button: .left, mods: []))
         requestRender()
     
         // Show edit menu after short delay
@@ -348,7 +348,7 @@ extension GhosttyTerminalView {
     
     /// Triple-tap to select line
     @objc func handleTripleTap(_ recognizer: UITapGestureRecognizer) {
-        guard let surface = surface else { return }
+        guard surfaceOwner.hasLiveSurface else { return }
         let location = recognizer.location(in: self)
         let pos = ghosttyPoint(location)
     
@@ -356,10 +356,10 @@ extension GhosttyTerminalView {
         requestKeyboardFocus(for: .selectionGesture)
     
         // Triple-click to select line
-        surface.sendMousePos(.init(x: pos.x, y: pos.y, mods: []))
+        surfaceOwner.sendMousePosition(pos)
         for _ in 0..<3 {
-            surface.sendMouseButton(.init(action: .press, button: .left, mods: []))
-            surface.sendMouseButton(.init(action: .release, button: .left, mods: []))
+            surfaceOwner.sendMouseButton(.init(action: .press, button: .left, mods: []))
+            surfaceOwner.sendMouseButton(.init(action: .release, button: .left, mods: []))
         }
         requestRender()
     
@@ -394,7 +394,7 @@ extension GhosttyTerminalView {
             return
         }
     
-        guard let surface = surface else { return }
+        guard surfaceOwner.hasLiveSurface else { return }
         let location = recognizer.location(in: self)
         let pos = ghosttyPoint(location)
     
@@ -403,16 +403,16 @@ extension GhosttyTerminalView {
             isSelecting = true
             requestKeyboardFocus(for: .selectionGesture)
             // Start selection with click (no shift for initial position)
-            surface.sendMousePos(.init(x: pos.x, y: pos.y, mods: []))
-            surface.sendMouseButton(.init(action: .press, button: .left, mods: []))
+            surfaceOwner.sendMousePosition(pos)
+            surfaceOwner.sendMouseButton(.init(action: .press, button: .left, mods: []))
             requestRender()
         case .changed:
             // Drag to extend selection
-            surface.sendMousePos(.init(x: pos.x, y: pos.y, mods: []))
+            surfaceOwner.sendMousePosition(pos)
             requestRender()
         case .ended, .cancelled, .failed:
-            surface.sendMousePos(.init(x: pos.x, y: pos.y, mods: []))
-            surface.sendMouseButton(.init(action: .release, button: .left, mods: []))
+            surfaceOwner.sendMousePosition(pos)
+            surfaceOwner.sendMouseButton(.init(action: .release, button: .left, mods: []))
             isSelecting = false
             requestRender()
             showEditMenu(at: location)

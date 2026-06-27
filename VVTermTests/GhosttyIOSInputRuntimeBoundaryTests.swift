@@ -29,6 +29,9 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         let terminalInputSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+TerminalInput+iOS.swift")
         )
+        let textInputSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+TextInput+iOS.swift")
+        )
         let imeProxySource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+IMEProxy+iOS.swift")
         )
@@ -47,6 +50,7 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(terminalInputSource.contains("inputRuntime.handleIMEInsertText"))
         #expect(terminalInputSource.contains("inputRuntime.handleSpecialKey"))
         #expect(terminalInputSource.contains("inputRuntime.handleControlKey"))
+        #expect(textInputSource.contains("surfaceOwner.sendKeyEvent(interpretedEvent)"))
         #expect(imeProxySource.contains("inputRuntime.handleTerminalTextInputEffects"))
         #expect(imeProxySource.contains("surfaceOwner.imePoint(using: inputRuntime)"))
         #expect(keyboardAccessorySource.contains("inputRuntime.handleToolbarKey"))
@@ -88,6 +92,8 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(!imeProxySource.contains("unsafeCValue"))
         #expect(!hardwareKeyboardSource.contains("surface.sendKeyEvent"))
         #expect(!terminalInputSource.contains("surface.sendKeyEvent"))
+        #expect(!textInputSource.contains("surface.sendKeyEvent"))
+        #expect(!textInputSource.contains("guard canRouteTerminalInput, let surface"))
 
         #expect(runtimeSource.contains("final class TerminalIOSInputRuntime"))
         #expect(runtimeSource.contains("private var renderedPreeditText"))
@@ -128,6 +134,7 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(runtimeSource.contains("private func ghosttyInputAction"))
         #expect(ownerSource.contains("func sendDirectHardwareKeyEvent("))
         #expect(ownerSource.contains("func sendKeyPress("))
+        #expect(ownerSource.contains("func sendKeyEvent("))
         #expect(ownerSource.contains("func sendModifiedKey("))
         #expect(ownerSource.contains("func syncVisiblePreedit("))
         #expect(ownerSource.contains("func imePoint(using inputRuntime: TerminalIOSInputRuntime)"))

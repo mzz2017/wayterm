@@ -41,7 +41,7 @@ extension GhosttyTerminalView: UIKeyInput, UITextInputTraits {
 
     @discardableResult
     func sendInterpretedHardwareKeyText(_ text: String, for key: UIKey) -> Bool {
-        guard canRouteTerminalInput, let surface else { return false }
+        guard canRouteTerminalInput, surfaceOwner.hasLiveSurface else { return false }
         guard let sourceEvent = Ghostty.Input.KeyEvent(uiKey: key, action: .press) else {
             sendText(text)
             return true
@@ -56,7 +56,7 @@ extension GhosttyTerminalView: UIKeyInput, UITextInputTraits {
             consumedMods: sourceEvent.consumedMods,
             unshiftedCodepoint: sourceEvent.unshiftedCodepoint
         )
-        surface.sendKeyEvent(interpretedEvent)
+        surfaceOwner.sendKeyEvent(interpretedEvent)
         hardwarePressState.recordInterpretedHardwareKey(keyCode: keyCode)
         requestRender()
         return true

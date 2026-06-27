@@ -215,6 +215,10 @@ final class TerminalIOSSurfaceOwner {
         surface?.sendMousePos(.init(x: position.x, y: position.y, mods: []))
     }
 
+    func sendMouseButton(_ event: Ghostty.Input.MouseButtonEvent) {
+        surface?.sendMouseButton(event)
+    }
+
     func sendMouseScroll(_ event: Ghostty.Input.MouseScrollEvent) {
         surface?.sendMouseScroll(event)
     }

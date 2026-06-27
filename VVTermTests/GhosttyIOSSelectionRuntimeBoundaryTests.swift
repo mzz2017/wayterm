@@ -38,12 +38,17 @@ struct GhosttyIOSSelectionRuntimeBoundaryTests {
         #expect(selectionSource.contains("surfaceOwner.quickLookWordSelection("))
         #expect(selectionSource.contains("surfaceOwner.touchSelectionText("))
         #expect(selectionSource.contains("surfaceOwner.ghosttySelectionText("))
+        #expect(selectionSource.contains("surfaceOwner.sendMousePosition(pos)"))
+        #expect(selectionSource.contains("surfaceOwner.sendMouseButton("))
 
         // Then the main UIKit view does not directly own the Ghostty selection
         // C/FFI query.
         #expect(!selectionSource.contains("unsafeCValue"))
         #expect(!selectionSource.contains("ghostty_surface_has_selection"))
         #expect(!selectionSource.contains("GhosttyTerminalTextReader."))
+        #expect(!selectionSource.contains("surface.sendMousePos"))
+        #expect(!selectionSource.contains("surface.sendMouseButton"))
+        #expect(!selectionSource.contains("guard let surface = surface"))
 
         #expect(runtimeSource.contains("final class TerminalIOSSelectionRuntime"))
         #expect(runtimeSource.contains("func hasGhosttySelection"))
@@ -62,6 +67,8 @@ struct GhosttyIOSSelectionRuntimeBoundaryTests {
         #expect(ownerSource.contains("func quickLookWordSelection("))
         #expect(ownerSource.contains("func touchSelectionText("))
         #expect(ownerSource.contains("func ghosttySelectionText("))
+        #expect(ownerSource.contains("func sendMousePosition("))
+        #expect(ownerSource.contains("func sendMouseButton("))
     }
 
     private func source(at url: URL) throws -> String {
