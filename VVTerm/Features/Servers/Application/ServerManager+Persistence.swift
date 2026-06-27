@@ -1,14 +1,6 @@
 import Foundation
 import os.log
 
-private enum ServerManagerPersistenceKeys {
-    static let servers = CloudKitSyncConstants.serverStorageKey
-    static let workspaces = CloudKitSyncConstants.workspaceStorageKey
-    static let didBootstrapDefaultWorkspace = CloudKitSyncConstants.didBootstrapDefaultWorkspaceKey
-    static let pendingBootstrapWorkspaceID = CloudKitSyncConstants.pendingBootstrapWorkspaceIDKey
-    static let hasSeenWelcome = "hasSeenWelcome"
-}
-
 extension ServerManager {
     // MARK: - Local Storage
 
@@ -50,56 +42,33 @@ extension ServerManager {
     }
 
     func loadStoredServers() -> [Server]? {
-        guard let data = UserDefaults.standard.data(forKey: ServerManagerPersistenceKeys.servers) else {
-            return nil
-        }
-        return try? JSONDecoder().decode([Server].self, from: data)
+        localDataStore.loadServers()
     }
 
     func loadStoredWorkspaces() -> [Workspace]? {
-        guard let data = UserDefaults.standard.data(forKey: ServerManagerPersistenceKeys.workspaces) else {
-            return nil
-        }
-        return try? JSONDecoder().decode([Workspace].self, from: data)
+        localDataStore.loadWorkspaces()
     }
 
     func storeServers(_ servers: [Server]) {
-        guard let data = try? JSONEncoder().encode(servers) else {
-            return
-        }
-        UserDefaults.standard.set(data, forKey: ServerManagerPersistenceKeys.servers)
+        localDataStore.storeServers(servers)
     }
 
     func storeWorkspaces(_ workspaces: [Workspace]) {
-        guard let data = try? JSONEncoder().encode(workspaces) else {
-            return
-        }
-        UserDefaults.standard.set(data, forKey: ServerManagerPersistenceKeys.workspaces)
+        localDataStore.storeWorkspaces(workspaces)
     }
 
     var didBootstrapDefaultWorkspace: Bool {
-        get { UserDefaults.standard.bool(forKey: ServerManagerPersistenceKeys.didBootstrapDefaultWorkspace) }
-        set { UserDefaults.standard.set(newValue, forKey: ServerManagerPersistenceKeys.didBootstrapDefaultWorkspace) }
+        get { localDataStore.didBootstrapDefaultWorkspace }
+        set { localDataStore.didBootstrapDefaultWorkspace = newValue }
     }
 
     var hasSeenWelcome: Bool {
-        UserDefaults.standard.bool(forKey: ServerManagerPersistenceKeys.hasSeenWelcome)
+        localDataStore.hasSeenWelcome
     }
 
     var pendingBootstrapWorkspaceID: UUID? {
-        get {
-            guard let rawValue = UserDefaults.standard.string(forKey: ServerManagerPersistenceKeys.pendingBootstrapWorkspaceID) else {
-                return nil
-            }
-            return UUID(uuidString: rawValue)
-        }
-        set {
-            if let newValue {
-                UserDefaults.standard.set(newValue.uuidString, forKey: ServerManagerPersistenceKeys.pendingBootstrapWorkspaceID)
-            } else {
-                UserDefaults.standard.removeObject(forKey: ServerManagerPersistenceKeys.pendingBootstrapWorkspaceID)
-            }
-        }
+        get { localDataStore.pendingBootstrapWorkspaceID }
+        set { localDataStore.pendingBootstrapWorkspaceID = newValue }
     }
 
     var transientBootstrapWorkspaceID: UUID? {
@@ -236,8 +205,7 @@ extension ServerManager {
     func clearLocalDataAndResync() async {
         logger.info("Clearing local data and re-syncing from CloudKit...")
 
-        UserDefaults.standard.removeObject(forKey: ServerManagerPersistenceKeys.servers)
-        UserDefaults.standard.removeObject(forKey: ServerManagerPersistenceKeys.workspaces)
+        localDataStore.clearServerAndWorkspaceStorage()
         pendingBootstrapWorkspaceID = nil
         syncCoordinator.clearPendingMutations(for: [.server, .workspace])
 

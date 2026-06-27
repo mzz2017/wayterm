@@ -125,6 +125,7 @@ final class ServerManager: ObservableObject {
 
     let cloudKit: any ServerCloudSyncing
     let syncCoordinator: any ServerPendingCloudSyncCoordinating
+    let localDataStore: any ServerLocalDataStoring
     private(set) var deletionTeardown: ServerDeletionTeardown
     let deleteCredentials: ServerCredentialDeletion
     private let storeCredentials: ServerCredentialStore
@@ -156,6 +157,7 @@ final class ServerManager: ObservableObject {
     init(
         cloudKit: any ServerCloudSyncing,
         syncCoordinator: any ServerPendingCloudSyncCoordinating,
+        localDataStore: any ServerLocalDataStoring,
         loadLocalDataOnInit: Bool = true,
         startStartupLoad: Bool = true,
         deletionTeardown: @escaping ServerDeletionTeardown = ServerManager.defaultDeletionTeardown,
@@ -170,6 +172,7 @@ final class ServerManager: ObservableObject {
     ) {
         self.cloudKit = cloudKit
         self.syncCoordinator = syncCoordinator
+        self.localDataStore = localDataStore
         self.deletionTeardown = deletionTeardown
         self.deleteCredentials = deleteCredentials
         self.storeCredentials = storeCredentials
@@ -202,11 +205,13 @@ final class ServerManager: ObservableObject {
         startupLoadAction: ServerStartupLoadAction? = nil,
         isProProvider: @escaping IsProProvider = { false },
         cloudKit: (any ServerCloudSyncing)? = nil,
-        syncCoordinator: (any ServerPendingCloudSyncCoordinating)? = nil
+        syncCoordinator: (any ServerPendingCloudSyncCoordinating)? = nil,
+        localDataStore: (any ServerLocalDataStoring)? = nil
     ) -> ServerManager {
         let manager = ServerManager(
             cloudKit: cloudKit ?? DisabledServerCloudSyncService(),
             syncCoordinator: syncCoordinator ?? NoopServerPendingCloudSyncCoordinator(),
+            localDataStore: localDataStore ?? InMemoryServerLocalDataStore(),
             loadLocalDataOnInit: false,
             startStartupLoad: startStartupLoad,
             deletionTeardown: deletionTeardown,

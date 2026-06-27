@@ -18,6 +18,15 @@ struct ServerManagerSuperfileBoundaryTests {
         let persistenceSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager+Persistence.swift")
         )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerLocalDataStore.swift")
+        )
+        let userDefaultsStoreSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Infrastructure/UserDefaultsServerLocalDataStore.swift")
+        )
+        let liveSyncSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Infrastructure/ServerManager+LiveSync.swift")
+        )
 
         // Given local server/workspace persistence and bootstrap workspace
         // reconciliation are durable state responsibilities.
@@ -30,6 +39,16 @@ struct ServerManagerSuperfileBoundaryTests {
         #expect(persistenceSource.contains("func reconcilePendingBootstrapWorkspaceState"))
         #expect(persistenceSource.contains("func resolvePendingBootstrapWorkspaceAgainstAuthoritativeFetch"))
         #expect(persistenceSource.contains("func shouldCreateBootstrapWorkspace"))
+        #expect(persistenceSource.contains("localDataStore.loadServers()"))
+        #expect(persistenceSource.contains("localDataStore.clearServerAndWorkspaceStorage()"))
+        #expect(storeSource.contains("protocol ServerLocalDataStoring"))
+        #expect(userDefaultsStoreSource.contains("final class UserDefaultsServerLocalDataStore"))
+        #expect(userDefaultsStoreSource.contains("UserDefaults"))
+        #expect(liveSyncSource.contains("localDataStore: UserDefaultsServerLocalDataStore()"))
+        #expect(
+            !persistenceSource.contains("UserDefaults.standard"),
+            "ServerManager persistence policy should use the injected local data store boundary."
+        )
 
         // Then the ServerManager superfile should not own local persistence
         // and bootstrap state orchestration directly.
