@@ -375,21 +375,15 @@ extension ConnectionSessionManager {
         let shellGeneration = startResult.generation
 
         let shellTask = Task.detached(priority: .userInitiated) { [weak self, weak terminal] in
-            defer {
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.finishShellStart(
-                        for: sessionId,
-                        client: sshClient,
-                        generation: shellGeneration
-                    )
-                    if let runtime = self.sessionRuntimes[sessionId]?.runtime {
-                        await runtime.clearShellTask(ifUsing: sshClient)
-                    }
-                }
+            guard let self else { return }
+            guard let terminal else {
+                await self.finishSessionShellTask(
+                    sessionId: sessionId,
+                    client: sshClient,
+                    generation: shellGeneration
+                )
+                return
             }
-
-            guard let self, let terminal else { return }
             await TerminalConnectionRunner.run(
                 server: server,
                 credentials: credentials,
@@ -469,8 +463,28 @@ extension ConnectionSessionManager {
                     self.updateSessionState(sessionId, to: .failed(error.localizedDescription))
                 }
             )
+            await self.finishSessionShellTask(
+                sessionId: sessionId,
+                client: sshClient,
+                generation: shellGeneration
+            )
         }
         await runtime.runtime.setShellTask(shellTask)
+    }
+
+    private func finishSessionShellTask(
+        sessionId: UUID,
+        client: SSHClient,
+        generation: SSHShellRegistry.Generation
+    ) async {
+        finishShellStart(
+            for: sessionId,
+            client: client,
+            generation: generation
+        )
+        if let runtime = sessionRuntimes[sessionId]?.runtime {
+            await runtime.clearShellTask(ifUsing: client)
+        }
     }
 
     private func handleStaleShellStartContext(

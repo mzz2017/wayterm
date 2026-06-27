@@ -544,6 +544,14 @@ struct TerminalTabManagerSuperfileBoundaryTests {
             !runtimeSource.contains("TerminalTabManager.shared"),
             "Pane runtime callbacks should not resolve TerminalTabManager.shared."
         )
+        #expect(
+            !runtimeSource.contains("defer {\n                Task { @MainActor"),
+            "Pane runner task cleanup must be awaited by the shell task, not launched as untracked MainActor work."
+        )
+        #expect(
+            runtimeSource.contains("finishPaneShellTask"),
+            "Pane runtime startup should use an explicit awaited shell-task cleanup helper."
+        )
 
         // And the superfile should not own pane runtime/SSH lifecycle directly.
         #expect(

@@ -334,21 +334,15 @@ extension TerminalTabManager {
         let shellGeneration = startResult.generation
 
         let shellTask = Task.detached(priority: .userInitiated) { [weak self, weak terminal] in
-            defer {
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.finishShellStart(
-                        for: paneId,
-                        client: sshClient,
-                        generation: shellGeneration
-                    )
-                    if let runtime = self.paneRuntimes[paneId]?.runtime {
-                        await runtime.clearShellTask(ifUsing: sshClient)
-                    }
-                }
+            guard let self else { return }
+            guard let terminal else {
+                await self.finishPaneShellTask(
+                    paneId: paneId,
+                    client: sshClient,
+                    generation: shellGeneration
+                )
+                return
             }
-
-            guard let self, let terminal else { return }
             await TerminalConnectionRunner.run(
                 server: server,
                 credentials: credentials,
@@ -427,8 +421,28 @@ extension TerminalTabManager {
                     self.updatePaneState(paneId, connectionState: .failed(error.localizedDescription))
                 }
             )
+            await self.finishPaneShellTask(
+                paneId: paneId,
+                client: sshClient,
+                generation: shellGeneration
+            )
         }
         await runtime.runtime.setShellTask(shellTask)
+    }
+
+    private func finishPaneShellTask(
+        paneId: UUID,
+        client: SSHClient,
+        generation: SSHShellRegistry.Generation
+    ) async {
+        finishShellStart(
+            for: paneId,
+            client: client,
+            generation: generation
+        )
+        if let runtime = paneRuntimes[paneId]?.runtime {
+            await runtime.clearShellTask(ifUsing: client)
+        }
     }
 
     private func getSSHClient(for paneId: UUID) -> SSHClient? {

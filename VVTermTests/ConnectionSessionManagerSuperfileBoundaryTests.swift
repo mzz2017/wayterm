@@ -386,6 +386,14 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
             !runtimeSource.contains("ConnectionSessionManager.shared"),
             "Session runtime callbacks should not resolve ConnectionSessionManager.shared."
         )
+        #expect(
+            !runtimeSource.contains("defer {\n                Task { @MainActor"),
+            "Session runner task cleanup must be awaited by the shell task, not launched as untracked MainActor work."
+        )
+        #expect(
+            runtimeSource.contains("finishSessionShellTask"),
+            "Session runtime startup should use an explicit awaited shell-task cleanup helper."
+        )
 
         // And the superfile should not own session runtime/SSH lifecycle directly.
         #expect(
