@@ -3,12 +3,18 @@ import Testing
 @testable import VVTerm
 
 // Test Context:
-// These tests protect remote connection lease ownership used by features that
-// borrow live terminal SSH clients or create short-lived owned clients. The
-// invariant is that closing a borrowed lease must not disconnect the underlying
-// client, while closing an owned lease must await disconnect. Fakes are actor
-// based and perform no network I/O. Update this context only if lease ownership
-// semantics intentionally change.
+// RemoteConnectionLease is the shared boundary used by rich paste, RemoteFiles,
+// and stats collectors when they borrow live terminal SSH clients or create
+// short-lived owned clients. These tests protect lease ownership, exclusive
+// operation serialization, and the invariant that close waits for in-flight
+// operations plus owned disconnect teardown. Update this file when the lease
+// contract intentionally changes, not when a caller starts using a different
+// feature-level adapter.
+//
+// Fake assumptions: Recording clients are actor-isolated stand-ins for SSHClient
+// and do not perform real network or libssh2 work. Gates model operation and
+// disconnect ordering without relying on wall-clock timing except for brief
+// probes that verify a task has not completed too early.
 struct RemoteConnectionLeaseTests {
     @Test
     func borrowedLeaseCloseDoesNotDisconnectClient() async {
