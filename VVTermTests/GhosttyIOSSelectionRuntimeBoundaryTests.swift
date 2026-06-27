@@ -1,6 +1,10 @@
 import Foundation
 import Testing
 
+#if os(iOS)
+@testable import VVTerm
+#endif
+
 // Test Context:
 // These source-boundary tests protect iOS Ghostty selection FFI ownership. The
 // UIKit terminal view may decide when to show menus, but direct Ghostty
@@ -54,3 +58,24 @@ struct GhosttyIOSSelectionRuntimeBoundaryTests {
         case notFound
     }
 }
+
+#if os(iOS)
+// Test Context:
+// TerminalIOSSelectionRuntime owns the safe entry point for Ghostty selection FFI.
+// These behavior tests protect the nil-surface guard that lets callers ask about
+// selection availability during teardown without touching native surface memory.
+@Suite(.serialized)
+@MainActor
+struct GhosttyIOSSelectionRuntimeBehaviorTests {
+    @Test
+    func nilSurfaceReportsNoSelectionWithoutCallingGhostty() {
+        let runtime = TerminalIOSSelectionRuntime()
+
+        // Given selection availability is queried after the native surface was cleared.
+        let hasSelection = runtime.hasGhosttySelection(surface: nil)
+
+        // Then the runtime returns a safe false value instead of crossing the FFI boundary.
+        #expect(!hasSelection, "A missing Ghostty surface should never report an active selection.")
+    }
+}
+#endif
