@@ -725,9 +725,7 @@ class GhosttyTerminalView: UIView {
     }
 
     func imeProxyFocusDidChange(isFocused: Bool) {
-        if let surface = surface?.unsafeCValue {
-            ghostty_surface_set_focus(surface, isFocused)
-        }
+        surfaceLifecycleRuntime.setFocus(isFocused, surface: surface)
         if isFocused {
             updateHardwareKeyboardState(reloadInputViewsIfNeeded: true)
         } else {
@@ -939,9 +937,7 @@ class GhosttyTerminalView: UIView {
         if usesNativeTouchSelection,
            (prefersNativeSelectionFirstResponder || nativeSelectionInteractionActive || nativeSelectedRange != nil) {
             let result = super.becomeFirstResponder()
-            if let surface = surface?.unsafeCValue {
-                ghostty_surface_set_focus(surface, result || super.isFirstResponder)
-            }
+            surfaceLifecycleRuntime.setFocus(result || super.isFirstResponder, surface: surface)
             return result
         }
         return imeProxyTextView.becomeFirstResponder()
@@ -965,9 +961,7 @@ class GhosttyTerminalView: UIView {
         }
         let ownResult = super.isFirstResponder ? super.resignFirstResponder() : true
         if (proxyResult && ownResult) || !isTextInputSessionEligible {
-            if let surface = surface?.unsafeCValue {
-                ghostty_surface_set_focus(surface, false)
-            }
+            surfaceLifecycleRuntime.setFocus(false, surface: surface)
             stopKeyRepeat()
             hardwarePressState.clearPendingSystemTextInputHardwareKeys()
         }
@@ -996,9 +990,7 @@ class GhosttyTerminalView: UIView {
 
         let isVisible = (window != nil)
         isPaused = !isVisible
-        if let surface = surface?.unsafeCValue {
-            ghostty_surface_set_occlusion(surface, isVisible)
-        }
+        surfaceLifecycleRuntime.setOcclusion(isVisible, surface: surface)
 
         if isVisible {
             updateHardwareKeyboardState(reloadInputViewsIfNeeded: true)
@@ -1339,9 +1331,7 @@ class GhosttyTerminalView: UIView {
             _ = super.becomeFirstResponder()
         }
 
-        if let surface = surface?.unsafeCValue {
-            ghostty_surface_set_focus(surface, false)
-        }
+        surfaceLifecycleRuntime.setFocus(false, surface: surface)
     }
 
     private func endFindNavigatorLifecycle() -> Bool {

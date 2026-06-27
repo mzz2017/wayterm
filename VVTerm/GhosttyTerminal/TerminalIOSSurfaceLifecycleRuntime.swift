@@ -60,10 +60,10 @@ final class TerminalIOSSurfaceLifecycleRuntime {
         performPause(
             actions: PauseActions(
                 clearFocus: {
-                    Self.setFocus(false, surface: surface)
+                    Self.applyFocus(false, surface: surface)
                 },
                 setOcclusion: { isVisible in
-                    Self.setOcclusion(isVisible, surface: surface)
+                    Self.applyOcclusion(isVisible, surface: surface)
                 }
             )
         )
@@ -73,11 +73,19 @@ final class TerminalIOSSurfaceLifecycleRuntime {
         performResume(
             actions: ResumeActions(
                 setOcclusion: { isVisible in
-                    Self.setOcclusion(isVisible, surface: surface)
+                    Self.applyOcclusion(isVisible, surface: surface)
                 },
                 updateSizeAndRequestRender: updateSizeAndRequestRender
             )
         )
+    }
+
+    func setFocus(_ isFocused: Bool, surface: Ghostty.Surface?) {
+        Self.applyFocus(isFocused, surface: surface)
+    }
+
+    func setOcclusion(_ isVisible: Bool, surface: Ghostty.Surface?) {
+        Self.applyOcclusion(isVisible, surface: surface)
     }
 
     func performCleanup(actions: CleanupActions) {
@@ -102,16 +110,16 @@ final class TerminalIOSSurfaceLifecycleRuntime {
     }
 
     private static func stopSurfaceInputAndRendering(_ surface: Ghostty.Surface?) {
-        setFocus(false, surface: surface)
-        setOcclusion(false, surface: surface)
+        applyFocus(false, surface: surface)
+        applyOcclusion(false, surface: surface)
     }
 
-    private static func setFocus(_ isFocused: Bool, surface: Ghostty.Surface?) {
+    private static func applyFocus(_ isFocused: Bool, surface: Ghostty.Surface?) {
         guard let surface = surface?.unsafeCValue else { return }
         ghostty_surface_set_focus(surface, isFocused)
     }
 
-    private static func setOcclusion(_ isVisible: Bool, surface: Ghostty.Surface?) {
+    private static func applyOcclusion(_ isVisible: Bool, surface: Ghostty.Surface?) {
         guard let surface = surface?.unsafeCValue else { return }
         ghostty_surface_set_occlusion(surface, isVisible)
     }

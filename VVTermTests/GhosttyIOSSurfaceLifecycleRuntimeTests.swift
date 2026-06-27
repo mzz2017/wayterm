@@ -29,7 +29,11 @@ struct GhosttyIOSSurfaceLifecycleRuntimeTests {
         #expect(cleanupSource.contains("surfaceLifecycleRuntime.cleanup("))
         #expect(pauseSource.contains("surfaceLifecycleRuntime.pauseRendering("))
         #expect(resumeSource.contains("surfaceLifecycleRuntime.resumeRendering("))
+        #expect(viewSource.contains("surfaceLifecycleRuntime.setFocus("))
+        #expect(viewSource.contains("surfaceLifecycleRuntime.setOcclusion("))
 
+        #expect(!viewSource.contains("ghostty_surface_set_focus"))
+        #expect(!viewSource.contains("ghostty_surface_set_occlusion"))
         #expect(!cleanupSource.contains("ghostty_surface_set_focus"))
         #expect(!cleanupSource.contains("ghostty_surface_set_occlusion"))
         #expect(!cleanupSource.contains("surfaceRegistration.unregister()"))
