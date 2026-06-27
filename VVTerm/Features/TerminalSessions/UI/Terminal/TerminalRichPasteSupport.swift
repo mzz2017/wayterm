@@ -336,14 +336,10 @@ final class TerminalRichPasteController {
         case .disabled:
             return false
         case .askOnce:
-            Task { @MainActor [weak self] in
-                self?.presentPrompt(for: snapshot, settings: settings)
-            }
+            presentPrompt(for: snapshot, settings: settings)
             return true
         case .automatic:
-            Task { @MainActor [weak self] in
-                self?.startRichPaste(with: snapshot, settings: settings)
-            }
+            startRichPaste(with: snapshot, settings: settings)
             return true
         }
     }

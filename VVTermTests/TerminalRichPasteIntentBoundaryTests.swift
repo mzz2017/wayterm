@@ -34,6 +34,10 @@ struct TerminalRichPasteIntentBoundaryTests {
             "TerminalRichPasteSupport must not store upload tasks in UI-owned runtime/controller state."
         )
         #expect(
+            !source.contains("Task { @MainActor [weak self]"),
+            "TerminalRichPasteSupport must not start prompt/upload flow through an untracked UI Task."
+        )
+        #expect(
             !source.contains("TerminalRichPasteCoordinator("),
             "TerminalRichPasteSupport must not instantiate the upload coordinator from UI code."
         )
