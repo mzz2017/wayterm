@@ -192,6 +192,39 @@ struct GhosttyIOSSuperfileBoundaryTests {
     }
 
     @Test
+    func nativeSelectionStateLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
+        )
+        let selectionSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Selection/GhosttyTerminalView+SelectionInteractions+iOS.swift")
+        )
+
+        #expect(
+            !mainSource.contains("func setupNativeTextSelectionInteractions"),
+            "GhosttyTerminalView+iOS.swift should not own native text-selection interaction setup."
+        )
+        #expect(
+            !mainSource.contains("func refreshNativeSelectionSnapshot"),
+            "GhosttyTerminalView+iOS.swift should not own native selection snapshot refresh."
+        )
+        #expect(
+            !mainSource.contains("func setNativeSelectedRange"),
+            "GhosttyTerminalView+iOS.swift should not own native selected-range mutation."
+        )
+        #expect(
+            !mainSource.contains("func isPointOnNativeSelectionHandleHitArea"),
+            "GhosttyTerminalView+iOS.swift should not own native selection hit testing."
+        )
+
+        #expect(selectionSource.contains("func setupNativeTextSelectionInteractions"))
+        #expect(selectionSource.contains("func refreshNativeSelectionSnapshot"))
+        #expect(selectionSource.contains("func setNativeSelectedRange"))
+        #expect(selectionSource.contains("selectionRuntime.nativeTextSnapshot"))
+    }
+
+    @Test
     func scrollGestureRoutingLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(

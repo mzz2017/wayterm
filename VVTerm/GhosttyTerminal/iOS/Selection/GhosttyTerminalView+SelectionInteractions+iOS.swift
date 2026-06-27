@@ -9,6 +9,17 @@ extension GhosttyTerminalView {
     var usesAppOwnedTouchSelection: Bool {
         UIDevice.current.userInterfaceIdiom == .phone && !usesNativeTouchSelection
     }
+
+    func setupNativeTextSelectionInteractions() {
+        let interaction = UITextInteraction(for: .nonEditable)
+        interaction.delegate = self
+        interaction.textInput = self
+        addInteraction(interaction)
+        nativeTextInteraction = interaction
+        for gesture in interaction.gesturesForFailureRequirements {
+            scrollRecognizer.require(toFail: gesture)
+        }
+    }
     
     func selectionGridMetrics() -> TerminalSelectionGridMetrics? {
         guard let terminalSize = terminalSize() else { return nil }
@@ -138,6 +149,76 @@ extension GhosttyTerminalView {
             return touchSelectionText
         }
         return ghosttySelectionText()
+    }
+
+    private func notifyNativeSelectionLayoutChange() {
+        guard nativeSelectionInteractionActive || nativeSelectedRange != nil else { return }
+        nativeTextInputDelegate?.textWillChange(self)
+        nativeTextInputDelegate?.textDidChange(self)
+        nativeTextInputDelegate?.selectionWillChange(self)
+        nativeTextInputDelegate?.selectionDidChange(self)
+    }
+
+    func refreshNativeSelectionSnapshot(resetSelection: Bool = false) {
+        guard usesNativeTouchSelection else { return }
+
+        nativeSelectionSnapshot = buildNativeSelectionSnapshot()
+        updateNativeFindOverlay()
+        if resetSelection {
+            setNativeSelectedRange(nil)
+            return
+        }
+
+        guard let nativeSelectedRange else { return }
+        let clamped = nativeSelectionSnapshot.clampedRange(nativeSelectedRange)
+        if clamped != nativeSelectedRange {
+            setNativeSelectedRange(clamped)
+        } else {
+            notifyNativeSelectionLayoutChange()
+        }
+    }
+
+    private func buildNativeSelectionSnapshot() -> TerminalNativeTextSnapshot {
+        selectionRuntime.nativeTextSnapshot(
+            surface: surface?.unsafeCValue,
+            metrics: selectionGridMetrics()
+        )
+    }
+
+    func setNativeSelectedRange(_ range: NSRange?) {
+        let clampedRange = range.map { nativeSelectionSnapshot.clampedRange($0) }
+        if nativeSelectedRange == clampedRange {
+            notifyNativeSelectionLayoutChange()
+            return
+        }
+
+        nativeTextInputDelegate?.selectionWillChange(self)
+        nativeSelectedRange = clampedRange
+        if clampedRange == nil, !nativeSelectionInteractionActive {
+            prefersNativeSelectionFirstResponder = false
+        }
+        nativeTextInputDelegate?.selectionDidChange(self)
+    }
+
+    func isPointOnNativeSelectionHandleHitArea(_ point: CGPoint) -> Bool {
+        guard usesNativeTouchSelection,
+              let nativeSelectedRange,
+              nativeSelectedRange.length > 0 else {
+            return false
+        }
+        let clamped = nativeSelectionSnapshot.clampedRange(nativeSelectedRange)
+        guard clamped.length > 0 else { return false }
+
+        let startRect = nativeSelectionSnapshot.caretRect(for: clamped.location)
+        let endRect = nativeSelectionSnapshot.caretRect(for: clamped.location + clamped.length)
+        let hitSlop = max(28, nativeSelectionSnapshot.cellSize.height * 1.5)
+        return startRect.insetBy(dx: -hitSlop, dy: -hitSlop).contains(point)
+            || endRect.insetBy(dx: -hitSlop, dy: -hitSlop).contains(point)
+    }
+
+    func selectedNativeSelectionText() -> String? {
+        guard let nativeSelectedRange, nativeSelectedRange.length > 0 else { return nil }
+        return nativeSelectionSnapshot.text(in: nativeSelectedRange)
     }
     
     private func touchSelectionText() -> String? {
