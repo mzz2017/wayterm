@@ -1760,99 +1760,37 @@ class GhosttyTerminalView: UIView {
         UIDevice.current.userInterfaceIdiom == .phone && !usesNativeTouchSelection
     }
 
-    private func selectionGridMetrics() -> (cols: Int, rows: Int, cellSize: CGSize)? {
+    private func selectionGridMetrics() -> TerminalSelectionGridMetrics? {
         guard let terminalSize = terminalSize() else { return nil }
         let cols = max(Int(terminalSize.columns), 1)
         let rows = max(Int(terminalSize.rows), 1)
         let resolvedCellWidth = cellSize.width > 0 ? cellSize.width : max(bounds.width / CGFloat(cols), 1)
         let resolvedCellHeight = cellSize.height > 0 ? cellSize.height : max(bounds.height / CGFloat(rows), 1)
-        return (cols, rows, CGSize(width: resolvedCellWidth, height: resolvedCellHeight))
+        return TerminalSelectionGridMetrics(
+            cols: cols,
+            rows: rows,
+            cellSize: CGSize(width: resolvedCellWidth, height: resolvedCellHeight)
+        )
     }
 
-    private func gridPoint(for location: CGPoint) -> TerminalGridPoint? {
+    private func touchSelectionLayout() -> TerminalTouchSelectionLayout? {
         guard let metrics = selectionGridMetrics() else { return nil }
-        let column = min(max(Int(floor(location.x / metrics.cellSize.width)), 0), metrics.cols - 1)
-        let row = min(max(Int(floor(location.y / metrics.cellSize.height)), 0), metrics.rows - 1)
-        return TerminalGridPoint(row: row, column: column)
-    }
-
-    private func gridPoint(
-        forLinearOffset offset: Int,
-        metrics: (cols: Int, rows: Int, cellSize: CGSize)
-    ) -> TerminalGridPoint {
-        let clampedOffset = min(max(offset, 0), max(metrics.cols * metrics.rows - 1, 0))
-        return TerminalGridPoint(
-            row: clampedOffset / metrics.cols,
-            column: clampedOffset % metrics.cols
-        )
-    }
-
-    private func selectionFromViewportText(
-        _ text: ghostty_text_s,
-        metrics: (cols: Int, rows: Int, cellSize: CGSize)
-    ) -> TerminalGridSelection? {
-        guard metrics.cols > 0, metrics.rows > 0 else { return nil }
-        let start = gridPoint(forLinearOffset: Int(text.offset_start), metrics: metrics)
-        let end = gridPoint(
-            forLinearOffset: Int(text.offset_start + text.offset_len),
-            metrics: metrics
-        )
-        return TerminalGridSelection(start: start, end: end).normalized
-    }
-
-    private func cellFrame(for point: TerminalGridPoint, metrics: (cols: Int, rows: Int, cellSize: CGSize)) -> CGRect {
-        CGRect(
-            x: CGFloat(point.column) * metrics.cellSize.width,
-            y: CGFloat(point.row) * metrics.cellSize.height,
-            width: metrics.cellSize.width,
-            height: metrics.cellSize.height
-        )
-    }
-
-    private func selectionRects(
-        for selection: TerminalGridSelection,
-        metrics: (cols: Int, rows: Int, cellSize: CGSize)
-    ) -> [CGRect] {
-        let normalized = selection.normalized
-        let start = normalized.start
-        let end = normalized.end
-
-        return (start.row...end.row).map { row in
-            let startColumn = row == start.row ? start.column : 0
-            let endColumn = row == end.row ? end.column : max(metrics.cols - 1, 0)
-            let width = CGFloat(max(endColumn - startColumn + 1, 1)) * metrics.cellSize.width
-            return CGRect(
-                x: CGFloat(startColumn) * metrics.cellSize.width,
-                y: CGFloat(row) * metrics.cellSize.height,
-                width: width,
-                height: metrics.cellSize.height
-            )
-        }
-    }
-
-    private func selectionMenuPoint(for selection: TerminalGridSelection) -> CGPoint? {
-        guard let metrics = selectionGridMetrics() else { return nil }
-        let rects = selectionRects(for: selection, metrics: metrics)
-        guard let firstRect = rects.first else { return nil }
-        let bounds = rects.dropFirst().reduce(firstRect) { partialResult, rect in
-            partialResult.union(rect)
-        }
-        return CGPoint(x: bounds.midX, y: min(bounds.maxY + 12, self.bounds.maxY - 1))
+        return TerminalTouchSelectionLayout(metrics: metrics, bounds: bounds)
     }
 
     private func updateTouchSelectionOverlay() {
         guard usesAppOwnedTouchSelection,
               let touchSelection,
-              let metrics = selectionGridMetrics() else {
+              let layout = touchSelectionLayout() else {
             touchSelectionOverlay.isHidden = true
             touchSelectionOverlay.clear()
             return
         }
 
         let normalized = touchSelection.normalized
-        let rects = selectionRects(for: normalized, metrics: metrics)
-        let startFrame = cellFrame(for: normalized.start, metrics: metrics)
-        let endFrame = cellFrame(for: normalized.end, metrics: metrics)
+        let rects = layout.selectionRects(for: normalized)
+        let startFrame = layout.cellFrame(for: normalized.start)
+        let endFrame = layout.cellFrame(for: normalized.end)
         touchSelectionOverlay.isHidden = false
         touchSelectionOverlay.update(
             rects: rects,
@@ -1899,7 +1837,7 @@ class GhosttyTerminalView: UIView {
     }
 
     private func quickLookWordSelection(at location: CGPoint) -> TerminalGridSelection? {
-        guard let metrics = selectionGridMetrics(),
+        guard let layout = touchSelectionLayout(),
               let surface,
               let cSurface = surface.unsafeCValue else { return nil }
 
@@ -1909,7 +1847,7 @@ class GhosttyTerminalView: UIView {
         var text = ghostty_text_s()
         guard ghostty_surface_quicklook_word(cSurface, &text) else { return nil }
         defer { ghostty_surface_free_text(cSurface, &text) }
-        return selectionFromViewportText(text, metrics: metrics)
+        return layout.selection(fromViewportText: text)
     }
 
     private func startTouchSelection(at location: CGPoint) {
@@ -1922,7 +1860,7 @@ class GhosttyTerminalView: UIView {
             return
         }
 
-        guard let point = gridPoint(for: location) else { return }
+        guard let point = touchSelectionLayout()?.gridPoint(for: location) else { return }
         touchSelectionAnchor = point
         touchSelectionSeed = nil
         touchSelection = TerminalGridSelection(start: point, end: point)
@@ -1930,7 +1868,7 @@ class GhosttyTerminalView: UIView {
     }
 
     private func updateTouchSelection(at location: CGPoint) {
-        guard let point = gridPoint(for: location) else { return }
+        guard let point = touchSelectionLayout()?.gridPoint(for: location) else { return }
 
         if touchSelectionAnchor == nil, let seed = touchSelectionSeed?.normalized {
             if point < seed.start {
@@ -1949,7 +1887,7 @@ class GhosttyTerminalView: UIView {
 
     private func updateTouchSelectionHandle(_ kind: TerminalTouchSelectionHandleKind, at location: CGPoint) {
         guard var selection = touchSelection?.normalized,
-              let point = gridPoint(for: location) else { return }
+              let point = touchSelectionLayout()?.gridPoint(for: location) else { return }
 
         switch kind {
         case .start:
@@ -1965,7 +1903,7 @@ class GhosttyTerminalView: UIView {
         isSelecting = false
         touchSelectionLoupe.hideLoupe()
         guard let touchSelection,
-              let menuPoint = selectionMenuPoint(for: touchSelection) else { return }
+              let menuPoint = touchSelectionLayout()?.menuPoint(for: touchSelection) else { return }
         showEditMenu(at: menuPoint)
     }
 
