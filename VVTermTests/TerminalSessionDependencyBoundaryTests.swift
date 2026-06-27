@@ -66,6 +66,9 @@ struct TerminalSessionDependencyBoundaryTests {
         let managerSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
         )
+        let liveDependencySource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalSessionLiveDependencies.swift")
+        )
         let openSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Open.swift")
         )
@@ -76,18 +79,32 @@ struct TerminalSessionDependencyBoundaryTests {
         #expect(managerSource.contains("typealias ServerUnlocker"))
         #expect(managerSource.contains("typealias LastConnectedUpdater"))
         #expect(managerSource.contains("typealias IsProProvider"))
-        #expect(managerSource.contains("static var live: Self"))
+        #expect(managerSource.contains("let dependencies = Dependencies.live"))
+        #expect(liveDependencySource.contains("extension ConnectionSessionManager.Dependencies"))
+        #expect(liveDependencySource.contains("static var live: Self"))
         #expect(openSource.contains("serverLockPolicy(server)"))
         #expect(openSource.contains("await serverUnlocker(server)"))
         #expect(openSource.contains("scheduleLastConnectedUpdate(for: server)"))
         #expect(managerSource.contains("if isProProvider() { return true }"))
 
-        // Then the open lifecycle file does not reach directly into Servers or
-        // Security singletons for those cross-feature concerns.
+        // Then the open lifecycle and manager files do not reach directly into
+        // Servers or Security singletons for those cross-feature concerns.
+        #expect(!managerSource.contains("ServerManager.shared"))
+        #expect(!managerSource.contains("AppLockManager.shared"))
+        #expect(!managerSource.contains("KeychainManager.shared"))
+        #expect(!managerSource.contains("StoreManager.shared"))
         #expect(!openSource.contains("ServerManager.shared.isServerLocked"))
         #expect(!openSource.contains("AppLockManager.shared.ensureServerUnlocked"))
         #expect(!openSource.contains("ServerManager.shared.updateLastConnected"))
         #expect(!managerSource.contains("if StoreManager.shared.isPro { return true }"))
+
+        // And the live app adapters stay isolated in a dedicated dependency
+        // bridge that can be replaced or moved to composition later.
+        #expect(liveDependencySource.contains("ServerManager.shared.servers"))
+        #expect(liveDependencySource.contains("ServerManager.shared.isServerLocked"))
+        #expect(liveDependencySource.contains("AppLockManager.shared.ensureServerUnlocked"))
+        #expect(liveDependencySource.contains("ServerManager.shared.updateLastConnected"))
+        #expect(liveDependencySource.contains("KeychainManager.shared.getCredentials"))
     }
 
     @Test
@@ -95,6 +112,9 @@ struct TerminalSessionDependencyBoundaryTests {
         let root = try sourceRoot()
         let managerSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let liveDependencySource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalSessionLiveDependencies.swift")
         )
         let openSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Open.swift")
@@ -107,15 +127,31 @@ struct TerminalSessionDependencyBoundaryTests {
         #expect(managerSource.contains("struct Dependencies"))
         #expect(managerSource.contains("var isProProvider: IsProProvider"))
         #expect(managerSource.contains("var defaultViewProvider: DefaultViewProvider"))
+        #expect(managerSource.contains("let dependencies = Dependencies.live"))
+        #expect(liveDependencySource.contains("extension TerminalTabManager.Dependencies"))
+        #expect(liveDependencySource.contains("static var live: Self"))
         #expect(openSource.contains("self.defaultViewProvider()"))
         #expect(managerSource.contains("if isProProvider() { return true }"))
         #expect(managerSource.contains("guard isProProvider() else { return nil }"))
 
-        // Then TerminalSessions open/split policy does not reach directly
-        // into Store or connection-view configuration singletons.
+        // Then TerminalSessions open/split policy and manager files do not
+        // reach directly into Store, Servers, Security, or connection-view
+        // configuration singletons.
+        #expect(!managerSource.contains("ServerManager.shared"))
+        #expect(!managerSource.contains("AppLockManager.shared"))
+        #expect(!managerSource.contains("KeychainManager.shared"))
+        #expect(!managerSource.contains("StoreManager.shared"))
+        #expect(!managerSource.contains("ViewTabConfigurationManager.shared"))
         #expect(!openSource.contains("ViewTabConfigurationManager.shared"))
         #expect(!managerSource.contains("StoreManager.shared.isPro { return true }"))
         #expect(!managerSource.contains("guard StoreManager.shared.isPro"))
+
+        // And the live app adapters stay isolated in a dedicated dependency
+        // bridge that can be replaced or moved to composition later.
+        #expect(liveDependencySource.contains("ServerManager.shared.servers"))
+        #expect(liveDependencySource.contains("AppLockManager.shared.ensureServerUnlocked"))
+        #expect(liveDependencySource.contains("KeychainManager.shared.getCredentials"))
+        #expect(liveDependencySource.contains("ViewTabConfigurationManager.shared.effectiveDefaultTab"))
     }
 
     @Test

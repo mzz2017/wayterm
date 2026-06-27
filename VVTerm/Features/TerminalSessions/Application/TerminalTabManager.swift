@@ -46,26 +46,6 @@ final class TerminalTabManager: ObservableObject {
         var serverUnlocker: ServerUnlocker
         var serverProvider: ServerProvider
         var credentialsProvider: CredentialsProvider
-
-        static var live: Self {
-            Self(
-                isProProvider: {
-                    StoreManager.shared.isPro
-                },
-                defaultViewProvider: {
-                    ViewTabConfigurationManager.shared.effectiveDefaultTab()
-                },
-                serverUnlocker: { server in
-                    await AppLockManager.shared.ensureServerUnlocked(server)
-                },
-                serverProvider: { serverId in
-                    ServerManager.shared.servers.first { $0.id == serverId }
-                },
-                credentialsProvider: { server in
-                    try KeychainManager.shared.getCredentials(for: server)
-                }
-            )
-        }
     }
 
     // MARK: - Published State
