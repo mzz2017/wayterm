@@ -11,6 +11,41 @@ import Testing
 
 struct TerminalSessionDependencyBoundaryTests {
     @Test
+    func terminalSessionApplicationManagersDoNotImportPlatformUIFrameworks() throws {
+        let root = try sourceRoot()
+        let managerSources = try [
+            "VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift",
+            "VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Closing.swift",
+            "VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift"
+        ].map { path in
+            try source(at: root.appendingPathComponent(path))
+        }.joined(separator: "\n")
+        let surfacePlatformSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Terminal/TerminalSurfacePlatformBehavior.swift")
+        )
+
+        // Given TerminalSessions Application managers should stay presentation-agnostic.
+        #expect(
+            !managerSources.contains("import AppKit"),
+            "TerminalSessions application managers should not import AppKit; platform focus/window details belong behind surfaces or app/UI boundaries."
+        )
+        #expect(
+            !managerSources.contains("import UIKit"),
+            "TerminalSessions application managers should not import UIKit; application active state and keyboard focus should stay injected."
+        )
+        #expect(
+            !managerSources.contains("import SwiftUI"),
+            "TerminalSessions application managers should use Combine observation without importing SwiftUI presentation APIs."
+        )
+
+        // Then platform window/focus handling stays at the terminal surface UI boundary.
+        #expect(surfacePlatformSource.contains("extension GhosttyTerminalView"))
+        #expect(surfacePlatformSource.contains("import AppKit"))
+        #expect(surfacePlatformSource.contains("import UIKit"))
+        #expect(managerSources.contains("requestInitialTerminalSurfaceFocus"))
+    }
+
+    @Test
     func connectionSessionRuntimeAndReconnectUseInjectedServerProvider() throws {
         let root = try sourceRoot()
         let managerSource = try source(
@@ -394,6 +429,9 @@ struct TerminalSessionDependencyBoundaryTests {
         let connectionClosingSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Closing.swift")
         )
+        let surfacePlatformSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Terminal/TerminalSurfacePlatformBehavior.swift")
+        )
         let connectionTestingSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Testing.swift")
         )
@@ -405,7 +443,8 @@ struct TerminalSessionDependencyBoundaryTests {
         // is active, but UIKit application state belongs at the app boundary.
         #expect(connectionManagerSource.contains("typealias ApplicationActiveStateProvider"))
         #expect(connectionManagerSource.contains("isApplicationActive: ApplicationActiveStateProvider"))
-        #expect(connectionClosingSource.contains("guard self.isApplicationActive() else { return }"))
+        #expect(connectionClosingSource.contains("requestInitialTerminalSurfaceFocus(isApplicationActive: self.isApplicationActive())"))
+        #expect(surfacePlatformSource.contains("guard isApplicationActive else { return }"))
         #expect(connectionTestingSource.contains("func setApplicationActiveStateProviderForTesting"))
         #expect(liveDependencySource.contains("UIApplication.shared.applicationState == .active"))
 

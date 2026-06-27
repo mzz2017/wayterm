@@ -9,13 +9,8 @@
 //
 
 import Foundation
-import SwiftUI
 import Combine
 import os.log
-
-#if os(macOS)
-import AppKit
-#endif
 
 @MainActor
 final class TerminalTabManager: ObservableObject {

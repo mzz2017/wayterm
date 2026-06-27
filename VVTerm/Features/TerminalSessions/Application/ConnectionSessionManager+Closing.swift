@@ -1,11 +1,5 @@
 import Foundation
 import os.log
-#if os(macOS)
-import AppKit
-#endif
-#if os(iOS)
-import UIKit
-#endif
 
 extension ConnectionSessionManager {
     /// Closes a terminal session and removes it from the list.
@@ -468,28 +462,20 @@ extension ConnectionSessionManager {
         wasSelected: Bool,
         replacementSessionId: UUID?
     ) {
-        if let terminal = terminalSurfaceRegistry.surface(for: .session(sessionId)), terminal.window != nil {
-            terminal.pauseRendering()
-            if !wasSelected {
-                _ = terminal.resignFirstResponder()
-            }
+        if let terminal = terminalSurfaceRegistry.surface(for: .session(sessionId)), terminal.isAttachedToPlatformWindow {
+            terminal.pauseForClosedTerminalSurface(wasSelected: wasSelected)
         } else {
             unregisterTerminal(for: sessionId)
         }
 
         guard let replacementSessionId,
               let replacementTerminal = terminalSurfaceRegistry.surface(for: .session(replacementSessionId)),
-              replacementTerminal.window != nil else {
+              replacementTerminal.isAttachedToPlatformWindow else {
             return
         }
 
         DispatchQueue.main.async {
-            #if os(iOS)
-            guard self.isApplicationActive() else { return }
-            replacementTerminal.requestKeyboardFocus(for: .initialActivation)
-            #else
-            _ = replacementTerminal.window?.makeFirstResponder(replacementTerminal)
-            #endif
+            replacementTerminal.requestInitialTerminalSurfaceFocus(isApplicationActive: self.isApplicationActive())
         }
     }
 
@@ -544,11 +530,7 @@ extension ConnectionSessionManager {
     private func pauseCachedTerminalsForBackground() {
         #if os(iOS)
         for terminal in terminalSurfaceRegistry.allSurfaces {
-            terminal.pauseRendering()
-            if terminal.isFirstResponder {
-                terminal.markKeyboardFocusForReconnect()
-            }
-            _ = terminal.resignFirstResponder()
+            terminal.pauseForBackgroundTerminalSuspension()
         }
         #endif
     }
