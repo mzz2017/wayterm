@@ -316,9 +316,7 @@ extension ServerManager {
     }
 
     func removeKnownHosts(for candidates: [KnownHostRemovalCandidate]) async {
-        for candidate in candidates {
-            await KnownHostsStore.shared.remove(host: candidate.host, port: candidate.port)
-        }
+        await removeKnownHostEntries(candidates)
     }
 
     private func applyCloudKitChanges(_ changes: CloudKitChanges, canReplaceLocalState: Bool = true) async {

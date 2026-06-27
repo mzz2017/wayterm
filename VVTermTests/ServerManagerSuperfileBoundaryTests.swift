@@ -328,6 +328,42 @@ struct ServerManagerSuperfileBoundaryTests {
     }
 
     @Test
+    func knownHostRemovalUsesInjectedServiceBoundary() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager.swift")
+        )
+        let syncSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager+Sync.swift")
+        )
+        let serviceSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerKnownHostRemovalService.swift")
+        )
+        let infrastructureSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Infrastructure/ServerKnownHostRemovalService+KnownHosts.swift")
+        )
+        let lifecycleSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Infrastructure/ServerManager+KnownHostLifecycle.swift")
+        )
+
+        // Given server deletion and sync reconciliation may need to remove
+        // trusted-host entries for servers that disappeared.
+        #expect(managerSource.contains("typealias ServerKnownHostRemoval"))
+        #expect(managerSource.contains("removeKnownHostEntries: ServerKnownHostRemoval"))
+        #expect(syncSource.contains("await removeKnownHostEntries(candidates)"))
+        #expect(serviceSource.contains("protocol ServerKnownHostRemovingStore"))
+        #expect(serviceSource.contains("final class ServerKnownHostRemovalService"))
+        #expect(infrastructureSource.contains("extension KnownHostsStore: ServerKnownHostRemovingStore"))
+        #expect(infrastructureSource.contains("ServerKnownHostRemovalService(store: KnownHostsStore.shared)"))
+        #expect(lifecycleSource.contains("ServerKnownHostRemovalService.shared.removeKnownHosts"))
+
+        // Then ServerManager's application sync/deletion logic does not reach
+        // directly into Core's known-host actor.
+        #expect(!syncSource.contains("KnownHostsStore.shared"))
+        #expect(!managerSource.contains("KnownHostsStore.shared"))
+    }
+
+    @Test
     func queryHelpersLiveOutsideServerManagerFile() throws {
         let root = try sourceRoot()
         let managerSource = try source(

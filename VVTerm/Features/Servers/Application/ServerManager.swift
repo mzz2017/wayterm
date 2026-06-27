@@ -111,6 +111,8 @@ final class ServerManager: ObservableObject {
     typealias ServerCredentialStore = @MainActor @Sendable (Server, ServerCredentials) throws -> Void
     typealias ServerStartupLoadAction = @MainActor @Sendable (ServerManager) async -> Void
     typealias IsProProvider = @MainActor @Sendable () -> Bool
+    typealias KnownHostRemovalCandidate = ServerKnownHostRemovalCandidate
+    typealias ServerKnownHostRemoval = @MainActor @Sendable ([KnownHostRemovalCandidate]) async -> Void
 
     static let shared = ServerManager()
 
@@ -129,6 +131,7 @@ final class ServerManager: ObservableObject {
     private(set) var deletionTeardown: ServerDeletionTeardown
     let deleteCredentials: ServerCredentialDeletion
     private let storeCredentials: ServerCredentialStore
+    let removeKnownHostEntries: ServerKnownHostRemoval
     let startupLoadAction: ServerStartupLoadAction
     let isProProvider: IsProProvider
     let syncStateService: ServerSyncStateService
@@ -153,14 +156,13 @@ final class ServerManager: ObservableObject {
     var pendingServerSaveRequestIDs: Set<UUID> { Set(serverSaveRequests.keys) }
     var pendingServerMoveRequestIDs: Set<UUID> { Set(serverMoveRequests.keys) }
 
-    typealias KnownHostRemovalCandidate = ServerKnownHostRemovalCandidate
-
     private init(
         loadLocalDataOnInit: Bool = true,
         startStartupLoad: Bool = true,
         deletionTeardown: @escaping ServerDeletionTeardown = ServerManager.defaultDeletionTeardown,
         deleteCredentials: @escaping ServerCredentialDeletion = ServerManager.defaultCredentialDeletion,
         storeCredentials: @escaping ServerCredentialStore = ServerManager.defaultCredentialStore,
+        removeKnownHostEntries: @escaping ServerKnownHostRemoval = ServerManager.defaultKnownHostRemoval,
         startupLoadAction: ServerStartupLoadAction? = nil,
         isProProvider: @escaping IsProProvider = { StoreManager.shared.isPro },
         syncStateService: ServerSyncStateService = ServerSyncStateService(),
@@ -170,6 +172,7 @@ final class ServerManager: ObservableObject {
         self.deletionTeardown = deletionTeardown
         self.deleteCredentials = deleteCredentials
         self.storeCredentials = storeCredentials
+        self.removeKnownHostEntries = removeKnownHostEntries
         self.startupLoadAction = startupLoadAction ?? { manager in
             await manager.loadData()
         }
@@ -194,6 +197,7 @@ final class ServerManager: ObservableObject {
         deletionTeardown: @escaping ServerDeletionTeardown = { _ in },
         deleteCredentials: @escaping ServerCredentialDeletion = { _ in },
         storeCredentials: @escaping ServerCredentialStore = { _, _ in },
+        removeKnownHostEntries: @escaping ServerKnownHostRemoval = { _ in },
         startupLoadAction: ServerStartupLoadAction? = nil,
         isProProvider: @escaping IsProProvider = { StoreManager.shared.isPro }
     ) -> ServerManager {
@@ -203,6 +207,7 @@ final class ServerManager: ObservableObject {
             deletionTeardown: deletionTeardown,
             deleteCredentials: deleteCredentials,
             storeCredentials: storeCredentials,
+            removeKnownHostEntries: removeKnownHostEntries,
             startupLoadAction: startupLoadAction,
             isProProvider: isProProvider,
             persistsLocalData: false,
