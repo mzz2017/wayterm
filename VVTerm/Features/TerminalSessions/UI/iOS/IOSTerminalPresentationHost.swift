@@ -9,6 +9,7 @@ extension View {
         serverToEdit: Binding<Server?>,
         serverManager: ServerManager,
         storeManager: StoreManager,
+        connectionTester: ServerConnectionTester,
         tmuxAttachPrompt: Binding<TmuxAttachPrompt?>,
         onResolveTmuxAttachPrompt: @escaping (TmuxAttachPrompt, TmuxAttachSelection) -> Void,
         pendingCloseSession: Binding<ConnectionSession?>,
@@ -23,6 +24,7 @@ extension View {
                 serverToEdit: serverToEdit,
                 serverManager: serverManager,
                 storeManager: storeManager,
+                connectionTester: connectionTester,
                 tmuxAttachPrompt: tmuxAttachPrompt,
                 onResolveTmuxAttachPrompt: onResolveTmuxAttachPrompt,
                 pendingCloseSession: pendingCloseSession,
@@ -40,6 +42,7 @@ private struct IOSTerminalPresentationHost: ViewModifier {
     @Binding var serverToEdit: Server?
     @ObservedObject var serverManager: ServerManager
     @ObservedObject var storeManager: StoreManager
+    let connectionTester: ServerConnectionTester
     @Binding var tmuxAttachPrompt: TmuxAttachPrompt?
     let onResolveTmuxAttachPrompt: (TmuxAttachPrompt, TmuxAttachSelection) -> Void
     @Binding var pendingCloseSession: ConnectionSession?
@@ -72,6 +75,7 @@ private struct IOSTerminalPresentationHost: ViewModifier {
                         storeManager: storeManager,
                         workspace: serverManager.workspaces.first { $0.id == server.workspaceId },
                         server: server,
+                        connectionTester: connectionTester,
                         onSave: { _ in serverToEdit = nil }
                     )
                 }

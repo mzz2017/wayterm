@@ -14,6 +14,7 @@ struct ContentView: View {
     let fileBrowser: RemoteFileBrowserStore
     let appLockManager: AppLockManager
     let disconnectCoordinator: ServerConnectionLifecycleCoordinator
+    let connectionTester: ServerConnectionTester
     let onShowSettings: () -> Void
     @StateObject private var serverManager = ServerManager.shared
     @StateObject private var tabManager = TerminalTabManager.shared
@@ -101,6 +102,7 @@ struct ContentView: View {
                     storeManager: storeManager,
                     viewTabConfig: viewTabConfig,
                     disconnectCoordinator: disconnectCoordinator,
+                    connectionTester: connectionTester,
                     onShowSettings: onShowSettings,
                     serverManager: serverManager,
                     fileBrowser: fileBrowser,
@@ -187,6 +189,7 @@ struct ContentView: View {
                 tabManager: tabManager,
                 storeManager: storeManager,
                 appLockManager: appLockManager,
+                connectionTester: connectionTester,
                 onShowSettings: onShowSettings,
                 backgroundColor: macOSWindowBackgroundColor,
                 selectedWorkspace: $selectedWorkspace,
@@ -265,6 +268,7 @@ struct ContentView: View {
         fileBrowser: RemoteFileBrowserStore(serverProvider: { _ in nil }),
         appLockManager: AppLockManager(),
         disconnectCoordinator: ServerConnectionLifecycleCoordinator(),
+        connectionTester: ServerConnectionTester(),
         onShowSettings: {}
     )
 }

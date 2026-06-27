@@ -5,6 +5,24 @@ protocol ServerConnectionTesting: AnyObject {
     func testConnection(server: Server, credentials: ServerCredentials) async throws
 }
 
+protocol ServerConnectionOperationServing: AnyObject {
+    func withTemporaryConnection<T>(
+        server: Server,
+        credentials: ServerCredentials,
+        operation: @escaping (SSHClient) async throws -> T
+    ) async throws -> T
+}
+
+protocol ServerConnectionMoshBootstrapping: AnyObject {
+    func bootstrapConnectInfo(
+        using executor: any RemoteCommandExecuting,
+        startCommand: String?,
+        portRange: ClosedRange<Int>
+    ) async throws
+}
+
+extension SSHConnectionOperationService: ServerConnectionOperationServing {}
+
 struct ServerConnectionTestFailure: Identifiable, Equatable {
     enum Operation: Equatable {
         case testConnection(UUID)
@@ -101,18 +119,56 @@ final class ServerConnectionTester {
 
 @MainActor
 final class ServerConnectionOperationTester: ServerConnectionTesting {
+    private let connectionService: any ServerConnectionOperationServing
+    private let moshBootstrapper: any ServerConnectionMoshBootstrapping
+
+    convenience init() {
+        self.init(
+            connectionService: SSHConnectionOperationService.shared,
+            moshBootstrapper: LiveServerConnectionMoshBootstrapper()
+        )
+    }
+
+    init(
+        connectionService: any ServerConnectionOperationServing,
+        moshBootstrapper: any ServerConnectionMoshBootstrapping
+    ) {
+        self.connectionService = connectionService
+        self.moshBootstrapper = moshBootstrapper
+    }
+
     func testConnection(server: Server, credentials: ServerCredentials) async throws {
-        try await SSHConnectionOperationService.shared.withTemporaryConnection(
+        try await connectionService.withTemporaryConnection(
             server: server,
             credentials: credentials
         ) { client in
             if server.connectionMode == .mosh {
-                _ = try await RemoteMoshManager.shared.bootstrapConnectInfo(
+                _ = try await self.moshBootstrapper.bootstrapConnectInfo(
                     using: client,
                     startCommand: "exec true",
                     portRange: 60001...61000
                 )
             }
         }
+    }
+}
+
+final class LiveServerConnectionMoshBootstrapper: ServerConnectionMoshBootstrapping {
+    private let manager: RemoteMoshManager
+
+    init(manager: RemoteMoshManager = .shared) {
+        self.manager = manager
+    }
+
+    func bootstrapConnectInfo(
+        using executor: any RemoteCommandExecuting,
+        startCommand: String?,
+        portRange: ClosedRange<Int>
+    ) async throws {
+        _ = try await manager.bootstrapConnectInfo(
+            using: executor,
+            startCommand: startCommand,
+            portRange: portRange
+        )
     }
 }

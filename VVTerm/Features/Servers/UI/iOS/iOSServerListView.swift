@@ -9,6 +9,7 @@ struct iOSServerListView: View {
     @ObservedObject var appLockManager: AppLockManager
     let disconnectCoordinator: ServerConnectionLifecycleCoordinator
     let fileBrowser: RemoteFileBrowserStore
+    let connectionTester: ServerConnectionTester
     @Binding var selectedWorkspace: Workspace?
     @Binding var selectedEnvironment: ServerEnvironment?
     @Binding var showingTerminal: Bool
@@ -93,6 +94,7 @@ struct iOSServerListView: View {
                     storeManager: storeManager,
                     workspace: selectedWorkspace,
                     prefill: addServerPrefill,
+                    connectionTester: connectionTester,
                     onSave: { _ in showingAddServer = false }
                 )
             }
@@ -136,6 +138,7 @@ struct iOSServerListView: View {
                     storeManager: storeManager,
                     workspace: selectedWorkspace,
                     server: server,
+                    connectionTester: connectionTester,
                     onSave: { updatedServer in
                         handleSavedServer(updatedServer, originalServer: server)
                         serverToEdit = nil

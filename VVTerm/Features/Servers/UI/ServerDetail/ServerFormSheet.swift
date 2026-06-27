@@ -64,6 +64,7 @@ struct ServerFormSheet: View {
         workspace: Workspace?,
         server: Server? = nil,
         prefill: ServerFormPrefill? = nil,
+        connectionTester: ServerConnectionTester,
         onSave: @escaping (Server) -> Void
     ) {
         self.init(
@@ -73,7 +74,7 @@ struct ServerFormSheet: View {
             server: server,
             prefill: prefill,
             credentialProvider: .shared,
-            connectionTester: .shared,
+            connectionTester: connectionTester,
             onSave: onSave
         )
     }
@@ -730,6 +731,7 @@ struct ServerFormSheet: View {
         serverManager: ServerManager.makeForTesting(workspaces: [workspace]),
         storeManager: StoreManager.makeForTesting(),
         workspace: workspace,
+        connectionTester: ServerConnectionTester(),
         onSave: { _ in }
     )
 }

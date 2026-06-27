@@ -18,6 +18,7 @@ struct ConnectionTerminalContainer: View {
     @ObservedObject var storeManager: StoreManager
     @ObservedObject var viewTabConfig: ViewTabConfigurationManager
     let disconnectCoordinator: ServerConnectionLifecycleCoordinator
+    let connectionTester: ServerConnectionTester
     let onShowSettings: () -> Void
     let serverManager: ServerManager
     let fileBrowser: RemoteFileBrowserStore
@@ -603,6 +604,7 @@ struct ConnectionTerminalContainer: View {
                     storeManager: storeManager,
                     workspace: serverManager.workspaces.first { $0.id == editingServer.workspaceId },
                     server: editingServer,
+                    connectionTester: connectionTester,
                     onSave: { _ in
                         serverToEdit = nil
                     }

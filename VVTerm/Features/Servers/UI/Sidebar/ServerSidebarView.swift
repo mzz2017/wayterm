@@ -7,6 +7,7 @@ struct ServerSidebarView: View {
     @ObservedObject var tabManager: TerminalTabManager
     @ObservedObject var storeManager: StoreManager
     @ObservedObject var appLockManager: AppLockManager
+    let connectionTester: ServerConnectionTester
     let onShowSettings: () -> Void
     let backgroundColor: Color
     @Binding var selectedWorkspace: Workspace?
@@ -197,6 +198,7 @@ struct ServerSidebarView: View {
                 storeManager: storeManager,
                 workspace: selectedWorkspace,
                 prefill: addServerPrefill,
+                connectionTester: connectionTester,
                 onSave: { _ in showingAddServer = false }
             )
             #if os(macOS)
@@ -222,6 +224,7 @@ struct ServerSidebarView: View {
                 storeManager: storeManager,
                 workspace: selectedWorkspace,
                 server: server,
+                connectionTester: connectionTester,
                 onSave: { updatedServer in
                     handleSavedServer(updatedServer, originalServer: server)
                     serverToEdit = nil

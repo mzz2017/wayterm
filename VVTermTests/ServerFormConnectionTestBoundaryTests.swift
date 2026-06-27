@@ -109,6 +109,76 @@ struct ServerFormConnectionTestBoundaryTests {
         )
     }
 
+    @Test
+    func serverFormConnectionTesterIsExplicitlyInjected() throws {
+        // Given the form and every current UI entry point that presents it.
+        let root = try sourceRoot()
+        let formSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift")
+        )
+        let callerSources = try [
+            "VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift",
+            "VVTerm/Features/Servers/UI/iOS/iOSServerListView.swift",
+            "VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift",
+            "VVTerm/Features/TerminalSessions/UI/iOS/IOSTerminalPresentationHost.swift"
+        ].map { path in
+            try source(at: root.appendingPathComponent(path))
+        }.joined(separator: "\n")
+
+        // Then the form cannot silently resolve the global tester; callers must
+        // pass the application-layer owner explicitly through the UI boundary.
+        #expect(
+            formSource.contains("connectionTester: ServerConnectionTester,"),
+            "ServerFormSheet initializers should require an explicit ServerConnectionTester."
+        )
+        #expect(
+            !formSource.contains("connectionTester: .shared"),
+            "ServerFormSheet should not default connection testing to ServerConnectionTester.shared."
+        )
+        #expect(
+            !formSource.contains("connectionTester: ServerConnectionTester ="),
+            "ServerFormSheet should not provide a default connection tester argument."
+        )
+        #expect(
+            callerSources.contains("connectionTester: connectionTester"),
+            "ServerFormSheet callers should pass the existing connection tester dependency through."
+        )
+    }
+
+    @Test
+    func operationTesterUsesInjectedTransportServices() throws {
+        // Given the Servers Application connection-test owner source.
+        let root = try sourceRoot()
+        let testerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerConnectionTester.swift")
+        )
+
+        let operationTesterSource = try slice(
+            startingAt: "final class ServerConnectionOperationTester",
+            endingBefore: "\n}\n\nfinal class LiveServerConnectionMoshBootstrapper",
+            in: testerSource
+        )
+        let operationSource = try tail(
+            startingAt: "    func testConnection(server: Server, credentials: ServerCredentials) async throws {",
+            in: operationTesterSource
+        )
+
+        // Then the live operation path depends on injected service protocols
+        // instead of resolving Core SSH/mosh singletons at the use site.
+        #expect(testerSource.contains("protocol ServerConnectionOperationServing"))
+        #expect(testerSource.contains("protocol ServerConnectionMoshBootstrapping"))
+        #expect(operationSource.contains("connectionService.withTemporaryConnection("))
+        #expect(operationSource.contains("moshBootstrapper.bootstrapConnectInfo("))
+        #expect(
+            !operationSource.contains("SSHConnectionOperationService.shared"),
+            "ServerConnectionOperationTester.testConnection should use its injected temporary connection service."
+        )
+        #expect(
+            !operationSource.contains("RemoteMoshManager.shared"),
+            "ServerConnectionOperationTester.testConnection should use its injected mosh bootstrapper."
+        )
+    }
+
     private func slice(startingAt marker: String, endingBefore endMarker: String, in source: String) throws -> String {
         guard let start = source.range(of: marker),
               let end = source.range(of: endMarker, range: start.lowerBound..<source.endIndex)
@@ -116,6 +186,13 @@ struct ServerFormConnectionTestBoundaryTests {
             throw SourceSliceError.notFound
         }
         return String(source[start.lowerBound..<end.lowerBound])
+    }
+
+    private func tail(startingAt marker: String, in source: String) throws -> String {
+        guard let start = source.range(of: marker) else {
+            throw SourceSliceError.notFound
+        }
+        return String(source[start.lowerBound..<source.endIndex])
     }
 
     private func source(at url: URL) throws -> String {

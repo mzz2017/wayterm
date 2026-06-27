@@ -12,6 +12,7 @@ struct iOSContentView: View {
     let fileBrowser: RemoteFileBrowserStore
     let appLockManager: AppLockManager
     let disconnectCoordinator: ServerConnectionLifecycleCoordinator
+    let connectionTester: ServerConnectionTester
     @StateObject private var serverManager = ServerManager.shared
     @StateObject private var sessionManager = ConnectionSessionManager.shared
     @StateObject private var storeManager = StoreManager.shared
@@ -53,6 +54,7 @@ struct iOSContentView: View {
                 appLockManager: appLockManager,
                 disconnectCoordinator: disconnectCoordinator,
                 fileBrowser: fileBrowser,
+                connectionTester: connectionTester,
                 selectedWorkspace: $selectedWorkspace,
                 selectedEnvironment: $selectedEnvironment,
                 showingTerminal: $showingTerminal,
@@ -100,6 +102,7 @@ struct iOSContentView: View {
                     viewTabConfig: viewTabConfig,
                     disconnectCoordinator: disconnectCoordinator,
                     fileBrowser: fileBrowser,
+                    connectionTester: connectionTester,
                     connectingServer: connectingServer,
                     isConnecting: isConnecting,
                     onBack: { showingTerminal = false }

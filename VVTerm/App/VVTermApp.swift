@@ -35,6 +35,7 @@ struct VVTermApp: App {
     @StateObject private var terminalThemeManager = TerminalThemeManager.shared
     @StateObject private var terminalAccessoryPreferencesManager = TerminalAccessoryPreferencesManager.shared
     private let serverConnectionLifecycleCoordinator = ServerConnectionLifecycleCoordinator.shared
+    private let serverConnectionTester = ServerConnectionTester.shared
 
     // Welcome screen flag
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
@@ -82,7 +83,8 @@ struct VVTermApp: App {
                             fileTabs: remoteFileTabManager,
                             fileBrowser: remoteFileBrowserStore,
                             appLockManager: appLockManager,
-                            disconnectCoordinator: serverConnectionLifecycleCoordinator
+                            disconnectCoordinator: serverConnectionLifecycleCoordinator,
+                            connectionTester: serverConnectionTester
                         )
                             .environmentObject(ghosttyApp)
                             .environmentObject(terminalThemeManager)
@@ -103,6 +105,7 @@ struct VVTermApp: App {
                             fileBrowser: remoteFileBrowserStore,
                             appLockManager: appLockManager,
                             disconnectCoordinator: serverConnectionLifecycleCoordinator,
+                            connectionTester: serverConnectionTester,
                             onShowSettings: {
                                 SettingsWindowManager.shared.show()
                             }

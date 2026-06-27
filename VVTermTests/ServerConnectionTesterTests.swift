@@ -202,6 +202,49 @@ struct ServerConnectionTesterTests {
         #expect(fake.requests.map(\.credentials.serverId) == [server.id])
     }
 
+    @Test
+    func operationTesterUsesInjectedTemporaryConnectionAndMoshBootstrapper() async throws {
+        // Given a live operation tester wired to in-memory SSH and mosh services.
+        let connectionService = FakeServerConnectionOperationService()
+        let moshBootstrapper = FakeServerConnectionMoshBootstrapper()
+        let tester = ServerConnectionOperationTester(
+            connectionService: connectionService,
+            moshBootstrapper: moshBootstrapper
+        )
+        let server = makeServer(host: "mosh-service.example.com", connectionMode: .mosh)
+        let credentials = ServerCredentials(serverId: server.id)
+
+        // When a mosh-mode server connection test runs.
+        try await tester.testConnection(server: server, credentials: credentials)
+
+        // Then the tester delegates temporary SSH and mosh bootstrap work to
+        // the injected services instead of resolving transport singletons at use.
+        #expect(connectionService.requests.map(\.server.id) == [server.id])
+        #expect(connectionService.requests.map(\.credentials.serverId) == [server.id])
+        #expect(moshBootstrapper.requests.map(\.startCommand) == ["exec true"])
+        #expect(moshBootstrapper.requests.map(\.portRange) == [60001...61000])
+    }
+
+    @Test
+    func operationTesterSkipsMoshBootstrapperForStandardConnection() async throws {
+        // Given a live operation tester wired to in-memory SSH and mosh services.
+        let connectionService = FakeServerConnectionOperationService()
+        let moshBootstrapper = FakeServerConnectionMoshBootstrapper()
+        let tester = ServerConnectionOperationTester(
+            connectionService: connectionService,
+            moshBootstrapper: moshBootstrapper
+        )
+        let server = makeServer(host: "ssh-service.example.com", connectionMode: .standard)
+        let credentials = ServerCredentials(serverId: server.id)
+
+        // When a standard SSH connection test runs.
+        try await tester.testConnection(server: server, credentials: credentials)
+
+        // Then the temporary connection is still checked without doing mosh work.
+        #expect(connectionService.requests.map(\.server.id) == [server.id])
+        #expect(moshBootstrapper.requests.isEmpty)
+    }
+
     private func makeServer(
         host: String,
         connectionMode: SSHConnectionMode = .standard
@@ -268,5 +311,40 @@ private enum FakeConnectionTestError: LocalizedError {
 
     var errorDescription: String? {
         "connection rejected"
+    }
+}
+
+private final class FakeServerConnectionOperationService: ServerConnectionOperationServing {
+    struct Request {
+        let server: Server
+        let credentials: ServerCredentials
+    }
+
+    private(set) var requests: [Request] = []
+
+    func withTemporaryConnection<T>(
+        server: Server,
+        credentials: ServerCredentials,
+        operation: @escaping (SSHClient) async throws -> T
+    ) async throws -> T {
+        requests.append(Request(server: server, credentials: credentials))
+        return try await operation(SSHClient())
+    }
+}
+
+private final class FakeServerConnectionMoshBootstrapper: ServerConnectionMoshBootstrapping {
+    struct Request {
+        let startCommand: String?
+        let portRange: ClosedRange<Int>
+    }
+
+    private(set) var requests: [Request] = []
+
+    func bootstrapConnectInfo(
+        using executor: any RemoteCommandExecuting,
+        startCommand: String?,
+        portRange: ClosedRange<Int>
+    ) async throws {
+        requests.append(Request(startCommand: startCommand, portRange: portRange))
     }
 }
