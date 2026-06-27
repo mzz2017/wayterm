@@ -36,7 +36,7 @@ extension GhosttyTerminalView {
             _ = super.becomeFirstResponder()
         }
 
-        surfaceLifecycleRuntime.setFocus(false, surface: surface)
+        surfaceOwner.setFocus(false, using: surfaceLifecycleRuntime)
     }
 
     func endFindNavigatorLifecycle() -> Bool {
@@ -80,13 +80,12 @@ extension GhosttyTerminalView {
         _ query: String,
         keepNavigatorVisibleOnSearchEnd: Bool = false
     ) -> Bool {
-        guard let surface else { return false }
         findRuntime.resetReportedResults()
         let action = "search:\(query)"
         if keepNavigatorVisibleOnSearchEnd {
             findRuntime.suppressNextGhosttySearchEnd()
         }
-        guard surface.perform(action: action) else {
+        guard surfaceOwner.perform(action: action) else {
             if keepNavigatorVisibleOnSearchEnd {
                 findRuntime.cancelSuppressedGhosttySearchEnd()
             }
@@ -104,17 +103,15 @@ extension GhosttyTerminalView {
 
     @MainActor
     func navigateGhosttyFind(_ direction: UITextStorageDirection) {
-        guard let surface else { return }
         let action = direction == .backward ? "navigate_search:previous" : "navigate_search:next"
-        _ = surface.perform(action: action)
+        surfaceOwner.perform(action: action)
     }
 
     @MainActor
     func endGhosttyFindSearchForNavigatorDismissal() {
-        guard let surface else { return }
         findRuntime.resetReportedResults()
         findRuntime.suppressNextGhosttySearchEnd()
-        if !surface.perform(action: "end_search") {
+        if !surfaceOwner.perform(action: "end_search") {
             findRuntime.cancelSuppressedGhosttySearchEnd()
         }
     }

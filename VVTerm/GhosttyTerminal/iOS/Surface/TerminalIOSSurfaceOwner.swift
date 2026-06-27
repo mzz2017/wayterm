@@ -32,6 +32,55 @@ final class TerminalIOSSurfaceOwner {
         surface?.inAlternateScreen ?? false
     }
 
+    func cleanup(
+        using lifecycleRuntime: TerminalIOSSurfaceLifecycleRuntime,
+        surfaceRegistration: GhosttySurfaceRegistration,
+        stopMomentumScrolling: @escaping () -> Void,
+        cancelPendingZoomIndicatorHide: @escaping () -> Void,
+        invalidateLifecycleObservers: @escaping () -> Void,
+        clearCallbacks: @escaping () -> Void
+    ) {
+        surface = lifecycleRuntime.cleanup(
+            surface: surface,
+            surfaceRegistration: surfaceRegistration,
+            stopMomentumScrolling: stopMomentumScrolling,
+            cancelPendingZoomIndicatorHide: cancelPendingZoomIndicatorHide,
+            invalidateLifecycleObservers: invalidateLifecycleObservers,
+            clearCallbacks: clearCallbacks
+        )
+    }
+
+    func pauseRendering(using lifecycleRuntime: TerminalIOSSurfaceLifecycleRuntime) {
+        lifecycleRuntime.pauseRendering(surface: surface)
+    }
+
+    func resumeRendering(
+        using lifecycleRuntime: TerminalIOSSurfaceLifecycleRuntime,
+        updateSizeAndRequestRender: @escaping () -> Void
+    ) {
+        lifecycleRuntime.resumeRendering(surface: surface, updateSizeAndRequestRender: updateSizeAndRequestRender)
+    }
+
+    func setFocus(_ isFocused: Bool, using lifecycleRuntime: TerminalIOSSurfaceLifecycleRuntime) {
+        lifecycleRuntime.setFocus(isFocused, surface: surface)
+    }
+
+    func setOcclusion(_ isVisible: Bool, using lifecycleRuntime: TerminalIOSSurfaceLifecycleRuntime) {
+        lifecycleRuntime.setOcclusion(isVisible, surface: surface)
+    }
+
+    func processExited(using lifecycleRuntime: TerminalIOSSurfaceLifecycleRuntime) -> Bool {
+        lifecycleRuntime.processExited(surface: surface)
+    }
+
+    var needsConfirmQuit: Bool {
+        surface?.needsConfirmQuit ?? false
+    }
+
+    func terminalSize() -> Ghostty.Surface.TerminalSize? {
+        surface?.terminalSize()
+    }
+
     func resizeIfNeeded(
         pointSize: CGSize,
         scale: CGFloat,

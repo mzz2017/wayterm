@@ -4,8 +4,8 @@ import Testing
 // Test Context:
 // These source-boundary tests protect iOS Ghostty surface ownership. UIView may
 // route UI events and expose transitional computed access for existing
-// extensions, but stored app/surface references, direct surface actions, and
-// selected display C/FFI operations should live behind TerminalIOSSurfaceOwner.
+// extensions, but stored app/surface references, direct lifecycle handoff,
+// direct surface actions, and selected display C/FFI operations should live behind TerminalIOSSurfaceOwner.
 // Update only when this ownership intentionally moves again.
 
 @Suite(.serialized)
@@ -27,6 +27,12 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
         )
         let nativeScrollSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Scroll/TerminalNativeScrollContainerView+iOS.swift")
+        )
+        let findSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Find/GhosttyTerminalView+FindNavigator+iOS.swift")
+        )
+        let imeProxySource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+IMEProxy+iOS.swift")
         )
 
         #expect(viewSource.contains("let surfaceOwner: TerminalIOSSurfaceOwner"))
@@ -56,6 +62,14 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
         #expect(ownerSource.contains("var hasLiveSurface: Bool"))
         #expect(ownerSource.contains("var isMouseCaptured: Bool"))
         #expect(ownerSource.contains("var isInAlternateScreen: Bool"))
+        #expect(ownerSource.contains("func cleanup("))
+        #expect(ownerSource.contains("func pauseRendering("))
+        #expect(ownerSource.contains("func resumeRendering("))
+        #expect(ownerSource.contains("func setFocus("))
+        #expect(ownerSource.contains("func setOcclusion("))
+        #expect(ownerSource.contains("func processExited("))
+        #expect(ownerSource.contains("var needsConfirmQuit: Bool"))
+        #expect(ownerSource.contains("func terminalSize()"))
         #expect(ownerSource.contains("func resizeIfNeeded("))
         #expect(ownerSource.contains("func forceResize("))
         #expect(ownerSource.contains("func redraw("))
@@ -72,6 +86,20 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
         #expect(scrollGestureSource.contains("surfaceOwner.sendMousePosition(position)"))
         #expect(scrollGestureSource.contains("surfaceOwner.sendMouseScroll(event)"))
         #expect(nativeScrollSource.contains("terminalView.surfaceOwner.perform(action: \"scroll_to_row:\\(row)\")"))
+        #expect(viewSource.contains("surfaceOwner.setFocus(result || super.isFirstResponder, using: surfaceLifecycleRuntime)"))
+        #expect(viewSource.contains("surfaceOwner.setFocus(false, using: surfaceLifecycleRuntime)"))
+        #expect(viewSource.contains("surfaceOwner.setOcclusion(isVisible, using: surfaceLifecycleRuntime)"))
+        #expect(surfaceRuntimeSource.contains("surfaceOwner.cleanup("))
+        #expect(surfaceRuntimeSource.contains("surfaceOwner.pauseRendering(using: surfaceLifecycleRuntime)"))
+        #expect(surfaceRuntimeSource.contains("surfaceOwner.resumeRendering(using: surfaceLifecycleRuntime)"))
+        #expect(surfaceRuntimeSource.contains("surfaceOwner.processExited(using: surfaceLifecycleRuntime)"))
+        #expect(surfaceRuntimeSource.contains("surfaceOwner.needsConfirmQuit"))
+        #expect(surfaceRuntimeSource.contains("surfaceOwner.terminalSize()"))
+        #expect(surfaceRuntimeSource.contains("surfaceOwner.perform(action: \"reset\")"))
+        #expect(findSource.contains("surfaceOwner.setFocus(false, using: surfaceLifecycleRuntime)"))
+        #expect(findSource.contains("surfaceOwner.perform(action: action)"))
+        #expect(findSource.contains("surfaceOwner.perform(action: \"end_search\")"))
+        #expect(imeProxySource.contains("surfaceOwner.setFocus(isFocused, using: surfaceLifecycleRuntime)"))
 
         #expect(
             !viewSource.contains("surface?.unsafeCValue != nil"),
@@ -100,6 +128,54 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
         #expect(
             !surfaceRuntimeSource.contains("surfaceDisplayRuntime.externalExited("),
             "GhosttyTerminalView+SurfaceRuntime+iOS.swift should route process-exit notifications through the surface owner."
+        )
+        #expect(
+            !viewSource.contains("surfaceLifecycleRuntime.setFocus("),
+            "GhosttyTerminalView+iOS.swift should route focus changes through the surface owner."
+        )
+        #expect(
+            !viewSource.contains("surfaceLifecycleRuntime.setOcclusion("),
+            "GhosttyTerminalView+iOS.swift should route occlusion changes through the surface owner."
+        )
+        #expect(
+            !surfaceRuntimeSource.contains("surfaceLifecycleRuntime.cleanup("),
+            "GhosttyTerminalView+SurfaceRuntime+iOS.swift should route cleanup through the surface owner."
+        )
+        #expect(
+            !surfaceRuntimeSource.contains("surfaceLifecycleRuntime.pauseRendering("),
+            "GhosttyTerminalView+SurfaceRuntime+iOS.swift should route pause through the surface owner."
+        )
+        #expect(
+            !surfaceRuntimeSource.contains("surfaceLifecycleRuntime.resumeRendering("),
+            "GhosttyTerminalView+SurfaceRuntime+iOS.swift should route resume through the surface owner."
+        )
+        #expect(
+            !surfaceRuntimeSource.contains("surfaceLifecycleRuntime.processExited("),
+            "GhosttyTerminalView+SurfaceRuntime+iOS.swift should route process state through the surface owner."
+        )
+        #expect(
+            !surfaceRuntimeSource.contains("surface?.perform(action: \"reset\")"),
+            "GhosttyTerminalView+SurfaceRuntime+iOS.swift should route reset through the surface owner."
+        )
+        #expect(
+            !surfaceRuntimeSource.contains("guard let surface else"),
+            "GhosttyTerminalView+SurfaceRuntime+iOS.swift should not unwrap the surface for lifecycle state."
+        )
+        #expect(
+            !findSource.contains("surfaceLifecycleRuntime.setFocus("),
+            "GhosttyTerminalView+FindNavigator+iOS.swift should route focus changes through the surface owner."
+        )
+        #expect(
+            !findSource.contains("surface.perform(action:"),
+            "GhosttyTerminalView+FindNavigator+iOS.swift should route Ghostty find actions through the surface owner."
+        )
+        #expect(
+            !findSource.contains("guard let surface"),
+            "GhosttyTerminalView+FindNavigator+iOS.swift should not unwrap the surface for Ghostty find actions."
+        )
+        #expect(
+            !imeProxySource.contains("surfaceLifecycleRuntime.setFocus("),
+            "GhosttyTerminalView+IMEProxy+iOS.swift should route IME focus through the surface owner."
         )
         #expect(
             !scrollGestureSource.contains("surface?.mouseCaptured"),

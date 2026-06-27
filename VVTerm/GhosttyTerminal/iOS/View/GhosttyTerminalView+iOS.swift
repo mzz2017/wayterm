@@ -602,7 +602,7 @@ class GhosttyTerminalView: UIView {
         if usesNativeTouchSelection,
            (prefersNativeSelectionFirstResponder || nativeSelectionInteractionActive || nativeSelectedRange != nil) {
             let result = super.becomeFirstResponder()
-            surfaceLifecycleRuntime.setFocus(result || super.isFirstResponder, surface: surface)
+            surfaceOwner.setFocus(result || super.isFirstResponder, using: surfaceLifecycleRuntime)
             return result
         }
         return imeProxyTextView.becomeFirstResponder()
@@ -626,7 +626,7 @@ class GhosttyTerminalView: UIView {
         }
         let ownResult = super.isFirstResponder ? super.resignFirstResponder() : true
         if (proxyResult && ownResult) || !isTextInputSessionEligible {
-            surfaceLifecycleRuntime.setFocus(false, surface: surface)
+            surfaceOwner.setFocus(false, using: surfaceLifecycleRuntime)
             stopKeyRepeat()
             hardwarePressState.clearPendingSystemTextInputHardwareKeys()
         }
@@ -655,7 +655,7 @@ class GhosttyTerminalView: UIView {
 
         let isVisible = (window != nil)
         isPaused = !isVisible
-        surfaceLifecycleRuntime.setOcclusion(isVisible, surface: surface)
+        surfaceOwner.setOcclusion(isVisible, using: surfaceLifecycleRuntime)
 
         if isVisible {
             updateHardwareKeyboardState(reloadInputViewsIfNeeded: true)

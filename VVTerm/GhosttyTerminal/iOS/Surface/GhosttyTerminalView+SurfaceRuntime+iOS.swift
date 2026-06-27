@@ -38,8 +38,8 @@ extension GhosttyTerminalView {
     func cleanup() {
         isShuttingDown = true
         isPaused = true
-        surface = surfaceLifecycleRuntime.cleanup(
-            surface: surface,
+        surfaceOwner.cleanup(
+            using: surfaceLifecycleRuntime,
             surfaceRegistration: surfaceRegistration,
             stopMomentumScrolling: { [scrollRuntime] in
                 scrollRuntime.stopMomentumScrolling()
@@ -60,14 +60,14 @@ extension GhosttyTerminalView {
     func pauseRendering() {
         guard !isShuttingDown else { return }
         isPaused = true
-        surfaceLifecycleRuntime.pauseRendering(surface: surface)
+        surfaceOwner.pauseRendering(using: surfaceLifecycleRuntime)
     }
 
     /// Resume rendering/input after a pause.
     func resumeRendering() {
         guard !isShuttingDown else { return }
         isPaused = false
-        surfaceLifecycleRuntime.resumeRendering(surface: surface) { [weak self] in
+        surfaceOwner.resumeRendering(using: surfaceLifecycleRuntime) { [weak self] in
             guard let self else { return }
             sizeDidChange(bounds.size)
             requestRender()
@@ -89,19 +89,17 @@ extension GhosttyTerminalView {
 
     /// Check if the terminal process has exited
     var processExited: Bool {
-        surfaceLifecycleRuntime.processExited(surface: surface)
+        surfaceOwner.processExited(using: surfaceLifecycleRuntime)
     }
 
     /// Check if closing this terminal needs confirmation
     var needsConfirmQuit: Bool {
-        guard let surface else { return false }
-        return surface.needsConfirmQuit
+        surfaceOwner.needsConfirmQuit
     }
 
     /// Get current terminal grid size
     func terminalSize() -> Ghostty.Surface.TerminalSize? {
-        guard let surface else { return nil }
-        return surface.terminalSize()
+        surfaceOwner.terminalSize()
     }
 
     /// Force the terminal surface to refresh/redraw
@@ -128,7 +126,7 @@ extension GhosttyTerminalView {
     /// Reset Ghostty's terminal state before binding a fresh remote shell to a reused surface.
     func resetTerminalForReconnect() {
         guard !isShuttingDown else { return }
-        _ = surface?.perform(action: "reset")
+        surfaceOwner.perform(action: "reset")
         forceRefresh()
     }
 
