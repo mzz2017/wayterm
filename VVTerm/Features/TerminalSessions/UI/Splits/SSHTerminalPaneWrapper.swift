@@ -18,6 +18,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
     let richPasteUIModel: TerminalRichPasteUIModel
     let tabManager: TerminalTabManager
     let isActive: Bool
+    let autoReconnectEnabled: Bool
     let onProcessExit: () -> Void
     let onReady: () -> Void
 
@@ -27,7 +28,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         TerminalSurfaceAttachContext(
             isAppActive: true,
             isViewActive: isActive,
-            autoReconnectEnabled: true
+            autoReconnectEnabled: autoReconnectEnabled
         )
     }
 

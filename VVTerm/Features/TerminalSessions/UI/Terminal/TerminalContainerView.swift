@@ -20,6 +20,7 @@ struct TerminalContainerView: View {
     var onVoiceTranscriptionSent: (() -> Void)? = nil
     private let sessionManager: ConnectionSessionManager
     @EnvironmentObject var ghosttyApp: Ghostty.App
+    @EnvironmentObject private var terminalPreferences: TerminalRuntimePreferencesStore
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
     @State private var isReady = false
@@ -34,7 +35,6 @@ struct TerminalContainerView: View {
     @State private var hasEstablishedConnection = false
     @State private var showingRetrustHostConfirmation = false
     @StateObject private var richPasteUI = TerminalRichPasteUIModel()
-    @AppStorage("sshAutoReconnect") private var autoReconnectEnabled = true
 
     /// Check if terminal already exists (was previously created)
     private var terminalAlreadyExists: Bool {
@@ -43,11 +43,10 @@ struct TerminalContainerView: View {
 
     // Voice input state
     #if os(macOS) || os(iOS)
-    @ObservedObject private var voiceInput = TerminalVoiceInputStore.shared
+    @EnvironmentObject private var voiceInput: TerminalVoiceInputStore
     @State private var showingVoiceRecording = false
     @State private var showingPermissionError = false
     @State private var permissionErrorMessage = ""
-    @AppStorage("terminalVoiceButtonEnabled") private var voiceButtonEnabled = true
 
     private var voiceTarget: TerminalVoiceInputTarget {
         .session(session.id)
@@ -60,11 +59,6 @@ struct TerminalContainerView: View {
 
     /// Terminal background color from theme
     @State private var terminalBackgroundColor: Color = Self.initialTerminalBackgroundColor()
-
-    /// Theme name from settings
-    @AppStorage(CloudKitSyncConstants.terminalThemeNameKey) private var terminalThemeName = "Aizen Dark"
-    @AppStorage(CloudKitSyncConstants.terminalThemeNameLightKey) private var terminalThemeNameLight = "Aizen Light"
-    @AppStorage(CloudKitSyncConstants.terminalUsePerAppearanceThemeKey) private var usePerAppearanceTheme = true
 
     init(
         session: ConnectionSession,
@@ -83,8 +77,12 @@ struct TerminalContainerView: View {
     }
 
     private var effectiveThemeName: String {
-        guard usePerAppearanceTheme else { return terminalThemeName }
-        return colorScheme == .dark ? terminalThemeName : terminalThemeNameLight
+        guard terminalPreferences.usePerAppearanceTheme else {
+            return terminalPreferences.terminalThemeName
+        }
+        return colorScheme == .dark
+            ? terminalPreferences.terminalThemeName
+            : terminalPreferences.terminalThemeNameLight
     }
 
     private var fallbackBannerMessage: String? {
@@ -144,7 +142,7 @@ struct TerminalContainerView: View {
 
     #if os(macOS) || os(iOS)
     private var voiceTriggerHandler: (() -> Void)? {
-        voiceButtonEnabled ? { handleVoiceTrigger() } : nil
+        terminalPreferences.terminalVoiceButtonEnabled ? { handleVoiceTrigger() } : nil
     }
     #endif
 
@@ -245,7 +243,7 @@ struct TerminalContainerView: View {
                     isConnected: session.connectionState.isConnected,
                     isReady: isReady,
                     isRecording: showingVoiceRecording,
-                    isVoiceButtonEnabled: voiceButtonEnabled,
+                    isVoiceButtonEnabled: terminalPreferences.terminalVoiceButtonEnabled,
                     bottomInset: voiceOverlayBottomInset,
                     onStart: { startVoiceRecording() },
                     onSend: { transcribedText in
@@ -285,9 +283,9 @@ struct TerminalContainerView: View {
             startConnectWatchdog()
             attemptAutoReconnectIfNeeded()
         }
-        .onChange(of: terminalThemeName) { _ in updateTerminalBackgroundColor() }
-        .onChange(of: terminalThemeNameLight) { _ in updateTerminalBackgroundColor() }
-        .onChange(of: usePerAppearanceTheme) { _ in updateTerminalBackgroundColor() }
+        .onChange(of: terminalPreferences.terminalThemeName) { _ in updateTerminalBackgroundColor() }
+        .onChange(of: terminalPreferences.terminalThemeNameLight) { _ in updateTerminalBackgroundColor() }
+        .onChange(of: terminalPreferences.usePerAppearanceTheme) { _ in updateTerminalBackgroundColor() }
         .onChange(of: colorScheme) { _ in updateTerminalBackgroundColor() }
         .onChange(of: scenePhase) { newPhase in
             if newPhase == .active {
@@ -448,6 +446,7 @@ struct TerminalContainerView: View {
             sessionManager: sessionManager,
             isActive: isActive,
             shouldPreserveKeyboardDuringReconnect: true,
+            autoReconnectEnabled: terminalPreferences.autoReconnectEnabled,
             onProcessExit: {
                 sessionManager.requestSessionProcessExit(forSession: session.id)
             },
@@ -464,6 +463,7 @@ struct TerminalContainerView: View {
             richPasteUIModel: richPasteUI,
             sessionManager: sessionManager,
             isActive: isActive,
+            autoReconnectEnabled: terminalPreferences.autoReconnectEnabled,
             onProcessExit: {
                 sessionManager.requestSessionProcessExit(forSession: session.id)
             },
@@ -526,7 +526,7 @@ struct TerminalContainerView: View {
         guard sessionManager.shouldAutoReconnectSession(
             session.id,
             isSceneActive: scenePhase == .active,
-            autoReconnectEnabled: autoReconnectEnabled
+            autoReconnectEnabled: terminalPreferences.autoReconnectEnabled
         ) else { return }
         retryConnection()
     }

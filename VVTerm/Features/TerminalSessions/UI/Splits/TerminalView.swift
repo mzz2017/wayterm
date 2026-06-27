@@ -26,13 +26,10 @@ struct TerminalTabView: View {
     @State private var showingSplitPaneUpgradeAlert = false
 
     @EnvironmentObject var ghosttyApp: Ghostty.App
+    @EnvironmentObject private var terminalPreferences: TerminalRuntimePreferencesStore
     @Environment(\.colorScheme) private var colorScheme
-    @AppStorage(CloudKitSyncConstants.terminalThemeNameKey) private var terminalThemeName = "Aizen Dark"
-    @AppStorage(CloudKitSyncConstants.terminalThemeNameLightKey) private var terminalThemeNameLight = "Aizen Light"
-    @AppStorage(CloudKitSyncConstants.terminalUsePerAppearanceThemeKey) private var usePerAppearanceTheme = true
-    @AppStorage("terminalVoiceButtonEnabled") private var voiceButtonEnabled = true
 
-    @ObservedObject private var voiceInput = TerminalVoiceInputStore.shared
+    @EnvironmentObject private var voiceInput: TerminalVoiceInputStore
     @State private var showingVoiceRecording = false
     @State private var showingPermissionError = false
     @State private var permissionErrorMessage = ""
@@ -47,8 +44,12 @@ struct TerminalTabView: View {
     }
 
     private var effectiveThemeName: String {
-        guard usePerAppearanceTheme else { return terminalThemeName }
-        return colorScheme == .dark ? terminalThemeName : terminalThemeNameLight
+        guard terminalPreferences.usePerAppearanceTheme else {
+            return terminalPreferences.terminalThemeName
+        }
+        return colorScheme == .dark
+            ? terminalPreferences.terminalThemeName
+            : terminalPreferences.terminalThemeNameLight
     }
 
     private var focusedTerminal: GhosttyTerminalView? {
@@ -86,7 +87,7 @@ struct TerminalTabView: View {
                     onFocus: { },
                     onProcessExit: { handlePaneExit(paneId: tab.rootPaneId) },
                     showsVoiceButton: isSelected
-                        && voiceButtonEnabled
+                        && terminalPreferences.terminalVoiceButtonEnabled
                         && !showingVoiceRecording
                         && hasFocusedTerminal,
                     onVoiceTrigger: { startVoiceRecording() }
@@ -155,7 +156,7 @@ struct TerminalTabView: View {
                     onFocus: { focusPane(paneId) },
                     onProcessExit: { handlePaneExit(paneId: paneId) },
                     showsVoiceButton: isSelected
-                        && voiceButtonEnabled
+                        && terminalPreferences.terminalVoiceButtonEnabled
                         && !showingVoiceRecording
                         && tab.focusedPaneId == paneId
                         && hasFocusedTerminal,

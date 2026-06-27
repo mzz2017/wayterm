@@ -496,6 +496,49 @@ struct TerminalSessionDependencyBoundaryTests {
         #expect(!tabRuntimeSource.contains("TerminalWorkingDirectoryService.shared"))
     }
 
+    @Test
+    func terminalRuntimePreferencesAreConsumedThroughInjectedApplicationStore() throws {
+        let root = try sourceRoot()
+        let appSource = try source(
+            at: root.appendingPathComponent("VVTerm/App/VVTermApp.swift")
+        )
+        let runtimePreferenceSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalRuntimePreferencesStore.swift")
+        )
+        let persistenceSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Infrastructure/UserDefaultsTerminalRuntimePreferencesPersistence.swift")
+        )
+        let uiSources = try [
+            "VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift",
+            "VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift",
+            "VVTerm/Features/TerminalSessions/UI/iOS/iOSTerminalView.swift",
+            "VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift",
+            "VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift",
+            "VVTerm/Features/TerminalSessions/UI/Splits/TerminalPaneView.swift",
+            "VVTerm/Features/TerminalSessions/UI/Splits/SSHTerminalPaneWrapper.swift",
+        ].map { path in
+            try source(at: root.appendingPathComponent(path))
+        }.joined(separator: "\n")
+
+        // Given terminal UI and surface wrappers need runtime preferences for
+        // theme, reconnect, and voice-button decisions.
+        #expect(runtimePreferenceSource.contains("final class TerminalRuntimePreferencesStore"))
+        #expect(persistenceSource.contains("final class UserDefaultsTerminalRuntimePreferencesPersistence"))
+        #expect(appSource.contains("@StateObject private var terminalRuntimePreferences"))
+        #expect(appSource.contains(".environmentObject(terminalRuntimePreferences)"))
+        #expect(appSource.contains(".environmentObject(terminalVoiceInput)"))
+        #expect(uiSources.contains("@EnvironmentObject private var terminalPreferences"))
+        #expect(uiSources.contains("autoReconnectEnabled: terminalPreferences.autoReconnectEnabled"))
+
+        // Then runtime UI does not independently read persisted settings or
+        // resolve voice input lifecycle state from a global singleton.
+        #expect(!uiSources.contains("@AppStorage"))
+        #expect(!uiSources.contains("UserDefaults.standard"))
+        #expect(!uiSources.contains("TerminalVoiceInputStore.shared"))
+        #expect(!uiSources.contains("autoReconnectEnabled: true"))
+        #expect(!uiSources.contains("object(forKey: \"sshAutoReconnect\")"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

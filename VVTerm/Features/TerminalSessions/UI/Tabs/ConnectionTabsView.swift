@@ -28,12 +28,8 @@ struct ConnectionTerminalContainer: View {
     let onToggleSidebar: () -> Void
 
     @EnvironmentObject var ghosttyApp: Ghostty.App
+    @EnvironmentObject private var terminalPreferences: TerminalRuntimePreferencesStore
     @Environment(\.colorScheme) private var colorScheme
-
-    /// Theme name from settings
-    @AppStorage(CloudKitSyncConstants.terminalThemeNameKey) private var terminalThemeName = "Aizen Dark"
-    @AppStorage(CloudKitSyncConstants.terminalThemeNameLightKey) private var terminalThemeNameLight = "Aizen Light"
-    @AppStorage(CloudKitSyncConstants.terminalUsePerAppearanceThemeKey) private var usePerAppearanceTheme = true
 
     /// Disconnect confirmation
     @State private var showingDisconnectConfirmation = false
@@ -62,8 +58,12 @@ struct ConnectionTerminalContainer: View {
     }
 
     private var effectiveThemeName: String {
-        guard usePerAppearanceTheme else { return terminalThemeName }
-        return colorScheme == .dark ? terminalThemeName : terminalThemeNameLight
+        guard terminalPreferences.usePerAppearanceTheme else {
+            return terminalPreferences.terminalThemeName
+        }
+        return colorScheme == .dark
+            ? terminalPreferences.terminalThemeName
+            : terminalPreferences.terminalThemeNameLight
     }
 
     private var selectedViewBinding: Binding<String> {
@@ -208,13 +208,13 @@ struct ConnectionTerminalContainer: View {
                 }
                 ensureInitialFileTabIfNeeded()
             }
-            .onChange(of: terminalThemeName) { _ in
+            .onChange(of: terminalPreferences.terminalThemeName) { _ in
                 updateTerminalBackgroundColor()
             }
-            .onChange(of: terminalThemeNameLight) { _ in
+            .onChange(of: terminalPreferences.terminalThemeNameLight) { _ in
                 updateTerminalBackgroundColor()
             }
-            .onChange(of: usePerAppearanceTheme) { _ in
+            .onChange(of: terminalPreferences.usePerAppearanceTheme) { _ in
                 updateTerminalBackgroundColor()
             }
             .onChange(of: colorScheme) { _ in

@@ -25,8 +25,12 @@ struct TerminalVoiceInputIntentBoundaryTests {
 
         // Given the single-session terminal voice UI source.
         #expect(
-            source.contains("TerminalVoiceInputStore.shared"),
-            "TerminalContainerView should observe the application-layer voice owner."
+            source.contains("@EnvironmentObject private var voiceInput: TerminalVoiceInputStore"),
+            "TerminalContainerView should observe the injected application-layer voice owner."
+        )
+        #expect(
+            !source.contains("TerminalVoiceInputStore.shared"),
+            "TerminalContainerView should not resolve the voice owner from a global singleton."
         )
 
         // Then SwiftUI must not own AudioService or voice lifecycle tasks.
@@ -49,8 +53,12 @@ struct TerminalVoiceInputIntentBoundaryTests {
 
         // Given the split terminal voice UI source.
         #expect(
-            source.contains("TerminalVoiceInputStore.shared"),
-            "Split TerminalView should observe the application-layer voice owner."
+            source.contains("@EnvironmentObject private var voiceInput: TerminalVoiceInputStore"),
+            "Split TerminalView should observe the injected application-layer voice owner."
+        )
+        #expect(
+            !source.contains("TerminalVoiceInputStore.shared"),
+            "Split TerminalView should not resolve the voice owner from a global singleton."
         )
 
         // Then SwiftUI must not own AudioService or voice lifecycle tasks.

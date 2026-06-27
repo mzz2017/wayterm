@@ -34,6 +34,10 @@ struct VVTermApp: App {
     @StateObject private var remoteFileBrowserStore = VVTermApp.makeRemoteFileBrowserStore()
     @StateObject private var terminalThemeManager = TerminalThemeManager.shared
     @StateObject private var terminalAccessoryPreferencesManager = TerminalAccessoryPreferencesManager.shared
+    @StateObject private var terminalRuntimePreferences = TerminalRuntimePreferencesStore(
+        persistence: UserDefaultsTerminalRuntimePreferencesPersistence()
+    )
+    @StateObject private var terminalVoiceInput = TerminalVoiceInputStore.shared
     private let serverConnectionLifecycleCoordinator = ServerConnectionLifecycleCoordinator.shared
     private let serverConnectionTester = ServerConnectionTester.shared
 
@@ -89,6 +93,8 @@ struct VVTermApp: App {
                             .environmentObject(ghosttyApp)
                             .environmentObject(terminalThemeManager)
                             .environmentObject(terminalAccessoryPreferencesManager)
+                            .environmentObject(terminalRuntimePreferences)
+                            .environmentObject(terminalVoiceInput)
                             .modifier(AppearanceModifier())
                             .task(id: "\(terminalFontName)\(terminalFontSize)\(terminalCursorStyle)\(terminalCursorBlink)\(terminalThemeName)\(terminalThemeNameLight)\(usePerAppearanceTheme)\(activeCustomThemeVersionToken)") {
                                 ghosttyApp.reloadConfig()
@@ -113,6 +119,8 @@ struct VVTermApp: App {
                             .environmentObject(ghosttyApp)
                             .environmentObject(terminalThemeManager)
                             .environmentObject(terminalAccessoryPreferencesManager)
+                            .environmentObject(terminalRuntimePreferences)
+                            .environmentObject(terminalVoiceInput)
                             .modifier(AppearanceModifier())
                             .task(id: "\(terminalFontName)\(terminalFontSize)\(terminalCursorStyle)\(terminalCursorBlink)\(terminalThemeName)\(terminalThemeNameLight)\(usePerAppearanceTheme)\(activeCustomThemeVersionToken)") {
                                 ghosttyApp.reloadConfig()

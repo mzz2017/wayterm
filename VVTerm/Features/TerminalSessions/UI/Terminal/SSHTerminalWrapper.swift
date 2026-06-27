@@ -54,6 +54,7 @@ struct SSHTerminalWrapper: NSViewRepresentable {
     let richPasteUIModel: TerminalRichPasteUIModel
     let sessionManager: ConnectionSessionManager
     var isActive: Bool = true
+    var autoReconnectEnabled: Bool = true
     let onProcessExit: () -> Void
     let onReady: () -> Void
     var onVoiceTrigger: (() -> Void)? = nil
@@ -64,7 +65,7 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         TerminalSurfaceAttachContext(
             isAppActive: true,
             isViewActive: isActive,
-            autoReconnectEnabled: (UserDefaults.standard.object(forKey: "sshAutoReconnect") as? Bool) ?? true
+            autoReconnectEnabled: autoReconnectEnabled
         )
     }
 
@@ -303,6 +304,7 @@ struct SSHTerminalWrapper: View {
     let sessionManager: ConnectionSessionManager
     var isActive: Bool = true
     var shouldPreserveKeyboardDuringReconnect: Bool = false
+    var autoReconnectEnabled: Bool = true
     let onProcessExit: () -> Void
     let onReady: () -> Void
     var onVoiceTrigger: (() -> Void)? = nil
@@ -318,6 +320,7 @@ struct SSHTerminalWrapper: View {
                 size: geo.size,
                 isActive: isActive,
                 shouldPreserveKeyboardDuringReconnect: shouldPreserveKeyboardDuringReconnect,
+                autoReconnectEnabled: autoReconnectEnabled,
                 onProcessExit: onProcessExit,
                 onReady: onReady,
                 onVoiceTrigger: onVoiceTrigger
@@ -336,6 +339,7 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
     let size: CGSize
     var isActive: Bool = true
     var shouldPreserveKeyboardDuringReconnect: Bool = false
+    var autoReconnectEnabled: Bool = true
     let onProcessExit: () -> Void
     let onReady: () -> Void
     var onVoiceTrigger: (() -> Void)? = nil
@@ -347,7 +351,7 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         TerminalSurfaceAttachContext(
             isAppActive: scenePhase == .active,
             isViewActive: isActive,
-            autoReconnectEnabled: (UserDefaults.standard.object(forKey: "sshAutoReconnect") as? Bool) ?? true
+            autoReconnectEnabled: autoReconnectEnabled
         )
     }
 

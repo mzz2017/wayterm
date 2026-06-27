@@ -17,6 +17,7 @@ struct iOSTerminalView: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
+    @EnvironmentObject private var terminalPreferences: TerminalRuntimePreferencesStore
 
     /// Delayed flag to allow tab animation to complete before creating terminal
     @State private var shouldShowTerminalBySession: [UUID: Bool] = [:]
@@ -36,14 +37,13 @@ struct iOSTerminalView: View {
 
     @SceneStorage("vvterm.zenMode.ios") private var isZenModeEnabled = false
 
-    @AppStorage(CloudKitSyncConstants.terminalThemeNameKey) private var terminalThemeName = "Aizen Dark"
-    @AppStorage(CloudKitSyncConstants.terminalThemeNameLightKey) private var terminalThemeNameLight = "Aizen Light"
-    @AppStorage(CloudKitSyncConstants.terminalUsePerAppearanceThemeKey) private var usePerAppearanceTheme = true
-    @AppStorage("sshAutoReconnect") private var autoReconnectEnabled = true
-    @AppStorage("terminalVoiceButtonEnabled") private var terminalVoiceButtonEnabled = true
     private var effectiveThemeName: String {
-        guard usePerAppearanceTheme else { return terminalThemeName }
-        return colorScheme == .dark ? terminalThemeName : terminalThemeNameLight
+        guard terminalPreferences.usePerAppearanceTheme else {
+            return terminalPreferences.terminalThemeName
+        }
+        return colorScheme == .dark
+            ? terminalPreferences.terminalThemeName
+            : terminalPreferences.terminalThemeNameLight
     }
 
     private var serverSessions: [ConnectionSession] {
@@ -142,7 +142,7 @@ struct iOSTerminalView: View {
             isBrowseModeEnabled: isSelectedTerminalInBrowseMode,
             isFindNavigatorVisible: isSelectedTerminalFindNavigatorVisible,
             isVoiceRecording: isSelectedTerminalVoiceRecording,
-            isVoiceButtonEnabled: terminalVoiceButtonEnabled,
+            isVoiceButtonEnabled: terminalPreferences.terminalVoiceButtonEnabled,
             hasPendingVoiceReturn: effectiveSelectedSessionId.map {
                 pendingVoiceReturnBySession[$0] == true
             } ?? false
@@ -250,7 +250,7 @@ struct iOSTerminalView: View {
             selectedViewId: selectedView,
             terminalViewId: ConnectionViewTab.terminal.id,
             refreshTerminal: refreshTerminal,
-            autoReconnectEnabled: autoReconnectEnabled
+            autoReconnectEnabled: terminalPreferences.autoReconnectEnabled
         ) { action in
             guard let session = sessionManager.sessions.first(where: { $0.id == action.sessionId }) else { return }
 
@@ -329,9 +329,9 @@ struct iOSTerminalView: View {
                 ensureInitialFileTabIfNeeded()
                 attemptForegroundReconnectIfNeeded(refreshTerminal: true)
             }
-            .onChange(of: terminalThemeName) { _ in updateTerminalBackgroundColor() }
-            .onChange(of: terminalThemeNameLight) { _ in updateTerminalBackgroundColor() }
-            .onChange(of: usePerAppearanceTheme) { _ in updateTerminalBackgroundColor() }
+            .onChange(of: terminalPreferences.terminalThemeName) { _ in updateTerminalBackgroundColor() }
+            .onChange(of: terminalPreferences.terminalThemeNameLight) { _ in updateTerminalBackgroundColor() }
+            .onChange(of: terminalPreferences.usePerAppearanceTheme) { _ in updateTerminalBackgroundColor() }
             .onChange(of: colorScheme) { _ in updateTerminalBackgroundColor() }
             .onChange(of: scenePhase) { newPhase in
                 if newPhase == .active {
@@ -545,7 +545,7 @@ struct iOSTerminalView: View {
 
     private func startVoiceInputForCurrentSession() {
         guard selectedView == ConnectionViewTab.terminal.id,
-              terminalVoiceButtonEnabled,
+              terminalPreferences.terminalVoiceButtonEnabled,
               !isSelectedTerminalVoiceRecording,
               let selectedId = effectiveSelectedSessionId,
               let terminal = sessionManager.peekTerminal(for: selectedId) else { return }

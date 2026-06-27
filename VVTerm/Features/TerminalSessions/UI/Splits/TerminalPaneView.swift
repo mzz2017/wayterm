@@ -22,6 +22,7 @@ struct TerminalPaneView: View {
     let onVoiceTrigger: () -> Void
 
     @EnvironmentObject var ghosttyApp: Ghostty.App
+    @EnvironmentObject private var terminalPreferences: TerminalRuntimePreferencesStore
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
 
@@ -34,15 +35,10 @@ struct TerminalPaneView: View {
     @State private var isInstallingMosh = false
     @State private var operationNotice: NoticeItem?
     @State private var dismissFallbackBanner = false
-    @State private var terminalBackgroundColor: Color = Self.initialTerminalBackgroundColor()
+    @State private var terminalBackgroundColor: Color = Self.platformFallbackBackgroundColor()
     @State private var hasEstablishedConnection = false
     @State private var showingRetrustHostConfirmation = false
     @StateObject private var richPasteUI = TerminalRichPasteUIModel()
-
-    @AppStorage(CloudKitSyncConstants.terminalThemeNameKey) private var terminalThemeName = "Aizen Dark"
-    @AppStorage(CloudKitSyncConstants.terminalThemeNameLightKey) private var terminalThemeNameLight = "Aizen Light"
-    @AppStorage(CloudKitSyncConstants.terminalUsePerAppearanceThemeKey) private var usePerAppearanceTheme = true
-    @AppStorage("sshAutoReconnect") private var autoReconnectEnabled = true
 
     private var paneState: TerminalPaneState? {
         tabManager.paneStates[paneId]
@@ -75,8 +71,12 @@ struct TerminalPaneView: View {
     }
 
     private var effectiveThemeName: String {
-        guard usePerAppearanceTheme else { return terminalThemeName }
-        return colorScheme == .dark ? terminalThemeName : terminalThemeNameLight
+        guard terminalPreferences.usePerAppearanceTheme else {
+            return terminalPreferences.terminalThemeName
+        }
+        return colorScheme == .dark
+            ? terminalPreferences.terminalThemeName
+            : terminalPreferences.terminalThemeNameLight
     }
 
     private var fallbackBannerMessage: String? {
@@ -198,6 +198,7 @@ struct TerminalPaneView: View {
                         richPasteUIModel: richPasteUI,
                         tabManager: tabManager,
                         isActive: shouldFocus,
+                        autoReconnectEnabled: terminalPreferences.autoReconnectEnabled,
                         onProcessExit: onProcessExit,
                         onReady: { isReady = true }
                     )
@@ -239,9 +240,9 @@ struct TerminalPaneView: View {
             startConnectWatchdog()
             attemptAutoReconnectIfNeeded()
         }
-        .onChange(of: terminalThemeName) { _ in updateTerminalBackgroundColor() }
-        .onChange(of: terminalThemeNameLight) { _ in updateTerminalBackgroundColor() }
-        .onChange(of: usePerAppearanceTheme) { _ in updateTerminalBackgroundColor() }
+        .onChange(of: terminalPreferences.terminalThemeName) { _ in updateTerminalBackgroundColor() }
+        .onChange(of: terminalPreferences.terminalThemeNameLight) { _ in updateTerminalBackgroundColor() }
+        .onChange(of: terminalPreferences.usePerAppearanceTheme) { _ in updateTerminalBackgroundColor() }
         .onChange(of: colorScheme) { _ in updateTerminalBackgroundColor() }
         .onChange(of: scenePhase) { phase in
             if phase == .active {
@@ -452,7 +453,7 @@ struct TerminalPaneView: View {
         guard tabManager.shouldAutoReconnectPane(
             paneId,
             isSceneActive: scenePhase == .active,
-            autoReconnectEnabled: autoReconnectEnabled
+            autoReconnectEnabled: terminalPreferences.autoReconnectEnabled
         ) else { return }
         retryConnection()
     }
@@ -541,26 +542,6 @@ struct TerminalPaneView: View {
         )
         terminalBackgroundColor = resolved.usedFallback ? Self.platformFallbackBackgroundColor() : resolved.color
         TerminalThemeBackgroundResolver.cacheResolvedBackground(resolved)
-    }
-
-    private static func initialTerminalBackgroundColor() -> Color {
-        let defaults = UserDefaults.standard
-
-        if let cached = TerminalThemeBackgroundResolver.cachedBackground(defaults: defaults) {
-            return cached.color
-        }
-
-        let usePerAppearanceTheme = defaults.object(forKey: CloudKitSyncConstants.terminalUsePerAppearanceThemeKey) as? Bool ?? true
-        let darkThemeName = defaults.string(forKey: CloudKitSyncConstants.terminalThemeNameKey) ?? "Aizen Dark"
-        let lightThemeName = defaults.string(forKey: CloudKitSyncConstants.terminalThemeNameLightKey) ?? "Aizen Light"
-        let isDarkAppearance = NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let themeName = usePerAppearanceTheme ? (isDarkAppearance ? darkThemeName : lightThemeName) : darkThemeName
-
-        let resolved = TerminalThemeBackgroundResolver.resolve(
-            themeName: themeName,
-            fallbackHex: isDarkAppearance ? "#000000" : "#FFFFFF"
-        )
-        return resolved.usedFallback ? platformFallbackBackgroundColor() : resolved.color
     }
 
     private var terminalBackgroundFallbackHex: String {
