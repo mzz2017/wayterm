@@ -33,7 +33,7 @@ class GhosttyTerminalView: UIView {
     private let worktreePath: String
     private let paneId: String?
     private let initialCommand: String?
-    private let useCustomIO: Bool
+    let useCustomIO: Bool
     private let presentationEnvironment: TerminalIOSPresentationEnvironment
 
     /// Callback invoked when the terminal process exits
@@ -87,8 +87,8 @@ class GhosttyTerminalView: UIView {
     private var didSignalReady = false
 
     /// Prevent rendering when the view is offscreen or being torn down.
-    private var isShuttingDown = false
-    private var isPaused = false
+    var isShuttingDown = false
+    var isPaused = false
     private var customIORedrawScheduled = false
     private let keyRepeatRuntime = TerminalIOSKeyRepeatRuntime()
 
@@ -227,8 +227,8 @@ class GhosttyTerminalView: UIView {
     // MARK: - Rendering Components
 
     private let renderingSetup = GhosttyRenderingSetup()
-    private let surfaceDisplayRuntime = TerminalIOSSurfaceDisplayRuntime()
-    private let surfaceLifecycleRuntime = TerminalIOSSurfaceLifecycleRuntime()
+    let surfaceDisplayRuntime = TerminalIOSSurfaceDisplayRuntime()
+    let surfaceLifecycleRuntime = TerminalIOSSurfaceLifecycleRuntime()
     private let inputRuntime = TerminalIOSInputRuntime()
     private let selectionRuntime = TerminalIOSSelectionRuntime()
 
@@ -243,23 +243,12 @@ class GhosttyTerminalView: UIView {
         markIOSurfaceLayersForDisplay()
     }
 
-    private func scheduleCustomIORedraw() {
-        guard useCustomIO else { return }
-        guard !customIORedrawScheduled else { return }
-        customIORedrawScheduled = true
+    func markCustomIORedrawScheduled(_ scheduled: Bool) {
+        customIORedrawScheduled = scheduled
+    }
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.customIORedrawScheduled = false
-            guard !self.isShuttingDown, !self.isPaused else { return }
-            guard let surface = self.surface?.unsafeCValue else { return }
-            guard self.bounds.width > 0 && self.bounds.height > 0 else { return }
-
-            self.updateContentScaleIfNeeded()
-            self.configureIOSurfaceLayers(size: self.bounds.size)
-            self.surfaceDisplayRuntime.redraw(surface: surface)
-            self.markIOSurfaceLayersForDisplay()
-        }
+    var isCustomIORedrawScheduled: Bool {
+        customIORedrawScheduled
     }
 
     // MARK: - Initialization
@@ -2579,116 +2568,6 @@ class GhosttyTerminalView: UIView {
                 self?.sendModifiedKey(key, mods: mods, text: text, unshiftedCodepoint: unshiftedCodepoint)
             }
         )
-    }
-
-    // MARK: - Process Lifecycle
-
-    /// Check if the terminal process has exited
-    var processExited: Bool {
-        surfaceLifecycleRuntime.processExited(surface: surface)
-    }
-
-    /// Check if closing this terminal needs confirmation
-    var needsConfirmQuit: Bool {
-        guard let surface = surface else { return false }
-        return surface.needsConfirmQuit
-    }
-
-    /// Get current terminal grid size
-    func terminalSize() -> Ghostty.Surface.TerminalSize? {
-        guard let surface = surface else { return nil }
-        return surface.terminalSize()
-    }
-
-    /// Force the terminal surface to refresh/redraw
-    func forceRefresh() {
-        if isShuttingDown { return }
-        if isPaused { return }
-        guard let surface = surface?.unsafeCValue else { return }
-        guard bounds.width > 0 && bounds.height > 0 else { return }
-
-        updateContentScaleIfNeeded()
-        configureIOSurfaceLayers(size: bounds.size)
-
-        let scale = self.contentScaleFactor
-        guard surfaceDisplayRuntime.forceResize(surface: surface, pointSize: bounds.size, scale: scale) else { return }
-        if window != nil {
-            surfaceDisplayRuntime.setOcclusion(true, surface: surface)
-        }
-
-        surfaceDisplayRuntime.redraw(surface: surface)
-        markIOSurfaceLayersForDisplay()
-        requestRender()
-    }
-
-    /// Reset Ghostty's terminal state before binding a fresh remote shell to a reused surface.
-    func resetTerminalForReconnect() {
-        guard !isShuttingDown else { return }
-        _ = surface?.perform(action: "reset")
-        forceRefresh()
-    }
-
-    private func configureIOSurfaceLayers() {
-        configureIOSurfaceLayers(size: nil)
-    }
-
-    private func configureIOSurfaceLayers(size: CGSize?) {
-        let scale = self.contentScaleFactor
-        guard let sublayers = layer.sublayers else { return }
-        let targetBounds = size.map { CGRect(origin: .zero, size: $0) } ?? bounds
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        for sublayer in sublayers {
-            guard isGhosttySurfaceLayer(sublayer) else { continue }
-            sublayer.frame = targetBounds
-            sublayer.contentsScale = scale
-        }
-        CATransaction.commit()
-    }
-
-    private func markIOSurfaceLayersForDisplay() {
-        layer.setNeedsDisplay()
-        layer.sublayers?.forEach { sublayer in
-            guard isGhosttySurfaceLayer(sublayer) else { return }
-            sublayer.setNeedsDisplay()
-        }
-    }
-
-    private func isGhosttySurfaceLayer(_ layer: CALayer) -> Bool {
-        !subviews.contains { subview in
-            subview.layer === layer
-        }
-    }
-
-    private func updateContentScaleIfNeeded() {
-        let targetScale = window?.screen.scale ?? UIScreen.main.scale
-        if contentScaleFactor != targetScale {
-            contentScaleFactor = targetScale
-        }
-    }
-
-    // MARK: - External backend I/O (for SSH clients)
-
-    /// Callback invoked when user types in the terminal. The External backend's
-    /// write callback (registered at surface creation) recovers this view via
-    /// userdata and forwards to this closure.
-    var writeCallback: ((Data) -> Void)?
-
-    /// Feed data from the SSH channel into the terminal for rendering (External backend).
-    func writeOutput(_ data: Data) {
-        guard let surface = surface?.unsafeCValue else { return }
-
-        surfaceDisplayRuntime.writeOutput(data, to: surface)
-        scheduleCustomIORedraw()
-        requestRender()
-    }
-
-    /// Notify the terminal that the SSH session ended (External backend).
-    func externalExited(_ exitCode: UInt32 = 0) {
-        guard let surface = surface?.unsafeCValue else { return }
-        surfaceDisplayRuntime.externalExited(exitCode, surface: surface)
-        scheduleCustomIORedraw()
-        requestRender()
     }
 
 }

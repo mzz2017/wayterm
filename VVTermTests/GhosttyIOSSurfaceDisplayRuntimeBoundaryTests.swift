@@ -21,31 +21,35 @@ struct GhosttyIOSSurfaceDisplayRuntimeBoundaryTests {
         let viewSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
         )
+        let surfaceRuntimeSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+SurfaceRuntime+iOS.swift")
+        )
         let runtimeSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalIOSSurfaceDisplayRuntime.swift")
         )
+        let displayCallSource = viewSource + surfaceRuntimeSource
 
         // Given the iOS terminal view needs Ghostty resize, redraw, and
         // External backend output lifecycle.
-        #expect(viewSource.contains("private let surfaceDisplayRuntime = TerminalIOSSurfaceDisplayRuntime()"))
-        #expect(viewSource.contains("surfaceDisplayRuntime.resizeIfNeeded"))
-        #expect(viewSource.contains("surfaceDisplayRuntime.forceResize"))
-        #expect(viewSource.contains("surfaceDisplayRuntime.redraw"))
-        #expect(viewSource.contains("surfaceDisplayRuntime.writeOutput"))
-        #expect(viewSource.contains("surfaceDisplayRuntime.externalExited"))
-        #expect(viewSource.contains("surfaceDisplayRuntime.setColorScheme"))
+        #expect(viewSource.contains("let surfaceDisplayRuntime = TerminalIOSSurfaceDisplayRuntime()"))
+        #expect(displayCallSource.contains("surfaceDisplayRuntime.resizeIfNeeded"))
+        #expect(surfaceRuntimeSource.contains("surfaceDisplayRuntime.forceResize"))
+        #expect(displayCallSource.contains("surfaceDisplayRuntime.redraw"))
+        #expect(surfaceRuntimeSource.contains("surfaceDisplayRuntime.writeOutput"))
+        #expect(surfaceRuntimeSource.contains("surfaceDisplayRuntime.externalExited"))
+        #expect(displayCallSource.contains("surfaceDisplayRuntime.setColorScheme"))
 
         // Then the main UIKit view does not directly own those C/FFI calls or
         // Ghostty pixel-size tracking state.
         #expect(!viewSource.contains("private var lastPixelSize"))
         #expect(!viewSource.contains("private var lastContentScale"))
-        #expect(!viewSource.contains("ghostty_surface_set_content_scale"))
-        #expect(!viewSource.contains("ghostty_surface_set_size"))
-        #expect(!viewSource.contains("ghostty_surface_refresh"))
-        #expect(!viewSource.contains("ghostty_surface_draw"))
-        #expect(!viewSource.contains("ghostty_surface_write_output"))
-        #expect(!viewSource.contains("ghostty_surface_external_exited"))
-        #expect(!viewSource.contains("ghostty_surface_set_color_scheme"))
+        #expect(!displayCallSource.contains("ghostty_surface_set_content_scale"))
+        #expect(!displayCallSource.contains("ghostty_surface_set_size"))
+        #expect(!displayCallSource.contains("ghostty_surface_refresh"))
+        #expect(!displayCallSource.contains("ghostty_surface_draw"))
+        #expect(!displayCallSource.contains("ghostty_surface_write_output"))
+        #expect(!displayCallSource.contains("ghostty_surface_external_exited"))
+        #expect(!displayCallSource.contains("ghostty_surface_set_color_scheme"))
 
         #expect(runtimeSource.contains("final class TerminalIOSSurfaceDisplayRuntime"))
         #expect(runtimeSource.contains("ghostty_surface_set_content_scale"))

@@ -17,6 +17,9 @@ struct GhosttyIOSSurfaceLifecycleRuntimeTests {
         let viewSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
         )
+        let surfaceRuntimeSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+SurfaceRuntime+iOS.swift")
+        )
         let runtimeSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalIOSSurfaceLifecycleRuntime.swift")
         )
@@ -24,18 +27,19 @@ struct GhosttyIOSSurfaceLifecycleRuntimeTests {
         let cleanupSource = try section(in: viewSource, from: "func cleanup()", to: "/// Pause rendering")
         let pauseSource = try section(in: viewSource, from: "func pauseRendering()", to: "/// Resume rendering")
         let resumeSource = try section(in: viewSource, from: "func resumeRendering()", to: "// MARK: - Layer Type")
+        let lifecycleCallSource = viewSource + surfaceRuntimeSource
 
-        #expect(viewSource.contains("private let surfaceLifecycleRuntime = TerminalIOSSurfaceLifecycleRuntime()"))
+        #expect(viewSource.contains("let surfaceLifecycleRuntime = TerminalIOSSurfaceLifecycleRuntime()"))
         #expect(cleanupSource.contains("surfaceLifecycleRuntime.cleanup("))
         #expect(pauseSource.contains("surfaceLifecycleRuntime.pauseRendering("))
         #expect(resumeSource.contains("surfaceLifecycleRuntime.resumeRendering("))
         #expect(viewSource.contains("surfaceLifecycleRuntime.setFocus("))
         #expect(viewSource.contains("surfaceLifecycleRuntime.setOcclusion("))
-        #expect(viewSource.contains("surfaceLifecycleRuntime.processExited(surface: surface)"))
+        #expect(surfaceRuntimeSource.contains("surfaceLifecycleRuntime.processExited(surface: surface)"))
 
-        #expect(!viewSource.contains("ghostty_surface_set_focus"))
-        #expect(!viewSource.contains("ghostty_surface_set_occlusion"))
-        #expect(!viewSource.contains("ghostty_surface_process_exited"))
+        #expect(!lifecycleCallSource.contains("ghostty_surface_set_focus"))
+        #expect(!lifecycleCallSource.contains("ghostty_surface_set_occlusion"))
+        #expect(!lifecycleCallSource.contains("ghostty_surface_process_exited"))
         #expect(!cleanupSource.contains("ghostty_surface_set_focus"))
         #expect(!cleanupSource.contains("ghostty_surface_set_occlusion"))
         #expect(!cleanupSource.contains("surfaceRegistration.unregister()"))

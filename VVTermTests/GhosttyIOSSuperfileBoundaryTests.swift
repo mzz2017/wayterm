@@ -135,6 +135,31 @@ struct GhosttyIOSSuperfileBoundaryTests {
     }
 
     @Test
+    func surfaceRuntimeLifecycleLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+        )
+        let surfaceRuntimeSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+SurfaceRuntime+iOS.swift")
+        )
+
+        #expect(
+            !mainSource.contains("func forceRefresh()"),
+            "GhosttyTerminalView+iOS.swift should not own surface refresh orchestration."
+        )
+        #expect(
+            !mainSource.contains("func writeOutput(_ data: Data)"),
+            "GhosttyTerminalView+iOS.swift should not own external backend output routing."
+        )
+
+        #expect(surfaceRuntimeSource.contains("extension GhosttyTerminalView"))
+        #expect(surfaceRuntimeSource.contains("func forceRefresh()"))
+        #expect(surfaceRuntimeSource.contains("func writeOutput(_ data: Data)"))
+        #expect(surfaceRuntimeSource.contains("func externalExited"))
+    }
+
+    @Test
     func momentumScrollStateLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
