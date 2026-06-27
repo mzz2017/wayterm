@@ -192,6 +192,35 @@ struct GhosttyIOSSuperfileBoundaryTests {
     }
 
     @Test
+    func scrollGestureRoutingLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
+        )
+        let scrollSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Scroll/GhosttyTerminalView+ScrollGesture+iOS.swift")
+        )
+
+        #expect(
+            !mainSource.contains("func handlePanGesture"),
+            "GhosttyTerminalView+iOS.swift should not own pan scroll routing."
+        )
+        #expect(
+            !mainSource.contains("func currentScrollOwner"),
+            "GhosttyTerminalView+iOS.swift should not own scroll owner policy wiring."
+        )
+        #expect(
+            !mainSource.contains("func setNativeHostScrollContainerEnabled"),
+            "GhosttyTerminalView+iOS.swift should not own native host scroll toggling."
+        )
+
+        #expect(scrollSource.contains("func handlePanGesture"))
+        #expect(scrollSource.contains("func currentScrollOwner"))
+        #expect(scrollSource.contains("TerminalScrollRoutingPolicy.owner"))
+        #expect(scrollSource.contains("scrollRuntime.handlePanGesture"))
+    }
+
+    @Test
     func interactionDelegatesLiveOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
