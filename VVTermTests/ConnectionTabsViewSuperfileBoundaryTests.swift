@@ -112,6 +112,18 @@ struct ConnectionTabsViewSuperfileBoundaryTests {
             toolbarSource.contains("ToolbarItem(placement:"),
             "ConnectionTabsToolbarContent.swift should own concrete macOS toolbar items."
         )
+        #expect(
+            containerSource.contains("let onShowSettings: () -> Void"),
+            "ConnectionTabsView.swift should receive settings presentation from app composition."
+        )
+        #expect(
+            containerSource.contains("onShowSettings: onShowSettings"),
+            "ConnectionTabsView.swift should pass the injected settings presenter to toolbar content."
+        )
+        #expect(
+            !containerSource.contains("SettingsWindowManager.shared"),
+            "ConnectionTabsView.swift should not resolve the settings window singleton from TerminalSessions UI."
+        )
 
         for lifecycleCall in [
             "requestTabOpen(",

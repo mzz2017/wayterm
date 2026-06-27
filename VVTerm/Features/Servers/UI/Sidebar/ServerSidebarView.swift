@@ -7,6 +7,7 @@ struct ServerSidebarView: View {
     @ObservedObject var tabManager: TerminalTabManager
     @ObservedObject var storeManager: StoreManager
     @ObservedObject var appLockManager: AppLockManager
+    let onShowSettings: () -> Void
     let backgroundColor: Color
     @Binding var selectedWorkspace: Workspace?
     @Binding var selectedServer: Server?
@@ -180,11 +181,7 @@ struct ServerSidebarView: View {
                 canAddServer: canAddServer,
                 onAddServer: { presentAddServer() },
                 onShowSupport: { showingSupport = true },
-                onShowSettings: {
-                    #if os(macOS)
-                    SettingsWindowManager.shared.show()
-                    #endif
-                }
+                onShowSettings: onShowSettings
             )
         }
         .sheet(isPresented: $showingWorkspaceSwitcher) {

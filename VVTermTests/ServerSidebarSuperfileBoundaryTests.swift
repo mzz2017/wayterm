@@ -100,6 +100,18 @@ struct ServerSidebarSuperfileBoundaryTests {
             !supportSource.contains("TerminalTabManager"),
             "ServerSidebarSupportViews.swift should not depend on TerminalSessions managers."
         )
+        #expect(
+            sidebarSource.contains("let onShowSettings: () -> Void"),
+            "ServerSidebarView.swift should receive settings presentation from app composition."
+        )
+        #expect(
+            !sidebarSource.contains("SettingsWindowManager.shared"),
+            "ServerSidebarView.swift should not resolve the settings window singleton from Servers UI."
+        )
+        #expect(
+            appSource.contains("onShowSettings: onShowSettings"),
+            "ContentView should inject the app-owned settings presenter into ServerSidebarView."
+        )
     }
 
     private func source(at url: URL) throws -> String {

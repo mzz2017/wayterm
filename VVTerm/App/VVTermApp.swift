@@ -102,7 +102,10 @@ struct VVTermApp: App {
                             fileTabs: remoteFileTabManager,
                             fileBrowser: remoteFileBrowserStore,
                             appLockManager: appLockManager,
-                            disconnectCoordinator: serverConnectionLifecycleCoordinator
+                            disconnectCoordinator: serverConnectionLifecycleCoordinator,
+                            onShowSettings: {
+                                SettingsWindowManager.shared.show()
+                            }
                         )
                             .environmentObject(ghosttyApp)
                             .environmentObject(terminalThemeManager)

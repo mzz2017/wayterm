@@ -18,6 +18,7 @@ struct ConnectionTerminalContainer: View {
     @ObservedObject var storeManager: StoreManager
     @ObservedObject var viewTabConfig: ViewTabConfigurationManager
     let disconnectCoordinator: ServerConnectionLifecycleCoordinator
+    let onShowSettings: () -> Void
     let serverManager: ServerManager
     let fileBrowser: RemoteFileBrowserStore
     let server: Server
@@ -579,7 +580,7 @@ struct ConnectionTerminalContainer: View {
                     },
                     isSidebarVisible: isSidebarVisible,
                     onToggleSidebar: onToggleSidebar,
-                    onShowSettings: { SettingsWindowManager.shared.show() },
+                    onShowSettings: onShowSettings,
                     onEditServer: { serverToEdit = server },
                     onRequestDisconnect: { showingDisconnectConfirmation = true }
                 )
