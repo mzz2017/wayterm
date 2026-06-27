@@ -2,11 +2,6 @@ import Combine
 import Foundation
 
 extension RemoteFileBrowserStore {
-    struct LocalUploadItemInfo: Sendable {
-        let name: String
-        let isDirectory: Bool
-    }
-
     final class TransferProgressTracker {
         private(set) var completedUnitCount = 0
         let totalUnitCount: Int
@@ -215,7 +210,7 @@ extension RemoteFileBrowserStore {
 
         let destinationDirectory = RemoteFilePath.normalize(directoryPath)
         let urls = plans.map(\.sourceURL)
-        try await withSecurityScopedAccess(to: urls) {
+        try await localFileService.withSecurityScopedAccess(to: urls) {
             let progressTracker = TransferProgressTracker(
                 totalUnitCount: try await countLocalTransferUnits(at: urls),
                 onProgress: onProgress
@@ -243,7 +238,7 @@ extension RemoteFileBrowserStore {
         server: Server
     ) async throws -> [LocalUploadPlanCandidate] {
         let destinationDirectory = RemoteFilePath.normalize(directoryPath)
-        return try await withSecurityScopedAccess(to: urls) {
+        return try await localFileService.withSecurityScopedAccess(to: urls) {
             try await withRemoteFileService(for: server) { service in
                 var reservedNames: Set<String> = []
                 var candidates: [LocalUploadPlanCandidate] = []
@@ -386,33 +381,15 @@ extension RemoteFileBrowserStore {
     }
 
     func loadLocalFileData(from url: URL) async throws -> Data {
-        try await Task.detached(priority: .utility) {
-            try Data(contentsOf: url, options: [.mappedIfSafe])
-        }.value
+        try await localFileService.loadData(from: url)
     }
 
-    func localItemInfo(at url: URL) async throws -> LocalUploadItemInfo {
-        try await Task.detached(priority: .utility) {
-            let resourceValues = try url.resourceValues(forKeys: [.isDirectoryKey, .nameKey])
-            return LocalUploadItemInfo(
-                name: resourceValues.name ?? url.lastPathComponent,
-                isDirectory: resourceValues.isDirectory == true
-            )
-        }.value
+    func localItemInfo(at url: URL) async throws -> RemoteFileLocalItemInfo {
+        try await localFileService.itemInfo(at: url)
     }
 
     func localDirectoryContents(at url: URL) async throws -> [URL] {
-        try await Task.detached(priority: .utility) {
-            let fileManager = FileManager.default
-            let contents = try fileManager.contentsOfDirectory(
-                at: url,
-                includingPropertiesForKeys: [.isDirectoryKey, .nameKey],
-                options: []
-            )
-            return contents.sorted {
-                $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
-            }
-        }.value
+        try await localFileService.directoryContents(at: url)
     }
 
     func uploadItem(
@@ -617,9 +594,7 @@ extension RemoteFileBrowserStore {
     }
 
     func createLocalDirectory(at url: URL) async throws {
-        try await Task.detached(priority: .utility) {
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        }.value
+        try await localFileService.createDirectory(at: url)
     }
 
     nonisolated func makeDownloadExportFileURL(for entry: RemoteFileEntry) throws -> URL {
@@ -632,21 +607,6 @@ extension RemoteFileBrowserStore {
 
     nonisolated func removeTemporaryFile(at url: URL) {
         temporaryStorage.removeItem(at: url)
-    }
-
-    func withSecurityScopedAccess<T>(
-        to urls: [URL],
-        operation: () async throws -> T
-    ) async throws -> T {
-        let accessedURLs = urls.map { url in
-            (url: url, accessed: url.startAccessingSecurityScopedResource())
-        }
-        defer {
-            for entry in accessedURLs where entry.accessed {
-                entry.url.stopAccessingSecurityScopedResource()
-            }
-        }
-        return try await operation()
     }
 
     func validatedRemoteName(_ name: String) throws -> String {
