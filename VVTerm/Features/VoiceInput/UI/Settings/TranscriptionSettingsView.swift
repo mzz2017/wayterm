@@ -33,11 +33,6 @@ struct TranscriptionSettingsView: View {
         ("auto", String(localized: "Auto-detect"))
     ]
 
-    @MainActor
-    init() {
-        self.init(modelDownloads: .shared)
-    }
-
     init(modelDownloads: VoiceModelDownloadStore) {
         _modelDownloads = ObservedObject(wrappedValue: modelDownloads)
         _whisperManager = ObservedObject(wrappedValue: modelDownloads.whisperManager)

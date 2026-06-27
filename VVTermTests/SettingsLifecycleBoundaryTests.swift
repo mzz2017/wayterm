@@ -100,6 +100,29 @@ struct SettingsLifecycleBoundaryTests {
         )
     }
 
+    @Test
+    func transcriptionSettingsReceivesModelDownloadStoreFromSettingsRoot() throws {
+        // Given the transcription settings leaf view and Settings root source.
+        let root = try sourceRoot()
+        let transcriptionSettingsSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/VoiceInput/UI/Settings/TranscriptionSettingsView.swift")
+        )
+        let settingsSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/UI/SettingsView.swift")
+        )
+
+        // Then the leaf view should render injected model-download state rather
+        // than resolving the live application store by itself.
+        #expect(
+            !transcriptionSettingsSource.contains("self.init(modelDownloads: .shared)"),
+            "TranscriptionSettingsView should not resolve VoiceModelDownloadStore.shared from leaf UI."
+        )
+        #expect(
+            settingsSource.contains("TranscriptionSettingsView(modelDownloads: voiceModelDownloads)"),
+            "SettingsView should pass the model download store into the transcription settings screen."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

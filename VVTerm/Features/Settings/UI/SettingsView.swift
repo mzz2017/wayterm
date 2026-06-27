@@ -39,10 +39,20 @@ struct SettingsView: View {
 
     @State private var selection: SettingsSelection? = .pro
     @StateObject private var storeManager = StoreManager.shared
+    @ObservedObject private var voiceModelDownloads: VoiceModelDownloadStore
 
     #if os(iOS)
     @Environment(\.dismiss) private var dismiss
     #endif
+
+    @MainActor
+    init() {
+        self.init(voiceModelDownloads: .shared)
+    }
+
+    init(voiceModelDownloads: VoiceModelDownloadStore) {
+        _voiceModelDownloads = ObservedObject(wrappedValue: voiceModelDownloads)
+    }
 
     var body: some View {
         #if os(macOS)
@@ -150,7 +160,7 @@ struct SettingsView: View {
                     }
 
                     NavigationLink {
-                        TranscriptionSettingsView()
+                        TranscriptionSettingsView(modelDownloads: voiceModelDownloads)
                             .navigationTitle("Transcription")
                             .navigationBarTitleDisplayMode(.inline)
                     } label: {
@@ -220,7 +230,7 @@ struct SettingsView: View {
                                 .navigationTitle("Terminal")
                                 .navigationSubtitle(String(localized: "Font, theme, and connection settings"))
         case .transcription:
-                            TranscriptionSettingsView()
+                            TranscriptionSettingsView(modelDownloads: voiceModelDownloads)
                                 .navigationTitle("Transcription")
                                 .navigationSubtitle(String(localized: "Speech-to-text engine and models"))
         case .keychain:
