@@ -3,11 +3,12 @@ import Testing
 @testable import VVTerm
 
 // Test Context:
-// These tests protect TmuxAttachResolver's server metadata boundary. The
-// resolver owns tmux prompt/session policy state, but server lookup belongs to
-// the terminal session manager boundary and must be injected. Fakes use in-memory
-// Server values only; update these tests only when tmux server overrides move to
-// a different application-layer dependency.
+// These tests protect TmuxAttachResolver's injected metadata and tmux service
+// boundaries. The resolver owns tmux prompt/session policy state, but server
+// lookup and remote tmux operations belong to the terminal session manager
+// boundary. Fakes use in-memory Server values and a no-op TerminalTmuxServicing
+// implementation; update these tests only when tmux server overrides or remote
+// tmux operations intentionally move to a different application-layer owner.
 @MainActor
 struct TmuxAttachResolverProviderTests {
     @Test
@@ -22,9 +23,12 @@ struct TmuxAttachResolverProviderTests {
             multiplexerOverride: .zmx,
             tmuxStartupBehaviorOverride: .skipTmux
         )
-        let resolver = TmuxAttachResolver(serverProvider: { requestedId in
-            requestedId == serverId ? server : nil
-        })
+        let resolver = TmuxAttachResolver(
+            serverProvider: { requestedId in
+                requestedId == serverId ? server : nil
+            },
+            tmuxService: FakeTerminalTmuxService()
+        )
 
         // Given a server has per-server tmux overrides.
         let multiplexer = resolver.multiplexer(for: serverId)
@@ -58,9 +62,12 @@ struct TmuxAttachResolverProviderTests {
             multiplexerOverride: TerminalMultiplexer.none,
             tmuxStartupBehaviorOverride: .skipTmux
         )
-        let resolver = TmuxAttachResolver(serverProvider: { requestedId in
-            requestedId == serverId ? first : nil
-        })
+        let resolver = TmuxAttachResolver(
+            serverProvider: { requestedId in
+                requestedId == serverId ? first : nil
+            },
+            tmuxService: FakeTerminalTmuxService()
+        )
 
         // Given tests or app composition replace the manager-level server
         // provider after resolver construction.
@@ -71,5 +78,95 @@ struct TmuxAttachResolverProviderTests {
         // Then future policy resolution uses the new provider.
         #expect(resolver.multiplexer(for: serverId) == .none)
         #expect(resolver.tmuxStartupBehavior(for: serverId) == .skipTmux)
+    }
+}
+
+private final class FakeTerminalTmuxService: TerminalTmuxServicing {
+    func tmuxBackend(
+        using client: SSHClient,
+        preferred: TerminalMultiplexer
+    ) async -> RemoteTmuxBackend? {
+        nil
+    }
+
+    func tmuxInstallBackend(
+        using executor: any RemoteCommandExecuting,
+        preferred: TerminalMultiplexer
+    ) async -> RemoteTmuxBackend? {
+        nil
+    }
+
+    func isTmuxAvailable(
+        using executor: any RemoteCommandExecuting,
+        preferred: TerminalMultiplexer
+    ) async -> Bool {
+        false
+    }
+
+    func listSessions(
+        using executor: any RemoteCommandExecuting,
+        backend: RemoteTmuxBackend
+    ) async -> [RemoteTmuxSession] {
+        []
+    }
+
+    func prepareConfig(
+        using executor: any RemoteCommandExecuting,
+        terminalType: RemoteTerminalType,
+        backend: RemoteTmuxBackend
+    ) async {}
+
+    func sendScript(_ script: String, using client: SSHClient, shellId: UUID) async {}
+
+    func killSession(
+        named sessionName: String,
+        using executor: any RemoteCommandExecuting,
+        preferred: TerminalMultiplexer
+    ) async {}
+
+    func cleanupLegacySessions(using executor: any RemoteCommandExecuting) async {}
+
+    func cleanupDetachedSessions(
+        deviceId: String,
+        keeping sessionNames: Set<String>,
+        using executor: any RemoteCommandExecuting,
+        preferred: TerminalMultiplexer
+    ) async {}
+
+    func currentPath(sessionName: String, using executor: any RemoteCommandExecuting) async -> String? {
+        nil
+    }
+
+    func startupAttachCommand(
+        sessionName: String,
+        workingDirectory: String,
+        backend: RemoteTmuxBackend
+    ) -> String {
+        "attach \(sessionName) \(workingDirectory)"
+    }
+
+    func startupAttachExistingCommand(sessionName: String, backend: RemoteTmuxBackend) -> String {
+        "attach-existing \(sessionName)"
+    }
+
+    func interactiveAttachCommand(
+        sessionName: String,
+        workingDirectory: String,
+        backend: RemoteTmuxBackend
+    ) -> String {
+        "exec \(sessionName) \(workingDirectory)"
+    }
+
+    func interactiveAttachExistingCommand(sessionName: String, backend: RemoteTmuxBackend) -> String {
+        "exec-existing \(sessionName)"
+    }
+
+    func installAndAttachScript(
+        sessionName: String,
+        workingDirectory: String,
+        terminalType: RemoteTerminalType,
+        backend: RemoteTmuxBackend
+    ) -> String {
+        "install \(sessionName) \(workingDirectory)"
     }
 }

@@ -230,6 +230,10 @@ extension ConnectionSessionManager {
         credentialsProvider = provider
     }
 
+    func setTmuxServiceForTesting(_ service: any TerminalTmuxServicing) {
+        tmuxService = service
+    }
+
     func setServerProviderForTesting(
         _ provider: @escaping ServerProvider
     ) {

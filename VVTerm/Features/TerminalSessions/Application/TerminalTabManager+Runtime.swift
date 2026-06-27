@@ -184,7 +184,7 @@ extension TerminalTabManager {
         }
 
         if let tmuxSessionName {
-            await RemoteTmuxManager.shared.killSession(
+            await tmuxService.killSession(
                 named: tmuxSessionName,
                 using: registration.client,
                 preferred: tmuxResolver.multiplexer(for: registration.serverId)

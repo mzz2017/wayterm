@@ -293,16 +293,17 @@ extension TerminalTabManager {
 #if DEBUG
         let testingOperation = tmuxKillOperationForTesting
 #endif
-        let task = Task.detached(priority: .utility) { [logger] in
+        let tmuxService = tmuxService
+        let task = Task.detached(priority: .utility) { [logger, tmuxService] in
             logger.info("Managed pane tmux kill started [serverId: \(serverId.uuidString, privacy: .public), sessionName: \(sessionName, privacy: .public)]")
 #if DEBUG
             if let testingOperation {
                 await testingOperation()
             } else {
-                await RemoteTmuxManager.shared.killSession(named: sessionName, using: client, preferred: preferred)
+                await tmuxService.killSession(named: sessionName, using: client, preferred: preferred)
             }
 #else
-            await RemoteTmuxManager.shared.killSession(named: sessionName, using: client, preferred: preferred)
+            await tmuxService.killSession(named: sessionName, using: client, preferred: preferred)
 #endif
             logger.info("Managed pane tmux kill finished [serverId: \(serverId.uuidString, privacy: .public), sessionName: \(sessionName, privacy: .public)]")
         }

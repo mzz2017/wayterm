@@ -5,7 +5,7 @@ extension ConnectionSessionManager {
     // MARK: - tmux Integration
 
     private func resolveTmuxWorkingDirectory(for sessionId: UUID, using client: SSHClient) async -> String {
-        if let path = await RemoteTmuxManager.shared.currentPath(
+        if let path = await tmuxService.currentPath(
             sessionName: tmuxResolver.sessionName(for: sessionId),
             using: client
         ) {
@@ -135,7 +135,7 @@ extension ConnectionSessionManager {
     ) async {
         updateTmuxStatus(sessionId, status: currentTmuxStatus(for: sessionId))
         let terminalType = await client.remoteTerminalType()
-        await RemoteTmuxManager.shared.prepareConfig(using: client, terminalType: terminalType, backend: backend)
+        await tmuxService.prepareConfig(using: client, terminalType: terminalType, backend: backend)
     }
 
     private func immediateTmuxSelection(for sessionId: UUID) -> TmuxAttachSelection {
@@ -158,13 +158,13 @@ extension ConnectionSessionManager {
         case .skipTmux:
             return nil
         case .createManaged:
-            return RemoteTmuxManager.shared.attachCommand(
+            return tmuxService.startupAttachCommand(
                 sessionName: tmuxResolver.sessionName(for: sessionId),
                 workingDirectory: workingDirectory,
                 backend: backend
             )
         case .attachExisting(let sessionName):
-            return RemoteTmuxManager.shared.attachExistingCommand(sessionName: sessionName, backend: backend)
+            return tmuxService.startupAttachExistingCommand(sessionName: sessionName, backend: backend)
         }
     }
 
@@ -189,7 +189,7 @@ extension ConnectionSessionManager {
             return
         }
 
-        guard let backend = await RemoteTmuxManager.shared.tmuxBackend(
+        guard let backend = await tmuxService.tmuxBackend(
             using: client,
             preferred: tmuxResolver.multiplexer(for: serverId)
         ) else {
@@ -214,7 +214,7 @@ extension ConnectionSessionManager {
             return
         }
 
-        await RemoteTmuxManager.shared.sendScript(rebuilt, using: client, shellId: shellId)
+        await tmuxService.sendScript(rebuilt, using: client, shellId: shellId)
     }
 
     func tmuxStartupPlan(
@@ -232,7 +232,7 @@ extension ConnectionSessionManager {
             return (nil, true)
         }
 
-        guard let backend = await RemoteTmuxManager.shared.tmuxBackend(
+        guard let backend = await tmuxService.tmuxBackend(
             using: client,
             preferred: tmuxResolver.multiplexer(for: serverId)
         ) else {
@@ -273,7 +273,7 @@ extension ConnectionSessionManager {
         updateTmuxStatus(sessionId, status: .installing)
 
         let preferred = tmuxResolver.multiplexer(for: serverId)
-        guard let backend = await RemoteTmuxManager.shared.tmuxInstallBackend(using: registration.client, preferred: preferred) else {
+        guard let backend = await tmuxService.tmuxInstallBackend(using: registration.client, preferred: preferred) else {
             updateTmuxStatus(sessionId, status: .off)
             return
         }
@@ -281,18 +281,18 @@ extension ConnectionSessionManager {
         let sessionName = tmuxResolver.sessionName(for: sessionId)
         let workingDirectory = await resolveTmuxWorkingDirectory(for: sessionId, using: registration.client)
         let terminalType = await registration.client.remoteTerminalType()
-        let script = RemoteTmuxManager.shared.installAndAttachScript(
+        let script = tmuxService.installAndAttachScript(
             sessionName: sessionName,
             workingDirectory: workingDirectory,
             terminalType: terminalType,
             backend: backend
         )
-        await RemoteTmuxManager.shared.sendScript(script, using: registration.client, shellId: registration.shellId)
+        await tmuxService.sendScript(script, using: registration.client, shellId: registration.shellId)
 
         for _ in 0..<6 {
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
-            let available = await RemoteTmuxManager.shared.isTmuxAvailable(using: registration.client, preferred: preferred)
+            let available = await tmuxService.isTmuxAvailable(using: registration.client, preferred: preferred)
             if available {
                 tmuxResolver.bindManagedSession(for: sessionId, serverId: serverId)
                 updateTmuxStatus(sessionId, status: currentTmuxStatus(for: sessionId))

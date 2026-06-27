@@ -12,11 +12,16 @@ final class TmuxAttachResolver {
     var sessionNames: [UUID: String] = [:]
     var sessionOwnership: [UUID: SessionOwnership] = [:]
     private var serverProvider: ServerProvider
+    private var tmuxService: any TerminalTmuxServicing
 
     private let bindingStore = TmuxSessionBindingStore()
 
-    init(serverProvider: @escaping ServerProvider) {
+    init(
+        serverProvider: @escaping ServerProvider,
+        tmuxService: any TerminalTmuxServicing
+    ) {
         self.serverProvider = serverProvider
+        self.tmuxService = tmuxService
         // Hydrate persisted bindings so a chosen session survives an app restart.
         for (idString, binding) in bindingStore.allBindings() {
             guard let id = UUID(uuidString: idString) else { continue }
@@ -27,6 +32,10 @@ final class TmuxAttachResolver {
 
     func setServerProvider(_ provider: @escaping ServerProvider) {
         serverProvider = provider
+    }
+
+    func setTmuxService(_ service: any TerminalTmuxServicing) {
+        tmuxService = service
     }
 
     private(set) var currentPrompt: TmuxAttachPrompt?
@@ -200,13 +209,13 @@ final class TmuxAttachResolver {
     /// List sessions using the backend that matches the server's chosen multiplexer
     /// (so a zmx server lists zmx sessions, not tmux).
     private func listSessions(serverId: UUID, client: SSHClient) async -> [RemoteTmuxSession] {
-        guard let backend = await RemoteTmuxManager.shared.tmuxBackend(
+        guard let backend = await tmuxService.tmuxBackend(
             using: client,
             preferred: multiplexer(for: serverId)
         ) else {
             return []
         }
-        return await RemoteTmuxManager.shared.listSessions(using: client, backend: backend)
+        return await tmuxService.listSessions(using: client, backend: backend)
     }
 
     // MARK: - Prompt Queue
@@ -240,8 +249,8 @@ final class TmuxAttachResolver {
         guard !cleanupSet.contains(serverId) else { return }
         cleanupSet.insert(serverId)
         let preferred = multiplexer(for: serverId)
-        await RemoteTmuxManager.shared.cleanupLegacySessions(using: client)
-        await RemoteTmuxManager.shared.cleanupDetachedSessions(
+        await tmuxService.cleanupLegacySessions(using: client)
+        await tmuxService.cleanupDetachedSessions(
             deviceId: DeviceIdentity.id,
             keeping: managedNames,
             using: client,
@@ -261,16 +270,14 @@ final class TmuxAttachResolver {
         case .skipTmux:
             return nil
         case .createManaged:
-            return RemoteTmuxManager.shared.attachCommand(
+            return tmuxService.startupAttachCommand(
                 sessionName: sessionName(for: entityId),
                 workingDirectory: workingDirectory,
-                context: .startupExec,
                 backend: backend
             )
         case .attachExisting(let name):
-            return RemoteTmuxManager.shared.attachExistingCommand(
+            return tmuxService.startupAttachExistingCommand(
                 sessionName: name,
-                context: .startupExec,
                 backend: backend
             )
         }
@@ -286,13 +293,13 @@ final class TmuxAttachResolver {
         case .skipTmux:
             return nil
         case .createManaged:
-            return RemoteTmuxManager.shared.attachExecCommand(
+            return tmuxService.interactiveAttachCommand(
                 sessionName: sessionName(for: entityId),
                 workingDirectory: workingDirectory,
                 backend: backend
             )
         case .attachExisting(let name):
-            return RemoteTmuxManager.shared.attachExistingExecCommand(sessionName: name, backend: backend)
+            return tmuxService.interactiveAttachExistingCommand(sessionName: name, backend: backend)
         }
     }
 

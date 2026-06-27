@@ -293,16 +293,17 @@ extension ConnectionSessionManager {
 #if DEBUG
         let testingOperation = tmuxKillOperationForTesting
 #endif
-        let task = Task.detached(priority: .utility) { [logger] in
+        let tmuxService = tmuxService
+        let task = Task.detached(priority: .utility) { [logger, tmuxService] in
             logger.info("Managed tmux kill started [serverId: \(serverId.uuidString, privacy: .public), sessionName: \(sessionName, privacy: .public)]")
 #if DEBUG
             if let testingOperation {
                 await testingOperation()
             } else {
-                await RemoteTmuxManager.shared.killSession(named: sessionName, using: client, preferred: preferred)
+                await tmuxService.killSession(named: sessionName, using: client, preferred: preferred)
             }
 #else
-            await RemoteTmuxManager.shared.killSession(named: sessionName, using: client, preferred: preferred)
+            await tmuxService.killSession(named: sessionName, using: client, preferred: preferred)
 #endif
             logger.info("Managed tmux kill finished [serverId: \(serverId.uuidString, privacy: .public), sessionName: \(sessionName, privacy: .public)]")
         }
@@ -584,7 +585,7 @@ extension ConnectionSessionManager {
            let client = unregisterResult.shellToClose?.client {
             let preferred = sessions.first(where: { $0.id == sessionId })
                 .map { tmuxResolver.multiplexer(for: $0.serverId) } ?? .tmux
-            await RemoteTmuxManager.shared.killSession(named: tmuxSessionName, using: client, preferred: preferred)
+            await tmuxService.killSession(named: tmuxSessionName, using: client, preferred: preferred)
         }
         await Self.finishSSHCleanup(for: unregisterResult)
     }

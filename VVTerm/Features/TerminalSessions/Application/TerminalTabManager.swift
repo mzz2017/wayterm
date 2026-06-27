@@ -46,6 +46,7 @@ final class TerminalTabManager: ObservableObject {
         var serverUnlocker: ServerUnlocker
         var serverProvider: ServerProvider
         var credentialsProvider: CredentialsProvider
+        var tmuxService: any TerminalTmuxServicing
     }
 
     // MARK: - Published State
@@ -152,6 +153,7 @@ final class TerminalTabManager: ObservableObject {
     private var dependencies: Dependencies {
         didSet {
             tmuxResolver.setServerProvider(dependencies.serverProvider)
+            tmuxResolver.setTmuxService(dependencies.tmuxService)
         }
     }
 
@@ -179,6 +181,10 @@ final class TerminalTabManager: ObservableObject {
     var credentialsProvider: CredentialsProvider {
         get { dependencies.credentialsProvider }
         set { updateDependencies { $0.credentialsProvider = newValue } }
+    }
+    var tmuxService: any TerminalTmuxServicing {
+        get { dependencies.tmuxService }
+        set { updateDependencies { $0.tmuxService = newValue } }
     }
     /// Application-owned pane SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
     var paneRuntimes: [UUID: PaneRuntimeState] = [:]
@@ -229,7 +235,10 @@ final class TerminalTabManager: ObservableObject {
     private init() {
         let dependencies = Dependencies.live
         self.dependencies = dependencies
-        tmuxResolver = TmuxAttachResolver(serverProvider: dependencies.serverProvider)
+        tmuxResolver = TmuxAttachResolver(
+            serverProvider: dependencies.serverProvider,
+            tmuxService: dependencies.tmuxService
+        )
         restoreSnapshot()
     }
 

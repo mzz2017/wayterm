@@ -3,10 +3,11 @@ import Testing
 
 // Test Context:
 // These source-boundary tests protect TerminalSessions Application dependency
-// ownership. Runtime start and reconnect flows need server metadata, but that
-// lookup should route through manager-level dependency providers instead of
-// scattering direct Servers feature singleton reads across lifecycle files.
-// Update these tests only when the server lookup owner intentionally changes.
+// ownership. Runtime start, reconnect, tmux attach, entitlement, credential,
+// access, and persistence flows should route through manager-level dependency
+// providers instead of scattering direct cross-feature singleton reads across
+// lifecycle files. Update these tests only when the relevant AGENTS.md
+// architecture boundary intentionally changes.
 
 struct TerminalSessionDependencyBoundaryTests {
     @Test
@@ -155,7 +156,7 @@ struct TerminalSessionDependencyBoundaryTests {
     }
 
     @Test
-    func tmuxResolverUsesInjectedServerProviderBoundary() throws {
+    func tmuxResolverUsesInjectedServerProviderAndServiceBoundaries() throws {
         let root = try sourceRoot()
         let resolverSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TmuxAttachResolver.swift")
@@ -172,20 +173,51 @@ struct TerminalSessionDependencyBoundaryTests {
         let tabTestingSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Testing.swift")
         )
+        let tmuxServiceSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTmuxService.swift")
+        )
+        let liveDependencySource = try source(
+            at: root.appendingPathComponent("VVTerm/App/TerminalSessionLiveDependencies.swift")
+        )
+        let tmuxApplicationSources = try [
+            "VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Closing.swift",
+            "VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Open.swift",
+            "VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Tmux.swift",
+            "VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Closing.swift",
+            "VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Runtime.swift",
+            "VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Tmux.swift",
+            "VVTerm/Features/TerminalSessions/Application/TmuxAttachResolver.swift"
+        ].map { path in
+            try source(at: root.appendingPathComponent(path))
+        }.joined(separator: "\n")
 
-        // Given tmux attach prompts and multiplexer policy need server metadata.
+        // Given tmux attach prompts and multiplexer policy need server metadata
+        // plus remote tmux transport operations.
         #expect(resolverSource.contains("typealias ServerProvider"))
-        #expect(resolverSource.contains("init(serverProvider: @escaping ServerProvider)"))
+        #expect(resolverSource.contains("tmuxService: any TerminalTmuxServicing"))
         #expect(resolverSource.contains("serverProvider(serverId)"))
-        #expect(connectionManagerSource.contains("TmuxAttachResolver(serverProvider: dependencies.serverProvider)"))
-        #expect(tabManagerSource.contains("TmuxAttachResolver(serverProvider: dependencies.serverProvider)"))
+        #expect(resolverSource.contains("tmuxService.tmuxBackend("))
+        #expect(resolverSource.contains("tmuxService.cleanupDetachedSessions("))
+        #expect(resolverSource.contains("tmuxService.interactiveAttachCommand("))
+        #expect(connectionManagerSource.contains("tmuxService: any TerminalTmuxServicing"))
+        #expect(tabManagerSource.contains("tmuxService: any TerminalTmuxServicing"))
+        #expect(connectionManagerSource.contains("tmuxService: dependencies.tmuxService"))
+        #expect(tabManagerSource.contains("tmuxService: dependencies.tmuxService"))
         #expect(connectionManagerSource.contains("tmuxResolver.setServerProvider(dependencies.serverProvider)"))
         #expect(tabManagerSource.contains("tmuxResolver.setServerProvider(dependencies.serverProvider)"))
+        #expect(connectionManagerSource.contains("tmuxResolver.setTmuxService(dependencies.tmuxService)"))
+        #expect(tabManagerSource.contains("tmuxResolver.setTmuxService(dependencies.tmuxService)"))
+        #expect(connectionTestingSource.contains("func setTmuxServiceForTesting"))
+        #expect(tabTestingSource.contains("func setTmuxServiceForTesting"))
         #expect(connectionTestingSource.contains("restoreLiveDependencies()"))
         #expect(tabTestingSource.contains("restoreLiveDependencies()"))
+        #expect(tmuxServiceSource.contains("protocol TerminalTmuxServicing"))
 
-        // Then the resolver does not reach directly into Servers feature state.
+        // Then live Core tmux wiring is kept at composition boundaries.
         #expect(!resolverSource.contains("ServerManager.shared.servers"))
+        #expect(!resolverSource.contains("RemoteTmuxManager.shared"))
+        #expect(!tmuxApplicationSources.contains("RemoteTmuxManager.shared"))
+        #expect(liveDependencySource.contains("tmuxService: RemoteTmuxManager.shared"))
     }
 
     @Test

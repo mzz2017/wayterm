@@ -81,7 +81,7 @@ extension ConnectionSessionManager {
         if tmuxResolver.isTmuxEnabled(for: server.id),
            let sourceSession,
            let client = sshClient(for: sourceSession),
-           let path = await RemoteTmuxManager.shared.currentPath(
+           let path = await tmuxService.currentPath(
                sessionName: tmuxResolver.sessionName(for: sourceSession.id),
                using: client
            ) {
