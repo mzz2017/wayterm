@@ -62,6 +62,10 @@ final class TerminalIOSSurfaceDisplayRuntime {
         ghostty_surface_set_occlusion(surface, isVisible)
     }
 
+    func setColorScheme(_ scheme: ghostty_color_scheme_e, surface: ghostty_surface_t) {
+        ghostty_surface_set_color_scheme(surface, scheme)
+    }
+
     func redraw(surface: ghostty_surface_t) {
         ghostty_surface_refresh(surface)
         ghostty_surface_draw(surface)

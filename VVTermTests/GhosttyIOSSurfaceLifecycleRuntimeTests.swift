@@ -31,9 +31,11 @@ struct GhosttyIOSSurfaceLifecycleRuntimeTests {
         #expect(resumeSource.contains("surfaceLifecycleRuntime.resumeRendering("))
         #expect(viewSource.contains("surfaceLifecycleRuntime.setFocus("))
         #expect(viewSource.contains("surfaceLifecycleRuntime.setOcclusion("))
+        #expect(viewSource.contains("surfaceLifecycleRuntime.processExited(surface: surface)"))
 
         #expect(!viewSource.contains("ghostty_surface_set_focus"))
         #expect(!viewSource.contains("ghostty_surface_set_occlusion"))
+        #expect(!viewSource.contains("ghostty_surface_process_exited"))
         #expect(!cleanupSource.contains("ghostty_surface_set_focus"))
         #expect(!cleanupSource.contains("ghostty_surface_set_occlusion"))
         #expect(!cleanupSource.contains("surfaceRegistration.unregister()"))
@@ -45,6 +47,7 @@ struct GhosttyIOSSurfaceLifecycleRuntimeTests {
         #expect(runtimeSource.contains("final class TerminalIOSSurfaceLifecycleRuntime"))
         #expect(runtimeSource.contains("ghostty_surface_set_focus"))
         #expect(runtimeSource.contains("ghostty_surface_set_occlusion"))
+        #expect(runtimeSource.contains("ghostty_surface_process_exited"))
         #expect(runtimeSource.contains("surfaceRegistration.unregister()"))
         #expect(runtimeSource.contains("surface?.free()"))
     }

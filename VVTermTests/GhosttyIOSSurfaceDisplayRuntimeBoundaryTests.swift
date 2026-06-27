@@ -33,6 +33,7 @@ struct GhosttyIOSSurfaceDisplayRuntimeBoundaryTests {
         #expect(viewSource.contains("surfaceDisplayRuntime.redraw"))
         #expect(viewSource.contains("surfaceDisplayRuntime.writeOutput"))
         #expect(viewSource.contains("surfaceDisplayRuntime.externalExited"))
+        #expect(viewSource.contains("surfaceDisplayRuntime.setColorScheme"))
 
         // Then the main UIKit view does not directly own those C/FFI calls or
         // Ghostty pixel-size tracking state.
@@ -44,6 +45,7 @@ struct GhosttyIOSSurfaceDisplayRuntimeBoundaryTests {
         #expect(!viewSource.contains("ghostty_surface_draw"))
         #expect(!viewSource.contains("ghostty_surface_write_output"))
         #expect(!viewSource.contains("ghostty_surface_external_exited"))
+        #expect(!viewSource.contains("ghostty_surface_set_color_scheme"))
 
         #expect(runtimeSource.contains("final class TerminalIOSSurfaceDisplayRuntime"))
         #expect(runtimeSource.contains("ghostty_surface_set_content_scale"))
@@ -52,6 +54,7 @@ struct GhosttyIOSSurfaceDisplayRuntimeBoundaryTests {
         #expect(runtimeSource.contains("ghostty_surface_draw"))
         #expect(runtimeSource.contains("ghostty_surface_write_output"))
         #expect(runtimeSource.contains("ghostty_surface_external_exited"))
+        #expect(runtimeSource.contains("ghostty_surface_set_color_scheme"))
     }
 
     private func source(at url: URL) throws -> String {

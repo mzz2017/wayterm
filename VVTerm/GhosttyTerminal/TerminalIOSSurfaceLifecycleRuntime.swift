@@ -88,6 +88,11 @@ final class TerminalIOSSurfaceLifecycleRuntime {
         Self.applyOcclusion(isVisible, surface: surface)
     }
 
+    func processExited(surface: Ghostty.Surface?) -> Bool {
+        guard let surface = surface?.unsafeCValue else { return true }
+        return ghostty_surface_process_exited(surface)
+    }
+
     func performCleanup(actions: CleanupActions) {
         actions.stopMomentumScrolling()
         actions.cancelPendingZoomIndicatorHide()

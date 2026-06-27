@@ -1015,7 +1015,7 @@ class GhosttyTerminalView: UIView {
         let scheme: ghostty_color_scheme_e = traitCollection.userInterfaceStyle == .dark
             ? GHOSTTY_COLOR_SCHEME_DARK
             : GHOSTTY_COLOR_SCHEME_LIGHT
-        ghostty_surface_set_color_scheme(surface, scheme)
+        surfaceDisplayRuntime.setColorScheme(scheme, surface: surface)
     }
 
     private func setupHardwareKeyboardObservation() {
@@ -2600,8 +2600,7 @@ class GhosttyTerminalView: UIView {
 
     /// Check if the terminal process has exited
     var processExited: Bool {
-        guard let surface = surface?.unsafeCValue else { return true }
-        return ghostty_surface_process_exited(surface)
+        surfaceLifecycleRuntime.processExited(surface: surface)
     }
 
     /// Check if closing this terminal needs confirmation
