@@ -21,15 +21,29 @@ protocol TerminalAccessoryPendingSyncCoordinating {
 extension CloudKitManager: TerminalAccessoryCloudProfileSyncing {}
 extension CloudKitSyncCoordinator: TerminalAccessoryPendingSyncCoordinating {}
 
+struct TerminalAccessoryPreferencesDependencies {
+    var isPro: @MainActor () -> Bool
+    var trackCustomActionCreated: @MainActor (TerminalAccessoryCustomActionKind) -> Void
+
+    init(
+        isPro: @escaping @MainActor () -> Bool = { false },
+        trackCustomActionCreated: @escaping @MainActor (TerminalAccessoryCustomActionKind) -> Void = { _ in }
+    ) {
+        self.isPro = isPro
+        self.trackCustomActionCreated = trackCustomActionCreated
+    }
+}
+
 @MainActor
 final class TerminalAccessoryPreferencesManager: ObservableObject {
-    static let shared = TerminalAccessoryPreferencesManager()
+    static let shared = TerminalAccessoryPreferencesManager(dependencies: .live)
 
     @Published private(set) var profile: TerminalAccessoryProfile
 
     private let defaults: UserDefaults
     private let cloudProfileSync: any TerminalAccessoryCloudProfileSyncing
     private let syncCoordinator: any TerminalAccessoryPendingSyncCoordinating
+    private let dependencies: TerminalAccessoryPreferencesDependencies
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "app.vivy.vvterm",
         category: "TerminalAccessoryPreferences"
@@ -51,12 +65,14 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
         defaults: UserDefaults = .standard,
         cloudProfileSync: (any TerminalAccessoryCloudProfileSyncing)? = nil,
         syncCoordinator: (any TerminalAccessoryPendingSyncCoordinating)? = nil,
+        dependencies: TerminalAccessoryPreferencesDependencies? = nil,
         startObservers: Bool = true,
         startInitialSync: Bool = true
     ) {
         self.defaults = defaults
         self.cloudProfileSync = cloudProfileSync ?? CloudKitManager.shared
         self.syncCoordinator = syncCoordinator ?? CloudKitSyncCoordinator.shared
+        self.dependencies = dependencies ?? TerminalAccessoryPreferencesDependencies()
         self.profile = TerminalAccessoryPreferencesManager.loadProfile(from: defaults)
         self.lastKnownSyncEnabled = SyncSettings.isEnabled
 
@@ -114,11 +130,11 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
     /// Free tier is limited to `FreeTierLimits.maxCustomActions` created actions.
     /// Existing actions beyond the limit keep working; only creation is gated.
     var isCustomActionCreationProGated: Bool {
-        !StoreManager.shared.isPro && customActions.count >= FreeTierLimits.maxCustomActions
+        !dependencies.isPro() && customActions.count >= FreeTierLimits.maxCustomActions
     }
 
     var customActionLimit: Int {
-        StoreManager.shared.isPro ? TerminalAccessoryProfile.maxCustomActions : FreeTierLimits.maxCustomActions
+        dependencies.isPro() ? TerminalAccessoryProfile.maxCustomActions : FreeTierLimits.maxCustomActions
     }
 
     func customAction(for id: UUID) -> TerminalAccessoryCustomAction? {
@@ -166,7 +182,7 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
         applyProfileMutation(at: now) { nextProfile, _ in
             nextProfile.customActions.insert(action, at: 0)
         }
-        AnalyticsTracker.shared.trackCustomActionCreated(kind: kind.rawValue)
+        dependencies.trackCustomActionCreated(kind)
         return action
     }
 

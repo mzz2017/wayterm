@@ -68,6 +68,56 @@ final class TerminalAccessoryPreferencesManagerTests: XCTestCase {
         XCTAssertEqual(manager.profile.lastWriterDeviceId, DeviceIdentity.id)
     }
 
+    func testCustomActionLimitUsesInjectedProStatus() {
+        let freeManager = TerminalAccessoryPreferencesManager(
+            defaults: defaults,
+            dependencies: TerminalAccessoryPreferencesDependencies(isPro: { false })
+        )
+        let proManager = TerminalAccessoryPreferencesManager(
+            defaults: defaults,
+            dependencies: TerminalAccessoryPreferencesDependencies(isPro: { true })
+        )
+
+        XCTAssertEqual(
+            freeManager.customActionLimit,
+            FreeTierLimits.maxCustomActions,
+            "Free tier accessory limits should come from the injected entitlement provider."
+        )
+        XCTAssertEqual(
+            proManager.customActionLimit,
+            TerminalAccessoryProfile.maxCustomActions,
+            "Pro accessory limits should come from the injected entitlement provider."
+        )
+    }
+
+    func testCreateCustomActionTracksThroughInjectedAnalytics() throws {
+        var trackedKinds: [TerminalAccessoryCustomActionKind] = []
+        let manager = TerminalAccessoryPreferencesManager(
+            defaults: defaults,
+            dependencies: TerminalAccessoryPreferencesDependencies(
+                isPro: { true },
+                trackCustomActionCreated: { kind in
+                    trackedKinds.append(kind)
+                }
+            )
+        )
+
+        _ = try manager.createCustomAction(
+            title: "List Files",
+            kind: .command,
+            commandContent: "ls -la",
+            commandSendMode: .insertAndEnter,
+            shortcutKey: .l,
+            shortcutModifiers: .init(control: true)
+        )
+
+        XCTAssertEqual(
+            trackedKinds,
+            [.command],
+            "Custom action analytics should be emitted through the injected analytics dependency."
+        )
+    }
+
     func testStartupCloudSyncTracksCloudMergeAndPendingDrainUntilCompletion() async throws {
         UserDefaults.standard.set(true, forKey: SyncSettings.enabledKey)
         let cloudProfileSync = FakeTerminalAccessoryCloudProfileSync()
