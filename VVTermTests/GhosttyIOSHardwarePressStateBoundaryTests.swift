@@ -12,13 +12,13 @@ struct GhosttyIOSHardwarePressStateBoundaryTests {
     func iOSTerminalViewDelegatesHardwarePressBookkeepingToStateOwner() throws {
         let root = try sourceRoot()
         let viewSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let proxySource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalIMEProxyTextView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/TerminalIMEProxyTextView+iOS.swift")
         )
         let stateSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalIOSHardwarePressState.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/TerminalIOSHardwarePressState.swift")
         )
 
         #expect(viewSource.contains("private let hardwarePressState = TerminalIOSHardwarePressState()"))

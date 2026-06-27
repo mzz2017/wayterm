@@ -15,13 +15,13 @@ struct GhosttyIOSSurfaceLifecycleRuntimeTests {
     func iOSTerminalViewDelegatesSurfaceLifecycleFFIAndTeardownToRuntimeOwner() throws {
         let root = try sourceRoot()
         let viewSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let surfaceRuntimeSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+SurfaceRuntime+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/GhosttyTerminalView+SurfaceRuntime+iOS.swift")
         )
         let runtimeSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalIOSSurfaceLifecycleRuntime.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/TerminalIOSSurfaceLifecycleRuntime.swift")
         )
 
         let cleanupSource = try section(in: viewSource, from: "func cleanup()", to: "/// Pause rendering")

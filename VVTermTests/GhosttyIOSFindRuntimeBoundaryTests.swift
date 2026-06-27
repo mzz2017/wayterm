@@ -19,13 +19,13 @@ struct GhosttyIOSFindRuntimeBoundaryTests {
     func iOSTerminalViewDelegatesNativeFindSessionStateToRuntimeOwner() throws {
         let root = try sourceRoot()
         let viewSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let runtimeSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalIOSFindRuntime.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Find/TerminalIOSFindRuntime.swift")
         )
         let interactionDelegateSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+InteractionDelegates+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+InteractionDelegates+iOS.swift")
         )
 
         // Given GhosttyTerminalView owns a native find runtime while UIKit

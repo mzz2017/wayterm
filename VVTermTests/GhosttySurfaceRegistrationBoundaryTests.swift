@@ -14,16 +14,16 @@ struct GhosttySurfaceRegistrationBoundaryTests {
     func platformTerminalViewsDelegateSurfaceRegistrationToLease() throws {
         let root = try sourceRoot()
         let iOSSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let macOSSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+macOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/macOS/GhosttyTerminalView+macOS.swift")
         )
         let registrationSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttySurfaceRegistration.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/Surface/GhosttySurfaceRegistration.swift")
         )
         let iOSLifecycleSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalIOSSurfaceLifecycleRuntime.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/TerminalIOSSurfaceLifecycleRuntime.swift")
         )
 
         // Given both platform terminal views create Ghostty surfaces.

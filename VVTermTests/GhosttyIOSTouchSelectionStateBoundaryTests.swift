@@ -7,10 +7,10 @@ struct GhosttyIOSTouchSelectionStateBoundaryTests {
     func iOSTerminalViewDelegatesTouchSelectionStateToStateOwner() throws {
         let root = try sourceRoot()
         let viewSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let stateSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalIOSTouchSelectionState.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Selection/TerminalIOSTouchSelectionState.swift")
         )
 
         #expect(viewSource.contains("private let touchSelectionState = TerminalIOSTouchSelectionState()"))

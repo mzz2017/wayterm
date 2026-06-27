@@ -49,6 +49,19 @@ Cross-platform (iOS/macOS) SSH terminal app with iCloud sync and Keychain creden
 │   │   ├── VoiceInput/           # Application, Infrastructure, UI
 │   │   └── Welcome/              # Domain, UI
 │   ├── GhosttyTerminal/          # libghostty bridge and terminal runtime integration
+│   │   ├── Bridge/               # Ghostty C/Swift wrapper types
+│   │   ├── Shared/               # Cross-platform terminal models and policies
+│   │   ├── Surface/              # Surface registration and rendering setup
+│   │   ├── iOS/
+│   │   │   ├── Find/
+│   │   │   ├── Input/
+│   │   │   ├── Presentation/
+│   │   │   ├── Scroll/
+│   │   │   ├── Selection/
+│   │   │   ├── Surface/
+│   │   │   ├── View/
+│   │   │   └── Zoom/
+│   │   └── macOS/
 │   ├── Compatibility/            # Version/platform compatibility helpers
 │   ├── Generated/                # Build-time generated sources
 │   ├── Resources/                # Bundled assets, themes, terminfo, l10n

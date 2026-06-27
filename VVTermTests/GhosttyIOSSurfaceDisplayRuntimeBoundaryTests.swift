@@ -19,13 +19,13 @@ struct GhosttyIOSSurfaceDisplayRuntimeBoundaryTests {
     func iOSTerminalViewDelegatesSurfaceDisplayFFIToRuntimeOwner() throws {
         let root = try sourceRoot()
         let viewSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let surfaceRuntimeSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+SurfaceRuntime+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/GhosttyTerminalView+SurfaceRuntime+iOS.swift")
         )
         let runtimeSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalIOSSurfaceDisplayRuntime.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/TerminalIOSSurfaceDisplayRuntime.swift")
         )
         let displayCallSource = viewSource + surfaceRuntimeSource
 

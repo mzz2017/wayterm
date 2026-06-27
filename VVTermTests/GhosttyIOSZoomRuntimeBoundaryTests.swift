@@ -18,10 +18,10 @@ struct GhosttyIOSZoomRuntimeBoundaryTests {
         // Given the terminal view and the dedicated zoom runtime source.
         let root = try sourceRoot()
         let viewSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let runtimeSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalIOSZoomRuntime.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Zoom/TerminalIOSZoomRuntime.swift")
         )
 
         // Then the view delegates pinch state and indicator presentation to the runtime.

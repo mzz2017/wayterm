@@ -15,13 +15,13 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
     func iOSTerminalViewDelegatesHardwareKeyAndPreeditRuntimeToInputOwner() throws {
         let root = try sourceRoot()
         let viewSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let runtimeSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalIOSInputRuntime.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/TerminalIOSInputRuntime.swift")
         )
         let keyboardAccessorySource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+KeyboardAccessory+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+KeyboardAccessory+iOS.swift")
         )
 
         // Given the iOS terminal view routes hardware keys and IME preedit.

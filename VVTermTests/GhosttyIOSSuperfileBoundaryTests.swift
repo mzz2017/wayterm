@@ -13,10 +13,10 @@ struct GhosttyIOSSuperfileBoundaryTests {
     func imeProxyTextViewLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let proxySource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalIMEProxyTextView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/TerminalIMEProxyTextView+iOS.swift")
         )
 
         // Given the iOS Ghostty terminal main view source.
@@ -34,10 +34,10 @@ struct GhosttyIOSSuperfileBoundaryTests {
     func inputAccessoryViewLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let accessorySource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalInputAccessoryView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/TerminalInputAccessoryView+iOS.swift")
         )
 
         // Given the iOS Ghostty terminal main view source.
@@ -56,10 +56,10 @@ struct GhosttyIOSSuperfileBoundaryTests {
     func keyboardAccessoryRoutingLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let accessoryRoutingSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+KeyboardAccessory+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+KeyboardAccessory+iOS.swift")
         )
 
         // Given the iOS Ghostty terminal main view source.
@@ -82,10 +82,10 @@ struct GhosttyIOSSuperfileBoundaryTests {
     func interactionDelegatesLiveOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let interactionDelegateSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+InteractionDelegates+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+InteractionDelegates+iOS.swift")
         )
 
         // Given the iOS Ghostty terminal main view source.
@@ -118,10 +118,10 @@ struct GhosttyIOSSuperfileBoundaryTests {
     func terminalKeyModelLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let keySource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalKey+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/TerminalKey+iOS.swift")
         )
 
         // Given the iOS Ghostty terminal main view source.
@@ -140,10 +140,10 @@ struct GhosttyIOSSuperfileBoundaryTests {
     func findNavigatorLifecycleLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let lifecycleSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalFindNavigatorLifecycle+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Find/TerminalFindNavigatorLifecycle+iOS.swift")
         )
 
         // Given the iOS Ghostty terminal main view source.
@@ -161,10 +161,10 @@ struct GhosttyIOSSuperfileBoundaryTests {
     func zoomIndicatorViewLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let zoomSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalZoomIndicatorView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Zoom/TerminalZoomIndicatorView+iOS.swift")
         )
 
         // Given the iOS Ghostty terminal main view source.
@@ -183,7 +183,7 @@ struct GhosttyIOSSuperfileBoundaryTests {
     func terminalSurfaceStateCallbacksAreMainActorBound() throws {
         let root = try sourceRoot()
         let mainSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
 
         #expect(
@@ -200,10 +200,10 @@ struct GhosttyIOSSuperfileBoundaryTests {
     func surfaceRuntimeLifecycleLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let surfaceRuntimeSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+SurfaceRuntime+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/GhosttyTerminalView+SurfaceRuntime+iOS.swift")
         )
 
         #expect(
@@ -225,10 +225,10 @@ struct GhosttyIOSSuperfileBoundaryTests {
     func momentumScrollStateLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let momentumSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalMomentumScrollState+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Scroll/TerminalMomentumScrollState+iOS.swift")
         )
 
         // Given the iOS Ghostty terminal main view source.
@@ -250,10 +250,10 @@ struct GhosttyIOSSuperfileBoundaryTests {
     func iOSPresentationPolicyLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let presentationSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalIOSPresentationEnvironment.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Presentation/TerminalIOSPresentationEnvironment.swift")
         )
 
         // Given GhosttyTerminalView needs app-active state, menu presentation,

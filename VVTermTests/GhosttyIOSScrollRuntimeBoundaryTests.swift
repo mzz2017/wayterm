@@ -18,10 +18,10 @@ struct GhosttyIOSScrollRuntimeBoundaryTests {
         // Given the terminal view and dedicated scroll runtime source.
         let root = try sourceRoot()
         let viewSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let runtimeSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalIOSScrollRuntime.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Scroll/TerminalIOSScrollRuntime.swift")
         )
 
         // Then the view delegates pan handling and stop intent to the runtime.

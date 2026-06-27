@@ -18,10 +18,10 @@ struct GhosttyIOSSelectionRuntimeBoundaryTests {
     func iOSTerminalViewDelegatesSelectionAvailabilityFFIToRuntimeOwner() throws {
         let root = try sourceRoot()
         let viewSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
         let runtimeSource = try source(
-            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalIOSSelectionRuntime.swift")
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Selection/TerminalIOSSelectionRuntime.swift")
         )
 
         // Given the iOS terminal view needs to decide whether selection menu
