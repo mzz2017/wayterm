@@ -214,11 +214,6 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
             )
         }
 
-        @MainActor
-        func cancelShell() {
-            tabManager.detachSurfaceForClosedPane(paneId)
-            terminal = nil
-        }
     }
 }
 

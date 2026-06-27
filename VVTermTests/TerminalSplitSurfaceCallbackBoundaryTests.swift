@@ -64,7 +64,7 @@ struct TerminalSplitSurfaceCallbackBoundaryTests {
             in: source
         )
 
-        // Given the split pane coordinator handles input, attach, and cleanup callbacks.
+        // Given the split pane coordinator handles input and attach callbacks.
         #expect(
             coordinator.contains("tabManager: tabManager"),
             "makeCoordinator should pass the injected manager into the coordinator."
@@ -77,8 +77,7 @@ struct TerminalSplitSurfaceCallbackBoundaryTests {
         // When coordinator callbacks run outside SwiftUI body evaluation.
         for expectedCall in [
             "tabManager.requestPaneInput",
-            "tabManager.requestSurfaceAttach",
-            "tabManager.detachSurfaceForClosedPane"
+            "tabManager.requestSurfaceAttach"
         ] {
             #expect(
                 coordinator.contains(expectedCall),
@@ -87,6 +86,7 @@ struct TerminalSplitSurfaceCallbackBoundaryTests {
         }
 
         // Then coordinator callbacks must not bypass injection through the singleton.
+        #expect(!coordinator.contains("tabManager.detachSurfaceForClosedPane"))
         #expect(!coordinator.contains("TerminalTabManager.shared"))
     }
 
