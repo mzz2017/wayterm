@@ -51,7 +51,7 @@ struct ServerFormSheet: View {
     @State private var isTestingConnection = false
     @State private var connectionTestError: String?
     @State private var connectionTestSucceeded = false
-    @State private var lastTestSnapshot: ConnectionTestSnapshot?
+    @State private var lastTestSnapshot: ServerFormConnectionTestSnapshot?
     @State private var activeConnectionTestRequestID: UUID?
     @State private var showingLocalDiscoverySheet = false
 
@@ -186,42 +186,16 @@ struct ServerFormSheet: View {
         return String(localized: "No additional workspace is available for this server right now.")
     }
 
-    private struct ConnectionTestSnapshot: Equatable {
-        let host: String
-        let port: String
-        let username: String
-        let transportSelection: ServerTransportSelection
-        let authMethod: AuthMethod
-        let password: String
-        let sshKey: String
-        let sshPassphrase: String
-        let sshPublicKey: String
-        let cloudflareAccessMode: CloudflareAccessMode
-        let cloudflareClientID: String
-        let cloudflareClientSecret: String
-        let cloudflareTeamDomainOverride: String
-    }
-
-    private var connectionSnapshot: ConnectionTestSnapshot {
-        ConnectionTestSnapshot(
-            host: host,
-            port: port,
-            username: currentDraft.effectiveUsername,
-            transportSelection: transportSelection,
-            authMethod: selectedAuthMethod,
-            password: password,
-            sshKey: sshKey,
-            sshPassphrase: sshPassphrase,
-            sshPublicKey: sshPublicKey,
-            cloudflareAccessMode: selectedCloudflareAccessMode,
-            cloudflareClientID: cloudflareClientID,
-            cloudflareClientSecret: cloudflareClientSecret,
-            cloudflareTeamDomainOverride: cloudflareTeamDomainOverride
-        )
+    private var connectionSnapshot: ServerFormConnectionTestSnapshot {
+        ServerFormConnectionTestSnapshot(draft: currentDraft)
     }
 
     private var hasValidConnectionTest: Bool {
-        connectionTestSucceeded && lastTestSnapshot == connectionSnapshot
+        ServerFormConnectionTestPolicy.hasValidConnectionTest(
+            didSucceed: connectionTestSucceeded,
+            lastSnapshot: lastTestSnapshot,
+            currentSnapshot: connectionSnapshot
+        )
     }
 
     private var saveButtonDisabled: Bool {
@@ -730,21 +704,12 @@ struct ServerFormSheet: View {
     private func applyConnectionTestFailure(
         _ error: Error,
         testServer: Server,
-        snapshot: ConnectionTestSnapshot
+        snapshot: ServerFormConnectionTestSnapshot
     ) {
         lastTestSnapshot = snapshot
-        let baseMessage = error.localizedDescription
-        if testServer.connectionMode == .tailscale {
-            let reminder = String(localized: "This app currently supports direct tailnet connections only (no userspace proxy fallback).")
-            if baseMessage.contains(reminder) {
-                connectionTestError = baseMessage
-            } else {
-                connectionTestError = "\(baseMessage)\n\(reminder)"
-            }
-        } else {
-            connectionTestError = baseMessage
-        }
-        if let sshError = error as? SSHError, case .cloudflareConfigurationRequired = sshError {
+        let failure = ServerFormConnectionTestPolicy.failure(from: error, testServer: testServer)
+        connectionTestError = failure.message
+        if failure.shouldShowCloudflareOverrides {
             showCloudflareOverrides = true
         }
         connectionTestSucceeded = false
