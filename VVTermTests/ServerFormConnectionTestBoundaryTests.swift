@@ -152,10 +152,13 @@ struct ServerFormConnectionTestBoundaryTests {
         let testerSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerConnectionTester.swift")
         )
+        let liveSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Infrastructure/ServerConnectionTester+Live.swift")
+        )
 
         let operationTesterSource = try slice(
             startingAt: "final class ServerConnectionOperationTester",
-            endingBefore: "\n}\n\nfinal class LiveServerConnectionMoshBootstrapper",
+            endingBefore: "\n}\n",
             in: testerSource
         )
         let operationSource = try tail(
@@ -170,6 +173,14 @@ struct ServerFormConnectionTestBoundaryTests {
         #expect(operationSource.contains("connectionService.withTemporaryConnection("))
         #expect(operationSource.contains("moshBootstrapper.bootstrapConnectInfo("))
         #expect(
+            !testerSource.contains("SSHConnectionOperationService.shared"),
+            "Servers Application connection testing should not wire Core's live SSH service directly."
+        )
+        #expect(
+            !testerSource.contains("RemoteMoshManager.shared"),
+            "Servers Application connection testing should not wire Core's live mosh manager directly."
+        )
+        #expect(
             !operationSource.contains("SSHConnectionOperationService.shared"),
             "ServerConnectionOperationTester.testConnection should use its injected temporary connection service."
         )
@@ -177,6 +188,10 @@ struct ServerFormConnectionTestBoundaryTests {
             !operationSource.contains("RemoteMoshManager.shared"),
             "ServerConnectionOperationTester.testConnection should use its injected mosh bootstrapper."
         )
+        #expect(liveSource.contains("extension SSHConnectionOperationService: ServerConnectionOperationServing"))
+        #expect(liveSource.contains("static let shared = ServerConnectionTester()"))
+        #expect(liveSource.contains("SSHConnectionOperationService.shared"))
+        #expect(liveSource.contains("RemoteMoshManager = .shared"))
     }
 
     private func slice(startingAt marker: String, endingBefore endMarker: String, in source: String) throws -> String {

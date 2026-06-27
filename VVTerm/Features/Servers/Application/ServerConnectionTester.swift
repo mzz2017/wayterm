@@ -21,8 +21,6 @@ protocol ServerConnectionMoshBootstrapping: AnyObject {
     ) async throws
 }
 
-extension SSHConnectionOperationService: ServerConnectionOperationServing {}
-
 struct ServerConnectionTestFailure: Identifiable, Equatable {
     enum Operation: Equatable {
         case testConnection(UUID)
@@ -41,8 +39,6 @@ struct ServerConnectionTestFailure: Identifiable, Equatable {
 
 @MainActor
 final class ServerConnectionTester {
-    static let shared = ServerConnectionTester()
-
     private struct ConnectionTestRequest {
         let task: Task<Void, Never>
         var isCancelled: Bool
@@ -59,8 +55,8 @@ final class ServerConnectionTester {
         })
     }
 
-    init(connectionTesting: (any ServerConnectionTesting)? = nil) {
-        self.connectionTesting = connectionTesting ?? ServerConnectionOperationTester()
+    init(connectionTesting: any ServerConnectionTesting) {
+        self.connectionTesting = connectionTesting
     }
 
     @discardableResult
@@ -122,13 +118,6 @@ final class ServerConnectionOperationTester: ServerConnectionTesting {
     private let connectionService: any ServerConnectionOperationServing
     private let moshBootstrapper: any ServerConnectionMoshBootstrapping
 
-    convenience init() {
-        self.init(
-            connectionService: SSHConnectionOperationService.shared,
-            moshBootstrapper: LiveServerConnectionMoshBootstrapper()
-        )
-    }
-
     init(
         connectionService: any ServerConnectionOperationServing,
         moshBootstrapper: any ServerConnectionMoshBootstrapping
@@ -150,25 +139,5 @@ final class ServerConnectionOperationTester: ServerConnectionTesting {
                 )
             }
         }
-    }
-}
-
-final class LiveServerConnectionMoshBootstrapper: ServerConnectionMoshBootstrapping {
-    private let manager: RemoteMoshManager
-
-    init(manager: RemoteMoshManager = .shared) {
-        self.manager = manager
-    }
-
-    func bootstrapConnectInfo(
-        using executor: any RemoteCommandExecuting,
-        startCommand: String?,
-        portRange: ClosedRange<Int>
-    ) async throws {
-        _ = try await manager.bootstrapConnectInfo(
-            using: executor,
-            startCommand: startCommand,
-            portRange: portRange
-        )
     }
 }
