@@ -76,9 +76,13 @@ struct ServerManagerSuperfileBoundaryTests {
         let syncSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager+Sync.swift")
         )
+        let syncStateServiceSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerSyncStateService.swift")
+        )
 
         // Given CloudKit sync, startup loading, and CloudKit merge/backfill are
-        // durable application orchestration responsibilities.
+        // durable application orchestration responsibilities, while value-only
+        // sync-state policy belongs to a service.
         #expect(syncSource.contains("extension ServerManager"))
         #expect(syncSource.contains("func enqueuePendingServerUpsert"))
         #expect(syncSource.contains("func enqueuePendingServerDelete"))
@@ -92,10 +96,17 @@ struct ServerManagerSuperfileBoundaryTests {
         #expect(syncSource.contains("func waitForStartupLoadRequest"))
         #expect(syncSource.contains("func loadData"))
         #expect(syncSource.contains("func backfillMissingLocalRecordsIfNeeded"))
-        #expect(syncSource.contains("func backfillCandidates"))
+        #expect(syncSource.contains("syncStateService.backfillCandidates"))
         #expect(syncSource.contains("func applyCloudKitChanges"))
+        #expect(syncSource.contains("syncStateService.fullFetchState"))
         #expect(syncSource.contains("func repairOrphanedServers"))
+        #expect(syncSource.contains("syncStateService.orphanRepairPlan"))
         #expect(syncSource.contains("func initializeCloudKitSchema"))
+        #expect(syncStateServiceSource.contains("struct ServerSyncStateService"))
+        #expect(syncStateServiceSource.contains("func backfillCandidates"))
+        #expect(syncStateServiceSource.contains("func fullFetchState"))
+        #expect(syncStateServiceSource.contains("func orphanRepairPlan"))
+        #expect(syncStateServiceSource.contains("func knownHostRemovalCandidates"))
 
         // Then the ServerManager superfile should not own sync/load lifecycle
         // orchestration directly.

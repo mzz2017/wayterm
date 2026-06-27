@@ -6,7 +6,7 @@ extension ServerManager {
         try await deleteCredentials(server.id)
 
         servers.removeAll { $0.id == server.id }
-        let candidates = Self.knownHostRemovalCandidates(
+        let candidates = syncStateService.knownHostRemovalCandidates(
             removedServers: [server],
             remainingServers: servers
         )

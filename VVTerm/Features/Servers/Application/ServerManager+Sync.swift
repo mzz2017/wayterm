@@ -246,7 +246,7 @@ extension ServerManager {
 
         let cloudWorkspaceIDs = Set(changes.workspaces.map(\.id))
         let cloudServerIDs = Set(changes.servers.map(\.id))
-        let missingCandidates = Self.backfillCandidates(
+        let missingCandidates = syncStateService.backfillCandidates(
             localWorkspaces: workspaces,
             localServers: servers,
             cloudWorkspaceIDs: cloudWorkspaceIDs,
@@ -315,81 +315,10 @@ extension ServerManager {
         )
     }
 
-    static func backfillCandidates(
-        localWorkspaces: [Workspace],
-        localServers: [Server],
-        cloudWorkspaceIDs: Set<UUID>,
-        cloudServerIDs: Set<UUID>,
-        transientBootstrapWorkspaceID: UUID?
-    ) -> (workspaces: [Workspace], servers: [Server]) {
-        let missingWorkspaces = localWorkspaces.filter {
-            !cloudWorkspaceIDs.contains($0.id) && $0.id != transientBootstrapWorkspaceID
-        }
-
-        let missingWorkspaceIDs = Set(missingWorkspaces.map(\.id))
-        let missingServers = localServers.filter {
-            !cloudServerIDs.contains($0.id) &&
-                $0.workspaceId != transientBootstrapWorkspaceID &&
-                (cloudWorkspaceIDs.contains($0.workspaceId) || missingWorkspaceIDs.contains($0.workspaceId))
-        }
-
-        return (missingWorkspaces, missingServers)
-    }
-
-    static func workspaceForOrphanRepair(
-        existingWorkspaces: [Workspace],
-        servers: [Server],
-        fallbackWorkspace: Workspace
-    ) -> Workspace? {
-        let workspaceIDs = Set(existingWorkspaces.map(\.id))
-        guard servers.contains(where: { !workspaceIDs.contains($0.workspaceId) }) else {
-            return nil
-        }
-
-        return existingWorkspaces.first ?? fallbackWorkspace
-    }
-
-    private func makeWorkspaceMap(from workspaces: [Workspace]) -> [UUID: Workspace] {
-        Dictionary(uniqueKeysWithValues: workspaces.map { ($0.id, $0) })
-    }
-
-    private func makeServerMap(from servers: [Server]) -> [UUID: Server] {
-        Dictionary(uniqueKeysWithValues: servers.map { ($0.id, $0) })
-    }
-
     func removeKnownHosts(for candidates: [KnownHostRemovalCandidate]) async {
         for candidate in candidates {
             await KnownHostsStore.shared.remove(host: candidate.host, port: candidate.port)
         }
-    }
-
-    private func sortedWorkspaces(from workspaceMap: [UUID: Workspace]) -> [Workspace] {
-        Array(workspaceMap.values).sorted { $0.order < $1.order }
-    }
-
-    private func sortedServers(from serverMap: [UUID: Server]) -> [Server] {
-        Array(serverMap.values).sorted { $0.name < $1.name }
-    }
-
-    static func knownHostRemovalCandidates(
-        removedServers: [Server],
-        remainingServers: [Server]
-    ) -> [KnownHostRemovalCandidate] {
-        var candidates: [KnownHostRemovalCandidate] = []
-        var seen = Set<String>()
-
-        for server in removedServers {
-            let isStillUsed = remainingServers.contains {
-                $0.host == server.host && $0.port == server.port
-            }
-            guard !isStillUsed else { continue }
-
-            let key = "\(server.host):\(server.port)"
-            guard seen.insert(key).inserted else { continue }
-            candidates.append(KnownHostRemovalCandidate(host: server.host, port: server.port))
-        }
-
-        return candidates
     }
 
     private func applyCloudKitChanges(_ changes: CloudKitChanges, canReplaceLocalState: Bool = true) async {
@@ -402,8 +331,16 @@ extension ServerManager {
     }
 
     private func applyFullFetchCloudKitChanges(_ changes: CloudKitChanges) {
-        workspaces = dedupedWorkspaces(from: changes.workspaces)
-        servers = dedupedServers(from: changes.servers)
+        for workspace in changes.workspaces {
+            logger.info("Workspace from CloudKit: \(workspace.name) (id: \(workspace.id))")
+        }
+        for server in changes.servers {
+            logger.info("Server from CloudKit: \(server.name) (id: \(server.id), workspaceId: \(server.workspaceId))")
+        }
+
+        let state = syncStateService.fullFetchState(workspaces: changes.workspaces, servers: changes.servers)
+        workspaces = state.workspaces
+        servers = state.servers
     }
 
     private func applyIncrementalCloudKitChanges(_ changes: CloudKitChanges) async {
@@ -421,40 +358,18 @@ extension ServerManager {
         }
     }
 
-    private func dedupedWorkspaces(from updates: [Workspace]) -> [Workspace] {
-        var workspaceMap: [UUID: Workspace] = [:]
-        for workspace in updates {
-            workspaceMap[workspace.id] = workspace
-            logger.info("Workspace from CloudKit: \(workspace.name) (id: \(workspace.id))")
-        }
-        return sortedWorkspaces(from: workspaceMap)
-    }
-
-    private func dedupedServers(from updates: [Server]) -> [Server] {
-        var serverMap: [UUID: Server] = [:]
-        for server in updates {
-            serverMap[server.id] = server
-            logger.info("Server from CloudKit: \(server.name) (id: \(server.id), workspaceId: \(server.workspaceId))")
-        }
-        return sortedServers(from: serverMap)
-    }
-
     private func upsertWorkspaces(_ updates: [Workspace]) {
-        var workspaceMap = makeWorkspaceMap(from: workspaces)
         for workspace in updates {
-            workspaceMap[workspace.id] = workspace
             logger.info("Workspace updated from CloudKit: \(workspace.name) (id: \(workspace.id))")
         }
-        workspaces = sortedWorkspaces(from: workspaceMap)
+        workspaces = syncStateService.upsertingWorkspaces(current: workspaces, updates: updates)
     }
 
     private func upsertServers(_ updates: [Server]) {
-        var serverMap = makeServerMap(from: servers)
         for server in updates {
-            serverMap[server.id] = server
             logger.info("Server updated from CloudKit: \(server.name) (id: \(server.id), workspaceId: \(server.workspaceId))")
         }
-        servers = sortedServers(from: serverMap)
+        servers = syncStateService.upsertingServers(current: servers, updates: updates)
     }
 
     private func removeWorkspaces(withIDs ids: [UUID]) {
@@ -466,7 +381,7 @@ extension ServerManager {
         let idSet = Set(ids)
         let removedServers = servers.filter { idSet.contains($0.id) }
         servers.removeAll { idSet.contains($0.id) }
-        let candidates = Self.knownHostRemovalCandidates(
+        let candidates = syncStateService.knownHostRemovalCandidates(
             removedServers: removedServers,
             remainingServers: servers
         )
@@ -475,65 +390,37 @@ extension ServerManager {
 
     /// Repairs servers that reference non-existent workspaces by reassigning them to the first available workspace
     private func repairOrphanedServers() async {
-        let workspaceIds = Set(workspaces.map { $0.id })
-        let orphanedServers = servers.filter { !workspaceIds.contains($0.workspaceId) }
+        let repairPlan = syncStateService.orphanRepairPlan(
+            workspaces: workspaces,
+            servers: servers,
+            fallbackWorkspace: createDefaultWorkspace(),
+            updatedAt: Date()
+        )
+        guard repairPlan.hasChanges else { return }
 
-        guard !orphanedServers.isEmpty else { return }
-
-        if workspaces.isEmpty {
-            let repairWorkspace = Self.workspaceForOrphanRepair(
-                existingWorkspaces: workspaces,
-                servers: servers,
-                fallbackWorkspace: createDefaultWorkspace()
-            )
-            guard let repairWorkspace else { return }
-
-            workspaces = [repairWorkspace]
+        if let createdWorkspace = repairPlan.createdWorkspace {
+            workspaces = repairPlan.workspaces
             if isSyncEnabled {
-                enqueuePendingWorkspaceUpsert(repairWorkspace)
+                enqueuePendingWorkspaceUpsert(createdWorkspace)
             }
-            logger.warning("Created repair workspace '\(repairWorkspace.name)' to recover orphaned servers")
+            logger.warning("Created repair workspace '\(createdWorkspace.name)' to recover orphaned servers")
         }
 
-        logger.warning("Found \(orphanedServers.count) ORPHANED servers (workspaceId doesn't match any workspace):")
-        for server in orphanedServers {
-            logger.warning("  - \(server.name) (id: \(server.id)) references missing workspaceId: \(server.workspaceId)")
+        logger.warning("Found \(repairPlan.repairs.count) ORPHANED servers (workspaceId doesn't match any workspace):")
+        for repair in repairPlan.repairs {
+            logger.warning("  - \(repair.original.name) (id: \(repair.original.id)) references missing workspaceId: \(repair.original.workspaceId)")
         }
 
         // Auto-repair: reassign orphaned servers to first workspace
-        let defaultWorkspace = workspaces[0]
+        let defaultWorkspace = repairPlan.workspaces[0]
         logger.info("Auto-repairing: reassigning orphaned servers to workspace '\(defaultWorkspace.name)'")
-        for i in servers.indices {
-            if !workspaceIds.contains(servers[i].workspaceId) {
-                let oldWorkspaceId = servers[i].workspaceId
-                servers[i] = Server(
-                    id: servers[i].id,
-                    workspaceId: defaultWorkspace.id,
-                    environment: servers[i].environment,
-                    name: servers[i].name,
-                    host: servers[i].host,
-                    port: servers[i].port,
-                    username: servers[i].username,
-                    connectionMode: servers[i].connectionMode,
-                    authMethod: servers[i].authMethod,
-                    cloudflareAccessMode: servers[i].cloudflareAccessMode,
-                    cloudflareTeamDomainOverride: servers[i].cloudflareTeamDomainOverride,
-                    cloudflareAppDomainOverride: servers[i].cloudflareAppDomainOverride,
-                    tags: servers[i].tags,
-                    notes: servers[i].notes,
-                    lastConnected: servers[i].lastConnected,
-                    isFavorite: servers[i].isFavorite,
-                    requiresBiometricUnlock: servers[i].requiresBiometricUnlock,
-                    multiplexerOverride: servers[i].multiplexerOverride,
-                    tmuxStartupBehaviorOverride: servers[i].tmuxStartupBehaviorOverride,
-                    createdAt: servers[i].createdAt,
-                    updatedAt: Date()
-                )
-                logger.info("Reassigned server '\(self.servers[i].name)' from \(oldWorkspaceId) to \(defaultWorkspace.id)")
+        workspaces = repairPlan.workspaces
+        servers = repairPlan.servers
+        for repair in repairPlan.repairs {
+            logger.info("Reassigned server '\(repair.repaired.name)' from \(repair.original.workspaceId) to \(defaultWorkspace.id)")
 
-                if isSyncEnabled {
-                    enqueuePendingServerUpsert(servers[i])
-                }
+            if isSyncEnabled {
+                enqueuePendingServerUpsert(repair.repaired)
             }
         }
     }

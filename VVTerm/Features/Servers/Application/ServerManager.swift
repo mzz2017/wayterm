@@ -131,6 +131,7 @@ final class ServerManager: ObservableObject {
     private let storeCredentials: ServerCredentialStore
     let startupLoadAction: ServerStartupLoadAction
     let isProProvider: IsProProvider
+    let syncStateService: ServerSyncStateService
     let persistsLocalData: Bool
     let recordsSyncMutations: Bool
     let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "ServerManager")
@@ -152,10 +153,7 @@ final class ServerManager: ObservableObject {
     var pendingServerSaveRequestIDs: Set<UUID> { Set(serverSaveRequests.keys) }
     var pendingServerMoveRequestIDs: Set<UUID> { Set(serverMoveRequests.keys) }
 
-    struct KnownHostRemovalCandidate: Equatable, Sendable {
-        let host: String
-        let port: Int
-    }
+    typealias KnownHostRemovalCandidate = ServerKnownHostRemovalCandidate
 
     private init(
         loadLocalDataOnInit: Bool = true,
@@ -165,6 +163,7 @@ final class ServerManager: ObservableObject {
         storeCredentials: @escaping ServerCredentialStore = ServerManager.defaultCredentialStore,
         startupLoadAction: ServerStartupLoadAction? = nil,
         isProProvider: @escaping IsProProvider = { StoreManager.shared.isPro },
+        syncStateService: ServerSyncStateService = ServerSyncStateService(),
         persistsLocalData: Bool = true,
         recordsSyncMutations: Bool = true
     ) {
@@ -175,6 +174,7 @@ final class ServerManager: ObservableObject {
             await manager.loadData()
         }
         self.isProProvider = isProProvider
+        self.syncStateService = syncStateService
         self.persistsLocalData = persistsLocalData
         self.recordsSyncMutations = recordsSyncMutations
 
