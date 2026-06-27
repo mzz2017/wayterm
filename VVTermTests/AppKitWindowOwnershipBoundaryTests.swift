@@ -43,6 +43,10 @@ struct AppKitWindowOwnershipBoundaryTests {
             !proUpgradePresentationUI.contains("StoreManager.shared"),
             "Pro upgrade presentation UI should receive StoreManager from the environment instead of resolving the singleton."
         )
+        #expect(
+            !proUpgradePresentationUI.contains("ProUpgradeWindowPresenter.shared"),
+            "Pro upgrade presentation UI should use an injected window presentation service instead of resolving the singleton presenter."
+        )
 
         // And the feature Application layer must contain the replacement owners.
         #expect(
@@ -60,6 +64,14 @@ struct AppKitWindowOwnershipBoundaryTests {
                     .path
             ),
             "Store/Application should own the Pro upgrade window presenter."
+        )
+        #expect(
+            FileManager.default.fileExists(
+                atPath: root
+                    .appendingPathComponent("VVTerm/Features/Store/Application/ProUpgradeWindowPresentationService.swift")
+                    .path
+            ),
+            "Store/Application should provide the live Pro upgrade window presentation service."
         )
     }
 

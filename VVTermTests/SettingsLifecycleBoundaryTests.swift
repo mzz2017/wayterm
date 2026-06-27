@@ -174,7 +174,8 @@ struct SettingsLifecycleBoundaryTests {
             "GeneralSettingsView should receive ViewTabConfigurationManager from SettingsView."
         )
         #expect(
-            !generalSettingsSource.contains("@AppStorage(\"appLanguage\")")
+            !generalSettingsSource.contains("@AppStorage")
+                && !generalSettingsSource.contains("UserDefaults.standard")
                 && !generalSettingsSource.contains("PrivacyModeSettings.enabledKey")
                 && !generalSettingsSource.contains("AnalyticsTracker.enabledKey")
                 && !generalSettingsSource.contains("AppLanguage.applySelection"),

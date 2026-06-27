@@ -36,18 +36,27 @@ enum AppearanceMode: String, CaseIterable {
 
 /// View modifier that applies the app-wide appearance setting
 struct AppearanceModifier: ViewModifier {
-    @AppStorage("appearanceMode") private var appearanceMode: String = AppearanceMode.system.rawValue
+    @ObservedObject private var settingsStore: GeneralSettingsPreferenceStore
 
     private var colorScheme: ColorScheme? {
-        switch AppearanceMode(rawValue: appearanceMode) ?? .system {
+        switch AppearanceMode(rawValue: settingsStore.appearanceMode) ?? .system {
         case .system: return nil
         case .light: return .light
         case .dark: return .dark
         }
     }
 
+    @MainActor
+    init() {
+        _settingsStore = ObservedObject(wrappedValue: .live)
+    }
+
+    init(settingsStore: GeneralSettingsPreferenceStore) {
+        _settingsStore = ObservedObject(wrappedValue: settingsStore)
+    }
+
     func body(content: Content) -> some View {
-        let mode = AppearanceMode(rawValue: appearanceMode) ?? .system
+        let mode = AppearanceMode(rawValue: settingsStore.appearanceMode) ?? .system
         #if os(iOS)
         content
             .background(
