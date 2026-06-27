@@ -720,9 +720,10 @@ struct ServerFormSheet: View {
 // MARK: - Preview
 
 #Preview {
+    let workspace = Workspace(name: "Default")
     ServerFormSheet(
-        serverManager: ServerManager.shared,
-        workspace: nil,
+        serverManager: ServerManager.makeForTesting(workspaces: [workspace]),
+        workspace: workspace,
         onSave: { _ in }
     )
 }

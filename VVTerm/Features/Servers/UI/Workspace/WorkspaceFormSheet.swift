@@ -233,7 +233,7 @@ extension Color {
 
 #Preview {
     WorkspaceFormSheet(
-        serverManager: ServerManager.shared,
+        serverManager: ServerManager.makeForTesting(),
         onSave: { _ in }
     )
 }

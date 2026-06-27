@@ -199,6 +199,25 @@ struct ServerFormSuperfileBoundaryTests {
         )
     }
 
+    @Test
+    func serverFormsDoNotResolveSharedServerManager() throws {
+        let root = try sourceRoot()
+        let formSources = try [
+            "VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift",
+            "VVTerm/Features/Servers/UI/Workspace/EnvironmentFormSheet.swift",
+            "VVTerm/Features/Servers/UI/Workspace/WorkspaceFormSheet.swift"
+        ].map { path in
+            (path, try source(at: root.appendingPathComponent(path)))
+        }
+
+        for (path, formSource) in formSources {
+            #expect(
+                !formSource.contains("ServerManager.shared"),
+                "\(path) should receive ServerManager through explicit injection, including previews."
+            )
+        }
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

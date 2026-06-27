@@ -136,9 +136,10 @@ struct EnvironmentFormSheet: View {
 }
 
 #Preview {
+    let workspace = Workspace(name: "Default")
     EnvironmentFormSheet(
-        serverManager: ServerManager.shared,
-        workspace: Workspace(name: "Default"),
+        serverManager: ServerManager.makeForTesting(workspaces: [workspace]),
+        workspace: workspace,
         onSave: { _, _ in }
     )
 }
