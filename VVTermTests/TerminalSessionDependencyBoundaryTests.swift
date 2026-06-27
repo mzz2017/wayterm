@@ -222,6 +222,9 @@ struct TerminalSessionDependencyBoundaryTests {
         let tmuxPreferenceSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TmuxAttachPreferences.swift")
         )
+        let tmuxPreferenceInfrastructureSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Infrastructure/UserDefaultsTmuxAttachPreferences.swift")
+        )
         let liveDependencySource = try source(
             at: root.appendingPathComponent("VVTerm/App/TerminalSessionLiveDependencies.swift")
         )
@@ -270,7 +273,9 @@ struct TerminalSessionDependencyBoundaryTests {
         #expect(tabTestingSource.contains("restoreLiveDependencies()"))
         #expect(tmuxServiceSource.contains("protocol TerminalTmuxServicing"))
         #expect(tmuxPreferenceSource.contains("protocol TmuxAttachPreferenceProviding"))
-        #expect(tmuxPreferenceSource.contains("struct UserDefaultsTmuxAttachPreferences"))
+        #expect(tmuxPreferenceInfrastructureSource.contains("struct UserDefaultsTmuxAttachPreferences"))
+        #expect(tmuxPreferenceInfrastructureSource.contains("UserDefaults"))
+        #expect(!tmuxPreferenceSource.contains("UserDefaults"))
 
         // Then live Core tmux wiring is kept at composition boundaries.
         #expect(!resolverSource.contains("ServerManager.shared.servers"))
