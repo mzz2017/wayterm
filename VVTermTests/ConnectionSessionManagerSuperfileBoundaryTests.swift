@@ -482,6 +482,14 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
         #expect(surfaceSource.contains("func attachSurface"))
         #expect(surfaceSource.contains("func detachSurface"))
         #expect(surfaceSource.contains("func handleClosedSessionSurfaceTeardown"))
+        #expect(
+            !surfaceSource.contains("terminal.onKeyboardBrowseModeChange = { [weak self] isBrowsing in\n            Task"),
+            "Session surface UI state callbacks should use main-actor callbacks instead of launching untracked Tasks."
+        )
+        #expect(
+            !surfaceSource.contains("terminal.onFindNavigatorVisibilityChange = { [weak self] isVisible in\n            Task"),
+            "Session find navigator callbacks should use main-actor callbacks instead of launching untracked Tasks."
+        )
 
         // Then the superfile should not own the terminal surface registration
         // and attach/detach lifecycle directly.

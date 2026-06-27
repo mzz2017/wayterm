@@ -118,6 +118,23 @@ struct GhosttyIOSSuperfileBoundaryTests {
     }
 
     @Test
+    func terminalSurfaceStateCallbacksAreMainActorBound() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+        )
+
+        #expect(
+            mainSource.contains("var onKeyboardBrowseModeChange: (@MainActor (Bool) -> Void)?"),
+            "Keyboard browse state callbacks should be main-actor bound so managers do not need untracked Tasks."
+        )
+        #expect(
+            mainSource.contains("var onFindNavigatorVisibilityChange: (@MainActor (Bool) -> Void)?"),
+            "Find navigator visibility callbacks should be main-actor bound so managers do not need untracked Tasks."
+        )
+    }
+
+    @Test
     func momentumScrollStateLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(

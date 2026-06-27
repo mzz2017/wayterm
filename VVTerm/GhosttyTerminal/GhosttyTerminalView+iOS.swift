@@ -796,8 +796,8 @@ class GhosttyTerminalView: UIView {
     var acceptsTerminalInput = true
     private var keyboardFocusPolicy = TerminalKeyboardFocusPolicy()
     private var suppressDirectTouchKeyboardFocusUntil = Date.distantPast
-    var onKeyboardBrowseModeChange: ((Bool) -> Void)?
-    var onFindNavigatorVisibilityChange: ((Bool) -> Void)?
+    var onKeyboardBrowseModeChange: (@MainActor (Bool) -> Void)?
+    var onFindNavigatorVisibilityChange: (@MainActor (Bool) -> Void)?
 
     var shouldRestoreKeyboardFocusOnReconnect: Bool {
         keyboardFocusPolicy.shouldRestoreOnReconnect

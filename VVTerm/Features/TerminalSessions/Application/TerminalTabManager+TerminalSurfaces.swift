@@ -16,9 +16,7 @@ extension TerminalTabManager {
     }
 
     private func scheduleTerminalRegistryVersionUpdate() {
-        Task { @MainActor [weak self] in
-            self?.bumpTerminalRegistryVersion()
-        }
+        bumpTerminalRegistryVersion()
     }
 
     /// Get terminal for a pane.

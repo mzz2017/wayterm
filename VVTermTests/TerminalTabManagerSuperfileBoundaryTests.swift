@@ -753,6 +753,10 @@ struct TerminalTabManagerSuperfileBoundaryTests {
         #expect(surfaceSource.contains("func requestSurfaceAttach"))
         #expect(surfaceSource.contains("func attachSurface"))
         #expect(surfaceSource.contains("func detachSurface"))
+        #expect(
+            !surfaceSource.contains("private func scheduleTerminalRegistryVersionUpdate() {\n        Task"),
+            "Pane surface registry updates should stay inside the Application owner instead of launching untracked Tasks."
+        )
 
         // Then the superfile should not own pane terminal surface
         // registration or attach/detach request lifecycle directly.

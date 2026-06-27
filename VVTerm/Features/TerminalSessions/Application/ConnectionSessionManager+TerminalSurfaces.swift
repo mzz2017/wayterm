@@ -10,23 +10,17 @@ extension ConnectionSessionManager {
 
         #if os(iOS)
         terminal.onKeyboardBrowseModeChange = { [weak self] isBrowsing in
-            Task { @MainActor [weak self] in
-                self?.setTerminalBrowseMode(isBrowsing, for: sessionId)
-            }
+            self?.setTerminalBrowseMode(isBrowsing, for: sessionId)
         }
         terminal.onFindNavigatorVisibilityChange = { [weak self] isVisible in
-            Task { @MainActor [weak self] in
-                self?.setTerminalFindNavigatorVisible(isVisible, for: sessionId)
-            }
+            self?.setTerminalFindNavigatorVisible(isVisible, for: sessionId)
         }
         #endif
         terminalSurfaceRegistry.register(terminal, for: .session(sessionId))
         #if os(iOS)
-        Task { @MainActor [weak self, weak terminal] in
-            guard let self, let terminal, self.terminalSurfaceRegistry.surface(for: .session(sessionId)) === terminal else { return }
-            self.setTerminalBrowseMode(terminal.isKeyboardInBrowseMode, for: sessionId)
-            self.setTerminalFindNavigatorVisible(terminal.isFindNavigatorVisible, for: sessionId)
-        }
+        guard terminalSurfaceRegistry.surface(for: .session(sessionId)) === terminal else { return }
+        setTerminalBrowseMode(terminal.isKeyboardInBrowseMode, for: sessionId)
+        setTerminalFindNavigatorVisible(terminal.isFindNavigatorVisible, for: sessionId)
         #endif
 
         logger.debug("Registered terminal for session, total: \(self.terminalSurfaceRegistry.count)/\(self.maxTerminals)")
@@ -35,15 +29,8 @@ extension ConnectionSessionManager {
     func unregisterTerminal(for sessionId: UUID) {
         terminalSurfaceRegistry.removeSurface(for: .session(sessionId), cleanup: true)
         terminalsNeedingReconnectReset.remove(sessionId)
-        #if os(iOS)
-        Task { @MainActor [weak self] in
-            self?.terminalBrowseModeBySession.removeValue(forKey: sessionId)
-            self?.terminalFindNavigatorVisibleBySession.removeValue(forKey: sessionId)
-        }
-        #else
         terminalBrowseModeBySession.removeValue(forKey: sessionId)
         terminalFindNavigatorVisibleBySession.removeValue(forKey: sessionId)
-        #endif
         logger.debug("Unregistered terminal, remaining: \(self.terminalSurfaceRegistry.count)")
     }
 
