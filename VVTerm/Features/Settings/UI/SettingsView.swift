@@ -31,6 +31,13 @@ enum SettingsSelection: Hashable {
     case about
 }
 
+struct SettingsViewDependencies {
+    let storeManager: StoreManager
+    let serverManager: ServerManager
+    let syncStore: SyncSettingsStore
+    let voiceModelDownloads: VoiceModelDownloadStore
+}
+
 // MARK: - Settings View
 
 struct SettingsView: View {
@@ -38,20 +45,20 @@ struct SettingsView: View {
     @AppStorage(TerminalDefaults.fontSizeKey) private var terminalFontSize = TerminalDefaults.defaultFontSize
 
     @State private var selection: SettingsSelection? = .pro
-    @StateObject private var storeManager = StoreManager.shared
+    @ObservedObject private var storeManager: StoreManager
+    @ObservedObject private var serverManager: ServerManager
+    @ObservedObject private var syncStore: SyncSettingsStore
     @ObservedObject private var voiceModelDownloads: VoiceModelDownloadStore
 
     #if os(iOS)
     @Environment(\.dismiss) private var dismiss
     #endif
 
-    @MainActor
-    init() {
-        self.init(voiceModelDownloads: .shared)
-    }
-
-    init(voiceModelDownloads: VoiceModelDownloadStore) {
-        _voiceModelDownloads = ObservedObject(wrappedValue: voiceModelDownloads)
+    init(dependencies: SettingsViewDependencies) {
+        _storeManager = ObservedObject(wrappedValue: dependencies.storeManager)
+        _serverManager = ObservedObject(wrappedValue: dependencies.serverManager)
+        _syncStore = ObservedObject(wrappedValue: dependencies.syncStore)
+        _voiceModelDownloads = ObservedObject(wrappedValue: dependencies.voiceModelDownloads)
     }
 
     var body: some View {
@@ -97,7 +104,7 @@ struct SettingsView: View {
                 // Pro card at top
                 Section {
                     NavigationLink {
-                        ProSettingsView()
+                        ProSettingsView(storeManager: storeManager, serverManager: serverManager)
                             .navigationTitle("VVTerm Pro")
                             .navigationBarTitleDisplayMode(.inline)
                     } label: {
@@ -176,7 +183,7 @@ struct SettingsView: View {
                     }
 
                     NavigationLink {
-                        SyncSettingsView()
+                        SyncSettingsView(syncStore: syncStore, serverManager: serverManager)
                             .navigationTitle("Sync")
                             .navigationBarTitleDisplayMode(.inline)
                     } label: {
@@ -215,7 +222,7 @@ struct SettingsView: View {
     private var detailView: some View {
         switch selection {
         case .pro:
-                            ProSettingsView()
+                            ProSettingsView(storeManager: storeManager, serverManager: serverManager)
                                 .navigationTitle("VVTerm Pro")
                                 .navigationSubtitle(storeManager.isPro
                                     ? String(localized: "Manage your subscription")
@@ -238,7 +245,7 @@ struct SettingsView: View {
                                 .navigationTitle("SSH Keys")
                                 .navigationSubtitle(String(localized: "Manage stored SSH keys"))
         case .sync:
-                            SyncSettingsView()
+                            SyncSettingsView(syncStore: syncStore, serverManager: serverManager)
                                 .navigationTitle("Sync")
                                 .navigationSubtitle(String(localized: "iCloud sync and data management"))
         case .about:
@@ -246,7 +253,7 @@ struct SettingsView: View {
                                 .navigationTitle("About")
                                 .navigationSubtitle(String(localized: "Version and links"))
         case .none:
-                            ProSettingsView()
+                            ProSettingsView(storeManager: storeManager, serverManager: serverManager)
                                 .navigationTitle("VVTerm Pro")
                                 .navigationSubtitle(storeManager.isPro
                                     ? String(localized: "Manage your subscription")

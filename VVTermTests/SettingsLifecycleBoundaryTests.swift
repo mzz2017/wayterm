@@ -3,8 +3,8 @@ import Testing
 
 // Test Context:
 // These tests protect Settings UI/Application boundaries for lifecycle-critical
-// persistence and cleanup actions. Settings views may send user intent, but they
-// must not own destructive cleanup tasks or call lower-level stores directly.
+// persistence, purchase, sync, and cleanup actions. Settings views may send user
+// intent, but they must not own destructive cleanup tasks or call lower-level stores directly.
 // The tests inspect source placement only; update them only when the trusted
 // host, reusable SSH key, sync settings, or custom terminal theme settings owner
 // intentionally moves to another application-layer type.
@@ -97,6 +97,48 @@ struct SettingsLifecycleBoundaryTests {
         #expect(
             !source.contains("AppSyncCoordinator.shared"),
             "SyncSettingsView should send sync intent through SyncSettingsStore instead of AppSyncCoordinator.shared."
+        )
+    }
+
+    @Test
+    func proAndSyncSettingsReceiveBusinessStoresFromSettingsRoot() throws {
+        // Given the Pro, Sync, and Settings root SwiftUI source.
+        let root = try sourceRoot()
+        let proSettingsSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/UI/ProSettingsView.swift")
+        )
+        let syncSettingsSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/UI/SyncSettingsView.swift")
+        )
+        let settingsSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/UI/SettingsView.swift")
+        )
+
+        // Then leaf settings views must render injected application stores, while
+        // live singleton wiring stays outside the Settings UI source file.
+        #expect(
+            !proSettingsSource.contains("StoreManager.shared"),
+            "ProSettingsView should receive StoreManager from SettingsView instead of resolving StoreManager.shared."
+        )
+        #expect(
+            !proSettingsSource.contains("ServerManager.shared"),
+            "ProSettingsView should receive ServerManager from SettingsView instead of resolving ServerManager.shared."
+        )
+        #expect(
+            !syncSettingsSource.contains("SyncSettingsStore.shared"),
+            "SyncSettingsView should receive SyncSettingsStore from SettingsView instead of resolving SyncSettingsStore.shared."
+        )
+        #expect(
+            !syncSettingsSource.contains("ServerManager.shared"),
+            "SyncSettingsView should receive ServerManager from SettingsView instead of resolving ServerManager.shared."
+        )
+        #expect(
+            !settingsSource.contains(".shared"),
+            "SettingsView should receive live stores through SettingsViewDependencies, with .shared wiring kept outside the Settings UI file."
+        )
+        #expect(
+            settingsSource.contains("init(dependencies: SettingsViewDependencies)"),
+            "SettingsView should expose an explicit dependency initializer."
         )
     }
 

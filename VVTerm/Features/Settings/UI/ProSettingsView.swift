@@ -7,10 +7,15 @@ import SwiftUI
 import StoreKit
 
 struct ProSettingsView: View {
-    @ObservedObject private var storeManager = StoreManager.shared
-    @ObservedObject private var serverManager = ServerManager.shared
+    @ObservedObject private var storeManager: StoreManager
+    @ObservedObject private var serverManager: ServerManager
     @State private var showingPlans = false
     @State private var showingManageSubscription = false
+
+    init(storeManager: StoreManager, serverManager: ServerManager) {
+        _storeManager = ObservedObject(wrappedValue: storeManager)
+        _serverManager = ObservedObject(wrappedValue: serverManager)
+    }
 
     var body: some View {
         Form {
@@ -243,9 +248,3 @@ extension View {
     }
 }
 #endif
-
-// MARK: - Preview
-
-#Preview {
-    ProSettingsView()
-}

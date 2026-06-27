@@ -8,11 +8,16 @@ import SwiftUI
 // MARK: - Sync Settings View
 
 struct SyncSettingsView: View {
-    @ObservedObject private var syncStore = SyncSettingsStore.shared
-    @ObservedObject private var serverManager = ServerManager.shared
+    @ObservedObject private var syncStore: SyncSettingsStore
+    @ObservedObject private var serverManager: ServerManager
     @EnvironmentObject private var terminalThemeManager: TerminalThemeManager
     @EnvironmentObject private var terminalAccessory: TerminalAccessoryPreferencesManager
     @AppStorage(SyncSettings.enabledKey) private var syncEnabled = true
+
+    init(syncStore: SyncSettingsStore, serverManager: ServerManager) {
+        _syncStore = ObservedObject(wrappedValue: syncStore)
+        _serverManager = ObservedObject(wrappedValue: serverManager)
+    }
 
     var body: some View {
         Form {
