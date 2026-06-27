@@ -2,11 +2,11 @@ import Foundation
 import Testing
 
 // Test Context:
-// These source-boundary tests protect Servers UI superfile control. ServerFormSheet
-// is the add/edit form root; independent sheets and feature-specific presentation
-// flows should stay in sibling files so the root form does not become the owner of
-// every server-management workflow. Update these tests only when the Servers UI
-// ownership boundary intentionally changes.
+// These source-boundary tests protect Servers form ownership. ServerFormSheet is
+// the add/edit form root; presentation, application assembly, validation, and
+// infrastructure defaults should stay in their owned files so the root form and
+// submission builder do not absorb every server-management workflow. Update only
+// when the Servers ownership boundary intentionally changes.
 @Suite
 struct ServerFormSuperfileBoundaryTests {
     @Test
@@ -49,6 +49,9 @@ struct ServerFormSuperfileBoundaryTests {
         )
         let submissionBuilderSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerFormSubmissionBuilder.swift")
+        )
+        let formDefaultsSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Infrastructure/ServerFormDefaults.swift")
         )
         let validationPolicySource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerFormValidationPolicy.swift")
@@ -102,8 +105,16 @@ struct ServerFormSuperfileBoundaryTests {
             "Servers Application should own server form submission assembly."
         )
         #expect(
-            submissionBuilderSource.contains("struct ServerFormDefaults"),
-            "Servers Application should own form default resolution."
+            !submissionBuilderSource.contains("UserDefaults"),
+            "ServerFormSubmissionBuilder.swift should not own UserDefaults-backed form defaults."
+        )
+        #expect(
+            formDefaultsSource.contains("struct ServerFormDefaults"),
+            "Servers Infrastructure should own form default resolution."
+        )
+        #expect(
+            formDefaultsSource.contains("UserDefaults"),
+            "ServerFormDefaults should keep the UserDefaults adapter details."
         )
         #expect(
             formSource.contains("ServerFormValidationPolicy.isValid(draft: currentDraft)"),
