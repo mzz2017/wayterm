@@ -4,6 +4,8 @@ import UIKit
 
 @MainActor
 final class TerminalIOSInputRuntime {
+    private var renderedPreeditText: String?
+
     func sendDirectHardwareKeyEvent(
         _ key: UIKey,
         action: ghostty_input_action_e,
@@ -16,6 +18,31 @@ final class TerminalIOSInputRuntime {
         return event.withCValue { cEvent in
             ghostty_surface_key(surface, cEvent)
         }
+    }
+
+    @discardableResult
+    func syncVisiblePreedit(
+        _ text: String?,
+        inputModePrimaryLanguage: String?,
+        surface: ghostty_surface_t?
+    ) -> Bool {
+        let visibleText: String?
+        if let text, !text.isEmpty {
+            let normalized = text.precomposedStringWithCanonicalMapping
+            visibleText = TerminalVisiblePreeditPolicy.shouldDisplay(
+                normalized,
+                inputModePrimaryLanguage: inputModePrimaryLanguage
+            ) ? normalized : nil
+        } else {
+            visibleText = nil
+        }
+
+        guard visibleText != renderedPreeditText else { return false }
+        renderedPreeditText = visibleText
+
+        guard let surface else { return false }
+        syncPreedit(visibleText, surface: surface)
+        return true
     }
 
     func syncPreedit(_ text: String?, surface: ghostty_surface_t) {

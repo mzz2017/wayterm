@@ -207,7 +207,6 @@ class GhosttyTerminalView: UIView {
     private var textInputModel = TerminalTextInputModel()
     private let hardwarePressState = TerminalIOSHardwarePressState()
     private var suppressIMEProxyCallbacks = false
-    private var renderedIMEPreeditText: String?
     private lazy var imeProxyTextView: TerminalIMEProxyTextView = {
         let textView = TerminalIMEProxyTextView(frame: bounds)
         textView.terminalOwner = self
@@ -2632,34 +2631,18 @@ class GhosttyTerminalView: UIView {
         sendText(text)
     }
 
-    private func shouldDisplayVisiblePreedit(for text: String) -> Bool {
-        TerminalVisiblePreeditPolicy.shouldDisplay(
-            text,
-            inputModePrimaryLanguage: currentIMEPrimaryLanguage
-        )
-    }
-
     private var currentIMEPrimaryLanguage: String? {
         imeProxyTextView.textInputMode?.primaryLanguage ?? textInputMode?.primaryLanguage
     }
 
     private func syncIMEPreedit(_ text: String?) {
-        let visibleText: String?
-        if let text, !text.isEmpty {
-            let normalized = text.precomposedStringWithCanonicalMapping
-            visibleText = shouldDisplayVisiblePreedit(for: normalized) ? normalized : nil
-        } else {
-            visibleText = nil
+        if inputRuntime.syncVisiblePreedit(
+            text,
+            inputModePrimaryLanguage: currentIMEPrimaryLanguage,
+            surface: surface?.unsafeCValue
+        ) {
+            requestRender()
         }
-
-        guard visibleText != renderedIMEPreeditText else { return }
-        renderedIMEPreeditText = visibleText
-
-        guard let cSurface = surface?.unsafeCValue else { return }
-
-        inputRuntime.syncPreedit(visibleText, surface: cSurface)
-
-        requestRender()
     }
 
     private func sendModifiedKey(
