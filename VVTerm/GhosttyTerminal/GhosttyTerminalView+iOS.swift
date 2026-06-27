@@ -90,11 +90,7 @@ class GhosttyTerminalView: UIView {
     private var isShuttingDown = false
     private var isPaused = false
     private var customIORedrawScheduled = false
-    private var keyRepeatTimer: DispatchSourceTimer?
-    private var repeatingHardwareKey: UIKey?
-    private var repeatingFallbackKey: Ghostty.Input.Key?
-    private var repeatingFallbackModifiers: UIKeyModifierFlags = []
-    private var repeatingKeyCode: UInt16?
+    private let keyRepeatRuntime = TerminalIOSKeyRepeatRuntime()
 
     private var lastReportedGrid: (cols: Int, rows: Int) = (0, 0)
     /// Cell size in points for row-to-pixel conversion
@@ -2232,24 +2228,6 @@ class GhosttyTerminalView: UIView {
         }
     }
 
-    private func shouldRepeatHardwareKey(_ key: UIKey) -> Bool {
-        switch key.keyCode {
-        case .keyboardDeleteOrBackspace,
-             .keyboardDeleteForward,
-             .keyboardUpArrow,
-             .keyboardDownArrow,
-             .keyboardLeftArrow,
-             .keyboardRightArrow,
-             .keyboardHome,
-             .keyboardEnd,
-             .keyboardPageUp,
-             .keyboardPageDown:
-            return true
-        default:
-            return false
-        }
-    }
-
     private func fallbackHardwareKey(for key: UIKey) -> Ghostty.Input.Key? {
         switch key.keyCode {
         case .keyboardLeftShift:
@@ -2361,55 +2339,39 @@ class GhosttyTerminalView: UIView {
     }
 
     private func startKeyRepeat(for key: UIKey) {
-        guard shouldRepeatHardwareKey(key) else { return }
-        let blockedModifiers: UIKeyModifierFlags = [.command, .control, .alternate]
-        guard key.modifierFlags.intersection(blockedModifiers).isEmpty else { return }
-        stopKeyRepeat()
-        repeatingHardwareKey = key
-        repeatingFallbackKey = fallbackHardwareKey(for: key)
-        repeatingFallbackModifiers = key.modifierFlags
-        repeatingKeyCode = UInt16(key.keyCode.rawValue)
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 0.35, repeating: 0.05)
-        timer.setEventHandler { [weak self] in
-            guard let self = self,
-                  let cSurface = self.surface?.unsafeCValue else { return }
-            guard self.canRouteTerminalInput else {
-                self.stopKeyRepeat()
-                return
-            }
-            if let repeatKey = self.repeatingHardwareKey,
-               self.sendDirectHardwareKeyEvent(
-                   repeatKey,
-                   action: GHOSTTY_ACTION_REPEAT,
-                   surface: cSurface
-               ) {
-                self.requestRender()
-                return
-            }
-            if let fallbackKey = self.repeatingFallbackKey,
-               let surface = self.surface {
+        keyRepeatRuntime.start(
+            for: key,
+            fallbackKey: fallbackHardwareKey(for: key),
+            canRouteInput: { [weak self] in
+                self?.canRouteTerminalInput == true
+            },
+            sendDirectRepeat: { [weak self] repeatKey in
+                guard let self,
+                      let cSurface = self.surface?.unsafeCValue else { return false }
+                return self.sendDirectHardwareKeyEvent(
+                    repeatKey,
+                    action: GHOSTTY_ACTION_REPEAT,
+                    surface: cSurface
+                )
+            },
+            sendFallbackRepeat: { [weak self] fallbackKey, modifiers in
+                guard let self, let surface = self.surface else { return }
                 surface.sendKeyEvent(
                     self.fallbackHardwareEvent(
                         key: fallbackKey,
                         action: .repeat,
-                        modifiers: self.repeatingFallbackModifiers
+                        modifiers: modifiers
                     )
                 )
+            },
+            requestRender: { [weak self] in
+                self?.requestRender()
             }
-            self.requestRender()
-        }
-        keyRepeatTimer = timer
-        timer.resume()
+        )
     }
 
     private func stopKeyRepeat() {
-        keyRepeatTimer?.cancel()
-        keyRepeatTimer = nil
-        repeatingHardwareKey = nil
-        repeatingFallbackKey = nil
-        repeatingFallbackModifiers = []
-        repeatingKeyCode = nil
+        keyRepeatRuntime.stop()
     }
 
     private func fallbackHardwareEvent(
@@ -2555,7 +2517,7 @@ class GhosttyTerminalView: UIView {
                 continue
             }
             hardwarePressesSentToGhostty.remove(keyCode)
-            if repeatingKeyCode == keyCode {
+            if keyRepeatRuntime.isRepeating(keyCode: keyCode) {
                 stopKeyRepeat()
             }
             let fallbackKey = fallbackHardwarePressKeys.removeValue(forKey: keyCode)
