@@ -169,6 +169,17 @@ struct SettingsLifecycleBoundaryTests {
             "GeneralSettingsView should receive ViewTabConfigurationManager from SettingsView."
         )
         #expect(
+            !generalSettingsSource.contains("@AppStorage(\"appLanguage\")")
+                && !generalSettingsSource.contains("PrivacyModeSettings.enabledKey")
+                && !generalSettingsSource.contains("AnalyticsTracker.enabledKey")
+                && !generalSettingsSource.contains("AppLanguage.applySelection"),
+            "GeneralSettingsView should delegate persisted General preference reads, writes, and language side effects to its application store."
+        )
+        #expect(
+            generalSettingsSource.contains("settingsStore: GeneralSettingsPreferenceStore"),
+            "GeneralSettingsView should receive its General preference store explicitly."
+        )
+        #expect(
             !terminalSettingsSource.contains("TrustedHostsSettingsStore.shared"),
             "TerminalSettingsView should receive TrustedHostsSettingsStore from SettingsView."
         )
@@ -177,8 +188,9 @@ struct SettingsLifecycleBoundaryTests {
             "KeychainSettingsView should receive SSHKeySettingsStore from SettingsView."
         )
         #expect(
-            settingsSource.contains("GeneralSettingsView(viewTabConfig: viewTabConfig)"),
-            "SettingsView should inject ViewTabConfigurationManager into GeneralSettingsView."
+            settingsSource.contains("settingsStore: generalSettings")
+                && settingsSource.contains("viewTabConfig: viewTabConfig"),
+            "SettingsView should inject GeneralSettingsPreferenceStore and ViewTabConfigurationManager into GeneralSettingsView."
         )
         #expect(
             settingsSource.contains("trustedHostsStore: trustedHostsStore"),

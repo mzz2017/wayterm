@@ -265,23 +265,24 @@ struct AppearancePreviewCard: View {
 }
 
 struct GeneralSettingsView: View {
-    @AppStorage("appearanceMode") private var appearanceMode: String = AppearanceMode.system.rawValue
-    @AppStorage("appLanguage") private var appLanguage = AppLanguage.system.rawValue
-    @AppStorage(PrivacyModeSettings.enabledKey) private var privacyModeEnabled = false
-    @AppStorage(AnalyticsTracker.enabledKey) private var analyticsEnabled = true
     @EnvironmentObject private var appLockManager: AppLockManager
+    @ObservedObject private var settingsStore: GeneralSettingsPreferenceStore
     @ObservedObject private var viewTabConfig: ViewTabConfigurationManager
 
     private let authGraceOptions = [0, 15, 30, 60, 120, 300]
 
-    init(viewTabConfig: ViewTabConfigurationManager) {
+    init(
+        settingsStore: GeneralSettingsPreferenceStore,
+        viewTabConfig: ViewTabConfigurationManager
+    ) {
+        _settingsStore = ObservedObject(wrappedValue: settingsStore)
         _viewTabConfig = ObservedObject(wrappedValue: viewTabConfig)
     }
 
     var body: some View {
         Form {
             Section {
-                Picker("Language", selection: $appLanguage) {
+                Picker("Language", selection: $settingsStore.appLanguage) {
                     ForEach(AppLanguage.allCases) { language in
                         Text(language.displayName)
                             .tag(language.rawValue)
@@ -296,7 +297,7 @@ struct GeneralSettingsView: View {
             }
 
             Section("Appearance") {
-                AppearancePickerView(selection: $appearanceMode)
+                AppearancePickerView(selection: $settingsStore.appearanceMode)
                     .frame(maxWidth: .infinity)
             }
 
@@ -360,9 +361,9 @@ struct GeneralSettingsView: View {
             }
 
             Section {
-                Toggle("Privacy Mode", isOn: $privacyModeEnabled)
+                Toggle("Privacy Mode", isOn: $settingsStore.isPrivacyModeEnabled)
 
-                Toggle("Help Improve VVTerm", isOn: $analyticsEnabled)
+                Toggle("Help Improve VVTerm", isOn: $settingsStore.isAnalyticsEnabled)
 
                 Toggle(
                     String(format: String(localized: "Require %@ to open VVTerm"), appLockManager.biometryDisplayName),
@@ -418,9 +419,6 @@ struct GeneralSettingsView: View {
         .formStyle(.grouped)
         .onAppear {
             appLockManager.refreshBiometryAvailability()
-        }
-        .onChange(of: appLanguage) { newValue in
-            AppLanguage.applySelection(newValue)
         }
     }
 }

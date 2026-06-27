@@ -34,6 +34,7 @@ enum SettingsSelection: Hashable {
 struct SettingsViewDependencies {
     let storeManager: StoreManager
     let serverManager: ServerManager
+    let generalSettings: GeneralSettingsPreferenceStore
     let syncStore: SyncSettingsStore
     let voiceSettings: TranscriptionSettingsPreferenceStore
     let voiceModelDownloads: VoiceModelDownloadStore
@@ -51,6 +52,7 @@ struct SettingsView: View {
     @State private var selection: SettingsSelection? = .pro
     @ObservedObject private var storeManager: StoreManager
     @ObservedObject private var serverManager: ServerManager
+    @ObservedObject private var generalSettings: GeneralSettingsPreferenceStore
     @ObservedObject private var syncStore: SyncSettingsStore
     @ObservedObject private var voiceSettings: TranscriptionSettingsPreferenceStore
     @ObservedObject private var voiceModelDownloads: VoiceModelDownloadStore
@@ -65,6 +67,7 @@ struct SettingsView: View {
     init(dependencies: SettingsViewDependencies) {
         _storeManager = ObservedObject(wrappedValue: dependencies.storeManager)
         _serverManager = ObservedObject(wrappedValue: dependencies.serverManager)
+        _generalSettings = ObservedObject(wrappedValue: dependencies.generalSettings)
         _syncStore = ObservedObject(wrappedValue: dependencies.syncStore)
         _voiceSettings = ObservedObject(wrappedValue: dependencies.voiceSettings)
         _voiceModelDownloads = ObservedObject(wrappedValue: dependencies.voiceModelDownloads)
@@ -163,7 +166,10 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink {
-                        GeneralSettingsView(viewTabConfig: viewTabConfig)
+                        GeneralSettingsView(
+                            settingsStore: generalSettings,
+                            viewTabConfig: viewTabConfig
+                        )
                             .navigationTitle("General")
                             .navigationBarTitleDisplayMode(.inline)
                     } label: {
@@ -248,7 +254,10 @@ struct SettingsView: View {
                                     : String(localized: "Upgrade for unlimited features")
                                 )
         case .general:
-                            GeneralSettingsView(viewTabConfig: viewTabConfig)
+                            GeneralSettingsView(
+                                settingsStore: generalSettings,
+                                viewTabConfig: viewTabConfig
+                            )
                                 .navigationTitle("General")
                                 .navigationSubtitle(String(localized: "Appearance and preferences"))
         case .terminal:
