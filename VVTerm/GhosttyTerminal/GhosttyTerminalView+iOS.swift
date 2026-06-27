@@ -14,16 +14,6 @@ import IOSurface
 import CoreImage
 import GameController
 
-private extension UIViewController {
-    var topMostPresentedViewController: UIViewController {
-        var controller = self
-        while let presented = controller.presentedViewController {
-            controller = presented
-        }
-        return controller
-    }
-}
-
 /// UIView that embeds a Ghostty terminal surface with Metal rendering
 ///
 /// This view handles:
@@ -44,6 +34,7 @@ class GhosttyTerminalView: UIView {
     private let paneId: String?
     private let initialCommand: String?
     private let useCustomIO: Bool
+    private let presentationEnvironment: TerminalIOSPresentationEnvironment
 
     /// Callback invoked when the terminal process exits
     var onProcessExit: (() -> Void)?
@@ -307,13 +298,23 @@ class GhosttyTerminalView: UIView {
     ///   - paneId: Unique identifier for this pane
     ///   - command: Optional command to run instead of default shell
     ///   - useCustomIO: If true, uses callback backend for custom I/O (SSH clients)
-    init(frame: CGRect, worktreePath: String, ghosttyApp: ghostty_app_t, appWrapper: Ghostty.App? = nil, paneId: String? = nil, command: String? = nil, useCustomIO: Bool = false) {
+    init(
+        frame: CGRect,
+        worktreePath: String,
+        ghosttyApp: ghostty_app_t,
+        appWrapper: Ghostty.App? = nil,
+        paneId: String? = nil,
+        command: String? = nil,
+        useCustomIO: Bool = false,
+        presentationEnvironment: TerminalIOSPresentationEnvironment? = nil
+    ) {
         self.worktreePath = worktreePath
         self.ghosttyApp = ghosttyApp
         self.ghosttyAppWrapper = appWrapper
         self.paneId = paneId
         self.initialCommand = command
         self.useCustomIO = useCustomIO
+        self.presentationEnvironment = presentationEnvironment ?? .live
 
         // Use a reasonable default size if frame is zero
         let initialFrame = frame.width > 0 && frame.height > 0 ? frame : CGRect(x: 0, y: 0, width: 800, height: 600)
@@ -909,7 +910,7 @@ class GhosttyTerminalView: UIView {
         if let activationState = window?.windowScene?.activationState {
             return activationState == .foregroundActive
         }
-        return UIApplication.shared.applicationState == .active
+        return presentationEnvironment.isApplicationActive()
     }
 
     var acceptsTerminalInput = true
@@ -1929,24 +1930,8 @@ class GhosttyTerminalView: UIView {
         return CGRect(x: bounds.midX, y: bounds.midY, width: 1, height: 1)
     }
 
-    private func nearestPresentingViewController() -> UIViewController? {
-        var responder: UIResponder? = self
-        while let current = responder {
-            if let viewController = current as? UIViewController {
-                return viewController.topMostPresentedViewController
-            }
-            responder = current.next
-        }
-        return window?.rootViewController?.topMostPresentedViewController
-    }
-
     private func presentSelectionMenuController(_ controller: UIViewController) {
-        guard let presenter = nearestPresentingViewController() else { return }
-        if let popover = controller.popoverPresentationController {
-            popover.sourceView = self
-            popover.sourceRect = selectionMenuSourceRect()
-        }
-        presenter.present(controller, animated: true)
+        presentationEnvironment.presentController(controller, self, selectionMenuSourceRect())
     }
 
     private func presentShareSheet(for text: String) {
@@ -1964,7 +1949,7 @@ class GhosttyTerminalView: UIView {
         var components = URLComponents(string: "https://www.google.com/search")
         components?.queryItems = [URLQueryItem(name: "q", value: text)]
         guard let url = components?.url else { return }
-        UIApplication.shared.open(url)
+        presentationEnvironment.openURL(url)
     }
 
     @available(iOS 16.0, *)

@@ -142,6 +142,37 @@ struct GhosttyIOSSuperfileBoundaryTests {
         #expect(momentumSource.contains("nextFrameEvent"))
     }
 
+    @Test
+    func iOSPresentationPolicyLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+        )
+        let presentationSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/TerminalIOSPresentationEnvironment.swift")
+        )
+
+        // Given GhosttyTerminalView needs app-active state, menu presentation,
+        // and URL opening for iOS terminal interactions.
+        #expect(mainSource.contains("private let presentationEnvironment: TerminalIOSPresentationEnvironment"))
+        #expect(mainSource.contains("presentationEnvironment.isApplicationActive()"))
+        #expect(mainSource.contains("presentationEnvironment.presentController"))
+        #expect(mainSource.contains("presentationEnvironment.openURL(url)"))
+
+        // Then the main surface view does not own those platform singleton
+        // lookups or presenter traversal details.
+        #expect(!mainSource.contains("UIApplication.shared"))
+        #expect(!mainSource.contains("topMostPresentedViewController"))
+        #expect(!mainSource.contains("nearestPresentingViewController"))
+        #expect(!mainSource.contains("present(controller"))
+        #expect(!mainSource.contains("open(url)"))
+
+        #expect(presentationSource.contains("struct TerminalIOSPresentationEnvironment"))
+        #expect(presentationSource.contains("static var live: Self"))
+        #expect(presentationSource.contains("UIApplication.shared.applicationState == .active"))
+        #expect(presentationSource.contains("UIApplication.shared.open(url)"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
