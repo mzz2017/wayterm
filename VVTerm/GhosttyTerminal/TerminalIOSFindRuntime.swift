@@ -7,10 +7,35 @@ final class TerminalIOSFindRuntime {
     private var nativeFindSession: GhosttyNativeFindSession?
     private var ghosttyFindReportedTotal: Int?
     private var ghosttyFindReportedSelectedIndex: Int?
+    private var navigatorLifecycle = TerminalFindNavigatorLifecycle()
+
+    var isNavigatorLifecycleActive: Bool {
+        navigatorLifecycle.isActive
+    }
 
     func resetReportedResults() {
         ghosttyFindReportedTotal = 0
         ghosttyFindReportedSelectedIndex = nil
+    }
+
+    func beginNavigatorLifecycle(restoreTerminalFocus: Bool) {
+        navigatorLifecycle.begin(restoreTerminalFocus: restoreTerminalFocus)
+    }
+
+    func endNavigatorLifecycle() -> Bool {
+        navigatorLifecycle.end()
+    }
+
+    func suppressNextGhosttySearchEnd() {
+        navigatorLifecycle.suppressNextGhosttySearchEnd()
+    }
+
+    func cancelSuppressedGhosttySearchEnd() {
+        navigatorLifecycle.cancelSuppressedGhosttySearchEnd()
+    }
+
+    func consumeSuppressedGhosttySearchEnd() -> Bool {
+        navigatorLifecycle.consumeSuppressedGhosttySearchEnd()
     }
 
     @available(iOS 16.0, *)

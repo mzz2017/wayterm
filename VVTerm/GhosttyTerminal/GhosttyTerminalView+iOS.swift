@@ -843,7 +843,6 @@ class GhosttyTerminalView: UIView {
     private var suppressDirectTouchKeyboardFocusUntil = Date.distantPast
     var onKeyboardBrowseModeChange: ((Bool) -> Void)?
     var onFindNavigatorVisibilityChange: ((Bool) -> Void)?
-    private var findNavigatorLifecycle = TerminalFindNavigatorLifecycle()
 
     var shouldRestoreKeyboardFocusOnReconnect: Bool {
         keyboardFocusPolicy.shouldRestoreOnReconnect
@@ -863,7 +862,7 @@ class GhosttyTerminalView: UIView {
 
     private var isFindNavigatorActive: Bool {
         guard #available(iOS 16.0, *) else { return false }
-        return findNavigatorLifecycle.isActive
+        return findRuntime.isNavigatorLifecycleActive
             || nativeFindInteraction?.isFindNavigatorVisible == true
     }
 
@@ -1371,7 +1370,7 @@ class GhosttyTerminalView: UIView {
 
     @available(iOS 16.0, *)
     private func beginFindNavigatorPresentation(restoreTerminalFocus: Bool) {
-        findNavigatorLifecycle.begin(restoreTerminalFocus: restoreTerminalFocus)
+        findRuntime.beginNavigatorLifecycle(restoreTerminalFocus: restoreTerminalFocus)
         notifyFindNavigatorVisibilityChange()
         stopKeyRepeat()
 
@@ -1385,7 +1384,7 @@ class GhosttyTerminalView: UIView {
     }
 
     private func endFindNavigatorLifecycle() -> Bool {
-        let shouldRestoreTerminalFocus = findNavigatorLifecycle.end()
+        let shouldRestoreTerminalFocus = findRuntime.endNavigatorLifecycle()
         if !shouldRestoreTerminalFocus, super.isFirstResponder {
             _ = super.resignFirstResponder()
         }
@@ -1429,11 +1428,11 @@ class GhosttyTerminalView: UIView {
         findRuntime.resetReportedResults()
         let action = "search:\(query)"
         if keepNavigatorVisibleOnSearchEnd {
-            findNavigatorLifecycle.suppressNextGhosttySearchEnd()
+            findRuntime.suppressNextGhosttySearchEnd()
         }
         guard surface.perform(action: action) else {
             if keepNavigatorVisibleOnSearchEnd {
-                findNavigatorLifecycle.cancelSuppressedGhosttySearchEnd()
+                findRuntime.cancelSuppressedGhosttySearchEnd()
             }
             return false
         }
@@ -1458,9 +1457,9 @@ class GhosttyTerminalView: UIView {
     private func endGhosttyFindSearchForNavigatorDismissal() {
         guard let surface else { return }
         findRuntime.resetReportedResults()
-        findNavigatorLifecycle.suppressNextGhosttySearchEnd()
+        findRuntime.suppressNextGhosttySearchEnd()
         if !surface.perform(action: "end_search") {
-            findNavigatorLifecycle.cancelSuppressedGhosttySearchEnd()
+            findRuntime.cancelSuppressedGhosttySearchEnd()
         }
     }
 
@@ -1491,11 +1490,11 @@ class GhosttyTerminalView: UIView {
             findRuntime.resetNativeSession { [weak self] in
                 self?.nativeFindInteraction?.updateResultCount()
             }
-            if findNavigatorLifecycle.consumeSuppressedGhosttySearchEnd() {
+            if findRuntime.consumeSuppressedGhosttySearchEnd() {
                 return
             } else if nativeFindInteraction?.isFindNavigatorVisible == true {
                 nativeFindInteraction?.dismissFindNavigator()
-            } else if findNavigatorLifecycle.isActive {
+            } else if findRuntime.isNavigatorLifecycleActive {
                 _ = endFindNavigatorLifecycle()
                 notifyFindNavigatorVisibilityChange()
             }
@@ -2886,8 +2885,8 @@ extension GhosttyTerminalView: UIFindInteractionDelegate {
     }
 
     func findInteraction(_ interaction: UIFindInteraction, didBegin session: UIFindSession) {
-        if !findNavigatorLifecycle.isActive {
-            findNavigatorLifecycle.begin(restoreTerminalFocus: imeProxyTextView.isFirstResponder)
+        if !findRuntime.isNavigatorLifecycleActive {
+            findRuntime.beginNavigatorLifecycle(restoreTerminalFocus: imeProxyTextView.isFirstResponder)
         }
         refreshNativeSelectionSnapshot()
         findRuntime.applyStoredGhosttyFindResultsToNativeSession { [weak self] in

@@ -28,6 +28,10 @@ struct GhosttyIOSFindRuntimeBoundaryTests {
         #expect(viewSource.contains("findRuntime.updateReportedTotal"))
         #expect(viewSource.contains("findRuntime.updateReportedSelectedIndex"))
         #expect(viewSource.contains("findRuntime.resetReportedResults"))
+        #expect(viewSource.contains("findRuntime.beginNavigatorLifecycle"))
+        #expect(viewSource.contains("findRuntime.endNavigatorLifecycle"))
+        #expect(viewSource.contains("findRuntime.suppressNextGhosttySearchEnd"))
+        #expect(viewSource.contains("findRuntime.consumeSuppressedGhosttySearchEnd"))
 
         // Then session ownership and Ghostty result counters must not stay in
         // the giant iOS terminal view.
@@ -35,17 +39,24 @@ struct GhosttyIOSFindRuntimeBoundaryTests {
         #expect(!viewSource.contains("private var ghosttyFindReportedTotal"))
         #expect(!viewSource.contains("private var ghosttyFindReportedSelectedIndex"))
         #expect(!viewSource.contains("private func applyStoredGhosttyFindResultsToNativeSession"))
+        #expect(!viewSource.contains("private var findNavigatorLifecycle"))
+        #expect(!viewSource.contains("findNavigatorLifecycle."))
 
         // And the focused runtime owns the stored session and result reporting API.
         #expect(runtimeSource.contains("final class TerminalIOSFindRuntime"))
         #expect(runtimeSource.contains("private var nativeFindSession"))
         #expect(runtimeSource.contains("private var ghosttyFindReportedTotal"))
         #expect(runtimeSource.contains("private var ghosttyFindReportedSelectedIndex"))
+        #expect(runtimeSource.contains("private var navigatorLifecycle = TerminalFindNavigatorLifecycle()"))
         #expect(runtimeSource.contains("func makeSession"))
         #expect(runtimeSource.contains("func applyExternalQuery"))
         #expect(runtimeSource.contains("func updateReportedTotal"))
         #expect(runtimeSource.contains("func updateReportedSelectedIndex"))
         #expect(runtimeSource.contains("func resetReportedResults"))
+        #expect(runtimeSource.contains("func beginNavigatorLifecycle"))
+        #expect(runtimeSource.contains("func endNavigatorLifecycle"))
+        #expect(runtimeSource.contains("func suppressNextGhosttySearchEnd"))
+        #expect(runtimeSource.contains("func consumeSuppressedGhosttySearchEnd"))
     }
 
     private func source(at url: URL) throws -> String {
