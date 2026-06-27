@@ -180,13 +180,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
         if useCustomIO {
             displayLinkRuntime.setup { [weak self] in
                 guard let self else { return }
-                self.displayLinkRuntime.tick(
-                    isShuttingDown: self.isShuttingDown,
-                    surface: self.surface?.unsafeCValue,
-                    appTick: { [weak self] in
-                        self?.surfaceOwner.appWrapper?.appTick()
-                    }
-                )
+                self.surfaceOwner.tickDisplayLink(self.displayLinkRuntime, isShuttingDown: self.isShuttingDown)
             }
         }
     }
@@ -458,8 +452,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         switch item.action {
         case #selector(copy(_:)):
-            guard let cSurface = surface?.unsafeCValue else { return false }
-            return ghostty_surface_has_selection(cSurface)
+            return surfaceOwner.hasSelection()
         case #selector(paste(_:)):
             return true
         default:
@@ -622,21 +615,9 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     /// Force the terminal surface to refresh/redraw
     /// Useful after tmux reattaches or when view becomes visible
     func forceRefresh() {
-        guard let surface = surface?.unsafeCValue else { return }
-
         // Force a size update to trigger tmux redraw
         let scaledSize = convertToBacking(bounds.size)
-        ghostty_surface_set_size(
-            surface,
-            UInt32(scaledSize.width),
-            UInt32(scaledSize.height)
-        )
-
-        ghostty_surface_refresh(surface)
-        ghostty_surface_draw(surface)
-
-        // Trigger app tick to process any pending updates
-        surfaceOwner.appWrapper?.appTick()
+        guard surfaceOwner.forceRefresh(backingSize: scaledSize) else { return }
 
         // Force Metal layer to redraw
         if let metalLayer = layer as? CAMetalLayer {
@@ -651,8 +632,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     func applyPresentationOverrides(_ presentationOverrides: TerminalPresentationOverrides) {
         surfacePresentationOverrides = presentationOverrides
 
-        guard let surface = surface?.unsafeCValue else { return }
-        surfaceOwner.appWrapper?.updateSurfaceConfig(surface, presentationOverrides: presentationOverrides)
+        guard surfaceOwner.updateSurfaceConfig(presentationOverrides) else { return }
         forceRefresh()
     }
 
@@ -672,13 +652,8 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
 
     /// Feed data from the SSH channel into the terminal for rendering (External backend).
     func writeOutput(_ data: Data) {
-        guard let surface = surface?.unsafeCValue else { return }
-
         // Feed data immediately - SSH read loop already batches appropriately
-        data.withUnsafeBytes { buffer in
-            guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
-            ghostty_surface_write_output(surface, ptr, UInt(buffer.count))
-        }
+        surfaceOwner.writeOutput(data)
 
         // Request render via display link (event-driven, will auto-stop when idle)
         requestRender()
@@ -687,8 +662,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     /// Notify the terminal that the SSH session ended (External backend), so it shows
     /// ghostty's real "session ended" UI instead of going silent.
     func externalExited(_ exitCode: UInt32 = 0) {
-        guard let surface = surface?.unsafeCValue else { return }
-        ghostty_surface_external_exited(surface, exitCode)
+        surfaceOwner.externalExited(exitCode)
         requestRender()
     }
 

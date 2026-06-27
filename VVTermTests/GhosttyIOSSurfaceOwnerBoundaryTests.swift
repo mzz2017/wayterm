@@ -2,11 +2,11 @@ import Foundation
 import Testing
 
 // Test Context:
-// These source-boundary tests protect iOS Ghostty surface reference ownership.
-// GhosttyTerminalView+iOS may route UI events and expose transitional computed
-// access for existing extensions, but stored app/surface references should live
-// in a dedicated surface owner. Update only when this ownership intentionally
-// moves again.
+// These source-boundary tests protect iOS Ghostty surface ownership. UIView may
+// route UI events and expose transitional computed access for existing
+// extensions, but stored app/surface references and selected display C/FFI
+// operations should live behind TerminalIOSSurfaceOwner. Update only when this
+// ownership intentionally moves again.
 
 @Suite(.serialized)
 struct GhosttyIOSSurfaceOwnerBoundaryTests {
@@ -47,6 +47,43 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
         #expect(ownerSource.contains("let ghosttyApp: ghostty_app_t"))
         #expect(ownerSource.contains("weak var appWrapper: Ghostty.App?"))
         #expect(ownerSource.contains("var surface: Ghostty.Surface?"))
+        #expect(ownerSource.contains("var hasLiveSurface: Bool"))
+        #expect(ownerSource.contains("func resizeIfNeeded("))
+        #expect(ownerSource.contains("func forceResize("))
+        #expect(ownerSource.contains("func redraw("))
+        #expect(ownerSource.contains("func setColorScheme("))
+        #expect(ownerSource.contains("func updateSurfaceConfig("))
+        #expect(ownerSource.contains("func writeOutput("))
+        #expect(ownerSource.contains("func externalExited("))
+
+        #expect(
+            !viewSource.contains("surface?.unsafeCValue != nil"),
+            "GhosttyTerminalView+iOS.swift should ask the surface owner whether a live surface exists."
+        )
+        #expect(
+            !viewSource.contains("surfaceDisplayRuntime.resizeIfNeeded(surface:"),
+            "GhosttyTerminalView+iOS.swift should not pass raw surface handles into display resizing."
+        )
+        #expect(
+            !viewSource.contains("surfaceDisplayRuntime.setColorScheme("),
+            "GhosttyTerminalView+iOS.swift should not pass raw surface handles into color-scheme updates."
+        )
+        #expect(
+            !viewSource.contains("surfaceOwner.appWrapper?.updateSurfaceConfig("),
+            "GhosttyTerminalView+iOS.swift should route surface config updates through the surface owner."
+        )
+        #expect(
+            !surfaceRuntimeSource.contains("surfaceDisplayRuntime.forceResize(surface:"),
+            "GhosttyTerminalView+SurfaceRuntime+iOS.swift should not pass raw surface handles into forced resizing."
+        )
+        #expect(
+            !surfaceRuntimeSource.contains("surfaceDisplayRuntime.writeOutput("),
+            "GhosttyTerminalView+SurfaceRuntime+iOS.swift should route custom IO writes through the surface owner."
+        )
+        #expect(
+            !surfaceRuntimeSource.contains("surfaceDisplayRuntime.externalExited("),
+            "GhosttyTerminalView+SurfaceRuntime+iOS.swift should route process-exit notifications through the surface owner."
+        )
     }
 
     private func source(at url: URL) throws -> String {

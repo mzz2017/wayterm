@@ -108,19 +108,19 @@ extension GhosttyTerminalView {
     func forceRefresh() {
         if isShuttingDown { return }
         if isPaused { return }
-        guard let surface = surface?.unsafeCValue else { return }
+        guard surfaceOwner.hasLiveSurface else { return }
         guard bounds.width > 0 && bounds.height > 0 else { return }
 
         updateContentScaleIfNeeded()
         configureIOSurfaceLayers(size: bounds.size)
 
         let scale = contentScaleFactor
-        guard surfaceDisplayRuntime.forceResize(surface: surface, pointSize: bounds.size, scale: scale) else { return }
+        guard surfaceOwner.forceResize(pointSize: bounds.size, scale: scale, using: surfaceDisplayRuntime) else { return }
         if window != nil {
-            surfaceDisplayRuntime.setOcclusion(true, surface: surface)
+            surfaceOwner.setOcclusion(true, using: surfaceDisplayRuntime)
         }
 
-        surfaceDisplayRuntime.redraw(surface: surface)
+        surfaceOwner.redraw(using: surfaceDisplayRuntime)
         markIOSurfaceLayersForDisplay()
         requestRender()
     }
@@ -192,29 +192,26 @@ extension GhosttyTerminalView {
             guard let self else { return }
             self.markCustomIORedrawScheduled(false)
             guard !self.isShuttingDown, !self.isPaused else { return }
-            guard let surface = self.surface?.unsafeCValue else { return }
+            guard self.surfaceOwner.hasLiveSurface else { return }
             guard self.bounds.width > 0 && self.bounds.height > 0 else { return }
 
             self.updateContentScaleIfNeeded()
             self.configureIOSurfaceLayers(size: self.bounds.size)
-            self.surfaceDisplayRuntime.redraw(surface: surface)
+            self.surfaceOwner.redraw(using: self.surfaceDisplayRuntime)
             self.markIOSurfaceLayersForDisplay()
         }
     }
 
     /// Feed data from the SSH channel into the terminal for rendering (External backend).
     func writeOutput(_ data: Data) {
-        guard let surface = surface?.unsafeCValue else { return }
-
-        surfaceDisplayRuntime.writeOutput(data, to: surface)
+        surfaceOwner.writeOutput(data, using: surfaceDisplayRuntime)
         scheduleCustomIORedraw()
         requestRender()
     }
 
     /// Notify the terminal that the SSH session ended (External backend).
     func externalExited(_ exitCode: UInt32 = 0) {
-        guard let surface = surface?.unsafeCValue else { return }
-        surfaceDisplayRuntime.externalExited(exitCode, surface: surface)
+        surfaceOwner.externalExited(exitCode, using: surfaceDisplayRuntime)
         scheduleCustomIORedraw()
         requestRender()
     }

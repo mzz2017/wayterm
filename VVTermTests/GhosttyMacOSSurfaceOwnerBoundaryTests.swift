@@ -2,11 +2,11 @@ import Foundation
 import Testing
 
 // Test Context:
-// These source-boundary tests protect macOS Ghostty surface reference ownership.
-// GhosttyTerminalView+macOS may route AppKit events and expose transitional
-// computed access for existing helpers, but stored app/surface references should
-// live in a dedicated surface owner. Update only when this ownership
-// intentionally moves again.
+// These source-boundary tests protect macOS Ghostty surface ownership. NSView may
+// route AppKit events and expose transitional computed access for existing
+// helpers, but stored app/surface references and selected display/custom-IO C/FFI
+// operations should live behind TerminalMacOSSurfaceOwner. Update only when this
+// ownership intentionally moves again.
 
 @Suite(.serialized)
 struct GhosttyMacOSSurfaceOwnerBoundaryTests {
@@ -25,7 +25,7 @@ struct GhosttyMacOSSurfaceOwnerBoundaryTests {
         #expect(viewSource.contains("get { surfaceOwner.surface }"))
         #expect(viewSource.contains("set { surfaceOwner.surface = newValue }"))
         #expect(viewSource.contains("let app = surfaceOwner.ghosttyApp"))
-        #expect(viewSource.contains("surfaceOwner.appWrapper?.appTick()"))
+        #expect(ownerSource.contains("appWrapper?.appTick()"))
         #expect(viewSource.contains("appWrapper: surfaceOwner.appWrapper"))
 
         #expect(
@@ -45,6 +45,43 @@ struct GhosttyMacOSSurfaceOwnerBoundaryTests {
         #expect(ownerSource.contains("let ghosttyApp: ghostty_app_t"))
         #expect(ownerSource.contains("weak var appWrapper: Ghostty.App?"))
         #expect(ownerSource.contains("var surface: Ghostty.Surface?"))
+        #expect(ownerSource.contains("func tickDisplayLink("))
+        #expect(ownerSource.contains("func hasSelection() -> Bool"))
+        #expect(ownerSource.contains("func forceRefresh("))
+        #expect(ownerSource.contains("func updateSurfaceConfig("))
+        #expect(ownerSource.contains("func writeOutput("))
+        #expect(ownerSource.contains("func externalExited("))
+        #expect(ownerSource.contains("ghostty_surface_set_size("))
+        #expect(ownerSource.contains("ghostty_surface_refresh("))
+        #expect(ownerSource.contains("ghostty_surface_draw("))
+        #expect(ownerSource.contains("ghostty_surface_write_output("))
+        #expect(ownerSource.contains("ghostty_surface_external_exited("))
+        #expect(ownerSource.contains("ghostty_surface_has_selection("))
+
+        #expect(
+            !viewSource.contains("ghostty_surface_set_size("),
+            "GhosttyTerminalView+macOS.swift should route surface resize refresh through the surface owner."
+        )
+        #expect(
+            !viewSource.contains("ghostty_surface_refresh("),
+            "GhosttyTerminalView+macOS.swift should route surface refresh through the surface owner."
+        )
+        #expect(
+            !viewSource.contains("ghostty_surface_draw("),
+            "GhosttyTerminalView+macOS.swift should route surface drawing through the surface owner."
+        )
+        #expect(
+            !viewSource.contains("ghostty_surface_write_output("),
+            "GhosttyTerminalView+macOS.swift should route custom IO writes through the surface owner."
+        )
+        #expect(
+            !viewSource.contains("ghostty_surface_external_exited("),
+            "GhosttyTerminalView+macOS.swift should route process-exit notifications through the surface owner."
+        )
+        #expect(
+            !viewSource.contains("ghostty_surface_has_selection("),
+            "GhosttyTerminalView+macOS.swift should route selection checks through the surface owner."
+        )
     }
 
     private func source(at url: URL) throws -> String {

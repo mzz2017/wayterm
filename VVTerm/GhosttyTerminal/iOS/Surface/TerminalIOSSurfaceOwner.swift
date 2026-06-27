@@ -7,6 +7,7 @@
 
 #if os(iOS)
 import Foundation
+import UIKit
 
 @MainActor
 final class TerminalIOSSurfaceOwner {
@@ -17,6 +18,63 @@ final class TerminalIOSSurfaceOwner {
     init(ghosttyApp: ghostty_app_t, appWrapper: Ghostty.App?) {
         self.ghosttyApp = ghosttyApp
         self.appWrapper = appWrapper
+    }
+
+    var hasLiveSurface: Bool {
+        surface?.unsafeCValue != nil
+    }
+
+    func resizeIfNeeded(
+        pointSize: CGSize,
+        scale: CGFloat,
+        using displayRuntime: TerminalIOSSurfaceDisplayRuntime
+    ) -> Bool {
+        guard let cSurface = surface?.unsafeCValue else { return false }
+        return displayRuntime.resizeIfNeeded(surface: cSurface, pointSize: pointSize, scale: scale)
+    }
+
+    func forceResize(
+        pointSize: CGSize,
+        scale: CGFloat,
+        using displayRuntime: TerminalIOSSurfaceDisplayRuntime
+    ) -> Bool {
+        guard let cSurface = surface?.unsafeCValue else { return false }
+        return displayRuntime.forceResize(surface: cSurface, pointSize: pointSize, scale: scale)
+    }
+
+    func setOcclusion(_ isVisible: Bool, using displayRuntime: TerminalIOSSurfaceDisplayRuntime) {
+        guard let cSurface = surface?.unsafeCValue else { return }
+        displayRuntime.setOcclusion(isVisible, surface: cSurface)
+    }
+
+    func setColorScheme(
+        _ scheme: ghostty_color_scheme_e,
+        using displayRuntime: TerminalIOSSurfaceDisplayRuntime
+    ) {
+        guard let cSurface = surface?.unsafeCValue else { return }
+        displayRuntime.setColorScheme(scheme, surface: cSurface)
+    }
+
+    func redraw(using displayRuntime: TerminalIOSSurfaceDisplayRuntime) {
+        guard let cSurface = surface?.unsafeCValue else { return }
+        displayRuntime.redraw(surface: cSurface)
+    }
+
+    @discardableResult
+    func updateSurfaceConfig(_ presentationOverrides: TerminalPresentationOverrides) -> Bool {
+        guard let cSurface = surface?.unsafeCValue else { return false }
+        appWrapper?.updateSurfaceConfig(cSurface, presentationOverrides: presentationOverrides)
+        return true
+    }
+
+    func writeOutput(_ data: Data, using displayRuntime: TerminalIOSSurfaceDisplayRuntime) {
+        guard let cSurface = surface?.unsafeCValue else { return }
+        displayRuntime.writeOutput(data, to: cSurface)
+    }
+
+    func externalExited(_ exitCode: UInt32, using displayRuntime: TerminalIOSSurfaceDisplayRuntime) {
+        guard let cSurface = surface?.unsafeCValue else { return }
+        displayRuntime.externalExited(exitCode, surface: cSurface)
     }
 }
 #endif

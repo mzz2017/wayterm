@@ -227,7 +227,7 @@ class GhosttyTerminalView: UIView {
     func requestRender() {
         if isShuttingDown { return }
         if isPaused { return }
-        guard surface?.unsafeCValue != nil else { return }
+        guard surfaceOwner.hasLiveSurface else { return }
         guard bounds.width > 0 && bounds.height > 0 else { return }
         if usesNativeTouchSelection, nativeSelectionInteractionActive || nativeSelectedRange != nil {
             refreshNativeSelectionSnapshot()
@@ -405,19 +405,19 @@ class GhosttyTerminalView: UIView {
     /// Without proper sublayer configuration, Ghostty's setSurfaceCallback will discard all frames.
     func sizeDidChange(_ size: CGSize) {
         if isShuttingDown { return }
-        guard let surface = surface?.unsafeCValue else { return }
+        guard surfaceOwner.hasLiveSurface else { return }
         guard size.width > 0 && size.height > 0 else { return }
 
         updateContentScaleIfNeeded()
         configureIOSurfaceLayers(size: size)
 
         let scale = self.contentScaleFactor
-        if surfaceDisplayRuntime.resizeIfNeeded(surface: surface, pointSize: size, scale: scale) {
+        if surfaceOwner.resizeIfNeeded(pointSize: size, scale: scale, using: surfaceDisplayRuntime) {
             reportGridResizeIfNeeded()
         }
 
         if !isPaused {
-            surfaceDisplayRuntime.redraw(surface: surface)
+            surfaceOwner.redraw(using: surfaceDisplayRuntime)
             if usesNativeTouchSelection {
                 refreshNativeSelectionSnapshot()
             }
@@ -435,8 +435,7 @@ class GhosttyTerminalView: UIView {
     func applyPresentationOverrides(_ presentationOverrides: TerminalPresentationOverrides) {
         surfacePresentationOverrides = presentationOverrides
 
-        guard let surface = surface?.unsafeCValue else { return }
-        surfaceOwner.appWrapper?.updateSurfaceConfig(surface, presentationOverrides: presentationOverrides)
+        guard surfaceOwner.updateSurfaceConfig(presentationOverrides) else { return }
         surfaceDisplayRuntime.resetSizeTracking()
         sizeDidChange(bounds.size)
         requestRender()
@@ -677,11 +676,10 @@ class GhosttyTerminalView: UIView {
     }
 
     private func updateColorScheme() {
-        guard let surface = surface?.unsafeCValue else { return }
         let scheme: ghostty_color_scheme_e = traitCollection.userInterfaceStyle == .dark
             ? GHOSTTY_COLOR_SCHEME_DARK
             : GHOSTTY_COLOR_SCHEME_LIGHT
-        surfaceDisplayRuntime.setColorScheme(scheme, surface: surface)
+        surfaceOwner.setColorScheme(scheme, using: surfaceDisplayRuntime)
     }
 
     private func setupHardwareKeyboardObservation() {
