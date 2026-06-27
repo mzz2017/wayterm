@@ -23,16 +23,16 @@ final class CloudKitManager: ObservableObject {
     @Published var accountStatusDetail: String = String(localized: "Checking...")
 
     private let container: CKContainer
-    private let database: CKDatabase
-    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "CloudKit")
+    let database: CKDatabase
+    let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "CloudKit")
     private let recordZoneName = CloudKitSyncConstants.recordZoneName
-    private lazy var recordZone = CKRecordZone(zoneName: recordZoneName)
-    private var recordZoneID: CKRecordZone.ID { recordZone.zoneID }
-    private var changeTokenKey: String { CloudKitSyncConstants.changeTokenKey(for: recordZoneName) }
-    private var zoneReadyKey: String { CloudKitSyncConstants.zoneReadyKey(for: recordZoneName) }
+    lazy var recordZone = CKRecordZone(zoneName: recordZoneName)
+    var recordZoneID: CKRecordZone.ID { recordZone.zoneID }
+    var changeTokenKey: String { CloudKitSyncConstants.changeTokenKey(for: recordZoneName) }
+    var zoneReadyKey: String { CloudKitSyncConstants.zoneReadyKey(for: recordZoneName) }
 
     // Record types
-    private enum RecordType {
+    enum RecordType {
         static let server = "Server"
         static let workspace = "Workspace"
         static let terminalTheme = "TerminalTheme"
@@ -61,8 +61,8 @@ final class CloudKitManager: ObservableObject {
     private var accountStatusChecked = false
     private var isSyncEnabled: Bool { SyncSettings.isEnabled }
     private var fetchChangesTask: Task<CloudKitChanges, Error>?
-    private var ensureZoneTask: Task<Void, Error>?
-    private var zoneReady: Bool
+    var ensureZoneTask: Task<Void, Error>?
+    var zoneReady: Bool
 
     private init() {
         container = CKContainer(identifier: CloudKitSyncConstants.cloudKitContainerIdentifier)
@@ -567,143 +567,6 @@ final class CloudKitManager: ObservableObject {
         }
     }
 
-    // MARK: - Record Fetching (No Queries)
-
-    private struct ZoneChangeBatch {
-        let records: [CKRecord]
-        let deletions: [Deletion]
-        let serverChangeToken: CKServerChangeToken?
-        let moreComing: Bool
-    }
-
-    private struct Deletion {
-        let recordID: CKRecord.ID
-        let recordType: CKRecord.RecordType
-    }
-
-    private func loadChangeToken() -> CKServerChangeToken? {
-        guard let data = UserDefaults.standard.data(forKey: changeTokenKey) else {
-            return nil
-        }
-        return try? NSKeyedUnarchiver.unarchivedObject(ofClass: CKServerChangeToken.self, from: data)
-    }
-
-    private func saveChangeToken(_ token: CKServerChangeToken) {
-        guard let data = try? NSKeyedArchiver.archivedData(
-            withRootObject: token,
-            requiringSecureCoding: true
-        ) else {
-            return
-        }
-        UserDefaults.standard.set(data, forKey: changeTokenKey)
-    }
-
-    private func clearChangeToken() {
-        UserDefaults.standard.removeObject(forKey: changeTokenKey)
-    }
-
-    private func isChangeTokenExpired(_ error: Error) -> Bool {
-        guard let ckError = error as? CKError else {
-            return false
-        }
-        return ckError.code == .changeTokenExpired
-    }
-
-    private func fetchAllRecordsFromCloudKit(
-        matchingRecordTypes recordTypes: Set<String>? = nil
-    ) async throws -> [CKRecord] {
-        try await ensureCustomZone()
-        let zoneID = recordZoneID
-        var token: CKServerChangeToken?
-        var records: [CKRecord] = []
-        var moreComing = true
-
-        while moreComing {
-            let batch = try await fetchZoneChanges(zoneID: zoneID, previousToken: token)
-            if let recordTypes {
-                records.append(contentsOf: batch.records.filter { recordTypes.contains($0.recordType) })
-            } else {
-                records.append(contentsOf: batch.records)
-            }
-            token = batch.serverChangeToken
-            moreComing = batch.moreComing
-        }
-
-        return records
-    }
-
-    private func fetchZoneChanges(
-        zoneID: CKRecordZone.ID,
-        previousToken: CKServerChangeToken?
-    ) async throws -> ZoneChangeBatch {
-        let logger = logger
-        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ZoneChangeBatch, Error>) in
-            let configuration = CKFetchRecordZoneChangesOperation.ZoneConfiguration(
-                previousServerChangeToken: previousToken,
-                resultsLimit: nil,
-                desiredKeys: nil
-            )
-            let operation = CKFetchRecordZoneChangesOperation(
-                recordZoneIDs: [zoneID],
-                configurationsByRecordZoneID: [zoneID: configuration]
-            )
-            operation.qualityOfService = .userInitiated
-
-            var records: [CKRecord] = []
-            var deletions: [Deletion] = []
-            var serverChangeToken: CKServerChangeToken?
-            var moreComing = false
-            var zoneError: Error?
-
-            operation.recordWasChangedBlock = { recordID, recordResult in
-                switch recordResult {
-                case .success(let record):
-                    records.append(record)
-                case .failure(let error):
-                    logger.error(
-                        "Failed to fetch record \(recordID.recordName): \(error.localizedDescription)"
-                    )
-                }
-            }
-
-            operation.recordWithIDWasDeletedBlock = { recordID, recordType in
-                deletions.append(Deletion(recordID: recordID, recordType: recordType))
-            }
-
-            operation.recordZoneFetchResultBlock = { _, result in
-                switch result {
-                case .success(let info):
-                    serverChangeToken = info.serverChangeToken
-                    moreComing = info.moreComing
-                case .failure(let error):
-                    zoneError = error
-                }
-            }
-
-            operation.fetchRecordZoneChangesResultBlock = { result in
-                switch result {
-                case .success:
-                    if let zoneError = zoneError {
-                        continuation.resume(throwing: zoneError)
-                    } else {
-                        continuation.resume(
-                            returning: ZoneChangeBatch(
-                                records: records,
-                                deletions: deletions,
-                                serverChangeToken: serverChangeToken,
-                                moreComing: moreComing
-                            )
-                        )
-                    }
-                case .failure(let error):
-                    continuation.resume(throwing: error)
-                }
-            }
-
-            self.database.add(operation)
-        }
-    }
-
     private func terminalAccessoryRecordID() -> CKRecord.ID {
         CKRecord.ID(recordName: TerminalAccessoryProfile.recordName, zoneID: recordZoneID)
     }
@@ -751,70 +614,6 @@ final class CloudKitManager: ObservableObject {
         record["updatedAt"] = normalizedProfile.updatedAt
         record["lastWriterDeviceId"] = normalizedProfile.lastWriterDeviceId
         return record
-    }
-
-    private func extractServerRecord(from error: Error) -> CKRecord? {
-        guard let ckError = error as? CKError else { return nil }
-
-        if ckError.code == .serverRecordChanged {
-            return ckError.userInfo[CKRecordChangedErrorServerRecordKey] as? CKRecord
-        }
-
-        if ckError.code == .partialFailure,
-           let partialErrors = ckError.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error] {
-            for partialError in partialErrors.values {
-                if let serverRecord = extractServerRecord(from: partialError) {
-                    return serverRecord
-                }
-            }
-        }
-
-        return nil
-    }
-
-    private func isUnknownItemError(_ error: Error) -> Bool {
-        guard let ckError = error as? CKError else { return false }
-
-        if ckError.code == .unknownItem || ckError.code == .zoneNotFound {
-            return true
-        }
-
-        if ckError.code == .partialFailure,
-           let partialErrors = ckError.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error] {
-            return partialErrors.values.contains { isUnknownItemError($0) }
-        }
-
-        return false
-    }
-
-    // MARK: - Upsert Helper
-
-    /// Save a record using CKModifyRecordsOperation with changedKeys policy
-    /// This handles both insert (new record) and update (existing record)
-    private func saveRecordWithUpsert(_ record: CKRecord) async throws {
-        try await saveRecord(record, savePolicy: .changedKeys)
-    }
-
-    private func saveRecord(
-        _ record: CKRecord,
-        savePolicy: CKModifyRecordsOperation.RecordSavePolicy
-    ) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let operation = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
-            operation.savePolicy = savePolicy
-            operation.qualityOfService = .userInitiated
-
-            operation.modifyRecordsResultBlock = { result in
-                switch result {
-                case .success:
-                    continuation.resume()
-                case .failure(let error):
-                    continuation.resume(throwing: error)
-                }
-            }
-
-            database.add(operation)
-        }
     }
 
     // MARK: - Force Sync
@@ -882,90 +681,6 @@ final class CloudKitManager: ObservableObject {
         lastSyncDate = Date()
     }
 
-    // MARK: - Error Helpers
-
-    /// Check if an error is a schema-related error (record type not found)
-    static func isSchemaError(_ error: Error) -> Bool {
-        if let ckError = error as? CKError {
-            switch ckError.code {
-            case .unknownItem, .invalidArguments:
-                // unknownItem: record type doesn't exist
-                // invalidArguments: field/index issues
-                return true
-            default:
-                return false
-            }
-        }
-        // Check error message for schema-related keywords
-        let message = error.localizedDescription.lowercased()
-        return message.contains("record type") || message.contains("field") || message.contains("queryable")
-    }
-
-    // MARK: - Record Zone
-
-    private func ensureCustomZone() async throws {
-        if zoneReady {
-            return
-        }
-
-        if let task = ensureZoneTask {
-            try await task.value
-            return
-        }
-
-        let task = Task { try await self.createZoneIfNeeded() }
-        ensureZoneTask = task
-        defer { ensureZoneTask = nil }
-        try await task.value
-    }
-
-    private func createZoneIfNeeded() async throws {
-        let results = try await database.recordZones(for: [recordZoneID])
-        if let result = results[recordZoneID] {
-            switch result {
-            case .success:
-                setZoneReady(true)
-                return
-            case .failure(let error):
-                if isZoneNotFound(error) {
-                    _ = try await database.modifyRecordZones(saving: [recordZone], deleting: [])
-                    setZoneReady(true)
-                    return
-                }
-                throw error
-            }
-        }
-
-        _ = try await database.modifyRecordZones(saving: [recordZone], deleting: [])
-        setZoneReady(true)
-    }
-
-    private func setZoneReady(_ ready: Bool) {
-        zoneReady = ready
-        UserDefaults.standard.set(ready, forKey: zoneReadyKey)
-    }
-
-    private func withZoneRetry<T>(_ operation: () async throws -> T) async throws -> T {
-        do {
-            return try await operation()
-        } catch {
-            guard isZoneNotFound(error) else {
-                throw error
-            }
-
-            logger.warning("CloudKit zone was missing during operation; recreating and retrying once")
-            setZoneReady(false)
-            try await ensureCustomZone()
-            return try await operation()
-        }
-    }
-
-    private func isZoneNotFound(_ error: Error) -> Bool {
-        guard let ckError = error as? CKError else {
-            return false
-        }
-        return ckError.code == .zoneNotFound || ckError.code == .unknownItem
-    }
 }
 
 // MARK: - CloudKit Error
