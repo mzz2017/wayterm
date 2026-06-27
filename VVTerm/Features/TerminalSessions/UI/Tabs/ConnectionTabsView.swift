@@ -15,6 +15,7 @@ import UIKit
 struct ConnectionTerminalContainer: View {
     @ObservedObject var tabManager: TerminalTabManager
     @ObservedObject var fileTabManager: RemoteFileTabManager
+    @ObservedObject var storeManager: StoreManager
     let serverManager: ServerManager
     let fileBrowser: RemoteFileBrowserStore
     let server: Server
@@ -596,6 +597,7 @@ struct ConnectionTerminalContainer: View {
             .sheet(item: $serverToEdit) { editingServer in
                 ServerFormSheet(
                     serverManager: serverManager,
+                    storeManager: storeManager,
                     workspace: serverManager.workspaces.first { $0.id == editingServer.workspaceId },
                     server: editingServer,
                     onSave: { _ in
@@ -628,7 +630,7 @@ struct ConnectionTerminalContainer: View {
 
     private func splitFocusedPane(_ direction: TerminalSplitDirection) {
         guard let selectedTab else { return }
-        guard StoreManager.shared.isPro else {
+        guard storeManager.isPro else {
             showingZenPanel = false
             showingSplitPaneUpgradeAlert = true
             return

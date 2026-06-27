@@ -331,6 +331,14 @@ struct IOSTerminalViewSuperfileBoundaryTests {
             !presentationSource.contains("ConnectionSessionManager"),
             "IOSTerminalPresentationHost.swift should not depend on TerminalSessions application managers."
         )
+        #expect(
+            presentationSource.contains("@ObservedObject var storeManager: StoreManager"),
+            "IOSTerminalPresentationHost.swift should receive StoreManager from the iOS terminal composition boundary."
+        )
+        #expect(
+            presentationSource.contains("storeManager: storeManager"),
+            "IOSTerminalPresentationHost.swift should pass the injected StoreManager to presented server forms."
+        )
     }
 
     @Test

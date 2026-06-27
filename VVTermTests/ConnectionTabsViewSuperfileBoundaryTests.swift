@@ -148,6 +148,10 @@ struct ConnectionTabsViewSuperfileBoundaryTests {
                 !source.contains("ServerManager.shared"),
                 "\(url.lastPathComponent) should not read ServerManager.shared from TerminalSessions tab UI."
             )
+            #expect(
+                !source.contains("StoreManager.shared"),
+                "\(url.lastPathComponent) should receive StoreManager or entitlement providers instead of reading StoreManager.shared."
+            )
         }
     }
 

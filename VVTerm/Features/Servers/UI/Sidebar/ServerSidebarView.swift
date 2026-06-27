@@ -5,11 +5,10 @@ import SwiftUI
 struct ServerSidebarView: View {
     @ObservedObject var serverManager: ServerManager
     @ObservedObject var tabManager: TerminalTabManager
+    @ObservedObject var storeManager: StoreManager
     let backgroundColor: Color
     @Binding var selectedWorkspace: Workspace?
     @Binding var selectedServer: Server?
-
-    @ObservedObject private var storeManager = StoreManager.shared
 
     @State private var showingWorkspaceSwitcher = false
     @State private var showingAddServer = false
@@ -197,6 +196,7 @@ struct ServerSidebarView: View {
         .sheet(isPresented: $showingAddServer) {
             ServerFormSheet(
                 serverManager: serverManager,
+                storeManager: storeManager,
                 workspace: selectedWorkspace,
                 prefill: addServerPrefill,
                 onSave: { _ in showingAddServer = false }
@@ -221,6 +221,7 @@ struct ServerSidebarView: View {
         .sheet(item: $serverToEdit) { server in
             ServerFormSheet(
                 serverManager: serverManager,
+                storeManager: storeManager,
                 workspace: selectedWorkspace,
                 server: server,
                 onSave: { updatedServer in

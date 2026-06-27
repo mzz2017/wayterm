@@ -6,6 +6,7 @@ struct iOSTerminalView: View {
     @ObservedObject var sessionManager: ConnectionSessionManager
     @ObservedObject var serverManager: ServerManager
     @ObservedObject var fileTabs: RemoteFileTabManager
+    @ObservedObject var storeManager: StoreManager
     let fileBrowser: RemoteFileBrowserStore
     let connectingServer: Server?
     let isConnecting: Bool
@@ -301,6 +302,7 @@ struct iOSTerminalView: View {
                 isSettingsPresented: $showingSettings,
                 serverToEdit: $serverToEdit,
                 serverManager: serverManager,
+                storeManager: storeManager,
                 tmuxAttachPrompt: tmuxAttachPromptBinding,
                 onResolveTmuxAttachPrompt: { prompt, selection in
                     sessionManager.resolveTmuxAttachPrompt(sessionId: prompt.id, selection: selection)

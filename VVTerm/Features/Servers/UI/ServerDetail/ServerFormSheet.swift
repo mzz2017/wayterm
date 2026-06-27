@@ -5,7 +5,7 @@ import UIKit
 
 struct ServerFormSheet: View {
     @ObservedObject var serverManager: ServerManager
-    @ObservedObject private var storeManager = StoreManager.shared
+    @ObservedObject var storeManager: StoreManager
     @ObservedObject private var sshKeyStore = SSHKeySettingsStore.shared
     @EnvironmentObject private var appLockManager: AppLockManager
     private let credentialProvider: ServerFormCredentialProvider
@@ -60,6 +60,7 @@ struct ServerFormSheet: View {
     @MainActor
     init(
         serverManager: ServerManager,
+        storeManager: StoreManager,
         workspace: Workspace?,
         server: Server? = nil,
         prefill: ServerFormPrefill? = nil,
@@ -67,6 +68,7 @@ struct ServerFormSheet: View {
     ) {
         self.init(
             serverManager: serverManager,
+            storeManager: storeManager,
             workspace: workspace,
             server: server,
             prefill: prefill,
@@ -78,6 +80,7 @@ struct ServerFormSheet: View {
 
     init(
         serverManager: ServerManager,
+        storeManager: StoreManager,
         workspace: Workspace?,
         server: Server? = nil,
         prefill: ServerFormPrefill? = nil,
@@ -86,6 +89,7 @@ struct ServerFormSheet: View {
         onSave: @escaping (Server) -> Void
     ) {
         self.serverManager = serverManager
+        self.storeManager = storeManager
         self.workspace = workspace
         self.server = server
         self.prefill = prefill
@@ -724,6 +728,7 @@ struct ServerFormSheet: View {
     let workspace = Workspace(name: "Default")
     ServerFormSheet(
         serverManager: ServerManager.makeForTesting(workspaces: [workspace]),
+        storeManager: StoreManager.makeForTesting(),
         workspace: workspace,
         onSave: { _ in }
     )

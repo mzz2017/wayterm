@@ -248,6 +248,38 @@ struct ServerFormSuperfileBoundaryTests {
         )
     }
 
+    @Test
+    func serverFormUsesInjectedStoreManager() throws {
+        let root = try sourceRoot()
+        let serverFormSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift")
+        )
+        let callerSources = try [
+            "VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift",
+            "VVTerm/Features/Servers/UI/iOS/iOSServerListView.swift",
+            "VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift",
+            "VVTerm/Features/TerminalSessions/UI/iOS/IOSTerminalPresentationHost.swift"
+        ].map { path in
+            try source(at: root.appendingPathComponent(path))
+        }.joined(separator: "\n")
+
+        // Given ServerFormSheet enforces store-backed limits while presenting
+        // from multiple app surfaces, the store dependency should be provided by
+        // the caller instead of resolved by the form leaf.
+        #expect(
+            serverFormSource.contains("@ObservedObject var storeManager: StoreManager"),
+            "ServerFormSheet should receive StoreManager from its caller."
+        )
+        #expect(
+            !serverFormSource.contains("StoreManager.shared"),
+            "ServerFormSheet should not resolve StoreManager.shared from the form UI."
+        )
+        #expect(
+            callerSources.contains("storeManager: storeManager"),
+            "ServerFormSheet callers should pass the existing StoreManager dependency through."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

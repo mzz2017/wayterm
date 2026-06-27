@@ -12,6 +12,7 @@ struct iOSContentView: View {
     let fileBrowser: RemoteFileBrowserStore
     @StateObject private var serverManager = ServerManager.shared
     @StateObject private var sessionManager = ConnectionSessionManager.shared
+    @StateObject private var storeManager = StoreManager.shared
     @StateObject private var viewTabConfig = ViewTabConfigurationManager.shared
     @StateObject private var engagementTracker = EngagementTracker.shared
     @Environment(\.requestReview) private var requestReview
@@ -45,6 +46,7 @@ struct iOSContentView: View {
             iOSServerListView(
                 serverManager: serverManager,
                 sessionManager: sessionManager,
+                storeManager: storeManager,
                 fileBrowser: fileBrowser,
                 selectedWorkspace: $selectedWorkspace,
                 selectedEnvironment: $selectedEnvironment,
@@ -89,6 +91,7 @@ struct iOSContentView: View {
                     sessionManager: sessionManager,
                     serverManager: serverManager,
                     fileTabs: fileTabs,
+                    storeManager: storeManager,
                     fileBrowser: fileBrowser,
                     connectingServer: connectingServer,
                     isConnecting: isConnecting,
@@ -142,7 +145,7 @@ struct iOSContentView: View {
             if !isShowing {
                 engagementTracker.noteTerminalSessionEnded(
                     otherTerminalsActive: false,
-                    isPro: StoreManager.shared.isPro
+                    isPro: storeManager.isPro
                 )
             }
         }

@@ -94,6 +94,7 @@ struct ContentView: View {
                 ConnectionTerminalContainer(
                     tabManager: tabManager,
                     fileTabManager: fileTabs,
+                    storeManager: storeManager,
                     serverManager: serverManager,
                     fileBrowser: fileBrowser,
                     server: server,
@@ -177,6 +178,7 @@ struct ContentView: View {
             ServerSidebarView(
                 serverManager: serverManager,
                 tabManager: tabManager,
+                storeManager: storeManager,
                 backgroundColor: macOSWindowBackgroundColor,
                 selectedWorkspace: $selectedWorkspace,
                 selectedServer: $selectedServer

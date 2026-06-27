@@ -8,6 +8,7 @@ extension View {
         isSettingsPresented: Binding<Bool>,
         serverToEdit: Binding<Server?>,
         serverManager: ServerManager,
+        storeManager: StoreManager,
         tmuxAttachPrompt: Binding<TmuxAttachPrompt?>,
         onResolveTmuxAttachPrompt: @escaping (TmuxAttachPrompt, TmuxAttachSelection) -> Void,
         pendingCloseSession: Binding<ConnectionSession?>,
@@ -21,6 +22,7 @@ extension View {
                 isSettingsPresented: isSettingsPresented,
                 serverToEdit: serverToEdit,
                 serverManager: serverManager,
+                storeManager: storeManager,
                 tmuxAttachPrompt: tmuxAttachPrompt,
                 onResolveTmuxAttachPrompt: onResolveTmuxAttachPrompt,
                 pendingCloseSession: pendingCloseSession,
@@ -37,6 +39,7 @@ private struct IOSTerminalPresentationHost: ViewModifier {
     @Binding var isSettingsPresented: Bool
     @Binding var serverToEdit: Server?
     @ObservedObject var serverManager: ServerManager
+    @ObservedObject var storeManager: StoreManager
     @Binding var tmuxAttachPrompt: TmuxAttachPrompt?
     let onResolveTmuxAttachPrompt: (TmuxAttachPrompt, TmuxAttachSelection) -> Void
     @Binding var pendingCloseSession: ConnectionSession?
@@ -66,6 +69,7 @@ private struct IOSTerminalPresentationHost: ViewModifier {
                 NavigationStack {
                     ServerFormSheet(
                         serverManager: serverManager,
+                        storeManager: storeManager,
                         workspace: serverManager.workspaces.first { $0.id == server.workspaceId },
                         server: server,
                         onSave: { _ in serverToEdit = nil }

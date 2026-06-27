@@ -4,13 +4,12 @@ import SwiftUI
 struct iOSServerListView: View {
     @ObservedObject var serverManager: ServerManager
     @ObservedObject var sessionManager: ConnectionSessionManager
+    @ObservedObject var storeManager: StoreManager
     let fileBrowser: RemoteFileBrowserStore
     @Binding var selectedWorkspace: Workspace?
     @Binding var selectedEnvironment: ServerEnvironment?
     @Binding var showingTerminal: Bool
     let onServerSelected: (Server) -> Void
-
-    @ObservedObject private var storeManager = StoreManager.shared
     @ObservedObject private var viewTabConfig = ViewTabConfigurationManager.shared
     @State private var showingAddServer = false
     @State private var showingLocalDiscovery = false
@@ -89,6 +88,7 @@ struct iOSServerListView: View {
             NavigationStack {
                 ServerFormSheet(
                     serverManager: serverManager,
+                    storeManager: storeManager,
                     workspace: selectedWorkspace,
                     prefill: addServerPrefill,
                     onSave: { _ in showingAddServer = false }
@@ -131,6 +131,7 @@ struct iOSServerListView: View {
             NavigationStack {
                 ServerFormSheet(
                     serverManager: serverManager,
+                    storeManager: storeManager,
                     workspace: selectedWorkspace,
                     server: server,
                     onSave: { updatedServer in
