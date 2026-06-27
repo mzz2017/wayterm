@@ -252,10 +252,8 @@ struct iOSTerminalView: View {
             refreshTerminal: refreshTerminal,
             autoReconnectEnabled: terminalPreferences.autoReconnectEnabled
         ) { action in
-            guard let session = sessionManager.sessions.first(where: { $0.id == action.sessionId }) else { return }
-
             if action.shouldRefreshTerminal {
-                activateTerminal(session)
+                activateTerminal(action.session)
             }
 
             if action.shouldReconnect {

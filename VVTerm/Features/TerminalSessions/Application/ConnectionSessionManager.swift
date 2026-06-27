@@ -154,13 +154,13 @@ final class ConnectionSessionManager: ObservableObject {
         autoReconnectEnabled: Bool
     ) -> TerminalForegroundReconnectAction? {
         guard let sessionId = selectedSessionId,
-              sessionWithID(sessionId) != nil else {
+              let session = sessionWithID(sessionId) else {
             return nil
         }
         return TerminalForegroundReconnectPolicy.action(
             selectedViewId: selectedViewId,
             terminalViewId: terminalViewId,
-            selectedSessionId: sessionId,
+            selectedSession: session,
             selectedSessionHasLiveRuntime: hasLiveRuntime(forSessionId: sessionId),
             refreshTerminal: refreshTerminal,
             autoReconnectEnabled: autoReconnectEnabled,

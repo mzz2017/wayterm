@@ -34,6 +34,7 @@ struct IOSForegroundReconnectIntentBoundaryTests {
 
         // Then SwiftUI must not own the async reconnect sequence.
         #expect(helper.range(of: #"Task\s*\{"#, options: .regularExpression) == nil)
+        #expect(!helper.contains("sessionManager.sessions"))
         #expect(!helper.contains("handleForegroundReconnectForSelectedSession"))
     }
 

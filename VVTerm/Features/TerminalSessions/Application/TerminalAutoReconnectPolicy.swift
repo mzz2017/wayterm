@@ -81,31 +81,33 @@ enum TerminalCredentialLoadResult {
 }
 
 struct TerminalForegroundReconnectAction: Equatable {
-    let sessionId: UUID
+    let session: ConnectionSession
     let shouldRefreshTerminal: Bool
     let shouldReconnect: Bool
     let shouldForceTerminalVisible: Bool
+
+    var sessionId: UUID { session.id }
 }
 
 enum TerminalForegroundReconnectPolicy {
     static func action(
         selectedViewId: String,
         terminalViewId: String,
-        selectedSessionId: UUID?,
+        selectedSession: ConnectionSession?,
         selectedSessionHasLiveRuntime: Bool,
         refreshTerminal: Bool,
         autoReconnectEnabled: Bool,
         isSuspendingForBackground: Bool
     ) -> TerminalForegroundReconnectAction? {
         guard selectedViewId == terminalViewId else { return nil }
-        guard let selectedSessionId else { return nil }
+        guard let selectedSession else { return nil }
 
         let canReconnect = autoReconnectEnabled
             && !isSuspendingForBackground
             && !selectedSessionHasLiveRuntime
 
         return TerminalForegroundReconnectAction(
-            sessionId: selectedSessionId,
+            session: selectedSession,
             shouldRefreshTerminal: refreshTerminal,
             shouldReconnect: canReconnect,
             shouldForceTerminalVisible: canReconnect
