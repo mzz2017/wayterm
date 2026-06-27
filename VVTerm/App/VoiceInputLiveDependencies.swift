@@ -1,5 +1,18 @@
 import Foundation
 
+@MainActor
+private let liveTranscriptionSettingsPreferenceStore = TranscriptionSettingsPreferenceStore(
+    persistence: UserDefaultsTranscriptionSettingsPersistence(),
+    mlxAvailable: MLXAudioSupport.isSupported
+)
+
+extension TranscriptionSettingsPreferenceStore {
+    @MainActor
+    static var live: TranscriptionSettingsPreferenceStore {
+        liveTranscriptionSettingsPreferenceStore
+    }
+}
+
 extension VoiceModelDownloadStore {
     static let shared = VoiceModelDownloadStore(
         settings: .live,

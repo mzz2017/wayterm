@@ -257,7 +257,7 @@ struct SettingsLifecycleBoundaryTests {
     }
 
     @Test
-    func transcriptionSettingsReceivesModelDownloadStoreFromSettingsRoot() throws {
+    func transcriptionSettingsReceivesStoresFromSettingsRoot() throws {
         // Given the transcription settings leaf view and Settings root source.
         let root = try sourceRoot()
         let transcriptionSettingsSource = try source(
@@ -267,15 +267,25 @@ struct SettingsLifecycleBoundaryTests {
             at: root.appendingPathComponent("VVTerm/Features/Settings/UI/SettingsView.swift")
         )
 
-        // Then the leaf view should render injected model-download state rather
-        // than resolving the live application store by itself.
+        // Then the leaf view should render injected settings and model-download state
+        // rather than resolving live stores or persistent settings by itself.
         #expect(
             !transcriptionSettingsSource.contains("self.init(modelDownloads: .shared)"),
             "TranscriptionSettingsView should not resolve VoiceModelDownloadStore.shared from leaf UI."
         )
         #expect(
-            settingsSource.contains("TranscriptionSettingsView(modelDownloads: voiceModelDownloads)"),
-            "SettingsView should pass the model download store into the transcription settings screen."
+            !transcriptionSettingsSource.contains("@AppStorage")
+                && !transcriptionSettingsSource.contains("UserDefaults.standard"),
+            "TranscriptionSettingsView should delegate persisted preference reads and writes to its application store."
+        )
+        #expect(
+            transcriptionSettingsSource.contains("settingsStore: TranscriptionSettingsPreferenceStore"),
+            "TranscriptionSettingsView should receive its persisted settings store explicitly."
+        )
+        #expect(
+            settingsSource.contains("settingsStore: voiceSettings")
+                && settingsSource.contains("modelDownloads: voiceModelDownloads"),
+            "SettingsView should pass voice settings and model download stores into the transcription settings screen."
         )
     }
 

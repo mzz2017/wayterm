@@ -102,7 +102,7 @@ struct TranscriptionSettingsStore {
         return TranscriptionSettingsDefaults.mlxParakeetModelId
     }
 
-    private static func normalizedWhisperModelId(_ modelId: String) -> String {
+    static func normalizedWhisperModelId(_ modelId: String) -> String {
         let trimmed = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return TranscriptionSettingsDefaults.mlxWhisperModelId }
         if trimmed == "mlx-community/whisper-medium-mlx" {

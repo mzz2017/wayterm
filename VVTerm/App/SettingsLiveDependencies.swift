@@ -7,6 +7,7 @@ extension SettingsViewDependencies {
             storeManager: .shared,
             serverManager: .shared,
             syncStore: .shared,
+            voiceSettings: .live,
             voiceModelDownloads: .shared,
             viewTabConfig: .shared,
             keyStore: .shared,

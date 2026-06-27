@@ -35,6 +35,7 @@ struct SettingsViewDependencies {
     let storeManager: StoreManager
     let serverManager: ServerManager
     let syncStore: SyncSettingsStore
+    let voiceSettings: TranscriptionSettingsPreferenceStore
     let voiceModelDownloads: VoiceModelDownloadStore
     let viewTabConfig: ViewTabConfigurationManager
     let keyStore: SSHKeySettingsStore
@@ -51,6 +52,7 @@ struct SettingsView: View {
     @ObservedObject private var storeManager: StoreManager
     @ObservedObject private var serverManager: ServerManager
     @ObservedObject private var syncStore: SyncSettingsStore
+    @ObservedObject private var voiceSettings: TranscriptionSettingsPreferenceStore
     @ObservedObject private var voiceModelDownloads: VoiceModelDownloadStore
     @ObservedObject private var viewTabConfig: ViewTabConfigurationManager
     @ObservedObject private var keyStore: SSHKeySettingsStore
@@ -64,6 +66,7 @@ struct SettingsView: View {
         _storeManager = ObservedObject(wrappedValue: dependencies.storeManager)
         _serverManager = ObservedObject(wrappedValue: dependencies.serverManager)
         _syncStore = ObservedObject(wrappedValue: dependencies.syncStore)
+        _voiceSettings = ObservedObject(wrappedValue: dependencies.voiceSettings)
         _voiceModelDownloads = ObservedObject(wrappedValue: dependencies.voiceModelDownloads)
         _viewTabConfig = ObservedObject(wrappedValue: dependencies.viewTabConfig)
         _keyStore = ObservedObject(wrappedValue: dependencies.keyStore)
@@ -180,7 +183,10 @@ struct SettingsView: View {
                     }
 
                     NavigationLink {
-                        TranscriptionSettingsView(modelDownloads: voiceModelDownloads)
+                        TranscriptionSettingsView(
+                            settingsStore: voiceSettings,
+                            modelDownloads: voiceModelDownloads
+                        )
                             .navigationTitle("Transcription")
                             .navigationBarTitleDisplayMode(.inline)
                     } label: {
@@ -254,7 +260,10 @@ struct SettingsView: View {
                                 .navigationTitle("Terminal")
                                 .navigationSubtitle(String(localized: "Font, theme, and connection settings"))
         case .transcription:
-                            TranscriptionSettingsView(modelDownloads: voiceModelDownloads)
+                            TranscriptionSettingsView(
+                                settingsStore: voiceSettings,
+                                modelDownloads: voiceModelDownloads
+                            )
                                 .navigationTitle("Transcription")
                                 .navigationSubtitle(String(localized: "Speech-to-text engine and models"))
         case .keychain:
