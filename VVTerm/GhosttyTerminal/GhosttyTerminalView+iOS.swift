@@ -774,7 +774,7 @@ class GhosttyTerminalView: UIView {
             case let .syncPreedit(text):
                 syncIMEPreedit(text)
             case let .sendText(text):
-                sendTerminalInputText(text)
+                inputRuntime.handleTerminalInputText(text, context: terminalTextInputExecutionContext())
             case let .sendBackspaces(count):
                 for _ in 0..<count {
                     sendKeyPress(.backspace)
@@ -2418,37 +2418,9 @@ class GhosttyTerminalView: UIView {
         requestRender()
     }
 
-    private func sendTerminalInputText(_ text: String) {
+    private func sendRawTerminalText(_ text: String, invalidateLocalSession: Bool) {
         guard canRouteTerminalInput else { return }
-        let normalized = text.precomposedStringWithCanonicalMapping
-        guard normalized.count == 1, let character = normalized.first else {
-            sendRawTerminalInputText(normalized, invalidateLocalSession: false)
-            return
-        }
-        guard let mapping = inputRuntime.ghosttyKeyMapping(for: character) else {
-            sendRawTerminalInputText(normalized, invalidateLocalSession: false)
-            return
-        }
-
-        var mods: Ghostty.Input.Mods = []
-        if mapping.requiresShift {
-            mods.insert(.shift)
-        }
-        sendModifiedKey(
-            mapping.key,
-            mods: mods,
-            text: mapping.text,
-            unshiftedCodepoint: mapping.codepoint,
-            invalidateLocalSession: false
-        )
-    }
-
-    private func sendRawTerminalInputText(_ text: String, invalidateLocalSession: Bool = true) {
-        guard canRouteTerminalInput else { return }
-        let terminalText = text
-            .replacingOccurrences(of: "\r\n", with: "\r")
-            .replacingOccurrences(of: "\n", with: "\r")
-        let data = Data(terminalText.utf8)
+        let data = Data(text.utf8)
         guard !data.isEmpty else { return }
 
         if invalidateLocalSession {
@@ -2457,9 +2429,26 @@ class GhosttyTerminalView: UIView {
         if let writeCallback {
             writeCallback(data)
         } else {
-            surface?.sendText(terminalText)
+            surface?.sendText(text)
         }
         requestRender()
+    }
+
+    private func terminalTextInputExecutionContext() -> TerminalIOSInputRuntime.TerminalTextInputExecutionContext {
+        TerminalIOSInputRuntime.TerminalTextInputExecutionContext(
+            sendRawText: { [weak self] text, invalidateLocalSession in
+                self?.sendRawTerminalText(text, invalidateLocalSession: invalidateLocalSession)
+            },
+            sendGhosttyKey: { [weak self] key, mods, text, unshiftedCodepoint, invalidateLocalSession in
+                self?.sendModifiedKey(
+                    key,
+                    mods: mods,
+                    text: text,
+                    unshiftedCodepoint: unshiftedCodepoint,
+                    invalidateLocalSession: invalidateLocalSession
+                )
+            }
+        )
     }
 
     func handleIMEProxyInsertText(_ text: String, fromIMEComposition: Bool = false) -> Bool {

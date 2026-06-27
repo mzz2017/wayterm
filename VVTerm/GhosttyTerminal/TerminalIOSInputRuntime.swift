@@ -78,6 +78,11 @@ final class TerminalIOSInputRuntime {
         let sendGhosttyKey: (Ghostty.Input.Key, Ghostty.Input.Mods, String?, UInt32) -> Void
     }
 
+    struct TerminalTextInputExecutionContext {
+        let sendRawText: (String, Bool) -> Void
+        let sendGhosttyKey: (Ghostty.Input.Key, Ghostty.Input.Mods, String?, UInt32, Bool) -> Void
+    }
+
     private var renderedPreeditText: String?
     private var isIMEProxyProgrammaticResignAllowed = false
     private var suppressUnexpectedIMEProxyResignUntil = 0.0
@@ -337,6 +342,30 @@ final class TerminalIOSInputRuntime {
         }
     }
 
+    func handleTerminalInputText(_ text: String, context: TerminalTextInputExecutionContext) {
+        let normalized = text.precomposedStringWithCanonicalMapping
+        guard normalized.count == 1, let character = normalized.first else {
+            sendRawTerminalInputText(normalized, invalidateLocalSession: false, context: context)
+            return
+        }
+        guard let mapping = ghosttyKeyMapping(for: character) else {
+            sendRawTerminalInputText(normalized, invalidateLocalSession: false, context: context)
+            return
+        }
+
+        var mods: Ghostty.Input.Mods = []
+        if mapping.requiresShift {
+            mods.insert(.shift)
+        }
+        context.sendGhosttyKey(
+            mapping.key,
+            mods,
+            mapping.text,
+            mapping.codepoint,
+            false
+        )
+    }
+
     @discardableResult
     func syncVisiblePreedit(
         _ text: String?,
@@ -473,6 +502,18 @@ final class TerminalIOSInputRuntime {
     private func sendRemainingIMEInsertTextIfNeeded(after normalized: String, sendText: (String) -> Void) {
         guard normalized.count > 1 else { return }
         sendText(String(normalized.dropFirst()))
+    }
+
+    private func sendRawTerminalInputText(
+        _ text: String,
+        invalidateLocalSession: Bool,
+        context: TerminalTextInputExecutionContext
+    ) {
+        let terminalText = text
+            .replacingOccurrences(of: "\r\n", with: "\r")
+            .replacingOccurrences(of: "\n", with: "\r")
+        guard !Data(terminalText.utf8).isEmpty else { return }
+        context.sendRawText(terminalText, invalidateLocalSession)
     }
 
     private func isEscapeKey(_ key: TerminalKey) -> Bool {

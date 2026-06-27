@@ -275,5 +275,45 @@ struct GhosttyIOSInputRuntimeRouteTests {
             "text-4"
         ])
     }
+
+    @Test
+    func terminalTextRoutingUsesGhosttyKeyMappingWithoutInvalidatingLocalSession() {
+        let runtime = TerminalIOSInputRuntime()
+        var events: [String] = []
+        let context = TerminalIOSInputRuntime.TerminalTextInputExecutionContext(
+            sendRawText: { text, invalidateLocalSession in
+                events.append("raw-\(text)-invalidate:\(invalidateLocalSession)")
+            },
+            sendGhosttyKey: { key, mods, text, codepoint, invalidateLocalSession in
+                events.append("ghostty-\(key)-shift:\(mods.contains(.shift))-\(text ?? "nil")-\(codepoint)-invalidate:\(invalidateLocalSession)")
+            }
+        )
+
+        // Given a single printable character with a Ghostty key mapping.
+        runtime.handleTerminalInputText("A", context: context)
+
+        // Then it routes as a key event and keeps the local text input session.
+        #expect(events == ["ghostty-a-shift:true-A-97-invalidate:false"])
+    }
+
+    @Test
+    func terminalTextRoutingNormalizesRawTextWithoutInvalidatingLocalSession() {
+        let runtime = TerminalIOSInputRuntime()
+        var events: [String] = []
+        let context = TerminalIOSInputRuntime.TerminalTextInputExecutionContext(
+            sendRawText: { text, invalidateLocalSession in
+                events.append("raw-\(text.utf8.map(String.init).joined(separator: ","))-invalidate:\(invalidateLocalSession)")
+            },
+            sendGhosttyKey: { key, mods, text, codepoint, invalidateLocalSession in
+                events.append("ghostty-\(key)-shift:\(mods.contains(.shift))-\(text ?? "nil")-\(codepoint)-invalidate:\(invalidateLocalSession)")
+            }
+        )
+
+        // Given text-model output with line feeds and more than one character.
+        runtime.handleTerminalInputText("a\nb", context: context)
+
+        // Then raw terminal text converts LF to CR and does not invalidate the local session.
+        #expect(events == ["raw-97,13,98-invalidate:false"])
+    }
 }
 #endif
