@@ -1,8 +1,14 @@
 import Foundation
 
-nonisolated struct TerminalWorkingDirectoryService: Sendable {
-    static let shared = TerminalWorkingDirectoryService()
+nonisolated protocol TerminalWorkingDirectoryApplying: Sendable {
+    func apply(
+        using client: SSHClient,
+        shellId: UUID,
+        workingDirectoryProvider: @escaping TerminalWorkingDirectoryService.WorkingDirectoryProvider
+    ) async
+}
 
+nonisolated struct TerminalWorkingDirectoryService: Sendable {
     typealias WorkingDirectoryProvider = @MainActor @Sendable () -> String?
 
     func apply(
@@ -33,3 +39,5 @@ nonisolated struct TerminalWorkingDirectoryService: Sendable {
         ).data(using: .utf8)
     }
 }
+
+extension TerminalWorkingDirectoryService: TerminalWorkingDirectoryApplying {}

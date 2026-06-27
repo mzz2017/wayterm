@@ -207,6 +207,10 @@ extension TerminalTabManager {
         knownHostRemover = remover
     }
 
+    func setWorkingDirectoryServiceForTesting(_ service: any TerminalWorkingDirectoryApplying) {
+        workingDirectoryService = service
+    }
+
     func setServerProviderForTesting(
         _ provider: @escaping ServerProvider
     ) {

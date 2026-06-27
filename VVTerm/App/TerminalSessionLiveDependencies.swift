@@ -32,7 +32,8 @@ extension ConnectionSessionManager.Dependencies {
             moshService: RemoteMoshManager.shared,
             knownHostRemover: { host, port in
                 await KnownHostsStore.shared.remove(host: host, port: port)
-            }
+            },
+            workingDirectoryService: TerminalWorkingDirectoryService()
         )
     }
 }
@@ -59,7 +60,8 @@ extension TerminalTabManager.Dependencies {
             moshService: RemoteMoshManager.shared,
             knownHostRemover: { host, port in
                 await KnownHostsStore.shared.remove(host: host, port: port)
-            }
+            },
+            workingDirectoryService: TerminalWorkingDirectoryService()
         )
     }
 }

@@ -50,6 +50,7 @@ final class TerminalTabManager: ObservableObject {
         var tmuxService: any TerminalTmuxServicing
         var moshService: any TerminalMoshServicing
         var knownHostRemover: KnownHostRemover
+        var workingDirectoryService: any TerminalWorkingDirectoryApplying
     }
 
     // MARK: - Published State
@@ -196,6 +197,10 @@ final class TerminalTabManager: ObservableObject {
     var knownHostRemover: KnownHostRemover {
         get { dependencies.knownHostRemover }
         set { updateDependencies { $0.knownHostRemover = newValue } }
+    }
+    var workingDirectoryService: any TerminalWorkingDirectoryApplying {
+        get { dependencies.workingDirectoryService }
+        set { updateDependencies { $0.workingDirectoryService = newValue } }
     }
     /// Application-owned pane SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
     var paneRuntimes: [UUID: PaneRuntimeState] = [:]

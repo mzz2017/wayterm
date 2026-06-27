@@ -389,7 +389,7 @@ extension TerminalTabManager {
                     await self.paneRuntimes[paneId]?.runtime.updateLastSize(cols: cols, rows: rows)
                 },
                 onShellStarted: { _, shellId in
-                    await TerminalWorkingDirectoryService.shared.apply(using: sshClient, shellId: shellId) {
+                    await self.workingDirectoryService.apply(using: sshClient, shellId: shellId) {
                         guard self.shouldApplyWorkingDirectory(for: paneId) else { return nil }
                         return self.workingDirectory(for: paneId)
                     }

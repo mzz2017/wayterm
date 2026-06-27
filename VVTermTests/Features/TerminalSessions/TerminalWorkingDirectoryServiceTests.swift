@@ -68,10 +68,13 @@ struct TerminalWorkingDirectoryServiceTests {
 
         // Then runtime managers delegate restore payload/write behavior to the service.
         #expect(serviceSource.contains("struct TerminalWorkingDirectoryService"))
+        #expect(serviceSource.contains("protocol TerminalWorkingDirectoryApplying"))
         #expect(serviceSource.contains("directoryChangePayload"))
         #expect(serviceSource.contains("RemoteTerminalBootstrap.directoryChangeCommand"))
-        #expect(sessionRuntimeSource.contains("TerminalWorkingDirectoryService.shared.apply"))
-        #expect(tabRuntimeSource.contains("TerminalWorkingDirectoryService.shared.apply"))
+        #expect(sessionRuntimeSource.contains("workingDirectoryService.apply"))
+        #expect(tabRuntimeSource.contains("workingDirectoryService.apply"))
+        #expect(!sessionRuntimeSource.contains("TerminalWorkingDirectoryService.shared"))
+        #expect(!tabRuntimeSource.contains("TerminalWorkingDirectoryService.shared"))
         #expect(!sessionRuntimeSource.contains("RemoteTerminalBootstrap.directoryChangeCommand"))
         #expect(!tabRuntimeSource.contains("RemoteTerminalBootstrap.directoryChangeCommand"))
     }

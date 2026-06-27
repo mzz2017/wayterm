@@ -326,6 +326,49 @@ struct TerminalSessionDependencyBoundaryTests {
         #expect(!tabClosingSource.contains("StoreManager.shared.isPro"))
     }
 
+    @Test
+    func workingDirectoryRestoreUsesInjectedServiceBoundary() throws {
+        let root = try sourceRoot()
+        let connectionManagerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let tabManagerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let connectionRuntimeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Runtime.swift")
+        )
+        let tabRuntimeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Runtime.swift")
+        )
+        let connectionTestingSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Testing.swift")
+        )
+        let tabTestingSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Testing.swift")
+        )
+        let serviceSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalWorkingDirectoryService.swift")
+        )
+        let liveDependencySource = try source(
+            at: root.appendingPathComponent("VVTerm/App/TerminalSessionLiveDependencies.swift")
+        )
+
+        // Given working-directory restore runs during shell startup lifecycle.
+        #expect(serviceSource.contains("protocol TerminalWorkingDirectoryApplying"))
+        #expect(connectionManagerSource.contains("workingDirectoryService: any TerminalWorkingDirectoryApplying"))
+        #expect(tabManagerSource.contains("workingDirectoryService: any TerminalWorkingDirectoryApplying"))
+        #expect(connectionRuntimeSource.contains("workingDirectoryService.apply"))
+        #expect(tabRuntimeSource.contains("workingDirectoryService.apply"))
+        #expect(connectionTestingSource.contains("func setWorkingDirectoryServiceForTesting"))
+        #expect(tabTestingSource.contains("func setWorkingDirectoryServiceForTesting"))
+        #expect(liveDependencySource.contains("workingDirectoryService: TerminalWorkingDirectoryService()"))
+
+        // Then runtime managers do not resolve the live service singleton directly.
+        #expect(!connectionRuntimeSource.contains("TerminalWorkingDirectoryService.shared"))
+        #expect(!tabRuntimeSource.contains("TerminalWorkingDirectoryService.shared"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

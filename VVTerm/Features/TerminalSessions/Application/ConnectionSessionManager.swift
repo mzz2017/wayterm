@@ -47,6 +47,7 @@ final class ConnectionSessionManager: ObservableObject {
         var tmuxService: any TerminalTmuxServicing
         var moshService: any TerminalMoshServicing
         var knownHostRemover: KnownHostRemover
+        var workingDirectoryService: any TerminalWorkingDirectoryApplying
     }
 
     @Published var sessions: [ConnectionSession] = [] {
@@ -271,6 +272,10 @@ final class ConnectionSessionManager: ObservableObject {
     var knownHostRemover: KnownHostRemover {
         get { dependencies.knownHostRemover }
         set { updateDependencies { $0.knownHostRemover = newValue } }
+    }
+    var workingDirectoryService: any TerminalWorkingDirectoryApplying {
+        get { dependencies.workingDirectoryService }
+        set { updateDependencies { $0.workingDirectoryService = newValue } }
     }
     /// Per-server teardown work from ordinary tab closes. New opens wait for this too.
     var serverTeardownTaskStore = TerminalTeardownTaskStore()
