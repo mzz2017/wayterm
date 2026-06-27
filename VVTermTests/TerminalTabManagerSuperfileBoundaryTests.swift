@@ -3,9 +3,9 @@ import Testing
 
 // Test Context:
 // These source-boundary tests protect TerminalTabManager superfile control.
-// The manager owns tab orchestration; persistence shapes and reusable request
-// indexing should live in dedicated Application support files. Update only when
-// those ownership boundaries intentionally move again.
+// The manager owns tab orchestration; persistence shapes, infrastructure stores,
+// and reusable request indexing should live in dedicated owned files. Update
+// only when those ownership boundaries intentionally move again.
 
 @Suite(.serialized)
 struct TerminalTabManagerSuperfileBoundaryTests {
@@ -38,7 +38,7 @@ struct TerminalTabManagerSuperfileBoundaryTests {
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
         )
         let storeSource = try source(
-            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabsSnapshotStore.swift")
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Infrastructure/TerminalTabsSnapshotStore.swift")
         )
 
         // Given the terminal tab manager source.
@@ -53,6 +53,7 @@ struct TerminalTabManagerSuperfileBoundaryTests {
 
         // Then tab snapshot storage has a dedicated Application file.
         #expect(storeSource.contains("struct TerminalTabsSnapshotStore"))
+        #expect(storeSource.contains("UserDefaults"))
         #expect(storeSource.contains("func save"))
         #expect(storeSource.contains("func load"))
         #expect(storeSource.contains("func remove"))

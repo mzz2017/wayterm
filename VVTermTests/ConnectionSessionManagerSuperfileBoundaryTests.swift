@@ -4,8 +4,9 @@ import Testing
 // Test Context:
 // These source-boundary tests protect TerminalSessions Application superfile
 // control. ConnectionSessionManager owns orchestration; shared lifecycle value
-// types and persistence snapshots should live in dedicated support files so
-// future connection behavior changes do not expand the manager superfile.
+// types, persistence snapshots, and infrastructure stores should live in
+// dedicated owned files so future connection behavior changes do not expand the
+// manager superfile.
 // Update only when this ownership intentionally moves again.
 @Suite(.serialized)
 struct ConnectionSessionManagerSuperfileBoundaryTests {
@@ -65,7 +66,7 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
         )
         let storeSource = try source(
-            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionsSnapshotStore.swift")
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Infrastructure/ConnectionSessionsSnapshotStore.swift")
         )
 
         // Given the connection session manager source.
@@ -80,6 +81,7 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
 
         // Then connection session snapshot storage has a dedicated Application file.
         #expect(storeSource.contains("struct ConnectionSessionsSnapshotStore"))
+        #expect(storeSource.contains("UserDefaults"))
         #expect(storeSource.contains("func save"))
         #expect(storeSource.contains("func load"))
         #expect(storeSource.contains("func remove"))
