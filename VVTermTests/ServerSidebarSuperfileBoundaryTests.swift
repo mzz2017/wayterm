@@ -56,6 +56,9 @@ struct ServerSidebarSuperfileBoundaryTests {
         let sidebarSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift")
         )
+        let appSource = try source(
+            at: root.appendingPathComponent("VVTerm/App/ContentView.swift")
+        )
         let supportSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Servers/UI/Sidebar/ServerSidebarSupportViews.swift")
         )
@@ -64,6 +67,18 @@ struct ServerSidebarSuperfileBoundaryTests {
         #expect(
             sidebarSource.contains("requestServerTerminalOpen("),
             "ServerSidebarView.swift should keep terminal-open intent at the sidebar root."
+        )
+        #expect(
+            sidebarSource.contains("@ObservedObject var tabManager: TerminalTabManager"),
+            "ServerSidebarView.swift should receive TerminalSessions tab state through explicit injection."
+        )
+        #expect(
+            !sidebarSource.contains("TerminalTabManager.shared"),
+            "ServerSidebarView.swift should not resolve TerminalTabManager.shared inside the Servers feature."
+        )
+        #expect(
+            appSource.contains("tabManager: tabManager"),
+            "ContentView should inject the app-owned TerminalTabManager into ServerSidebarView."
         )
         #expect(
             sidebarSource.contains("handleSavedServer("),

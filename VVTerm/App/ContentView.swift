@@ -176,6 +176,7 @@ struct ContentView: View {
             // LEFT: Sidebar with workspace + servers
             ServerSidebarView(
                 serverManager: serverManager,
+                tabManager: tabManager,
                 backgroundColor: macOSWindowBackgroundColor,
                 selectedWorkspace: $selectedWorkspace,
                 selectedServer: $selectedServer

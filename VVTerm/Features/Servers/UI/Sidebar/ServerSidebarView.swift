@@ -4,12 +4,12 @@ import SwiftUI
 
 struct ServerSidebarView: View {
     @ObservedObject var serverManager: ServerManager
+    @ObservedObject var tabManager: TerminalTabManager
     let backgroundColor: Color
     @Binding var selectedWorkspace: Workspace?
     @Binding var selectedServer: Server?
 
     @ObservedObject private var storeManager = StoreManager.shared
-    @ObservedObject private var tabManager = TerminalTabManager.shared
 
     @State private var showingWorkspaceSwitcher = false
     @State private var showingAddServer = false
