@@ -1,4 +1,7 @@
 import Foundation
+#if os(iOS)
+import UIKit
+#endif
 
 extension ConnectionReliabilityManager {
     @MainActor
@@ -46,6 +49,13 @@ extension ConnectionSessionManager.Dependencies {
                     otherTerminalsActive: otherTerminalsActive,
                     isPro: isPro
                 )
+            },
+            isApplicationActive: {
+                #if os(iOS)
+                UIApplication.shared.applicationState == .active
+                #else
+                true
+                #endif
             }
         )
     }

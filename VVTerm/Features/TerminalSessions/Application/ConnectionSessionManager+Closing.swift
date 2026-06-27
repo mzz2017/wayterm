@@ -485,7 +485,7 @@ extension ConnectionSessionManager {
 
         DispatchQueue.main.async {
             #if os(iOS)
-            guard UIApplication.shared.applicationState == .active else { return }
+            guard self.isApplicationActive() else { return }
             replacementTerminal.requestKeyboardFocus(for: .initialActivation)
             #else
             _ = replacementTerminal.window?.makeFirstResponder(replacementTerminal)

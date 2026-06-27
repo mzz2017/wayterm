@@ -381,6 +381,35 @@ struct TerminalSessionDependencyBoundaryTests {
     }
 
     @Test
+    func terminalCloseFocusRestoreUsesInjectedApplicationActiveBoundary() throws {
+        let root = try sourceRoot()
+        let connectionManagerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let connectionClosingSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Closing.swift")
+        )
+        let connectionTestingSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Testing.swift")
+        )
+        let liveDependencySource = try source(
+            at: root.appendingPathComponent("VVTerm/App/TerminalSessionLiveDependencies.swift")
+        )
+
+        // Given iOS close UI should only restore keyboard focus while the app
+        // is active, but UIKit application state belongs at the app boundary.
+        #expect(connectionManagerSource.contains("typealias ApplicationActiveStateProvider"))
+        #expect(connectionManagerSource.contains("isApplicationActive: ApplicationActiveStateProvider"))
+        #expect(connectionClosingSource.contains("guard self.isApplicationActive() else { return }"))
+        #expect(connectionTestingSource.contains("func setApplicationActiveStateProviderForTesting"))
+        #expect(liveDependencySource.contains("UIApplication.shared.applicationState == .active"))
+
+        // Then the terminal session application layer no longer reaches
+        // directly into UIApplication during close handling.
+        #expect(!connectionClosingSource.contains("UIApplication.shared"))
+    }
+
+    @Test
     func workingDirectoryRestoreUsesInjectedServiceBoundary() throws {
         let root = try sourceRoot()
         let connectionManagerSource = try source(

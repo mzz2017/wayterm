@@ -237,6 +237,10 @@ extension ConnectionSessionManager {
         tmuxPreferences = preferences
     }
 
+    func setApplicationActiveStateProviderForTesting(_ provider: @escaping ApplicationActiveStateProvider) {
+        isApplicationActive = provider
+    }
+
     func setMoshServiceForTesting(_ service: any TerminalMoshServicing) {
         moshService = service
     }
