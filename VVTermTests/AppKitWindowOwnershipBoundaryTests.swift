@@ -18,6 +18,9 @@ struct AppKitWindowOwnershipBoundaryTests {
         let root = try sourceRoot()
         let aboutUI = try source(at: root.appendingPathComponent("VVTerm/Features/Settings/UI/AboutView.swift"))
         let proUpgradeUI = try source(at: root.appendingPathComponent("VVTerm/Features/Store/UI/ProUpgradeSheet.swift"))
+        let proUpgradePresentationUI = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Store/UI/ProUpgradePresentation.swift")
+        )
 
         // Then those long-lived owners must not be declared in UI source files.
         #expect(
@@ -27,6 +30,18 @@ struct AppKitWindowOwnershipBoundaryTests {
         #expect(
             !proUpgradeUI.contains("final class ProUpgradeWindowPresenter"),
             "The Pro upgrade singleton NSWindow owner must live outside Store/UI."
+        )
+        #expect(
+            !proUpgradeUI.contains("ProUpgradePresentationModifier"),
+            "ProUpgradeSheet.swift should not own Pro upgrade presentation routing."
+        )
+        #expect(
+            !proUpgradeUI.contains("struct ProUpgradeWindowConfigurator"),
+            "ProUpgradeSheet.swift should not own AppKit window configuration bridge code."
+        )
+        #expect(
+            !proUpgradePresentationUI.contains("StoreManager.shared"),
+            "Pro upgrade presentation UI should receive StoreManager from the environment instead of resolving the singleton."
         )
 
         // And the feature Application layer must contain the replacement owners.
