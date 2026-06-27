@@ -429,11 +429,10 @@ extension ConnectionSessionManager {
                     await ConnectionSessionManager.shared.sessionRuntimes[sessionId]?.runtime.updateLastSize(cols: cols, rows: rows)
                 },
                 onShellStarted: { _, shellId in
-                    await ConnectionSessionManager.shared.applyWorkingDirectoryIfNeeded(
-                        for: sessionId,
-                        client: sshClient,
-                        shellId: shellId
-                    )
+                    await TerminalWorkingDirectoryService.shared.apply(using: sshClient, shellId: shellId) {
+                        guard ConnectionSessionManager.shared.shouldApplyWorkingDirectory(for: sessionId) else { return nil }
+                        return ConnectionSessionManager.shared.workingDirectory(for: sessionId)
+                    }
                 },
                 onTitleChange: { title in
                     ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
@@ -471,27 +470,6 @@ extension ConnectionSessionManager {
             )
         }
         await runtime.runtime.setShellTask(shellTask)
-    }
-
-    private func applyWorkingDirectoryIfNeeded(
-        for sessionId: UUID,
-        client: SSHClient,
-        shellId: UUID
-    ) async {
-        let cwd: String? = await MainActor.run {
-            guard ConnectionSessionManager.shared.shouldApplyWorkingDirectory(for: sessionId) else { return nil }
-            return ConnectionSessionManager.shared.workingDirectory(for: sessionId)
-        }
-        guard let cwd else { return }
-        let environment = await client.remoteEnvironment()
-        guard environment.shellProfile.family != .unknown else { return }
-        guard let payload = RemoteTerminalBootstrap.directoryChangeCommand(
-            for: cwd,
-            environment: environment
-        ).data(using: .utf8) else {
-            return
-        }
-        try? await client.write(payload, to: shellId)
     }
 
     private func handleStaleShellStartContext(

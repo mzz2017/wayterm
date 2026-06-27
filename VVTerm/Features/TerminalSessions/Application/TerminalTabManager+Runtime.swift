@@ -388,11 +388,10 @@ extension TerminalTabManager {
                     await TerminalTabManager.shared.paneRuntimes[paneId]?.runtime.updateLastSize(cols: cols, rows: rows)
                 },
                 onShellStarted: { _, shellId in
-                    await TerminalTabManager.shared.applyWorkingDirectoryIfNeeded(
-                        paneId: paneId,
-                        client: sshClient,
-                        shellId: shellId
-                    )
+                    await TerminalWorkingDirectoryService.shared.apply(using: sshClient, shellId: shellId) {
+                        guard TerminalTabManager.shared.shouldApplyWorkingDirectory(for: paneId) else { return nil }
+                        return TerminalTabManager.shared.workingDirectory(for: paneId)
+                    }
                 },
                 onTitleChange: { title in
                     TerminalTabManager.shared.updatePaneTitle(paneId, rawTitle: title)
@@ -429,27 +428,6 @@ extension TerminalTabManager {
             )
         }
         await runtime.runtime.setShellTask(shellTask)
-    }
-
-    private func applyWorkingDirectoryIfNeeded(
-        paneId: UUID,
-        client: SSHClient,
-        shellId: UUID
-    ) async {
-        let cwd: String? = await MainActor.run {
-            guard TerminalTabManager.shared.shouldApplyWorkingDirectory(for: paneId) else { return nil }
-            return TerminalTabManager.shared.workingDirectory(for: paneId)
-        }
-        guard let cwd else { return }
-        let environment = await client.remoteEnvironment()
-        guard environment.shellProfile.family != .unknown else { return }
-        guard let payload = RemoteTerminalBootstrap.directoryChangeCommand(
-            for: cwd,
-            environment: environment
-        ).data(using: .utf8) else {
-            return
-        }
-        try? await client.write(payload, to: shellId)
     }
 
     private func getSSHClient(for paneId: UUID) -> SSHClient? {
