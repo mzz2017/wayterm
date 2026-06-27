@@ -33,6 +33,8 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(viewSource.contains("inputRuntime.ghosttyKeyMapping"))
         #expect(viewSource.contains("inputRuntime.terminalKey"))
         #expect(viewSource.contains("inputRuntime.handleIMEInsertText"))
+        #expect(viewSource.contains("inputRuntime.handleSpecialKey"))
+        #expect(viewSource.contains("inputRuntime.handleControlKey"))
 
         // Then the main UIKit view does not directly own those C/FFI calls,
         // visible preedit state, or the Ghostty action conversion helper.
@@ -49,7 +51,8 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(!viewSource.contains("private func executeIMEInsertRoute"))
         #expect(!viewSource.contains("private func sendRemainingIMEInsertTextIfNeeded"))
         #expect(!viewSource.contains("inputRuntime.imeInsertRoute"))
-        #expect(!viewSource.contains("TerminalControlKey.controlCharacter(for: firstChar)"))
+        #expect(!viewSource.contains("TerminalControlKey.controlCharacter"))
+        #expect(!viewSource.contains("TerminalSpecialKeySequence.escapeSequence"))
         #expect(!viewSource.contains("private var renderedIMEPreeditText"))
         #expect(!viewSource.contains("private func shouldDisplayVisiblePreedit"))
         #expect(!viewSource.contains("private var allowIMEProxyProgrammaticResign"))
@@ -73,9 +76,13 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(runtimeSource.contains("func ghosttyModifiers"))
         #expect(runtimeSource.contains("func imeInsertRoute"))
         #expect(runtimeSource.contains("func handleIMEInsertText"))
+        #expect(runtimeSource.contains("func handleSpecialKey"))
+        #expect(runtimeSource.contains("func handleControlKey"))
+        #expect(runtimeSource.contains("func handleControlShortcut"))
         #expect(runtimeSource.contains("private func executeIMEInsertRoute"))
         #expect(runtimeSource.contains("struct IMEInsertExecutionContext"))
         #expect(runtimeSource.contains("TerminalControlKey.controlCharacter"))
+        #expect(runtimeSource.contains("TerminalSpecialKeySequence.escapeSequence"))
         #expect(runtimeSource.contains("private func sendToolbarKey"))
         #expect(runtimeSource.contains("private func sendToolbarGhosttyKey"))
         #expect(runtimeSource.contains("private func sendToolbarControlShortcut"))

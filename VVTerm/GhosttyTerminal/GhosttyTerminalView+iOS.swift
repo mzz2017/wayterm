@@ -2546,13 +2546,6 @@ class GhosttyTerminalView: UIView {
         requestRender()
     }
 
-    private func sendControlByte(_ value: UInt8) {
-        guard canRouteTerminalInput else { return }
-        invalidateLocalTextInputSession()
-        let scalar = UnicodeScalar(value)
-        sendText(String(Character(scalar)))
-    }
-
     private func sendAnsiSequence(_ data: Data) {
         guard canRouteTerminalInput else { return }
         invalidateLocalTextInputSession()
@@ -2609,53 +2602,30 @@ class GhosttyTerminalView: UIView {
         requestRender()
     }
 
-    private func sendControlShortcut(_ char: Character) {
-        let lower = String(char).lowercased()
-        if let key = Ghostty.Input.Key(rawValue: lower) {
-            let codepoint = lower.unicodeScalars.first?.value ?? 0
-            sendModifiedKey(key, mods: [.ctrl], text: lower, unshiftedCodepoint: codepoint)
-            return
-        }
-        if let controlChar = TerminalControlKey.controlCharacter(for: char) {
-            sendText(String(controlChar))
-        }
-    }
-
     /// Send a special key to the terminal
     func sendSpecialKey(_ key: TerminalSpecialKey) {
         guard surface != nil else { return }
-        let shouldInvalidateSession: Bool = switch key {
-        case .arrowLeft, .arrowRight, .home, .end, .escape:
-            false
-        default:
-            true
-        }
-        if shouldInvalidateSession {
-            invalidateLocalTextInputSession()
-        }
-
-        switch key {
-        case .enter:
-            sendControlByte(0x0D)
-            return
-        case .backspace:
-            // DEL (0x7F) is the typical backspace for terminals.
-            sendControlByte(0x7F)
-            return
-        default:
-            break
-        }
-
-        let escapeSequence = TerminalSpecialKeySequence.escapeSequence(for: key)
-        sendText(escapeSequence)
+        inputRuntime.handleSpecialKey(key, context: terminalInputExecutionContext())
     }
 
     /// Send control key combination (e.g., Ctrl+C)
     func sendControlKey(_ char: Character) {
         guard surface != nil else { return }
-        if let controlChar = TerminalControlKey.controlCharacter(for: char) {
-            sendText(String(controlChar))
-        }
+        inputRuntime.handleControlKey(char, context: terminalInputExecutionContext())
+    }
+
+    private func terminalInputExecutionContext() -> TerminalIOSInputRuntime.TerminalInputExecutionContext {
+        TerminalIOSInputRuntime.TerminalInputExecutionContext(
+            invalidateLocalTextInputSession: { [weak self] in
+                self?.invalidateLocalTextInputSession()
+            },
+            sendText: { [weak self] text in
+                self?.sendText(text)
+            },
+            sendGhosttyKey: { [weak self] key, mods, text, unshiftedCodepoint in
+                self?.sendModifiedKey(key, mods: mods, text: text, unshiftedCodepoint: unshiftedCodepoint)
+            }
+        )
     }
 
     // MARK: - Process Lifecycle

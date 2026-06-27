@@ -72,6 +72,12 @@ final class TerminalIOSInputRuntime {
         let sendText: (String) -> Void
     }
 
+    struct TerminalInputExecutionContext {
+        let invalidateLocalTextInputSession: () -> Void
+        let sendText: (String) -> Void
+        let sendGhosttyKey: (Ghostty.Input.Key, Ghostty.Input.Mods, String?, UInt32) -> Void
+    }
+
     private var renderedPreeditText: String?
     private var isIMEProxyProgrammaticResignAllowed = false
     private var suppressUnexpectedIMEProxyResignUntil = 0.0
@@ -290,6 +296,45 @@ final class TerminalIOSInputRuntime {
             fromIMEComposition: fromIMEComposition
         )
         return executeIMEInsertRoute(route, normalizedText: normalized, context: context)
+    }
+
+    func handleControlShortcut(_ char: Character, context: TerminalInputExecutionContext) {
+        let lower = String(char).lowercased()
+        if let key = Ghostty.Input.Key(rawValue: lower) {
+            let codepoint = lower.unicodeScalars.first?.value ?? 0
+            context.sendGhosttyKey(key, [.ctrl], lower, codepoint)
+            return
+        }
+        if let controlChar = TerminalControlKey.controlCharacter(for: char) {
+            context.sendText(String(controlChar))
+        }
+    }
+
+    func handleSpecialKey(_ key: TerminalSpecialKey, context: TerminalInputExecutionContext) {
+        let shouldInvalidateSession: Bool = switch key {
+        case .arrowLeft, .arrowRight, .home, .end, .escape:
+            false
+        default:
+            true
+        }
+        if shouldInvalidateSession {
+            context.invalidateLocalTextInputSession()
+        }
+
+        switch key {
+        case .enter:
+            context.sendText(String(Character(UnicodeScalar(UInt8(0x0D)))))
+        case .backspace:
+            context.sendText(String(Character(UnicodeScalar(UInt8(0x7F)))))
+        default:
+            context.sendText(TerminalSpecialKeySequence.escapeSequence(for: key))
+        }
+    }
+
+    func handleControlKey(_ char: Character, context: TerminalInputExecutionContext) {
+        if let controlChar = TerminalControlKey.controlCharacter(for: char) {
+            context.sendText(String(controlChar))
+        }
     }
 
     @discardableResult

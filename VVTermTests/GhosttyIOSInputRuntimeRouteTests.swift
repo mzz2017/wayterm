@@ -223,5 +223,57 @@ struct GhosttyIOSInputRuntimeRouteTests {
         #expect(modifierConsumptionCount == 1)
         #expect(events == ["rich-paste", "ghostty-v-ctrl:true-nil-118"])
     }
+
+    @Test
+    func specialKeyRoutingOwnsInvalidationAndEscapeSequencePolicy() {
+        let runtime = TerminalIOSInputRuntime()
+        var events: [String] = []
+        let context = TerminalIOSInputRuntime.TerminalInputExecutionContext(
+            invalidateLocalTextInputSession: { events.append("invalidate") },
+            sendText: { text in events.append("text-\(text.utf8.map(String.init).joined(separator: ","))") },
+            sendGhosttyKey: { key, mods, text, codepoint in
+                events.append("ghostty-\(key)-ctrl:\(mods.contains(.ctrl))-\(text ?? "nil")-\(codepoint)")
+            }
+        )
+
+        // Given cursor movement should preserve the local text input session.
+        runtime.handleSpecialKey(.arrowLeft, context: context)
+
+        // And destructive/text-submitting keys should invalidate before sending.
+        runtime.handleSpecialKey(.enter, context: context)
+        runtime.handleSpecialKey(.delete, context: context)
+
+        #expect(events == [
+            "text-27,91,68",
+            "invalidate",
+            "text-13",
+            "invalidate",
+            "text-27,91,51,126"
+        ])
+    }
+
+    @Test
+    func controlShortcutAndControlKeyRoutingOwnControlCharacterPolicy() {
+        let runtime = TerminalIOSInputRuntime()
+        var events: [String] = []
+        let context = TerminalIOSInputRuntime.TerminalInputExecutionContext(
+            invalidateLocalTextInputSession: { events.append("invalidate") },
+            sendText: { text in events.append("text-\(text.utf8.map(String.init).joined(separator: ","))") },
+            sendGhosttyKey: { key, mods, text, codepoint in
+                events.append("ghostty-\(key)-ctrl:\(mods.contains(.ctrl))-\(text ?? "nil")-\(codepoint)")
+            }
+        )
+
+        // Given alphabetic shortcuts can be represented as Ghostty key events.
+        runtime.handleControlShortcut("C", context: context)
+
+        // And control-key fallback writes the terminal control byte.
+        runtime.handleControlKey("d", context: context)
+
+        #expect(events == [
+            "ghostty-c-ctrl:true-c-99",
+            "text-4"
+        ])
+    }
 }
 #endif
