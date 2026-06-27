@@ -120,6 +120,7 @@ struct iOSServerListView: View {
             NavigationStack {
                 iOSWorkspacePickerView(
                     serverManager: serverManager,
+                    storeManager: storeManager,
                     selectedWorkspace: $selectedWorkspace,
                     onDismiss: { showingWorkspacePicker = false }
                 )
@@ -142,6 +143,7 @@ struct iOSServerListView: View {
             NavigationStack {
                 MoveServerSheet(
                     serverManager: serverManager,
+                    storeManager: storeManager,
                     server: server,
                     onMove: { updatedServer in
                         handleSavedServer(updatedServer, originalServer: server)

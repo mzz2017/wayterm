@@ -190,6 +190,7 @@ struct ServerSidebarView: View {
         .sheet(isPresented: $showingWorkspaceSwitcher) {
             WorkspaceSwitcherSheet(
                 serverManager: serverManager,
+                storeManager: storeManager,
                 selectedWorkspace: $selectedWorkspace
             )
         }
@@ -241,6 +242,7 @@ struct ServerSidebarView: View {
         .sheet(item: $serverToMove) { server in
             MoveServerSheet(
                 serverManager: serverManager,
+                storeManager: storeManager,
                 server: server,
                 onMove: { updatedServer in
                     handleSavedServer(updatedServer, originalServer: server)

@@ -228,6 +228,7 @@ struct iOSActiveConnectionRow: View {
 
 struct iOSWorkspacePickerView: View {
     @ObservedObject var serverManager: ServerManager
+    @ObservedObject var storeManager: StoreManager
     @Binding var selectedWorkspace: Workspace?
     let onDismiss: () -> Void
 
@@ -240,112 +241,7 @@ struct iOSWorkspacePickerView: View {
     var body: some View {
         List {
             ForEach(serverManager.workspaces) { workspace in
-                let isLocked = serverManager.isWorkspaceLocked(workspace)
-
-                Button {
-                    if isLocked {
-                        lockedWorkspaceAlert = workspace
-                    } else {
-                        selectedWorkspace = workspace
-                        onDismiss()
-                    }
-                } label: {
-                    HStack {
-                        if isLocked {
-                            Image(systemName: "lock.fill")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(width: 12)
-                        } else {
-                            Circle()
-                                .fill(Color.fromHex(workspace.colorHex))
-                                .frame(width: 12, height: 12)
-                        }
-
-                        Text(workspace.name)
-                            .foregroundStyle(isLocked ? .secondary : .primary)
-
-                        Spacer()
-
-                        if isLocked {
-                            LockedBadge()
-                        } else {
-                            if selectedWorkspace?.id == workspace.id {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(.blue)
-                            }
-
-                            Text(serverManager.servers(in: workspace, environment: nil).count, format: .number)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .opacity(isLocked ? 0.7 : 1.0)
-                }
-                .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                    if isLocked {
-                        if serverManager.servers(in: workspace, environment: nil).count > 0 {
-                            Button {
-                                workspaceToManageServers = workspace
-                            } label: {
-                                Label("Manage Servers", systemImage: "server.rack")
-                            }
-                            .tint(.blue)
-                        }
-
-                        Button {
-                            lockedWorkspaceAlert = workspace
-                        } label: {
-                            Label("Unlock with Pro", systemImage: "lock.open.fill")
-                        }
-                        .tint(.orange)
-                    } else {
-                        Button {
-                            workspaceToEdit = workspace
-                        } label: {
-                            Label("Edit Workspace", systemImage: "pencil")
-                        }
-                        .tint(.blue)
-                    }
-                }
-                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                    if !isLocked {
-                        Button(role: .destructive) {
-                            workspaceToDelete = workspace
-                        } label: {
-                            Label("Delete Workspace", systemImage: "trash")
-                        }
-                    }
-                }
-                .contextMenu {
-                    if isLocked {
-                        if serverManager.servers(in: workspace, environment: nil).count > 0 {
-                            Button {
-                                workspaceToManageServers = workspace
-                            } label: {
-                                Label("Manage Servers", systemImage: "server.rack")
-                            }
-                        }
-
-                        Button {
-                            lockedWorkspaceAlert = workspace
-                        } label: {
-                            Label("Unlock with Pro", systemImage: "lock.open.fill")
-                        }
-                    } else {
-                        Button {
-                            workspaceToEdit = workspace
-                        } label: {
-                            Label("Edit Workspace", systemImage: "pencil")
-                        }
-
-                        Button(role: .destructive) {
-                            workspaceToDelete = workspace
-                        } label: {
-                            Label("Delete Workspace", systemImage: "trash")
-                        }
-                    }
-                }
+                workspaceRow(for: workspace)
             }
         }
         .navigationTitle("Workspaces")
@@ -390,6 +286,7 @@ struct iOSWorkspacePickerView: View {
             NavigationStack {
                 LockedWorkspaceServerManagementSheet(
                     serverManager: serverManager,
+                    storeManager: storeManager,
                     workspace: workspace
                 )
             }
@@ -414,6 +311,141 @@ struct iOSWorkspacePickerView: View {
             }
         } message: {
             Text(deleteWarningText(for: workspaceToDelete))
+        }
+    }
+
+    private func workspaceRow(for workspace: Workspace) -> some View {
+        let isLocked = serverManager.isWorkspaceLocked(workspace)
+        return Button {
+            select(workspace, isLocked: isLocked)
+        } label: {
+            workspaceRowLabel(for: workspace, isLocked: isLocked)
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            workspaceLeadingSwipeActions(for: workspace, isLocked: isLocked)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            workspaceTrailingSwipeActions(for: workspace, isLocked: isLocked)
+        }
+        .contextMenu {
+            workspaceContextMenu(for: workspace, isLocked: isLocked)
+        }
+    }
+
+    private func select(_ workspace: Workspace, isLocked: Bool) {
+        if isLocked {
+            lockedWorkspaceAlert = workspace
+        } else {
+            selectedWorkspace = workspace
+            onDismiss()
+        }
+    }
+
+    private func workspaceServerCount(_ workspace: Workspace) -> Int {
+        serverManager.servers(in: workspace, environment: nil).count
+    }
+
+    private func workspaceRowLabel(for workspace: Workspace, isLocked: Bool) -> some View {
+        HStack {
+            if isLocked {
+                Image(systemName: "lock.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 12)
+            } else {
+                Circle()
+                    .fill(Color.fromHex(workspace.colorHex))
+                    .frame(width: 12, height: 12)
+            }
+
+            Text(workspace.name)
+                .foregroundStyle(isLocked ? .secondary : .primary)
+
+            Spacer()
+
+            if isLocked {
+                LockedBadge()
+            } else {
+                if selectedWorkspace?.id == workspace.id {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(.blue)
+                }
+
+                Text(workspaceServerCount(workspace), format: .number)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .opacity(isLocked ? 0.7 : 1.0)
+    }
+
+    @ViewBuilder
+    private func workspaceLeadingSwipeActions(for workspace: Workspace, isLocked: Bool) -> some View {
+        if isLocked {
+            if workspaceServerCount(workspace) > 0 {
+                Button {
+                    workspaceToManageServers = workspace
+                } label: {
+                    Label("Manage Servers", systemImage: "server.rack")
+                }
+                .tint(.blue)
+            }
+
+            Button {
+                lockedWorkspaceAlert = workspace
+            } label: {
+                Label("Unlock with Pro", systemImage: "lock.open.fill")
+            }
+            .tint(.orange)
+        } else {
+            Button {
+                workspaceToEdit = workspace
+            } label: {
+                Label("Edit Workspace", systemImage: "pencil")
+            }
+            .tint(.blue)
+        }
+    }
+
+    @ViewBuilder
+    private func workspaceTrailingSwipeActions(for workspace: Workspace, isLocked: Bool) -> some View {
+        if !isLocked {
+            Button(role: .destructive) {
+                workspaceToDelete = workspace
+            } label: {
+                Label("Delete Workspace", systemImage: "trash")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func workspaceContextMenu(for workspace: Workspace, isLocked: Bool) -> some View {
+        if isLocked {
+            if workspaceServerCount(workspace) > 0 {
+                Button {
+                    workspaceToManageServers = workspace
+                } label: {
+                    Label("Manage Servers", systemImage: "server.rack")
+                }
+            }
+
+            Button {
+                lockedWorkspaceAlert = workspace
+            } label: {
+                Label("Unlock with Pro", systemImage: "lock.open.fill")
+            }
+        } else {
+            Button {
+                workspaceToEdit = workspace
+            } label: {
+                Label("Edit Workspace", systemImage: "pencil")
+            }
+
+            Button(role: .destructive) {
+                workspaceToDelete = workspace
+            } label: {
+                Label("Delete Workspace", systemImage: "trash")
+            }
         }
     }
 

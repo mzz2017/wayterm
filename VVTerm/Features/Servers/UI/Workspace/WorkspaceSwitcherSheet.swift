@@ -5,6 +5,7 @@ import SwiftUI
 struct WorkspaceSwitcherSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var serverManager: ServerManager
+    @ObservedObject var storeManager: StoreManager
     @Binding var selectedWorkspace: Workspace?
 
     @State private var hoveredWorkspace: Workspace?
@@ -96,6 +97,7 @@ struct WorkspaceSwitcherSheet: View {
         .sheet(item: $workspaceToManageServers) { workspace in
             LockedWorkspaceServerManagementSheet(
                 serverManager: serverManager,
+                storeManager: storeManager,
                 workspace: workspace
             )
             .frame(width: 560, height: 460)
@@ -293,6 +295,7 @@ struct WorkspaceSwitcherRow: View {
 struct LockedWorkspaceServerManagementSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var serverManager: ServerManager
+    @ObservedObject var storeManager: StoreManager
     let workspace: Workspace
 
     @State private var serverToMove: Server?
@@ -400,6 +403,7 @@ struct LockedWorkspaceServerManagementSheet: View {
             NavigationStack {
                 MoveServerSheet(
                     serverManager: serverManager,
+                    storeManager: storeManager,
                     server: server,
                     onMove: { _ in
                         serverToMove = nil
@@ -409,6 +413,7 @@ struct LockedWorkspaceServerManagementSheet: View {
             #else
             MoveServerSheet(
                 serverManager: serverManager,
+                storeManager: storeManager,
                 server: server,
                 onMove: { _ in
                     serverToMove = nil

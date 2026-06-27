@@ -2,7 +2,7 @@ import SwiftUI
 
 struct MoveServerSheet: View {
     @ObservedObject var serverManager: ServerManager
-    @ObservedObject private var storeManager = StoreManager.shared
+    @ObservedObject var storeManager: StoreManager
     let server: Server
     let preferredDestination: Workspace?
     let onMove: (Server) -> Void
@@ -18,11 +18,13 @@ struct MoveServerSheet: View {
 
     init(
         serverManager: ServerManager,
+        storeManager: StoreManager,
         server: Server,
         preferredDestination: Workspace? = nil,
         onMove: @escaping (Server) -> Void
     ) {
         self.serverManager = serverManager
+        self.storeManager = storeManager
         self.server = server
         self.preferredDestination = preferredDestination
         self.onMove = onMove

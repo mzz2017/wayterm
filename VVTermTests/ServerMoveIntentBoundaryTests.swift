@@ -49,6 +49,41 @@ struct ServerMoveIntentBoundaryTests {
         )
     }
 
+    @Test
+    func moveServerSheetUsesInjectedStoreManager() throws {
+        // Given move UI may need Store entitlement state for Pro messaging.
+        let root = try sourceRoot()
+        let sheetSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/ServerDetail/MoveServerSheet.swift")
+        )
+        let sidebarSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift")
+        )
+        let iosListSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/iOS/iOSServerListView.swift")
+        )
+        let workspaceSwitcherSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/Workspace/WorkspaceSwitcherSheet.swift")
+        )
+
+        // Then the leaf move sheet should receive entitlement state from its
+        // caller instead of resolving StoreManager.shared itself.
+        #expect(
+            sheetSource.contains("@ObservedObject var storeManager: StoreManager"),
+            "MoveServerSheet should receive StoreManager from its caller."
+        )
+        #expect(
+            !sheetSource.contains("StoreManager.shared"),
+            "MoveServerSheet should not resolve StoreManager.shared from leaf move UI."
+        )
+        for source in [sidebarSource, iosListSource, workspaceSwitcherSource] {
+            #expect(
+                source.contains("storeManager: storeManager"),
+                "MoveServerSheet callers should pass the existing StoreManager dependency through."
+            )
+        }
+    }
+
     private func functionBody(named marker: String, endingBefore endMarker: String, in source: String) throws -> String {
         guard let start = source.range(of: marker),
               let end = source.range(of: endMarker, range: start.lowerBound..<source.endIndex)
