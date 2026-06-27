@@ -109,8 +109,8 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     /// Call this when closing a session to ensure proper cleanup.
     func cleanup() {
         isShuttingDown = true
-        surface = surfaceLifecycleRuntime.cleanup(
-            surface: surface,
+        surfaceOwner.cleanup(
+            using: surfaceLifecycleRuntime,
             surfaceRegistration: surfaceRegistration,
             stopDisplayLink: { [displayLinkRuntime] in
                 displayLinkRuntime.stop()
@@ -255,7 +255,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
 
     /// Setup observation for system appearance changes (light/dark mode)
     private func setupAppearanceObservation() {
-        appearanceObservation = renderingSetup.setupAppearanceObservation(for: self, surface: surface)
+        appearanceObservation = surfaceOwner.setupAppearanceObservation(for: self, renderingSetup: renderingSetup)
     }
 
     private func setupFrameObservation() {
@@ -290,7 +290,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
         if result {
-            surfaceLifecycleRuntime.setFocus(true, surface: surface)
+            surfaceOwner.setFocus(true, using: surfaceLifecycleRuntime)
         }
         return result
     }
@@ -298,7 +298,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     override func resignFirstResponder() -> Bool {
         let result = super.resignFirstResponder()
         if result {
-            surfaceLifecycleRuntime.setFocus(false, surface: surface)
+            surfaceOwner.setFocus(false, using: surfaceLifecycleRuntime)
         }
         return result
     }
@@ -315,7 +315,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
-        renderingSetup.updateBackingProperties(view: self, surface: surface?.unsafeCValue, window: window)
+        surfaceOwner.updateBackingProperties(for: self, renderingSetup: renderingSetup, window: window)
     }
 
     override func viewDidMoveToWindow() {
@@ -354,10 +354,10 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
 
     override func layout() {
         super.layout()
-        let didUpdate = renderingSetup.updateLayout(
-            view: self,
+        let didUpdate = surfaceOwner.updateLayout(
+            for: self,
+            renderingSetup: renderingSetup,
             metalLayer: layer as? CAMetalLayer,
-            surface: surface?.unsafeCValue,
             lastSize: &lastSurfaceSize
         )
         if didUpdate && !didSignalReady {
@@ -460,7 +460,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     }
 
     @objc func copy(_ sender: Any?) {
-        _ = surface?.perform(action: "copy_to_clipboard")
+        surfaceOwner.perform(action: "copy_to_clipboard")
     }
 
     @objc func paste(_ sender: Any?) {
@@ -596,19 +596,17 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
 
     /// Check if the terminal process has exited
     var processExited: Bool {
-        surfaceLifecycleRuntime.processExited(surface: surface)
+        surfaceOwner.processExited(using: surfaceLifecycleRuntime)
     }
 
     /// Check if closing this terminal needs confirmation
     var needsConfirmQuit: Bool {
-        guard let surface = surface else { return false }
-        return surface.needsConfirmQuit
+        surfaceOwner.needsConfirmQuit
     }
 
     /// Get current terminal grid size
     func terminalSize() -> Ghostty.Surface.TerminalSize? {
-        guard let surface = surface else { return nil }
-        return surface.terminalSize()
+        surfaceOwner.terminalSize()
     }
 
     /// Force the terminal surface to refresh/redraw
@@ -638,7 +636,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     /// Reset Ghostty's terminal state before binding a fresh remote shell to a reused surface.
     func resetTerminalForReconnect() {
         guard !isShuttingDown else { return }
-        _ = surface?.perform(action: "reset")
+        surfaceOwner.perform(action: "reset")
         forceRefresh()
     }
 
@@ -667,28 +665,26 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
 
     /// Send text to the terminal (used by voice input)
     func sendText(_ text: String) {
-        surface?.sendText(text)
+        surfaceOwner.sendText(text)
         requestRender()
     }
 
     func pasteTextFromClipboard() {
-        _ = surface?.perform(action: "paste_from_clipboard")
+        surfaceOwner.perform(action: "paste_from_clipboard")
         requestRender()
     }
 
     /// Send a special key to the terminal
     func sendSpecialKey(_ key: TerminalSpecialKey) {
-        guard let surface = surface else { return }
         let escapeSequence = TerminalSpecialKeySequence.escapeSequence(for: key)
-        surface.sendText(escapeSequence)
+        surfaceOwner.sendText(escapeSequence)
         requestRender()
     }
 
     /// Send a control key combination (Ctrl+C, Ctrl+D, etc.)
     func sendControlKey(_ char: Character) {
-        guard let surface = surface else { return }
         if let controlChar = TerminalControlKey.controlCharacter(for: char) {
-            surface.sendText(String(controlChar))
+            surfaceOwner.sendText(String(controlChar))
             requestRender()
         }
     }

@@ -9,6 +9,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import QuartzCore
 
 @MainActor
 final class TerminalMacOSSurfaceOwner {
@@ -31,6 +32,62 @@ final class TerminalMacOSSurfaceOwner {
         )
     }
 
+    func cleanup(
+        using lifecycleRuntime: TerminalMacOSSurfaceLifecycleRuntime,
+        surfaceRegistration: GhosttySurfaceRegistration,
+        stopDisplayLink: @escaping () -> Void,
+        cancelPendingZoomIndicatorHide: @escaping () -> Void,
+        removeConfigReloadObserver: @escaping () -> Void,
+        clearCallbacks: @escaping () -> Void
+    ) {
+        surface = lifecycleRuntime.cleanup(
+            surface: surface,
+            surfaceRegistration: surfaceRegistration,
+            stopDisplayLink: stopDisplayLink,
+            cancelPendingZoomIndicatorHide: cancelPendingZoomIndicatorHide,
+            removeConfigReloadObserver: removeConfigReloadObserver,
+            clearCallbacks: clearCallbacks
+        )
+    }
+
+    func setFocus(_ isFocused: Bool, using lifecycleRuntime: TerminalMacOSSurfaceLifecycleRuntime) {
+        lifecycleRuntime.setFocus(isFocused, surface: surface)
+    }
+
+    func processExited(using lifecycleRuntime: TerminalMacOSSurfaceLifecycleRuntime) -> Bool {
+        lifecycleRuntime.processExited(surface: surface)
+    }
+
+    var needsConfirmQuit: Bool {
+        surface?.needsConfirmQuit ?? false
+    }
+
+    func terminalSize() -> Ghostty.Surface.TerminalSize? {
+        surface?.terminalSize()
+    }
+
+    func setupAppearanceObservation(for view: NSView, renderingSetup: GhosttyRenderingSetup) -> NSKeyValueObservation? {
+        renderingSetup.setupAppearanceObservation(for: view, surface: surface)
+    }
+
+    func updateBackingProperties(for view: NSView, renderingSetup: GhosttyRenderingSetup, window: NSWindow?) {
+        renderingSetup.updateBackingProperties(view: view, surface: surface?.unsafeCValue, window: window)
+    }
+
+    func updateLayout(
+        for view: NSView,
+        renderingSetup: GhosttyRenderingSetup,
+        metalLayer: CAMetalLayer?,
+        lastSize: inout CGSize
+    ) -> Bool {
+        renderingSetup.updateLayout(
+            view: view,
+            metalLayer: metalLayer,
+            surface: surface?.unsafeCValue,
+            lastSize: &lastSize
+        )
+    }
+
     func hasSelection() -> Bool {
         guard let cSurface = surface?.unsafeCValue else { return false }
         return ghostty_surface_has_selection(cSurface)
@@ -38,6 +95,16 @@ final class TerminalMacOSSurfaceOwner {
 
     @discardableResult
     func forceRefresh(backingSize: CGSize) -> Bool {
+        guard resizeAndRefresh(backingSize: backingSize) else { return false }
+        guard let cSurface = surface?.unsafeCValue else { return false }
+
+        ghostty_surface_draw(cSurface)
+        appWrapper?.appTick()
+        return true
+    }
+
+    @discardableResult
+    func resizeAndRefresh(backingSize: CGSize) -> Bool {
         guard let cSurface = surface?.unsafeCValue else { return false }
 
         ghostty_surface_set_size(
@@ -47,8 +114,6 @@ final class TerminalMacOSSurfaceOwner {
         )
 
         ghostty_surface_refresh(cSurface)
-        ghostty_surface_draw(cSurface)
-        appWrapper?.appTick()
         return true
     }
 

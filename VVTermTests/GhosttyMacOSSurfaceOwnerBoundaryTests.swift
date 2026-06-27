@@ -25,6 +25,9 @@ struct GhosttyMacOSSurfaceOwnerBoundaryTests {
         let imeHandlerSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/macOS/GhosttyIMEHandler.swift")
         )
+        let scrollViewSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/macOS/TerminalScrollView.swift")
+        )
 
         #expect(viewSource.contains("let surfaceOwner: TerminalMacOSSurfaceOwner"))
         #expect(viewSource.contains("TerminalMacOSSurfaceOwner(ghosttyApp: ghosttyApp, appWrapper: appWrapper)"))
@@ -57,6 +60,15 @@ struct GhosttyMacOSSurfaceOwnerBoundaryTests {
         #expect(ownerSource.contains("func updateSurfaceConfig("))
         #expect(ownerSource.contains("func writeOutput("))
         #expect(ownerSource.contains("func externalExited("))
+        #expect(ownerSource.contains("func cleanup("))
+        #expect(ownerSource.contains("func setFocus("))
+        #expect(ownerSource.contains("func processExited("))
+        #expect(ownerSource.contains("var needsConfirmQuit: Bool"))
+        #expect(ownerSource.contains("func terminalSize()"))
+        #expect(ownerSource.contains("func setupAppearanceObservation("))
+        #expect(ownerSource.contains("func updateBackingProperties("))
+        #expect(ownerSource.contains("func updateLayout("))
+        #expect(ownerSource.contains("func resizeAndRefresh("))
         #expect(ownerSource.contains("ghostty_surface_set_size("))
         #expect(ownerSource.contains("ghostty_surface_refresh("))
         #expect(ownerSource.contains("ghostty_surface_draw("))
@@ -67,6 +79,8 @@ struct GhosttyMacOSSurfaceOwnerBoundaryTests {
         #expect(ownerSource.contains("func syncPreedit("))
         #expect(ownerSource.contains("func imePoint()"))
         #expect(ownerSource.contains("func sendMouseButton("))
+        #expect(ownerSource.contains("func perform(action: String)"))
+        #expect(ownerSource.contains("func sendText(_ text: String)"))
 
         #expect(viewSource.contains("GhosttyIMEHandler(view: self, surfaceOwner: surfaceOwner)"))
         #expect(viewSource.contains("GhosttyInputHandler(view: self, surfaceOwner: surfaceOwner, imeHandler: self.imeHandler)"))
@@ -77,6 +91,17 @@ struct GhosttyMacOSSurfaceOwnerBoundaryTests {
         #expect(!imeHandlerSource.contains("weak var surface: Ghostty.Surface?"))
         #expect(!inputHandlerSource.contains("unsafeCValue"))
         #expect(!imeHandlerSource.contains("unsafeCValue"))
+
+        #expect(viewSource.contains("surfaceOwner.cleanup("))
+        #expect(viewSource.contains("surfaceOwner.setFocus(true, using: surfaceLifecycleRuntime)"))
+        #expect(viewSource.contains("surfaceOwner.updateBackingProperties(for: self, renderingSetup: renderingSetup, window: window)"))
+        #expect(viewSource.contains("surfaceOwner.updateLayout("))
+        #expect(viewSource.contains("surfaceOwner.processExited(using: surfaceLifecycleRuntime)"))
+        #expect(viewSource.contains("surfaceOwner.terminalSize()"))
+        #expect(viewSource.contains("surfaceOwner.perform(action: \"reset\")"))
+        #expect(viewSource.contains("surfaceOwner.sendText(text)"))
+        #expect(scrollViewSource.contains("surfaceView.surfaceOwner.perform(action: \"scroll_to_row:\\(row)\")"))
+        #expect(scrollViewSource.contains("surfaceOwner.resizeAndRefresh(backingSize: scaledSize)"))
 
         #expect(
             !viewSource.contains("ghostty_surface_set_size("),
@@ -101,6 +126,34 @@ struct GhosttyMacOSSurfaceOwnerBoundaryTests {
         #expect(
             !viewSource.contains("ghostty_surface_has_selection("),
             "GhosttyTerminalView+macOS.swift should route selection checks through the surface owner."
+        )
+        #expect(
+            !viewSource.contains("unsafeCValue"),
+            "GhosttyTerminalView+macOS.swift should not access raw Ghostty surface pointers directly."
+        )
+        #expect(
+            !viewSource.contains("surface?.perform"),
+            "GhosttyTerminalView+macOS.swift should route surface actions through the surface owner."
+        )
+        #expect(
+            !viewSource.contains("surface?.sendText"),
+            "GhosttyTerminalView+macOS.swift should route terminal text writes through the surface owner."
+        )
+        #expect(
+            !scrollViewSource.contains("unsafeCValue"),
+            "TerminalScrollView.swift should not access raw Ghostty surface pointers directly."
+        )
+        #expect(
+            !scrollViewSource.contains("surface?.perform"),
+            "TerminalScrollView.swift should route surface actions through the surface owner."
+        )
+        #expect(
+            !scrollViewSource.contains("ghostty_surface_set_size("),
+            "TerminalScrollView.swift should route resize refresh through the surface owner."
+        )
+        #expect(
+            !scrollViewSource.contains("ghostty_surface_refresh("),
+            "TerminalScrollView.swift should route resize refresh through the surface owner."
         )
     }
 

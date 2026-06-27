@@ -301,7 +301,7 @@ class TerminalScrollView: NSView, NSUserInterfaceValidations {
         lastSentRow = row
 
         // Use the keybinding action to scroll.
-        _ = surfaceView.surface?.perform(action: "scroll_to_row:\(row)")
+        surfaceView.surfaceOwner.perform(action: "scroll_to_row:\(row)")
     }
 
     /// Handles scrollbar state updates from the terminal core.
@@ -363,16 +363,8 @@ class TerminalScrollView: NSView, NSUserInterfaceValidations {
 extension GhosttyTerminalView {
     /// Notify the terminal of a size change (used by scroll view wrapper)
     func sizeDidChange(_ size: CGSize) {
-        guard let surface = surface?.unsafeCValue else { return }
         let scaledSize = convertToBacking(size)
-        ghostty_surface_set_size(
-            surface,
-            UInt32(scaledSize.width),
-            UInt32(scaledSize.height)
-        )
-
-        // Trigger a refresh to process the size change
-        ghostty_surface_refresh(surface)
+        guard surfaceOwner.resizeAndRefresh(backingSize: scaledSize) else { return }
 
         // Force layout to update and notify resize callback
         needsLayout = true
