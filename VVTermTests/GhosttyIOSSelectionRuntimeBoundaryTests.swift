@@ -6,11 +6,11 @@ import Testing
 #endif
 
 // Test Context:
-// These source-boundary tests protect iOS Ghostty selection FFI ownership. The
-// UIKit terminal view may decide when to show menus, but direct Ghostty
-// selection availability queries should be owned by a focused runtime helper.
-// Update these tests only if selection FFI intentionally moves to another
-// non-view owner.
+// These source-boundary tests protect iOS Ghostty selection ownership. Selection
+// UI may collect gestures, layout, and menu intent, but raw Ghostty surface
+// handles and selection text reader FFI should remain behind
+// TerminalIOSSurfaceOwner and TerminalIOSSelectionRuntime. Update these tests
+// only if selection FFI intentionally moves to another non-view owner.
 
 @Suite(.serialized)
 struct GhosttyIOSSelectionRuntimeBoundaryTests {
@@ -20,27 +20,48 @@ struct GhosttyIOSSelectionRuntimeBoundaryTests {
         let viewSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
+        let selectionSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Selection/GhosttyTerminalView+SelectionInteractions+iOS.swift")
+        )
         let runtimeSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Selection/TerminalIOSSelectionRuntime.swift")
+        )
+        let ownerSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/TerminalIOSSurfaceOwner.swift")
         )
 
         // Given the iOS terminal view needs to decide whether selection menu
         // actions are available.
-        #expect(viewSource.contains("private let selectionRuntime = TerminalIOSSelectionRuntime()"))
-        #expect(viewSource.contains("selectionRuntime.hasGhosttySelection"))
-        #expect(viewSource.contains("selectionRuntime.nativeTextSnapshot"))
+        #expect(viewSource.contains("let selectionRuntime = TerminalIOSSelectionRuntime()"))
+        #expect(selectionSource.contains("surfaceOwner.hasGhosttySelection(using: selectionRuntime)"))
+        #expect(selectionSource.contains("surfaceOwner.nativeTextSnapshot("))
+        #expect(selectionSource.contains("surfaceOwner.quickLookWordSelection("))
+        #expect(selectionSource.contains("surfaceOwner.touchSelectionText("))
+        #expect(selectionSource.contains("surfaceOwner.ghosttySelectionText("))
 
         // Then the main UIKit view does not directly own the Ghostty selection
         // C/FFI query.
-        #expect(!viewSource.contains("ghostty_surface_has_selection"))
-        #expect(!viewSource.contains("private func readNativeSelectionLine"))
-        #expect(!viewSource.contains("GhosttyTerminalTextReader.readViewportLine"))
+        #expect(!selectionSource.contains("unsafeCValue"))
+        #expect(!selectionSource.contains("ghostty_surface_has_selection"))
+        #expect(!selectionSource.contains("GhosttyTerminalTextReader."))
 
         #expect(runtimeSource.contains("final class TerminalIOSSelectionRuntime"))
         #expect(runtimeSource.contains("func hasGhosttySelection"))
         #expect(runtimeSource.contains("func nativeTextSnapshot"))
+        #expect(runtimeSource.contains("func quickLookWordSelection"))
+        #expect(runtimeSource.contains("func touchSelectionText"))
+        #expect(runtimeSource.contains("func ghosttySelectionText"))
         #expect(runtimeSource.contains("ghostty_surface_has_selection"))
         #expect(runtimeSource.contains("GhosttyTerminalTextReader.readViewportLine"))
+        #expect(runtimeSource.contains("GhosttyTerminalTextReader.quickLookWordSelection"))
+        #expect(runtimeSource.contains("GhosttyTerminalTextReader.readText"))
+        #expect(runtimeSource.contains("GhosttyTerminalTextReader.readSelection"))
+
+        #expect(ownerSource.contains("func hasGhosttySelection(using selectionRuntime: TerminalIOSSelectionRuntime)"))
+        #expect(ownerSource.contains("func nativeTextSnapshot("))
+        #expect(ownerSource.contains("func quickLookWordSelection("))
+        #expect(ownerSource.contains("func touchSelectionText("))
+        #expect(ownerSource.contains("func ghosttySelectionText("))
     }
 
     private func source(at url: URL) throws -> String {

@@ -97,15 +97,13 @@ extension GhosttyTerminalView {
     }
     
     private func quickLookWordSelection(at location: CGPoint) -> TerminalGridSelection? {
-        guard let layout = touchSelectionLayout(),
-              let surface,
-              let cSurface = surface.unsafeCValue else { return nil }
-    
+        guard let layout = touchSelectionLayout() else { return nil }
+
         let pos = ghosttyPoint(location)
-        surface.sendMousePos(.init(x: pos.x, y: pos.y, mods: []))
-        return GhosttyTerminalTextReader.quickLookWordSelection(
-            surface: cSurface,
-            layout: layout
+        return surfaceOwner.quickLookWordSelection(
+            at: pos,
+            layout: layout,
+            using: selectionRuntime
         )
     }
     
@@ -179,9 +177,9 @@ extension GhosttyTerminalView {
     }
 
     private func buildNativeSelectionSnapshot() -> TerminalNativeTextSnapshot {
-        selectionRuntime.nativeTextSnapshot(
-            surface: surface?.unsafeCValue,
-            metrics: selectionGridMetrics()
+        surfaceOwner.nativeTextSnapshot(
+            metrics: selectionGridMetrics(),
+            using: selectionRuntime
         )
     }
 
@@ -222,31 +220,12 @@ extension GhosttyTerminalView {
     }
     
     private func touchSelectionText() -> String? {
-        guard let touchSelection = touchSelectionState.selection,
-              let surface = surface?.unsafeCValue else { return nil }
-    
-        let normalized = touchSelection.normalized
-        let selection = ghostty_selection_s(
-            top_left: ghostty_point_s(
-                tag: GHOSTTY_POINT_VIEWPORT,
-                coord: GHOSTTY_POINT_COORD_EXACT,
-                x: UInt32(normalized.start.column),
-                y: UInt32(normalized.start.row)
-            ),
-            bottom_right: ghostty_point_s(
-                tag: GHOSTTY_POINT_VIEWPORT,
-                coord: GHOSTTY_POINT_COORD_EXACT,
-                x: UInt32(normalized.end.column),
-                y: UInt32(normalized.end.row)
-            ),
-            rectangle: false
-        )
-        return GhosttyTerminalTextReader.readText(surface: surface, selection: selection)
+        guard let touchSelection = touchSelectionState.selection else { return nil }
+        return surfaceOwner.touchSelectionText(touchSelection, using: selectionRuntime)
     }
-    
+
     private func ghosttySelectionText() -> String? {
-        guard let surface = surface?.unsafeCValue else { return nil }
-        return GhosttyTerminalTextReader.readSelection(surface: surface)
+        surfaceOwner.ghosttySelectionText(using: selectionRuntime)
     }
     
     private func copyTextToClipboard(_ text: String) {
@@ -475,7 +454,7 @@ extension GhosttyTerminalView {
     }
     
     private func showEditMenu(at location: CGPoint) {
-        let hasGhosttySelection = selectionRuntime.hasGhosttySelection(surface: surface?.unsafeCValue)
+        let hasGhosttySelection = surfaceOwner.hasGhosttySelection(using: selectionRuntime)
         guard touchSelectionState.hasSelection || hasGhosttySelection else {
             return
         }
@@ -492,7 +471,7 @@ extension GhosttyTerminalView {
             if touchSelectionState.hasSelection {
                 return true
             }
-            return selectionRuntime.hasGhosttySelection(surface: surface?.unsafeCValue)
+            return surfaceOwner.hasGhosttySelection(using: selectionRuntime)
         case #selector(selectAll(_:)):
             if usesNativeTouchSelection {
                 return nativeSelectionSnapshot.length > 0 || selectionGridMetrics() != nil
