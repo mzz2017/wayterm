@@ -3,16 +3,15 @@ import Testing
 @testable import VVTerm
 
 // Test Context:
-// These tests protect RemoteFiles tab creation, selection, and close behavior.
-// They use in-memory tab state and no network I/O; update only when file-tab
-// workflow semantics intentionally change.
+// These tests protect RemoteFiles tab creation, selection, close behavior, and
+// snapshot persistence. They use isolated UserDefaults suites and no network
+// I/O; update only when file-tab workflow semantics intentionally change.
 
 @MainActor
 struct RemoteFileTabManagerTests {
     @Test
     func closingLastTabPreservesExplicitEmptyState() {
-        let defaults = makeDefaults()
-        let manager = RemoteFileTabManager(defaults: defaults, isProProvider: { false })
+        let manager = RemoteFileTabManager(snapshotStore: makeStore(), isProProvider: { false })
         let server = makeServer()
 
         let initialTab = manager.ensureInitialTab(for: server, seedPath: "/srv")!
@@ -26,18 +25,18 @@ struct RemoteFileTabManagerTests {
 
     @Test
     func closingSelectedTabPrefersRightNeighborThenLeftNeighbor() throws {
-        let defaults = makeDefaults()
         let server = makeServer()
         let firstTab = RemoteFileTab(serverId: server.id, seedPath: "/etc")
         let secondTab = RemoteFileTab(serverId: server.id, seedPath: "/var/log")
         let thirdTab = RemoteFileTab(serverId: server.id, seedPath: "/srv/app")
+        let store = makeStore()
         let snapshot = RemoteFileTabSnapshot(
             tabsByServer: [server.id.uuidString: [firstTab, secondTab, thirdTab]],
             selectedTabByServer: [server.id.uuidString: secondTab.id]
         )
-        defaults.set(try JSONEncoder().encode(snapshot), forKey: "remoteFileTabsSnapshot.v1")
+        try store.save(snapshot)
 
-        let manager = RemoteFileTabManager(defaults: defaults, isProProvider: { false })
+        let manager = RemoteFileTabManager(snapshotStore: store, isProProvider: { false })
         let removedMiddle = manager.closeTab(secondTab)
 
         #expect(removedMiddle == secondTab)
@@ -51,7 +50,7 @@ struct RemoteFileTabManagerTests {
 
     @Test
     func freeTierRejectsFileTabAfterLimit() {
-        let manager = RemoteFileTabManager(defaults: makeDefaults(), isProProvider: { false })
+        let manager = RemoteFileTabManager(snapshotStore: makeStore(), isProProvider: { false })
         let server = makeServer()
 
         // Given a free user has reached the RemoteFiles tab limit.
@@ -66,7 +65,7 @@ struct RemoteFileTabManagerTests {
 
     @Test
     func proProviderAllowsFileTabsPastFreeLimit() {
-        let manager = RemoteFileTabManager(defaults: makeDefaults(), isProProvider: { true })
+        let manager = RemoteFileTabManager(snapshotStore: makeStore(), isProProvider: { true })
         let server = makeServer()
 
         // Given App composition reports an active Pro entitlement.
@@ -79,6 +78,27 @@ struct RemoteFileTabManagerTests {
         #expect(manager.tabs(for: server.id).count == FreeTierLimits.maxFileTabs + 1)
     }
 
+    @Test
+    func persistedTabsRestoreIntoFreshManager() {
+        let store = makeStore()
+        let server = makeServer()
+        let manager = RemoteFileTabManager(snapshotStore: store, isProProvider: { true })
+
+        // Given tab state is mutated through the application-layer manager.
+        let firstTab = manager.openTab(for: server, seedPath: "/etc")!
+        let secondTab = manager.openTab(for: server, seedPath: "/srv")!
+        manager.selectTab(firstTab)
+        manager.updateLastKnownPath("/srv/current", for: secondTab.id)
+
+        // When a fresh manager restores from the same infrastructure store.
+        let restoredManager = RemoteFileTabManager(snapshotStore: store, isProProvider: { true })
+
+        // Then persisted tab order, selected tab, and per-tab path state survive.
+        #expect(restoredManager.tabs(for: server.id).map(\.id) == [firstTab.id, secondTab.id])
+        #expect(restoredManager.selectedTab(for: server.id)?.id == firstTab.id)
+        #expect(restoredManager.tabs(for: server.id).last?.lastKnownPath == "/srv/current")
+    }
+
     private func makeServer() -> Server {
         Server(
             workspaceId: UUID(),
@@ -88,10 +108,10 @@ struct RemoteFileTabManagerTests {
         )
     }
 
-    private func makeDefaults() -> UserDefaults {
+    private func makeStore() -> RemoteFileTabsSnapshotStore {
         let suiteName = "RemoteFileTabManagerTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
-        return defaults
+        return RemoteFileTabsSnapshotStore(userDefaults: defaults)
     }
 }

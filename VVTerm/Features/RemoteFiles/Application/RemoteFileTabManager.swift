@@ -12,16 +12,15 @@ final class RemoteFileTabManager: ObservableObject {
         didSet { persistSnapshotIfNeeded() }
     }
 
-    private let defaults: UserDefaults
+    private let snapshotStore: RemoteFileTabsSnapshotStore
     private let isProProvider: IsProProvider
-    private let persistenceKey = "remoteFileTabsSnapshot.v1"
     private var isRestoring = false
 
     init(
-        defaults: UserDefaults = .standard,
+        snapshotStore: RemoteFileTabsSnapshotStore? = nil,
         isProProvider: @escaping IsProProvider
     ) {
-        self.defaults = defaults
+        self.snapshotStore = snapshotStore ?? RemoteFileTabsSnapshotStore()
         self.isProProvider = isProProvider
         restoreSnapshot()
     }
@@ -270,13 +269,11 @@ final class RemoteFileTabManager: ObservableObject {
             )
         )
 
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        defaults.set(data, forKey: persistenceKey)
+        try? snapshotStore.save(snapshot)
     }
 
     private func restoreSnapshot() {
-        guard let data = defaults.data(forKey: persistenceKey),
-              let snapshot = try? JSONDecoder().decode(RemoteFileTabSnapshot.self, from: data),
+        guard let snapshot = try? snapshotStore.load(),
               snapshot.schemaVersion == RemoteFileTabSnapshot.currentSchemaVersion else {
             tabsByServer = [:]
             selectedTabByServer = [:]

@@ -47,6 +47,32 @@ struct RemoteFileBrowserStoreBoundaryTests {
         )
     }
 
+    @Test
+    func tabManagerUsesSnapshotStoreForPersistenceCodec() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFileTabManager.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Infrastructure/RemoteFileTabsSnapshotStore.swift")
+        )
+
+        // Given RemoteFiles tab state is durable UI state, but encoding and
+        // storage-key ownership should stay behind dedicated infrastructure.
+        #expect(managerSource.contains("RemoteFileTabsSnapshotStore"))
+        #expect(managerSource.contains("snapshotStore.save(snapshot)"))
+        #expect(managerSource.contains("snapshotStore.load()"))
+        #expect(storeSource.contains("struct RemoteFileTabsSnapshotStore"))
+        #expect(storeSource.contains("func save(_ snapshot: RemoteFileTabSnapshot) throws"))
+        #expect(storeSource.contains("func load() throws -> RemoteFileTabSnapshot?"))
+
+        // Then RemoteFileTabManager keeps tab policy and restoration filtering,
+        // but does not own UserDefaults or JSON codec details directly.
+        #expect(!managerSource.contains("UserDefaults"))
+        #expect(!managerSource.contains("JSONEncoder()"))
+        #expect(!managerSource.contains("JSONDecoder()"))
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
