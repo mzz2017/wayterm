@@ -253,6 +253,7 @@ class GhosttyTerminalView: UIView {
     private let renderingSetup = GhosttyRenderingSetup()
     private let surfaceDisplayRuntime = TerminalIOSSurfaceDisplayRuntime()
     private let inputRuntime = TerminalIOSInputRuntime()
+    private let selectionRuntime = TerminalIOSSelectionRuntime()
 
     func requestRender() {
         if isShuttingDown { return }
@@ -2101,12 +2102,7 @@ class GhosttyTerminalView: UIView {
     }
 
     private func showEditMenu(at location: CGPoint) {
-        let hasGhosttySelection: Bool
-        if let surface = surface?.unsafeCValue {
-            hasGhosttySelection = ghostty_surface_has_selection(surface)
-        } else {
-            hasGhosttySelection = false
-        }
+        let hasGhosttySelection = selectionRuntime.hasGhosttySelection(surface: surface?.unsafeCValue)
         guard touchSelection != nil || hasGhosttySelection else {
             return
         }
@@ -2123,8 +2119,7 @@ class GhosttyTerminalView: UIView {
             if touchSelection != nil {
                 return true
             }
-            guard let cSurface = surface?.unsafeCValue else { return false }
-            return ghostty_surface_has_selection(cSurface)
+            return selectionRuntime.hasGhosttySelection(surface: surface?.unsafeCValue)
         case #selector(selectAll(_:)):
             if usesNativeTouchSelection {
                 return nativeSelectionSnapshot.length > 0 || selectionGridMetrics() != nil
