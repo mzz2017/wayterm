@@ -11,84 +11,57 @@ Cross-platform (iOS/macOS) SSH terminal app with iCloud sync and Keychain creden
 ## Architecture
 
 ```
-VVTerm/
-├── App/
-│   ├── VVTermApp.swift           # App entry point and composition root
-│   ├── ContentView.swift         # Shared root container
-│   ├── Localization/             # App-scoped localization preferences
-│   └── iOS/                      # iOS app shell and root navigation views
-├── Core/                         # Shared infrastructure and platform glue
-│   ├── Logging/
-│   ├── Network/
-│   ├── UI/
-│   ├── SSH/
-│   ├── Security/
-│   ├── Sync/
-│   └── Terminal/
-├── Features/                     # Feature-first product features
-│   ├── ConnectionViews/
-│   │   ├── Domain/
-│   │   └── Application/
-│   ├── LocalDiscovery/
-│   │   ├── Domain/
+.
+├── VVTerm/                       # Main app target source
+│   ├── App/                      # App entry, composition roots, app shell
 │   │   ├── Application/
-│   │   ├── Infrastructure/
+│   │   ├── Localization/
+│   │   └── iOS/
+│   │       └── Application/
+│   ├── Core/                     # Shared cross-feature infrastructure
+│   │   ├── Analytics/
+│   │   ├── Engagement/
+│   │   ├── Logging/
+│   │   ├── Network/
+│   │   │   └── Cloudflare/
+│   │   ├── Security/
+│   │   ├── SSH/
+│   │   ├── Sync/
+│   │   ├── Terminal/
+│   │   │   └── Logic/
 │   │   └── UI/
-│   ├── Servers/
-│   │   ├── Domain/
-│   │   ├── Application/
-│   │   └── UI/
-│   ├── RemoteFiles/
-│   │   ├── Domain/
-│   │   ├── Application/
-│   │   ├── Infrastructure/
-│   │   └── UI/
-│   ├── VoiceInput/
-│   │   ├── Infrastructure/
-│   │   └── UI/
-│   ├── Security/
-│   │   ├── Domain/
-│   │   ├── Application/
-│   │   ├── Infrastructure/
-│   │   └── UI/
-│   ├── Settings/
-│   │   ├── Application/
-│   │   └── UI/
-│   ├── Store/
-│   │   ├── Domain/
-│   │   ├── Application/
-│   │   └── UI/
-│   ├── Support/
-│   │   └── UI/
-│   ├── TerminalThemes/
-│   │   ├── Domain/
-│   │   ├── Application/
-│   │   ├── Infrastructure/
-│   │   └── UI/
-│   ├── TerminalAccessories/
-│   │   ├── Domain/
-│   │   ├── Application/
-│   │   └── UI/
-│   ├── TerminalPresets/
-│   │   ├── Domain/
-│   │   ├── Application/
-│   │   └── UI/
-│   ├── TerminalSessions/
-│   │   ├── Domain/
-│   │   ├── Application/
-│   │   └── UI/
-│   ├── Stats/
-│   │   ├── Domain/
-│   │   ├── Application/
-│   │   ├── Infrastructure/
-│   │   └── UI/
-│   └── Welcome/
-│       ├── Domain/
-│       └── UI/
-├── GhosttyTerminal/              # libghostty terminal emulation
-├── Compatibility/                # Version/platform compatibility helpers
-├── Generated/                    # Build-time generated sources
-└── Resources/                    # Bundled assets, themes, terminfo, l10n
+│   │       ├── iOS/
+│   │       └── Notices/
+│   ├── Features/                 # Feature-first product code
+│   │   ├── ConnectionViews/      # Domain, Application
+│   │   ├── LocalDiscovery/       # Domain, Application, Infrastructure, UI
+│   │   ├── RemoteFiles/          # Domain, Application, Infrastructure, UI
+│   │   ├── Security/             # Domain, Application, Infrastructure, UI
+│   │   ├── Servers/              # Domain, Application, Infrastructure, UI
+│   │   ├── Settings/             # Application, Infrastructure, UI
+│   │   ├── Stats/                # Domain, Application, Infrastructure, UI
+│   │   ├── Store/                # Domain, Application, UI
+│   │   ├── Support/              # UI
+│   │   ├── TerminalAccessories/  # Domain, Application, UI
+│   │   ├── TerminalPresets/      # Domain, Application, UI
+│   │   ├── TerminalSessions/     # Domain, Application, Infrastructure, UI
+│   │   ├── TerminalThemes/       # Domain, Application, Infrastructure
+│   │   ├── VoiceInput/           # Application, Infrastructure, UI
+│   │   └── Welcome/              # Domain, UI
+│   ├── GhosttyTerminal/          # libghostty bridge and terminal runtime integration
+│   ├── Compatibility/            # Version/platform compatibility helpers
+│   ├── Generated/                # Build-time generated sources
+│   ├── Resources/                # Bundled assets, themes, terminfo, l10n
+│   └── Assets.xcassets/          # App asset catalog
+├── VVTermLiveActivity/           # Live Activity extension target
+├── VVTermShared/                 # Shared target folder
+├── VVTermTests/                  # Unit and architecture/boundary tests
+├── VVTermUITests/                # UI tests
+├── VVTermLinuxTests/             # Linux-compatible test coverage
+├── Vendor/                       # Prebuilt third-party native dependencies
+├── scripts/                      # Build/test/packaging automation
+├── docs/                         # Engineering docs and specs
+└── web/                          # Web/supporting frontend assets
 ```
 
 ## Architecture Direction
@@ -103,21 +76,23 @@ Current architecture:
 - `Core/UI` owns shared view primitives and presentation helpers reused across features.
 - `Core/Terminal` owns shared clipboard, paste, and terminal text/default helpers.
 - `Core/Logging` owns shared logging utilities.
+- `Core/Analytics` owns shared analytics event tracking primitives.
+- `Core/Engagement` owns shared engagement/review prompt tracking primitives.
 - `Core/SSH` owns shared SSH bootstrap, known-hosts, key generation, environment detection, rich-paste support, tmux/mosh runtime helpers, and `SSHClient`.
 - `Features/ConnectionViews` owns connection view tab configuration types and state.
 - `Features/RemoteFiles` owns remote file browsing, preview, transfer, and SFTP integration.
 - `Features/LocalDiscovery` owns discovery-specific code and UI.
-- `Features/Servers` owns server/workspace domain models, server management, and server/workspace UI flows.
+- `Features/Servers` owns server/workspace domain models, server management, credential/known-host persistence adapters, connection testing, and server/workspace UI flows.
 - `Features/Stats` owns server metrics collection and presentation.
 - `Features/Security` owns app lock and biometric authentication flows.
-- `Features/Settings` owns settings window presentation and settings screens.
+- `Features/Settings` owns settings persistence, settings window presentation, and settings screens.
 - `Features/Store` owns Pro entitlements, purchases, and upgrade surfaces.
 - `Features/Support` owns support/contact UI surfaces.
 - `Features/TerminalThemes` owns theme models, validation, storage paths, parsing, and theme management.
 - `Features/TerminalAccessories` owns keyboard accessory models, preferences, settings UI, and accessory validation flows.
 - `Features/TerminalPresets` owns terminal preset models, persistence, and preset form UI.
-- `Features/TerminalSessions` owns terminal session/tab domain models, session/tab managers, tmux prompt coordination, live activity support, and terminal session UI.
-- `Features/VoiceInput` owns transcription/audio capture infrastructure, MLX model management, and transcription settings UI.
+- `Features/TerminalSessions` owns terminal session/tab domain models, session/tab managers, runtime preference persistence, snapshot stores, tmux binding/prompt coordination, live activity support, and terminal session UI.
+- `Features/VoiceInput` owns transcription settings/model download state, transcription/audio capture infrastructure, MLX model management, and transcription settings UI.
 - `Features/Welcome` owns welcome/onboarding copy and presentation.
 - New app code should land in `Features`, `Core`, or `App` based on ownership.
 - New work inside a feature should stay inside its `Features/<FeatureName>` subtree and should not reintroduce app-wide bucket folders.
@@ -150,7 +125,7 @@ Top-level app-owned code belongs in:
 - `GhosttyTerminal`: libghostty bridge and terminal runtime integration
 - `Compatibility`, `Generated`, `Resources`: narrow purpose-specific buckets
 
-Feature folders should use `Domain`, `Application`, `Infrastructure`, and `UI`.
+Feature folders should use the relevant subset of `Domain`, `Application`, `Infrastructure`, and `UI`; do not create empty layers just to satisfy the shape.
 
 When a folder becomes module-like, add internal owner folders instead of growing flat files. For `GhosttyTerminal`, prefer `Bridge`, `Surface`, `Shared`, `iOS/<Owner>`, and `macOS/<Owner>`.
 
