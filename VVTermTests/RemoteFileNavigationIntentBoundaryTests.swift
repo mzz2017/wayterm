@@ -15,6 +15,9 @@ struct RemoteFileNavigationIntentBoundaryTests {
     func browserScreenDelegatesNavigationTaskOwnershipToStore() throws {
         // Given the shared RemoteFiles browser SwiftUI source.
         let root = try sourceRoot()
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift")
+        )
         let browserSource = try [
             "VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift",
             "VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen+MacOSInlineEdit.swift"
@@ -48,6 +51,14 @@ struct RemoteFileNavigationIntentBoundaryTests {
         #expect(
             !containsRegex(#"Task\s*\{\s*if\s+snapshot\.currentPath\s*!=\s*destinationPath[\s\S]*browser\.requestNavigation[\s\S]*browser\.createDirectory"#, in: browserSource),
             "RemoteFileBrowserScreen should not fire navigation intent and then continue folder creation before navigation completion."
+        )
+        #expect(
+            storeSource.contains("RemoteFileNavigationRequestCoordinator"),
+            "RemoteFileBrowserStore should delegate navigation request lifecycle to a focused application coordinator."
+        )
+        #expect(
+            !storeSource.contains("navigationRequestByTab"),
+            "RemoteFileBrowserStore should not own navigation request coalescing dictionaries directly."
         )
     }
 

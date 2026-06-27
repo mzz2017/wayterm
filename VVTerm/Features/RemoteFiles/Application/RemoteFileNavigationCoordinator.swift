@@ -23,44 +23,32 @@ extension RemoteFileBrowserStore {
         server: Server,
         onCompleted: @escaping @MainActor (RemoteFileNavigationResult) -> Void = { _ in }
     ) -> UUID {
-        guard tab.serverId == server.id else {
-            let requestID = UUID()
-            onCompleted(.skipped)
-            return requestID
-        }
-
-        cancelNavigationRequest(for: tab.id)
-
-        let requestID = UUID()
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                self.navigationRequests.removeValue(forKey: requestID)
-                if self.navigationRequestByTab[tab.id] == requestID {
-                    self.navigationRequestByTab.removeValue(forKey: tab.id)
-                }
-            }
-
-            guard !Task.isCancelled, self.navigationRequestByTab[tab.id] == requestID else { return }
-            let result = await self.performNavigation(
-                action,
-                in: tab,
-                server: server,
-                requestID: requestID
-            )
-            guard !Task.isCancelled, self.navigationRequestByTab[tab.id] == requestID else { return }
-            onCompleted(result)
-        }
-
-        navigationRequests[requestID] = NavigationRequest(tabId: tab.id, serverId: server.id, task: task)
-        navigationRequestByTab[tab.id] = requestID
-        return requestID
+        navigationRequestCoordinator.requestNavigation(
+            in: tab,
+            server: server,
+            onCancelPrevious: { [weak self] tabId in
+                self?.resetCancelledNavigationState(for: tabId)
+            },
+            perform: { [weak self] requestID in
+                guard let self else { return .skipped }
+                return await self.performNavigation(
+                    action,
+                    in: tab,
+                    server: server,
+                    requestID: requestID
+                )
+            },
+            onCompleted: onCompleted
+        )
     }
 
     func cancelNavigationRequest(for tabId: UUID) {
-        guard let requestID = navigationRequestByTab.removeValue(forKey: tabId) else { return }
+        guard navigationRequestCoordinator.cancelRequest(for: tabId) else { return }
+        resetCancelledNavigationState(for: tabId)
+    }
+
+    private func resetCancelledNavigationState(for tabId: UUID) {
         directoryRequestIDs.removeValue(forKey: tabId)
-        navigationRequests[requestID]?.task.cancel()
 
         guard let state = states[tabId] else { return }
         updateState(for: tabId, serverId: state.serverId) { state in
@@ -146,7 +134,7 @@ extension RemoteFileBrowserStore {
     }
 
     private func isCurrentNavigationRequest(_ requestID: UUID, for tabId: UUID) -> Bool {
-        !Task.isCancelled && navigationRequestByTab[tabId] == requestID
+        navigationRequestCoordinator.isCurrentRequest(requestID, for: tabId)
     }
 
     private func loadedDirectoryResult(

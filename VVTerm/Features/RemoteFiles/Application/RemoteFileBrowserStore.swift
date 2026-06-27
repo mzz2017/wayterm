@@ -92,12 +92,6 @@ final class RemoteFileBrowserStore: ObservableObject {
         let filesystemStatus: RemoteFileFilesystemStatus?
     }
 
-    struct NavigationRequest {
-        let tabId: UUID
-        let serverId: UUID
-        let task: Task<Void, Never>
-    }
-
     @Published private(set) var states: [UUID: BrowserState] = [:]
     @Published var pendingToolbarCommand: ToolbarCommand?
 
@@ -115,13 +109,12 @@ final class RemoteFileBrowserStore: ObservableObject {
     private let serviceAccessCoordinator: RemoteFileServiceAccessCoordinator
     private let requestLifecycleCoordinator = RemoteFileRequestLifecycleCoordinator()
     let previewLoadCoordinator = RemoteFilePreviewLoadCoordinator()
+    let navigationRequestCoordinator = RemoteFileNavigationRequestCoordinator()
     private let moveDestinationLoadCoordinator = RemoteFileMoveDestinationLoadCoordinator()
 
     var persistedStates: [String: RemoteFileBrowserPersistedState] = [:]
     var directoryRequestIDs: [UUID: UUID] = [:]
     var viewerRequestIDs: [UUID: UUID] = [:]
-    var navigationRequests: [UUID: NavigationRequest] = [:]
-    var navigationRequestByTab: [UUID: UUID] = [:]
     static let directoryEntryLimit = 2_000
     static let defaultPreviewBytes = 512 * 1_024
     static let hardPreviewBytes = 2 * 1_024 * 1_024
@@ -141,7 +134,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     var pendingNavigationRequestIDs: Set<UUID> {
-        Set(navigationRequestByTab.values)
+        navigationRequestCoordinator.pendingRequestIDs
     }
 
     var pendingMoveDestinationLoadRequestIDs: Set<UUID> {
@@ -275,7 +268,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     func waitForNavigationRequest(_ requestID: UUID) async {
-        await navigationRequests[requestID]?.task.value
+        await navigationRequestCoordinator.waitForRequest(requestID)
     }
 
     func waitForMoveDestinationLoadRequest(_ requestID: UUID) async {
@@ -437,9 +430,7 @@ final class RemoteFileBrowserStore: ObservableObject {
             }
         )
         affectedTabIDs.formUnion(
-            navigationRequests.values.compactMap { request in
-                request.serverId == serverId ? request.tabId : nil
-            }
+            navigationRequestCoordinator.affectedTabIDs(for: serverId)
         )
 
         for tabId in affectedTabIDs {
