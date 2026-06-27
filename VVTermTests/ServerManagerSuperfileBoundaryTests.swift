@@ -224,6 +224,12 @@ struct ServerManagerSuperfileBoundaryTests {
         let credentialSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Servers/Infrastructure/ServerManager+CredentialLifecycle.swift")
         )
+        let persistenceSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerCredentialPersistence.swift")
+        )
+        let persistenceKeychainSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Infrastructure/ServerCredentialPersistence+Keychain.swift")
+        )
         let appSource = try source(
             at: root.appendingPathComponent("VVTerm/App/VVTermApp.swift")
         )
@@ -234,7 +240,13 @@ struct ServerManagerSuperfileBoundaryTests {
         #expect(credentialSource.contains("func defaultDeletionTeardown"))
         #expect(credentialSource.contains("func defaultCredentialDeletion"))
         #expect(credentialSource.contains("func defaultCredentialStore"))
-        #expect(credentialSource.contains("KeychainManager.shared"))
+        #expect(credentialSource.contains("ServerCredentialPersistence.shared"))
+        #expect(!credentialSource.contains("KeychainManager.shared"))
+        #expect(persistenceSource.contains("protocol ServerCredentialWritingLibrary"))
+        #expect(persistenceSource.contains("final class ServerCredentialPersistence"))
+        #expect(persistenceSource.contains("func storeCredentials(for server: Server, credentials: ServerCredentials)"))
+        #expect(persistenceKeychainSource.contains("extension KeychainManager: ServerCredentialWritingLibrary"))
+        #expect(persistenceKeychainSource.contains("ServerCredentialPersistence(library: KeychainManager.shared)"))
         #expect(credentialSource.contains("static func defaultDeletionTeardown"))
         #expect(
             !credentialSource.contains("ConnectionSessionManager.shared"),
