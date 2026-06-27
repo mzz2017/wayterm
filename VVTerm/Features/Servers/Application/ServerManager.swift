@@ -1,6 +1,5 @@
 import Foundation
 import Combine
-import SwiftUI
 import os.log
 
 struct ServerDeletionFailure: Identifiable, Equatable {
@@ -411,7 +410,7 @@ final class ServerManager: ObservableObject {
     }
 
     func reorderWorkspaces(from source: IndexSet, to destination: Int) async throws {
-        workspaces.move(fromOffsets: source, toOffset: destination)
+        workspaces = Self.workspacesByMoving(workspaces, from: source, to: destination)
         pendingBootstrapWorkspaceID = nil
 
         // Update order for all workspaces
@@ -433,5 +432,23 @@ final class ServerManager: ObservableObject {
             enqueuePendingWorkspaceUpsert(updated)
         }
         await persistLocalMutations(logMessage: "Reordered workspaces")
+    }
+
+    private static func workspacesByMoving(
+        _ workspaces: [Workspace],
+        from source: IndexSet,
+        to destination: Int
+    ) -> [Workspace] {
+        let validSource = source.filter { workspaces.indices.contains($0) }
+        guard !validSource.isEmpty else { return workspaces }
+
+        let movingWorkspaces = validSource.map { workspaces[$0] }
+        var remainingWorkspaces = workspaces.enumerated()
+            .filter { index, _ in !validSource.contains(index) }
+            .map(\.element)
+        let removedBeforeDestination = validSource.filter { $0 < destination }.count
+        let insertionIndex = min(max(destination - removedBeforeDestination, 0), remainingWorkspaces.count)
+        remainingWorkspaces.insert(contentsOf: movingWorkspaces, at: insertionIndex)
+        return remainingWorkspaces
     }
 }

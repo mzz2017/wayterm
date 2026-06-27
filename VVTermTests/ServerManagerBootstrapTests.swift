@@ -9,8 +9,8 @@ import Testing
 // lifecycle closures so failures identify changes to local state invariants
 // rather than sync transport behavior. Update this context only when
 // bootstrap/backfill policy, known-host cleanup ownership, credential-save
-// ordering, server deletion teardown ownership, or user-initiated workspace and
-// environment save/delete intent tracking changes intentionally.
+// ordering, server deletion teardown ownership, or user-initiated workspace
+// save/reorder and environment save/delete intent tracking changes intentionally.
 @Suite(.serialized)
 @MainActor
 struct ServerManagerBootstrapTests {
@@ -414,6 +414,22 @@ struct ServerManagerBootstrapTests {
             manager.workspaceSaveFailure?.message.contains("Upgrade") == true,
             "Workspace save Pro failure should preserve the user-visible upgrade message."
         )
+    }
+
+    @Test
+    func workspaceReorderUsesApplicationOwnedMoveLogicWithoutSwiftUIDependency() async throws {
+        let first = Workspace(id: UUID(), name: "First", order: 0)
+        let second = Workspace(id: UUID(), name: "Second", order: 1)
+        let third = Workspace(id: UUID(), name: "Third", order: 2)
+        let fourth = Workspace(id: UUID(), name: "Fourth", order: 3)
+        let manager = ServerManager.makeForTesting(workspaces: [first, second, third, fourth])
+
+        // Given the user drags two adjacent workspaces after the current last item.
+        try await manager.reorderWorkspaces(from: IndexSet([1, 2]), to: 4)
+
+        // Then relative order is preserved and persisted order indexes are rewritten.
+        #expect(manager.workspaces.map(\.id) == [first.id, fourth.id, second.id, third.id])
+        #expect(manager.workspaces.map(\.order) == [0, 1, 2, 3])
     }
 
     @Test

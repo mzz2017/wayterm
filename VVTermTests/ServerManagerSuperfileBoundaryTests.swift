@@ -10,6 +10,29 @@ import Testing
 @Suite(.serialized)
 struct ServerManagerSuperfileBoundaryTests {
     @Test
+    func serverManagerDoesNotImportPresentationFrameworks() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerManager.swift")
+        )
+
+        // Given ServerManager is application state, not SwiftUI presentation.
+        #expect(managerSource.contains("import Combine"))
+        #expect(
+            !managerSource.contains("import SwiftUI"),
+            "ServerManager.swift should use Combine observation without importing SwiftUI presentation APIs."
+        )
+        #expect(
+            !managerSource.contains("import UIKit"),
+            "ServerManager.swift should not import UIKit from the Servers application layer."
+        )
+        #expect(
+            !managerSource.contains("import AppKit"),
+            "ServerManager.swift should not import AppKit from the Servers application layer."
+        )
+    }
+
+    @Test
     func localPersistenceAndBootstrapLiveOutsideServerManagerFile() throws {
         let root = try sourceRoot()
         let managerSource = try source(
