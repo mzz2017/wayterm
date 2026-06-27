@@ -19,7 +19,7 @@ import GameController
 /// This view handles:
 /// - Metal layer setup for terminal rendering (Ghostty handles this internally)
 /// - Touch and keyboard input
-/// - Surface lifecycle management
+/// - Surface lifecycle requests
 @MainActor
 class GhosttyTerminalView: UIView {
     private static let textInputContextID = "app.vivy.VVTerm.GhosttyTerminalView"
@@ -228,6 +228,7 @@ class GhosttyTerminalView: UIView {
 
     private let renderingSetup = GhosttyRenderingSetup()
     private let surfaceDisplayRuntime = TerminalIOSSurfaceDisplayRuntime()
+    private let surfaceLifecycleRuntime = TerminalIOSSurfaceLifecycleRuntime()
     private let inputRuntime = TerminalIOSInputRuntime()
     private let selectionRuntime = TerminalIOSSelectionRuntime()
 
@@ -369,12 +370,43 @@ class GhosttyTerminalView: UIView {
     func cleanup() {
         isShuttingDown = true
         isPaused = true
-        scrollRuntime.stopMomentumScrolling()
-        zoomRuntime.cancelPendingIndicatorHide()
+        surface = surfaceLifecycleRuntime.cleanup(
+            surface: surface,
+            surfaceRegistration: surfaceRegistration,
+            stopMomentumScrolling: { [scrollRuntime] in
+                scrollRuntime.stopMomentumScrolling()
+            },
+            cancelPendingZoomIndicatorHide: { [zoomRuntime] in
+                zoomRuntime.cancelPendingIndicatorHide()
+            },
+            invalidateLifecycleObservers: { [lifecycleObservers] in
+                lifecycleObservers.invalidateAll()
+            },
+            clearCallbacks: { [weak self] in
+                self?.clearLifecycleCallbacks()
+            }
+        )
+    }
 
-        lifecycleObservers.invalidateAll()
+    /// Pause rendering and input without destroying the surface.
+    func pauseRendering() {
+        guard !isShuttingDown else { return }
+        isPaused = true
+        surfaceLifecycleRuntime.pauseRendering(surface: surface)
+    }
 
-        // Clear all callbacks first to prevent any further interactions
+    /// Resume rendering/input after a pause.
+    func resumeRendering() {
+        guard !isShuttingDown else { return }
+        isPaused = false
+        surfaceLifecycleRuntime.resumeRendering(surface: surface) { [weak self] in
+            guard let self else { return }
+            sizeDidChange(bounds.size)
+            requestRender()
+        }
+    }
+
+    private func clearLifecycleCallbacks() {
         onReady = nil
         onProcessExit = nil
         onTitleChange = nil
@@ -385,44 +417,6 @@ class GhosttyTerminalView: UIView {
         onFindNavigatorVisibilityChange = nil
         richPasteInterceptor = nil
         writeCallback = nil
-
-        surface?.invalidateCallbackContext()
-
-        // Stop rendering/input callbacks and mark the surface as not visible.
-        if let cSurface = surface?.unsafeCValue {
-            ghostty_surface_set_focus(cSurface, false)
-            ghostty_surface_set_occlusion(cSurface, false)
-        }
-
-        surfaceRegistration.unregister()
-
-        // Detach immediately, then release native resources off the UI thread.
-        surface?.free()
-        surface = nil
-    }
-
-    /// Pause rendering and input without destroying the surface.
-    func pauseRendering() {
-        guard !isShuttingDown else { return }
-        isPaused = true
-
-        if let surface = surface?.unsafeCValue {
-            ghostty_surface_set_focus(surface, false)
-            ghostty_surface_set_occlusion(surface, false)
-        }
-    }
-
-    /// Resume rendering/input after a pause.
-    func resumeRendering() {
-        guard !isShuttingDown else { return }
-        isPaused = false
-
-        if let surface = surface?.unsafeCValue {
-            ghostty_surface_set_occlusion(surface, true)
-        }
-
-        sizeDidChange(bounds.size)
-        requestRender()
     }
 
     // MARK: - Layer Type
