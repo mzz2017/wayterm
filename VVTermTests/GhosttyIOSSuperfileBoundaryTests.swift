@@ -163,6 +163,35 @@ struct GhosttyIOSSuperfileBoundaryTests {
     }
 
     @Test
+    func selectionInteractionsLiveOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
+        )
+        let selectionSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Selection/GhosttyTerminalView+SelectionInteractions+iOS.swift")
+        )
+
+        #expect(
+            !mainSource.contains("func handleSelectionPress"),
+            "GhosttyTerminalView+iOS.swift should not own touch selection gesture routing."
+        )
+        #expect(
+            !mainSource.contains("func nativeSelectionMenuElements"),
+            "GhosttyTerminalView+iOS.swift should not own native selection menu construction."
+        )
+        #expect(
+            !mainSource.contains("func selectAllVisibleText"),
+            "GhosttyTerminalView+iOS.swift should not own selection command policy."
+        )
+
+        #expect(selectionSource.contains("func handleSelectionPress"))
+        #expect(selectionSource.contains("func nativeSelectionMenuElements"))
+        #expect(selectionSource.contains("func selectAllVisibleText"))
+        #expect(selectionSource.contains("TerminalTouchSelectionLayout"))
+    }
+
+    @Test
     func interactionDelegatesLiveOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
@@ -339,13 +368,16 @@ struct GhosttyIOSSuperfileBoundaryTests {
         let presentationSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Presentation/TerminalIOSPresentationEnvironment.swift")
         )
+        let selectionSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Selection/GhosttyTerminalView+SelectionInteractions+iOS.swift")
+        )
 
         // Given GhosttyTerminalView needs app-active state, menu presentation,
         // and URL opening for iOS terminal interactions.
-        #expect(mainSource.contains("private let presentationEnvironment: TerminalIOSPresentationEnvironment"))
+        #expect(mainSource.contains("let presentationEnvironment: TerminalIOSPresentationEnvironment"))
         #expect(mainSource.contains("presentationEnvironment.isApplicationActive()"))
-        #expect(mainSource.contains("presentationEnvironment.presentController"))
-        #expect(mainSource.contains("presentationEnvironment.openURL(url)"))
+        #expect(selectionSource.contains("presentationEnvironment.presentController"))
+        #expect(selectionSource.contains("presentationEnvironment.openURL(url)"))
 
         // Then the main surface view does not own those platform singleton
         // lookups or presenter traversal details.

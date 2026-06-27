@@ -9,15 +9,18 @@ struct GhosttyIOSTouchSelectionStateBoundaryTests {
         let viewSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
+        let selectionSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Selection/GhosttyTerminalView+SelectionInteractions+iOS.swift")
+        )
         let stateSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Selection/TerminalIOSTouchSelectionState.swift")
         )
 
-        #expect(viewSource.contains("private let touchSelectionState = TerminalIOSTouchSelectionState()"))
-        #expect(viewSource.contains("touchSelectionState.begin"))
-        #expect(viewSource.contains("touchSelectionState.update"))
-        #expect(viewSource.contains("touchSelectionState.updateHandle"))
-        #expect(viewSource.contains("touchSelectionState.clear"))
+        #expect(viewSource.contains("let touchSelectionState = TerminalIOSTouchSelectionState()"))
+        #expect(selectionSource.contains("touchSelectionState.begin"))
+        #expect(selectionSource.contains("touchSelectionState.update"))
+        #expect(selectionSource.contains("touchSelectionState.updateHandle"))
+        #expect(selectionSource.contains("touchSelectionState.clear"))
 
         #expect(!viewSource.contains("private var touchSelectionAnchor"))
         #expect(!viewSource.contains("private var touchSelectionSeed"))
