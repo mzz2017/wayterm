@@ -239,10 +239,7 @@ struct iOSTerminalView: View {
             fallbackHex: fallbackHex
         )
         terminalBackgroundColor = resolved.usedFallback ? fallback : resolved.color
-        UserDefaults.standard.set(
-            resolved.storageHex,
-            forKey: TerminalThemeBackgroundResolver.cacheKey
-        )
+        TerminalThemeBackgroundResolver.cacheResolvedBackground(resolved)
     }
 
     private func attemptForegroundReconnectIfNeeded(refreshTerminal: Bool = false) {

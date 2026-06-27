@@ -466,10 +466,7 @@ struct ConnectionTerminalContainer: View {
             themeName: effectiveThemeName,
             fallbackHex: terminalBackgroundFallbackHex
         )
-        UserDefaults.standard.set(
-            resolved.storageHex,
-            forKey: TerminalThemeBackgroundResolver.cacheKey
-        )
+        TerminalThemeBackgroundResolver.cacheResolvedBackground(resolved)
     }
 
     // MARK: - Toolbar Items (macOS)

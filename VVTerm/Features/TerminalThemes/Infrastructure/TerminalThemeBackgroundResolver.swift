@@ -28,16 +28,30 @@ nonisolated enum TerminalThemeBackgroundResolver {
         themeName: String,
         fallbackHex: String
     ) -> TerminalThemeBackgroundResolution {
-        if let cachedHex = defaults.string(forKey: cacheKey) {
-            let storageHex = normalizedStorageHex(cachedHex)
-            return TerminalThemeBackgroundResolution(
-                color: Color.fromHex(storageHex),
-                storageHex: storageHex,
-                usedFallback: false
-            )
+        if let cached = cachedBackground(defaults: defaults) {
+            return cached
         }
 
         return resolve(themeName: themeName, fallbackHex: fallbackHex)
+    }
+
+    nonisolated static func cachedBackground(
+        defaults: UserDefaults = .standard
+    ) -> TerminalThemeBackgroundResolution? {
+        guard let cachedHex = defaults.string(forKey: cacheKey) else { return nil }
+        let storageHex = normalizedStorageHex(cachedHex)
+        return TerminalThemeBackgroundResolution(
+            color: Color.fromHex(storageHex),
+            storageHex: storageHex,
+            usedFallback: false
+        )
+    }
+
+    nonisolated static func cacheResolvedBackground(
+        _ resolution: TerminalThemeBackgroundResolution,
+        defaults: UserDefaults = .standard
+    ) {
+        defaults.set(resolution.storageHex, forKey: cacheKey)
     }
 
     nonisolated static func normalizedStorageHex(_ value: String) -> String {

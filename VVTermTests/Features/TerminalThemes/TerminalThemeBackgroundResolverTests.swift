@@ -88,6 +88,24 @@ final class TerminalThemeBackgroundResolverTests: XCTestCase {
         )
     }
 
+    func testCacheResolvedBackgroundPersistsStorageHexBehindResolverBoundary() {
+        let suiteName = "TerminalThemeBackgroundResolverTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let resolved = TerminalThemeBackgroundResolver.resolve(
+            themeName: uniqueThemeName(),
+            fallbackHex: "aabbcc"
+        )
+        TerminalThemeBackgroundResolver.cacheResolvedBackground(resolved, defaults: defaults)
+
+        XCTAssertEqual(
+            TerminalThemeBackgroundResolver.cachedBackground(defaults: defaults)?.storageHex,
+            "#AABBCC",
+            "Terminal background cache persistence should be owned by the resolver boundary."
+        )
+    }
+
     private func uniqueThemeName() -> String {
         "TerminalThemeBackgroundResolverTests-\(UUID().uuidString)"
     }

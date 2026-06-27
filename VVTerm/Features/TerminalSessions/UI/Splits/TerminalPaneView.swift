@@ -540,17 +540,14 @@ struct TerminalPaneView: View {
             fallbackHex: terminalBackgroundFallbackHex
         )
         terminalBackgroundColor = resolved.usedFallback ? Self.platformFallbackBackgroundColor() : resolved.color
-        UserDefaults.standard.set(
-            resolved.storageHex,
-            forKey: TerminalThemeBackgroundResolver.cacheKey
-        )
+        TerminalThemeBackgroundResolver.cacheResolvedBackground(resolved)
     }
 
     private static func initialTerminalBackgroundColor() -> Color {
         let defaults = UserDefaults.standard
 
-        if let cachedHex = defaults.string(forKey: TerminalThemeBackgroundResolver.cacheKey) {
-            return Color.fromHex(cachedHex)
+        if let cached = TerminalThemeBackgroundResolver.cachedBackground(defaults: defaults) {
+            return cached.color
         }
 
         let usePerAppearanceTheme = defaults.object(forKey: CloudKitSyncConstants.terminalUsePerAppearanceThemeKey) as? Bool ?? true

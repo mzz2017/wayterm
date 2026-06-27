@@ -499,15 +499,12 @@ struct TerminalContainerView: View {
             fallbackHex: terminalBackgroundFallbackHex
         )
         terminalBackgroundColor = resolved.usedFallback ? Self.platformFallbackBackgroundColor() : resolved.color
-        UserDefaults.standard.set(
-            resolved.storageHex,
-            forKey: TerminalThemeBackgroundResolver.cacheKey
-        )
+        TerminalThemeBackgroundResolver.cacheResolvedBackground(resolved)
     }
 
     private static func initialTerminalBackgroundColor() -> Color {
-        if let cachedHex = UserDefaults.standard.string(forKey: TerminalThemeBackgroundResolver.cacheKey) {
-            return Color.fromHex(cachedHex)
+        if let cached = TerminalThemeBackgroundResolver.cachedBackground() {
+            return cached.color
         }
         return platformFallbackBackgroundColor()
     }
