@@ -67,7 +67,7 @@ struct TerminalSessionDependencyBoundaryTests {
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
         )
         let liveDependencySource = try source(
-            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalSessionLiveDependencies.swift")
+            at: root.appendingPathComponent("VVTerm/App/TerminalSessionLiveDependencies.swift")
         )
         let openSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Open.swift")
@@ -98,8 +98,8 @@ struct TerminalSessionDependencyBoundaryTests {
         #expect(!openSource.contains("ServerManager.shared.updateLastConnected"))
         #expect(!managerSource.contains("if StoreManager.shared.isPro { return true }"))
 
-        // And the live app adapters stay isolated in a dedicated dependency
-        // bridge that can be replaced or moved to composition later.
+        // And the live app adapters stay isolated in the App composition
+        // layer instead of the TerminalSessions feature.
         #expect(liveDependencySource.contains("ServerManager.shared.servers"))
         #expect(liveDependencySource.contains("ServerManager.shared.isServerLocked"))
         #expect(liveDependencySource.contains("AppLockManager.shared.ensureServerUnlocked"))
@@ -114,7 +114,7 @@ struct TerminalSessionDependencyBoundaryTests {
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
         )
         let liveDependencySource = try source(
-            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalSessionLiveDependencies.swift")
+            at: root.appendingPathComponent("VVTerm/App/TerminalSessionLiveDependencies.swift")
         )
         let openSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Open.swift")
@@ -146,8 +146,8 @@ struct TerminalSessionDependencyBoundaryTests {
         #expect(!managerSource.contains("StoreManager.shared.isPro { return true }"))
         #expect(!managerSource.contains("guard StoreManager.shared.isPro"))
 
-        // And the live app adapters stay isolated in a dedicated dependency
-        // bridge that can be replaced or moved to composition later.
+        // And the live app adapters stay isolated in the App composition
+        // layer instead of the TerminalSessions feature.
         #expect(liveDependencySource.contains("ServerManager.shared.servers"))
         #expect(liveDependencySource.contains("AppLockManager.shared.ensureServerUnlocked"))
         #expect(liveDependencySource.contains("KeychainManager.shared.getCredentials"))
