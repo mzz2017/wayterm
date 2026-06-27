@@ -252,6 +252,7 @@ class GhosttyTerminalView: UIView {
 
     private let renderingSetup = GhosttyRenderingSetup()
     private let surfaceDisplayRuntime = TerminalIOSSurfaceDisplayRuntime()
+    private let inputRuntime = TerminalIOSInputRuntime()
 
     func requestRender() {
         if isShuttingDown { return }
@@ -2447,19 +2448,6 @@ class GhosttyTerminalView: UIView {
         repeatingKeyCode = nil
     }
 
-    private func ghosttyInputAction(_ action: ghostty_input_action_e) -> Ghostty.Input.Action {
-        switch action {
-        case GHOSTTY_ACTION_PRESS:
-            return .press
-        case GHOSTTY_ACTION_RELEASE:
-            return .release
-        case GHOSTTY_ACTION_REPEAT:
-            return .repeat
-        default:
-            return .press
-        }
-    }
-
     private func fallbackHardwareEvent(
         key: Ghostty.Input.Key,
         action: Ghostty.Input.Action,
@@ -2485,13 +2473,7 @@ class GhosttyTerminalView: UIView {
         action: ghostty_input_action_e,
         surface cSurface: ghostty_surface_t
     ) -> Bool {
-        guard let event = Ghostty.Input.KeyEvent(uiKey: key, action: ghosttyInputAction(action))
-        else {
-            return false
-        }
-        return event.withCValue { cEvent in
-            ghostty_surface_key(cSurface, cEvent)
-        }
+        inputRuntime.sendDirectHardwareKeyEvent(key, action: action, surface: cSurface)
     }
 
     private func shouldRoutePressToSystemTextInput(_ key: UIKey) -> Bool {
@@ -2887,19 +2869,7 @@ class GhosttyTerminalView: UIView {
 
         guard let cSurface = surface?.unsafeCValue else { return }
 
-        if let visibleText, !visibleText.isEmpty {
-            let len = visibleText.utf8CString.count
-            guard len > 0 else {
-                ghostty_surface_preedit(cSurface, nil, 0)
-                requestRender()
-                return
-            }
-            visibleText.withCString { ptr in
-                ghostty_surface_preedit(cSurface, ptr, UInt(len - 1))
-            }
-        } else {
-            ghostty_surface_preedit(cSurface, nil, 0)
-        }
+        inputRuntime.syncPreedit(visibleText, surface: cSurface)
 
         requestRender()
     }
