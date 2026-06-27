@@ -7,15 +7,15 @@ final class RemoteFileServiceAccessCoordinator {
         let task: Task<Void, Never>
     }
 
-    private let remoteFileServiceAdapter: SSHSFTPAdapter
+    private let remoteFileServiceAccess: any RemoteFileServiceAccessing
     private var pendingDisconnects: [UUID: PendingDisconnect] = [:]
 
     #if DEBUG
     private var pendingDisconnectWaitDidFinishForTesting: (@MainActor (UUID) async -> Void)?
     #endif
 
-    init(remoteFileServiceAdapter: SSHSFTPAdapter) {
-        self.remoteFileServiceAdapter = remoteFileServiceAdapter
+    init(remoteFileServiceAccess: any RemoteFileServiceAccessing) {
+        self.remoteFileServiceAccess = remoteFileServiceAccess
     }
 
     @discardableResult
@@ -25,8 +25,8 @@ final class RemoteFileServiceAccessCoordinator {
         }
 
         let disconnectID = UUID()
-        let task = Task { @MainActor [weak self, remoteFileServiceAdapter] in
-            await remoteFileServiceAdapter.disconnect(serverId: serverId)
+        let task = Task { @MainActor [weak self, remoteFileServiceAccess] in
+            await remoteFileServiceAccess.disconnect(serverId: serverId)
             if self?.pendingDisconnects[serverId]?.id == disconnectID {
                 self?.pendingDisconnects.removeValue(forKey: serverId)
             }
@@ -40,7 +40,7 @@ final class RemoteFileServiceAccessCoordinator {
         operation: @escaping (any RemoteFileService) async throws -> T
     ) async throws -> T {
         await waitForPendingDisconnect(serverId: server.id)
-        return try await remoteFileServiceAdapter.withService(for: server, operation: operation)
+        return try await remoteFileServiceAccess.withService(for: server, operation: operation)
     }
 
     private func waitForPendingDisconnect(serverId: UUID) async {

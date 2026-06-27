@@ -169,7 +169,7 @@ private extension VVTermApp {
         )
 
         return RemoteFileBrowserStore(
-            remoteFileServiceAdapter: adapter,
+            remoteFileServiceAccess: adapter,
             serverProvider: { serverId in
                 ServerManager.shared.servers.first { $0.id == serverId }
             },

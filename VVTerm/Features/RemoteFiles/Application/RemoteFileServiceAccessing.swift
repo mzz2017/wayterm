@@ -1,0 +1,30 @@
+import Foundation
+
+@MainActor
+protocol RemoteFileServiceAccessing {
+    func withService<T>(
+        for server: Server,
+        operation: @escaping (any RemoteFileService) async throws -> T
+    ) async throws -> T
+
+    func disconnect(serverId: UUID) async
+}
+
+struct MissingRemoteFileServiceAccess: RemoteFileServiceAccessing {
+    func withService<T>(
+        for server: Server,
+        operation: @escaping (any RemoteFileService) async throws -> T
+    ) async throws -> T {
+        throw RemoteFileServiceAccessDependencyError.missingRemoteFileServiceAccess
+    }
+
+    func disconnect(serverId: UUID) async {}
+}
+
+private enum RemoteFileServiceAccessDependencyError: LocalizedError {
+    case missingRemoteFileServiceAccess
+
+    var errorDescription: String? {
+        "Remote file service access was not configured."
+    }
+}

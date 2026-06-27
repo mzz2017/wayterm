@@ -141,7 +141,7 @@ final class RemoteFileBrowserStore: ObservableObject {
 
     init(
         persistedStateStore: RemoteFileBrowserPersistedStateStore? = nil,
-        remoteFileServiceAdapter: SSHSFTPAdapter? = nil,
+        remoteFileServiceAccess: (any RemoteFileServiceAccessing)? = nil,
         serviceAccessCoordinator: RemoteFileServiceAccessCoordinator? = nil,
         temporaryStorage: RemoteFileTemporaryStorage = RemoteFileTemporaryStorage(),
         localFileService: RemoteFileLocalFileService = RemoteFileLocalFileService(),
@@ -153,11 +153,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     ) {
         self.persistedStateStore = persistedStateStore ?? RemoteFileBrowserPersistedStateStore()
         self.serviceAccessCoordinator = serviceAccessCoordinator ?? RemoteFileServiceAccessCoordinator(
-            remoteFileServiceAdapter: remoteFileServiceAdapter ?? SSHSFTPAdapter(
-                credentialsProvider: { _ in
-                    throw RemoteFileBrowserStoreDependencyError.missingCredentialsProvider
-                }
-            )
+            remoteFileServiceAccess: remoteFileServiceAccess ?? MissingRemoteFileServiceAccess()
         )
         self.temporaryStorage = temporaryStorage
         self.localFileService = localFileService
@@ -494,14 +490,6 @@ final class RemoteFileBrowserStore: ObservableObject {
 
     func setPendingToolbarCommand(_ command: ToolbarCommand?) {
         pendingToolbarCommand = command
-    }
-}
-
-private enum RemoteFileBrowserStoreDependencyError: LocalizedError {
-    case missingCredentialsProvider
-
-    var errorDescription: String? {
-        "Remote file credentials provider was not configured."
     }
 }
 

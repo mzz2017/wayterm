@@ -58,7 +58,7 @@ func makeRemoteFileBrowserStore(
 ) -> RemoteFileBrowserStore {
     RemoteFileBrowserStore(
         persistedStateStore: makeRemoteFileBrowserPersistedStateStore(),
-        remoteFileServiceAdapter: SSHSFTPAdapter(
+        remoteFileServiceAccess: SSHSFTPAdapter(
             credentialsProvider: { server in makeRemoteFileBrowserCredentials(serverId: server.id) },
             ownedClientFactory: {
                 client

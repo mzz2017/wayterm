@@ -18,19 +18,33 @@ struct RemoteFileServiceAccessBoundaryTests {
         let coordinatorSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFileServiceAccessCoordinator.swift")
         )
+        let serviceAccessSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFileServiceAccessing.swift")
+        )
+        let adapterSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift")
+        )
 
         // Given RemoteFiles needs to wait for dropped same-server disconnects
         // before starting fresh SFTP work.
         #expect(!storeSource.contains("private var pendingDisconnects"))
         #expect(!storeSource.contains("private struct PendingDisconnect"))
         #expect(!storeSource.contains("func waitForPendingDisconnect"))
+        #expect(!storeSource.contains("SSHSFTPAdapter"))
 
-        // Then one Application service owner holds the SFTP adapter and gate.
+        // Then one Application service owner holds the pending-disconnect gate
+        // through an explicit service access protocol, while Infrastructure
+        // provides the concrete SFTP adapter.
+        #expect(serviceAccessSource.contains("protocol RemoteFileServiceAccessing"))
+        #expect(serviceAccessSource.contains("func withService"))
+        #expect(serviceAccessSource.contains("func disconnect(serverId"))
         #expect(coordinatorSource.contains("final class RemoteFileServiceAccessCoordinator"))
-        #expect(coordinatorSource.contains("private let remoteFileServiceAdapter"))
+        #expect(coordinatorSource.contains("private let remoteFileServiceAccess: any RemoteFileServiceAccessing"))
         #expect(coordinatorSource.contains("private var pendingDisconnects"))
         #expect(coordinatorSource.contains("func withRemoteFileService"))
         #expect(coordinatorSource.contains("func disconnect(serverId"))
+        #expect(!coordinatorSource.contains("SSHSFTPAdapter"))
+        #expect(adapterSource.contains("extension SSHSFTPAdapter: RemoteFileServiceAccessing"))
     }
 
     @Test

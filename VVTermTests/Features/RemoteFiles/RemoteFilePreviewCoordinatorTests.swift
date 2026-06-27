@@ -300,7 +300,7 @@ struct RemoteFilePreviewCoordinatorTests {
         ))
         let store = RemoteFileBrowserStore(
             persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
-            remoteFileServiceAdapter: SSHSFTPAdapter(
+            remoteFileServiceAccess: SSHSFTPAdapter(
                 credentialsProvider: { server in makeCredentials(serverId: server.id) },
                 ownedClientFactory: { client }
             ),
@@ -405,7 +405,7 @@ struct RemoteFilePreviewCoordinatorTests {
     private func makeStore(client: SFTPRemoteFileClient) -> RemoteFileBrowserStore {
         RemoteFileBrowserStore(
             persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
-            remoteFileServiceAdapter: SSHSFTPAdapter(
+            remoteFileServiceAccess: SSHSFTPAdapter(
                 credentialsProvider: { server in makeCredentials(serverId: server.id) },
                 ownedClientFactory: { client }
             ),

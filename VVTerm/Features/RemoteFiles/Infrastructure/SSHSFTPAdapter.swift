@@ -107,3 +107,5 @@ final class SSHSFTPAdapter {
         return registration
     }
 }
+
+extension SSHSFTPAdapter: RemoteFileServiceAccessing {}

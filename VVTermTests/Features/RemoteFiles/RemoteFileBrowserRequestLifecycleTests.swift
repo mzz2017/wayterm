@@ -20,7 +20,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
         let operationProbe = RemoteFileBrowserOperationProbe()
         let store = RemoteFileBrowserStore(
             persistedStateStore: makeRemoteFileBrowserPersistedStateStore(defaults: defaults),
-            remoteFileServiceAdapter: SSHSFTPAdapter(
+            remoteFileServiceAccess: SSHSFTPAdapter(
                 credentialsProvider: { server in makeRemoteFileBrowserCredentials(serverId: server.id) },
                 ownedClientFactory: {
                     clients.removeFirst()
@@ -70,7 +70,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
         let operationProbe = RemoteFileBrowserOperationProbe()
         let store = RemoteFileBrowserStore(
             persistedStateStore: makeRemoteFileBrowserPersistedStateStore(defaults: defaults),
-            remoteFileServiceAdapter: SSHSFTPAdapter(
+            remoteFileServiceAccess: SSHSFTPAdapter(
                 credentialsProvider: { server in makeRemoteFileBrowserCredentials(serverId: server.id) },
                 ownedClientFactory: {
                     clients.removeFirst()
