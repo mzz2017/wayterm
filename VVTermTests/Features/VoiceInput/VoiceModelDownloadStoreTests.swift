@@ -15,6 +15,31 @@ import Testing
 @MainActor
 struct VoiceModelDownloadStoreTests {
     @Test
+    func modelManagersUseInjectedSettingsSnapshot() {
+        // Given a settings snapshot with non-default model identities.
+        let store = VoiceModelDownloadStore(
+            settings: TranscriptionSettingsReader {
+                TranscriptionSettingsSnapshot(
+                    provider: .mlxWhisper,
+                    whisperModelId: "test/custom-whisper",
+                    parakeetModelId: "test/custom-parakeet",
+                    languageCode: "en"
+                )
+            }
+        )
+
+        // Then model managers are configured from injected settings, not globals.
+        #expect(
+            store.whisperManager.modelId == "test/custom-whisper",
+            "Whisper model manager should use the injected settings snapshot."
+        )
+        #expect(
+            store.parakeetManager.modelId == "test/custom-parakeet",
+            "Parakeet model manager should use the injected settings snapshot."
+        )
+    }
+
+    @Test
     func duplicateDownloadIntentSharesTrackedTask() async {
         // Given a voice model download has started and is still running.
         let probe = VoiceModelDownloadProbe()

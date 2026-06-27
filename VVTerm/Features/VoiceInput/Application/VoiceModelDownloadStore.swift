@@ -5,22 +5,27 @@ import Combine
 final class VoiceModelDownloadStore: ObservableObject {
     typealias DownloadAction = @MainActor @Sendable (MLXModelKind) async -> Void
 
-    static let shared = VoiceModelDownloadStore(
-        whisperManager: MLXModelManager(
-            kind: .whisper,
-            modelId: TranscriptionSettingsStore.currentWhisperModelId()
-        ),
-        parakeetManager: MLXModelManager(
-            kind: .parakeetTDT,
-            modelId: TranscriptionSettingsStore.currentParakeetModelId()
-        )
-    )
-
     let whisperManager: MLXModelManager
     let parakeetManager: MLXModelManager
 
     private let downloadAction: DownloadAction?
     private var downloadTasks: [MLXModelKind: (id: UUID, task: Task<Void, Never>)] = [:]
+
+    init(
+        settings: TranscriptionSettingsReader,
+        downloadAction: DownloadAction? = nil
+    ) {
+        let snapshot = settings.current()
+        self.whisperManager = MLXModelManager(
+            kind: .whisper,
+            modelId: snapshot.whisperModelId
+        )
+        self.parakeetManager = MLXModelManager(
+            kind: .parakeetTDT,
+            modelId: snapshot.parakeetModelId
+        )
+        self.downloadAction = downloadAction
+    }
 
     private init(
         whisperManager: MLXModelManager,

@@ -12,9 +12,14 @@ class SpeechRecognitionService: ObservableObject {
     private var recognizerLanguageCode: String?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
+    private let settings: TranscriptionSettingsReader
 
     var isAvailable: Bool {
         resolvedRecognizer()?.isAvailable ?? false
+    }
+
+    init(settings: TranscriptionSettingsReader) {
+        self.settings = settings
     }
 
     // MARK: - Recognizer Resolution
@@ -32,7 +37,7 @@ class SpeechRecognitionService: ObservableObject {
     ]
 
     private func resolvedRecognizer() -> SFSpeechRecognizer? {
-        let languageCode = TranscriptionSettingsStore.currentLanguageCode()
+        let languageCode = settings.current().languageCode
         if let speechRecognizer, recognizerLanguageCode == languageCode {
             return speechRecognizer
         }

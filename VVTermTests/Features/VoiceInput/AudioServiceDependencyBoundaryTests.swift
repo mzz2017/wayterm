@@ -62,6 +62,12 @@ struct AudioServiceDependencyBoundaryTests {
         let parakeetProvider = try source(
             at: voiceInput.appendingPathComponent("Infrastructure/Parakeet/MLXParakeetProvider.swift")
         )
+        let speechRecognitionService = try source(
+            at: voiceInput.appendingPathComponent("Infrastructure/SpeechRecognitionService.swift")
+        )
+        let modelDownloadStore = try source(
+            at: voiceInput.appendingPathComponent("Application/VoiceModelDownloadStore.swift")
+        )
 
         #expect(
             !audioService.contains("TranscriptionSettingsStore.current"),
@@ -82,6 +88,14 @@ struct AudioServiceDependencyBoundaryTests {
         #expect(
             !parakeetProvider.contains("TranscriptionSettingsStore.current"),
             "MLXParakeetProvider should read settings through its injected TranscriptionSettingsReader."
+        )
+        #expect(
+            !speechRecognitionService.contains("TranscriptionSettingsStore.current"),
+            "SpeechRecognitionService should read language settings through its injected TranscriptionSettingsReader."
+        )
+        #expect(
+            !modelDownloadStore.contains("TranscriptionSettingsStore.current"),
+            "VoiceModelDownloadStore should receive model IDs through injected settings instead of reading global defaults."
         )
     }
 

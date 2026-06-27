@@ -1,5 +1,9 @@
 import Foundation
 
+extension VoiceModelDownloadStore {
+    static let shared = VoiceModelDownloadStore(settings: .live)
+}
+
 extension TranscriptionSettingsReader {
     static var live: TranscriptionSettingsReader {
         TranscriptionSettingsReader {

@@ -30,14 +30,16 @@ class AudioService: NSObject, ObservableObject {
 
     // Services
     private let permissionManager = AudioPermissionManager()
-    private let speechRecognitionService = SpeechRecognitionService()
+    private let speechRecognitionService: SpeechRecognitionService
     private let audioCaptureService = AudioCaptureService()
     private let dependencies: AudioServiceDependencies
 
     private var activeProvider: TranscriptionProvider = .system
 
     init(dependencies: AudioServiceDependencies? = nil) {
-        self.dependencies = dependencies ?? .live
+        let resolvedDependencies = dependencies ?? .live
+        self.dependencies = resolvedDependencies
+        self.speechRecognitionService = SpeechRecognitionService(settings: resolvedDependencies.settings)
         super.init()
         setupBindings()
     }
