@@ -24,22 +24,26 @@ struct GhosttyIOSFindRuntimeBoundaryTests {
         let runtimeSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Find/TerminalIOSFindRuntime.swift")
         )
+        let findNavigatorSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Find/GhosttyTerminalView+FindNavigator+iOS.swift")
+        )
         let interactionDelegateSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+InteractionDelegates+iOS.swift")
         )
+        let runtimeCallSource = viewSource + findNavigatorSource + interactionDelegateSource
 
         // Given GhosttyTerminalView owns a native find runtime while UIKit
         // delegate routing lives in the interaction delegate extension.
         #expect(viewSource.contains("let findRuntime = TerminalIOSFindRuntime()"))
         #expect(interactionDelegateSource.contains("findRuntime.makeSession"))
-        #expect(viewSource.contains("findRuntime.applyExternalQuery"))
-        #expect(viewSource.contains("findRuntime.updateReportedTotal"))
-        #expect(viewSource.contains("findRuntime.updateReportedSelectedIndex"))
-        #expect(viewSource.contains("findRuntime.resetReportedResults"))
-        #expect(viewSource.contains("findRuntime.beginNavigatorLifecycle"))
-        #expect(viewSource.contains("findRuntime.endNavigatorLifecycle"))
-        #expect(viewSource.contains("findRuntime.suppressNextGhosttySearchEnd"))
-        #expect(viewSource.contains("findRuntime.consumeSuppressedGhosttySearchEnd"))
+        #expect(runtimeCallSource.contains("findRuntime.applyExternalQuery"))
+        #expect(runtimeCallSource.contains("findRuntime.updateReportedTotal"))
+        #expect(runtimeCallSource.contains("findRuntime.updateReportedSelectedIndex"))
+        #expect(runtimeCallSource.contains("findRuntime.resetReportedResults"))
+        #expect(runtimeCallSource.contains("findRuntime.beginNavigatorLifecycle"))
+        #expect(runtimeCallSource.contains("findRuntime.endNavigatorLifecycle"))
+        #expect(runtimeCallSource.contains("findRuntime.suppressNextGhosttySearchEnd"))
+        #expect(runtimeCallSource.contains("findRuntime.consumeSuppressedGhosttySearchEnd"))
 
         // Then session ownership and Ghostty result counters must not stay in
         // the giant iOS terminal view.

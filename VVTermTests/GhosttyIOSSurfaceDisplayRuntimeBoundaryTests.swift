@@ -24,20 +24,23 @@ struct GhosttyIOSSurfaceDisplayRuntimeBoundaryTests {
         let surfaceRuntimeSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/GhosttyTerminalView+SurfaceRuntime+iOS.swift")
         )
+        let ownerSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/TerminalIOSSurfaceOwner.swift")
+        )
         let runtimeSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/TerminalIOSSurfaceDisplayRuntime.swift")
         )
-        let displayCallSource = viewSource + surfaceRuntimeSource
+        let displayCallSource = viewSource + surfaceRuntimeSource + ownerSource
 
         // Given the iOS terminal view needs Ghostty resize, redraw, and
         // External backend output lifecycle.
         #expect(viewSource.contains("let surfaceDisplayRuntime = TerminalIOSSurfaceDisplayRuntime()"))
-        #expect(displayCallSource.contains("surfaceDisplayRuntime.resizeIfNeeded"))
-        #expect(surfaceRuntimeSource.contains("surfaceDisplayRuntime.forceResize"))
-        #expect(displayCallSource.contains("surfaceDisplayRuntime.redraw"))
-        #expect(surfaceRuntimeSource.contains("surfaceDisplayRuntime.writeOutput"))
-        #expect(surfaceRuntimeSource.contains("surfaceDisplayRuntime.externalExited"))
-        #expect(displayCallSource.contains("surfaceDisplayRuntime.setColorScheme"))
+        #expect(displayCallSource.contains("displayRuntime.resizeIfNeeded"))
+        #expect(displayCallSource.contains("displayRuntime.forceResize"))
+        #expect(displayCallSource.contains("displayRuntime.redraw"))
+        #expect(displayCallSource.contains("displayRuntime.writeOutput"))
+        #expect(displayCallSource.contains("displayRuntime.externalExited"))
+        #expect(displayCallSource.contains("displayRuntime.setColorScheme"))
 
         // Then the main UIKit view does not directly own those C/FFI calls or
         // Ghostty pixel-size tracking state.

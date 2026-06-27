@@ -233,6 +233,9 @@ struct GhosttyIOSSuperfileBoundaryTests {
         let selectionSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Selection/GhosttyTerminalView+SelectionInteractions+iOS.swift")
         )
+        let surfaceOwnerSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/TerminalIOSSurfaceOwner.swift")
+        )
 
         #expect(
             !mainSource.contains("func setupNativeTextSelectionInteractions"),
@@ -254,7 +257,7 @@ struct GhosttyIOSSuperfileBoundaryTests {
         #expect(selectionSource.contains("func setupNativeTextSelectionInteractions"))
         #expect(selectionSource.contains("func refreshNativeSelectionSnapshot"))
         #expect(selectionSource.contains("func setNativeSelectedRange"))
-        #expect(selectionSource.contains("selectionRuntime.nativeTextSnapshot"))
+        #expect(surfaceOwnerSource.contains("selectionRuntime.nativeTextSnapshot"))
     }
 
     @Test
@@ -338,7 +341,8 @@ struct GhosttyIOSSuperfileBoundaryTests {
         )
 
         #expect(surfaceSource.contains("func setupSurface"))
-        #expect(surfaceSource.contains("surfaceLifecycleRuntime.cleanup"))
+        #expect(surfaceSource.contains("surfaceOwner.cleanup"))
+        #expect(surfaceSource.contains("using: surfaceLifecycleRuntime"))
         #expect(surfaceSource.contains("surfaceRegistration.register"))
         #expect(surfaceSource.contains("renderingSetup.setupSurface"))
     }

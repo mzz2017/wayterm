@@ -20,22 +20,28 @@ struct GhosttyIOSSurfaceLifecycleRuntimeTests {
         let surfaceRuntimeSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/GhosttyTerminalView+SurfaceRuntime+iOS.swift")
         )
+        let ownerSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/TerminalIOSSurfaceOwner.swift")
+        )
         let runtimeSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/TerminalIOSSurfaceLifecycleRuntime.swift")
         )
 
-        let cleanupSource = try section(in: viewSource, from: "func cleanup()", to: "/// Pause rendering")
-        let pauseSource = try section(in: viewSource, from: "func pauseRendering()", to: "/// Resume rendering")
-        let resumeSource = try section(in: viewSource, from: "func resumeRendering()", to: "// MARK: - Layer Type")
+        let cleanupSource = try section(in: surfaceRuntimeSource, from: "func cleanup()", to: "/// Pause rendering")
+        let pauseSource = try section(in: surfaceRuntimeSource, from: "func pauseRendering()", to: "/// Resume rendering")
+        let resumeSource = try section(in: surfaceRuntimeSource, from: "func resumeRendering()", to: "private func clearLifecycleCallbacks")
         let lifecycleCallSource = viewSource + surfaceRuntimeSource
 
         #expect(viewSource.contains("let surfaceLifecycleRuntime = TerminalIOSSurfaceLifecycleRuntime()"))
-        #expect(cleanupSource.contains("surfaceLifecycleRuntime.cleanup("))
-        #expect(pauseSource.contains("surfaceLifecycleRuntime.pauseRendering("))
-        #expect(resumeSource.contains("surfaceLifecycleRuntime.resumeRendering("))
-        #expect(viewSource.contains("surfaceLifecycleRuntime.setFocus("))
-        #expect(viewSource.contains("surfaceLifecycleRuntime.setOcclusion("))
-        #expect(surfaceRuntimeSource.contains("surfaceLifecycleRuntime.processExited(surface: surface)"))
+        #expect(cleanupSource.contains("using: surfaceLifecycleRuntime"))
+        #expect(pauseSource.contains("using: surfaceLifecycleRuntime"))
+        #expect(resumeSource.contains("using: surfaceLifecycleRuntime"))
+        #expect(ownerSource.contains("lifecycleRuntime.cleanup("))
+        #expect(ownerSource.contains("lifecycleRuntime.pauseRendering("))
+        #expect(ownerSource.contains("lifecycleRuntime.resumeRendering("))
+        #expect(ownerSource.contains("lifecycleRuntime.setFocus("))
+        #expect(ownerSource.contains("lifecycleRuntime.setOcclusion("))
+        #expect(ownerSource.contains("lifecycleRuntime.processExited(surface: surface)"))
 
         #expect(!lifecycleCallSource.contains("ghostty_surface_set_focus"))
         #expect(!lifecycleCallSource.contains("ghostty_surface_set_occlusion"))

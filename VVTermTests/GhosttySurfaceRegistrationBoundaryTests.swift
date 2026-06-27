@@ -19,6 +19,12 @@ struct GhosttySurfaceRegistrationBoundaryTests {
         let macOSSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/macOS/GhosttyTerminalView+macOS.swift")
         )
+        let macOSLifecycleSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/macOS/TerminalMacOSSurfaceLifecycleRuntime.swift")
+        )
+        let iOSSurfaceSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/GhosttyTerminalView+SurfaceRuntime+iOS.swift")
+        )
         let registrationSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/Surface/GhosttySurfaceRegistration.swift")
         )
@@ -27,13 +33,13 @@ struct GhosttySurfaceRegistrationBoundaryTests {
         )
 
         // Given both platform terminal views create Ghostty surfaces.
-        #expect(iOSSource.contains("private let surfaceRegistration = GhosttySurfaceRegistration()"))
+        #expect(iOSSource.contains("let surfaceRegistration = GhosttySurfaceRegistration()"))
         #expect(macOSSource.contains("private let surfaceRegistration = GhosttySurfaceRegistration()"))
-        #expect(iOSSource.contains("surfaceRegistration.register(cSurface"))
+        #expect(iOSSurfaceSource.contains("surfaceRegistration.register(cSurface"))
         #expect(macOSSource.contains("surfaceRegistration.register(cSurface"))
-        #expect(iOSSource.contains("surfaceRegistration: surfaceRegistration"))
+        #expect(iOSSurfaceSource.contains("surfaceRegistration: surfaceRegistration"))
         #expect(iOSLifecycleSource.contains("surfaceRegistration.unregister()"))
-        #expect(macOSSource.contains("surfaceRegistration.unregister()"))
+        #expect(macOSLifecycleSource.contains("surfaceRegistration.unregister()"))
         #expect(iOSSource.contains("surfaceRegistration.unregisterLaterFromDeinit()"))
         #expect(macOSSource.contains("surfaceRegistration.unregisterLaterFromDeinit()"))
 

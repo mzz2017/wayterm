@@ -21,9 +21,10 @@ struct GhosttyMacOSSurfaceLifecycleRuntimeBoundaryTests {
         )
 
         #expect(viewSource.contains("let surfaceLifecycleRuntime = TerminalMacOSSurfaceLifecycleRuntime()"))
-        #expect(viewSource.contains("surfaceLifecycleRuntime.cleanup"))
-        #expect(viewSource.contains("surfaceLifecycleRuntime.setFocus"))
-        #expect(viewSource.contains("surfaceLifecycleRuntime.processExited"))
+        #expect(viewSource.contains("surfaceOwner.cleanup"))
+        #expect(viewSource.contains("using: surfaceLifecycleRuntime"))
+        #expect(viewSource.contains("surfaceOwner.setFocus"))
+        #expect(viewSource.contains("surfaceOwner.processExited"))
 
         #expect(
             !viewSource.contains("ghostty_surface_set_focus"),

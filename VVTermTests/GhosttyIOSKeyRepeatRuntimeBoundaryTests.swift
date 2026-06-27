@@ -14,14 +14,17 @@ struct GhosttyIOSKeyRepeatRuntimeBoundaryTests {
         let viewSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
+        let hardwareKeyboardSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+HardwareKeyboard+iOS.swift")
+        )
         let runtimeSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/TerminalIOSKeyRepeatRuntime.swift")
         )
 
-        #expect(viewSource.contains("private let keyRepeatRuntime = TerminalIOSKeyRepeatRuntime()"))
-        #expect(viewSource.contains("keyRepeatRuntime.start"))
-        #expect(viewSource.contains("keyRepeatRuntime.stop"))
-        #expect(viewSource.contains("keyRepeatRuntime.isRepeating"))
+        #expect(viewSource.contains("let keyRepeatRuntime = TerminalIOSKeyRepeatRuntime()"))
+        #expect(hardwareKeyboardSource.contains("keyRepeatRuntime.start"))
+        #expect(hardwareKeyboardSource.contains("keyRepeatRuntime.stop"))
+        #expect(hardwareKeyboardSource.contains("keyRepeatRuntime.isRepeating"))
 
         #expect(!viewSource.contains("private var keyRepeatTimer"))
         #expect(!viewSource.contains("private var repeatingHardwareKey"))
