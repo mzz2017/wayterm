@@ -648,7 +648,7 @@ final class TerminalIMEProxyTextView: UIView, UITextInput {
             super.pressesBegan(presses, with: event)
             return
         }
-        let pendingCount = terminalOwner.pendingSystemTextInputHardwareKeys.count
+        let pendingCount = terminalOwner.pendingSystemTextInputHardwareKeyCount
         let result = terminalOwner.processHardwarePressesBegan(presses, event: event)
         if !result.forwardedToSystem.isEmpty {
             super.pressesBegan(result.forwardedToSystem, with: event)
