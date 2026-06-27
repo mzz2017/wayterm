@@ -219,6 +219,9 @@ struct TerminalSessionDependencyBoundaryTests {
         let tmuxServiceSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTmuxService.swift")
         )
+        let tmuxPreferenceSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TmuxAttachPreferences.swift")
+        )
         let liveDependencySource = try source(
             at: root.appendingPathComponent("VVTerm/App/TerminalSessionLiveDependencies.swift")
         )
@@ -238,29 +241,44 @@ struct TerminalSessionDependencyBoundaryTests {
         // plus remote tmux transport operations.
         #expect(resolverSource.contains("typealias ServerProvider"))
         #expect(resolverSource.contains("tmuxService: any TerminalTmuxServicing"))
+        #expect(resolverSource.contains("preferences: any TmuxAttachPreferenceProviding"))
         #expect(resolverSource.contains("serverProvider(serverId)"))
         #expect(resolverSource.contains("tmuxService.tmuxBackend("))
+        #expect(resolverSource.contains("preferences.tmuxStartupBehaviorDefault"))
+        #expect(resolverSource.contains("preferences.multiplexerDefault"))
         #expect(resolverSource.contains("tmuxService.cleanupDetachedSessions("))
         #expect(resolverSource.contains("tmuxService.interactiveAttachCommand("))
         #expect(connectionManagerSource.contains("tmuxService: any TerminalTmuxServicing"))
         #expect(tabManagerSource.contains("tmuxService: any TerminalTmuxServicing"))
+        #expect(connectionManagerSource.contains("tmuxPreferences: any TmuxAttachPreferenceProviding"))
+        #expect(tabManagerSource.contains("tmuxPreferences: any TmuxAttachPreferenceProviding"))
         #expect(connectionManagerSource.contains("tmuxService: dependencies.tmuxService"))
         #expect(tabManagerSource.contains("tmuxService: dependencies.tmuxService"))
+        #expect(connectionManagerSource.contains("preferences: dependencies.tmuxPreferences"))
+        #expect(tabManagerSource.contains("preferences: dependencies.tmuxPreferences"))
         #expect(connectionManagerSource.contains("tmuxResolver.setServerProvider(dependencies.serverProvider)"))
         #expect(tabManagerSource.contains("tmuxResolver.setServerProvider(dependencies.serverProvider)"))
         #expect(connectionManagerSource.contains("tmuxResolver.setTmuxService(dependencies.tmuxService)"))
         #expect(tabManagerSource.contains("tmuxResolver.setTmuxService(dependencies.tmuxService)"))
+        #expect(connectionManagerSource.contains("tmuxResolver.setPreferences(dependencies.tmuxPreferences)"))
+        #expect(tabManagerSource.contains("tmuxResolver.setPreferences(dependencies.tmuxPreferences)"))
         #expect(connectionTestingSource.contains("func setTmuxServiceForTesting"))
         #expect(tabTestingSource.contains("func setTmuxServiceForTesting"))
+        #expect(connectionTestingSource.contains("func setTmuxPreferencesForTesting"))
+        #expect(tabTestingSource.contains("func setTmuxPreferencesForTesting"))
         #expect(connectionTestingSource.contains("restoreLiveDependencies()"))
         #expect(tabTestingSource.contains("restoreLiveDependencies()"))
         #expect(tmuxServiceSource.contains("protocol TerminalTmuxServicing"))
+        #expect(tmuxPreferenceSource.contains("protocol TmuxAttachPreferenceProviding"))
+        #expect(tmuxPreferenceSource.contains("struct UserDefaultsTmuxAttachPreferences"))
 
         // Then live Core tmux wiring is kept at composition boundaries.
         #expect(!resolverSource.contains("ServerManager.shared.servers"))
         #expect(!resolverSource.contains("RemoteTmuxManager.shared"))
+        #expect(!resolverSource.contains("UserDefaults.standard"))
         #expect(!tmuxApplicationSources.contains("RemoteTmuxManager.shared"))
         #expect(liveDependencySource.contains("tmuxService: RemoteTmuxManager.shared"))
+        #expect(liveDependencySource.contains("tmuxPreferences: UserDefaultsTmuxAttachPreferences()"))
     }
 
     @Test

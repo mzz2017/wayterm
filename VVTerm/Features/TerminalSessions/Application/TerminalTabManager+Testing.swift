@@ -197,6 +197,10 @@ extension TerminalTabManager {
         tmuxService = service
     }
 
+    func setTmuxPreferencesForTesting(_ preferences: any TmuxAttachPreferenceProviding) {
+        tmuxPreferences = preferences
+    }
+
     func setMoshServiceForTesting(_ service: any TerminalMoshServicing) {
         moshService = service
     }

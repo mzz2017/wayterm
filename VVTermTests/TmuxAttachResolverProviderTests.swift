@@ -3,12 +3,13 @@ import Testing
 @testable import VVTerm
 
 // Test Context:
-// These tests protect TmuxAttachResolver's injected metadata and tmux service
-// boundaries. The resolver owns tmux prompt/session policy state, but server
-// lookup and remote tmux operations belong to the terminal session manager
-// boundary. Fakes use in-memory Server values and a no-op TerminalTmuxServicing
-// implementation; update these tests only when tmux server overrides or remote
-// tmux operations intentionally move to a different application-layer owner.
+// These tests protect TmuxAttachResolver's injected metadata, preference, and
+// tmux service boundaries. The resolver owns tmux prompt/session policy state,
+// but server lookup, default settings storage, and remote tmux operations belong
+// behind explicit services. Fakes use in-memory Server values, isolated
+// UserDefaults suites, and a no-op TerminalTmuxServicing implementation; update
+// these tests only when tmux server overrides, attach defaults, or remote tmux
+// operations intentionally move to a different application-layer owner.
 @MainActor
 struct TmuxAttachResolverProviderTests {
     @Test
@@ -27,7 +28,11 @@ struct TmuxAttachResolverProviderTests {
             serverProvider: { requestedId in
                 requestedId == serverId ? server : nil
             },
-            tmuxService: FakeTerminalTmuxService()
+            tmuxService: FakeTerminalTmuxService(),
+            preferences: FixedTmuxAttachPreferences(
+                tmuxStartupBehaviorDefault: .vvtermManaged,
+                multiplexerDefault: .tmux
+            )
         )
 
         // Given a server has per-server tmux overrides.
@@ -66,7 +71,8 @@ struct TmuxAttachResolverProviderTests {
             serverProvider: { requestedId in
                 requestedId == serverId ? first : nil
             },
-            tmuxService: FakeTerminalTmuxService()
+            tmuxService: FakeTerminalTmuxService(),
+            preferences: FixedTmuxAttachPreferences()
         )
 
         // Given tests or app composition replace the manager-level server
@@ -78,6 +84,43 @@ struct TmuxAttachResolverProviderTests {
         // Then future policy resolution uses the new provider.
         #expect(resolver.multiplexer(for: serverId) == .none)
         #expect(resolver.tmuxStartupBehavior(for: serverId) == .skipTmux)
+    }
+
+    @Test
+    func injectedPreferencesProvideDefaultsWhenServerHasNoOverrides() {
+        let serverId = UUID()
+        let resolver = TmuxAttachResolver(
+            serverProvider: { _ in nil },
+            tmuxService: FakeTerminalTmuxService(),
+            preferences: FixedTmuxAttachPreferences(
+                tmuxStartupBehaviorDefault: .skipTmux,
+                multiplexerDefault: .zmx
+            )
+        )
+
+        // Given no server-specific metadata is available.
+        // Then resolver policy uses the injected defaults instead of global UserDefaults.
+        #expect(resolver.multiplexer(for: serverId) == .zmx)
+        #expect(resolver.tmuxStartupBehavior(for: serverId) == .skipTmux)
+    }
+
+    @Test
+    func userDefaultsPreferencesPreserveLegacyTmuxEnabledMigration() {
+        let defaults = makeDefaults()
+        defaults.set(false, forKey: "terminalTmuxEnabledDefault")
+        let preferences = UserDefaultsTmuxAttachPreferences(defaults: defaults)
+
+        // Given only the legacy tmux-enabled boolean exists.
+        // Then the preference service keeps the old disabled default semantics.
+        #expect(preferences.multiplexerDefault == .none)
+        #expect(preferences.tmuxStartupBehaviorDefault == .askEveryTime)
+    }
+
+    private func makeDefaults(testName: String = #function) -> UserDefaults {
+        let suiteName = "TmuxAttachResolverProviderTests.\(testName).\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return defaults
     }
 }
 

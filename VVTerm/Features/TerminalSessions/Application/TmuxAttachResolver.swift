@@ -13,15 +13,18 @@ final class TmuxAttachResolver {
     var sessionOwnership: [UUID: SessionOwnership] = [:]
     private var serverProvider: ServerProvider
     private var tmuxService: any TerminalTmuxServicing
+    private var preferences: any TmuxAttachPreferenceProviding
 
     private let bindingStore = TmuxSessionBindingStore()
 
     init(
         serverProvider: @escaping ServerProvider,
-        tmuxService: any TerminalTmuxServicing
+        tmuxService: any TerminalTmuxServicing,
+        preferences: any TmuxAttachPreferenceProviding
     ) {
         self.serverProvider = serverProvider
         self.tmuxService = tmuxService
+        self.preferences = preferences
         // Hydrate persisted bindings so a chosen session survives an app restart.
         for (idString, binding) in bindingStore.allBindings() {
             guard let id = UUID(uuidString: idString) else { continue }
@@ -38,6 +41,10 @@ final class TmuxAttachResolver {
         tmuxService = service
     }
 
+    func setPreferences(_ preferences: any TmuxAttachPreferenceProviding) {
+        self.preferences = preferences
+    }
+
     private(set) var currentPrompt: TmuxAttachPrompt?
     private var promptQueue: [TmuxAttachPrompt] = []
     private var promptContinuations: [UUID: CheckedContinuation<TmuxAttachSelection, Never>] = [:]
@@ -45,24 +52,11 @@ final class TmuxAttachResolver {
     // MARK: - Settings
 
     var tmuxStartupBehaviorDefault: TmuxStartupBehavior {
-        let defaults = UserDefaults.standard
-        guard let rawValue = defaults.string(forKey: "terminalTmuxStartupBehaviorDefault") else {
-            return .askEveryTime
-        }
-        return TmuxStartupBehavior(rawValue: rawValue) ?? .askEveryTime
+        preferences.tmuxStartupBehaviorDefault
     }
 
     var multiplexerDefault: TerminalMultiplexer {
-        let defaults = UserDefaults.standard
-        if let raw = defaults.string(forKey: "terminalMultiplexerDefault"),
-           let mux = TerminalMultiplexer(rawValue: raw) {
-            return mux
-        }
-        // Migrate the legacy boolean default once.
-        if defaults.object(forKey: "terminalTmuxEnabledDefault") != nil {
-            return .fromLegacyTmuxEnabled(defaults.bool(forKey: "terminalTmuxEnabledDefault"))
-        }
-        return .tmux
+        preferences.multiplexerDefault
     }
 
     func multiplexer(for serverId: UUID) -> TerminalMultiplexer {

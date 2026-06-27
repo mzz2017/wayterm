@@ -48,6 +48,7 @@ final class ConnectionSessionManager: ObservableObject {
         var isProProvider: IsProProvider
         var credentialsProvider: CredentialsProvider
         var tmuxService: any TerminalTmuxServicing
+        var tmuxPreferences: any TmuxAttachPreferenceProviding
         var moshService: any TerminalMoshServicing
         var knownHostRemover: KnownHostRemover
         var workingDirectoryService: any TerminalWorkingDirectoryApplying
@@ -97,6 +98,7 @@ final class ConnectionSessionManager: ObservableObject {
         didSet {
             tmuxResolver.setServerProvider(dependencies.serverProvider)
             tmuxResolver.setTmuxService(dependencies.tmuxService)
+            tmuxResolver.setPreferences(dependencies.tmuxPreferences)
         }
     }
 
@@ -265,6 +267,10 @@ final class ConnectionSessionManager: ObservableObject {
         get { dependencies.tmuxService }
         set { updateDependencies { $0.tmuxService = newValue } }
     }
+    var tmuxPreferences: any TmuxAttachPreferenceProviding {
+        get { dependencies.tmuxPreferences }
+        set { updateDependencies { $0.tmuxPreferences = newValue } }
+    }
     var moshService: any TerminalMoshServicing {
         get { dependencies.moshService }
         set { updateDependencies { $0.moshService = newValue } }
@@ -335,7 +341,8 @@ final class ConnectionSessionManager: ObservableObject {
         self.dependencies = dependencies
         tmuxResolver = TmuxAttachResolver(
             serverProvider: dependencies.serverProvider,
-            tmuxService: dependencies.tmuxService
+            tmuxService: dependencies.tmuxService,
+            preferences: dependencies.tmuxPreferences
         )
         restoreSnapshot()
     }
