@@ -104,17 +104,6 @@ final class RemoteFileBrowserStore: ObservableObject {
         let task: Task<Void, Never>
     }
 
-    private struct MoveDestinationLoadRequest {
-        let key: MoveDestinationLoadRequestKey
-        var task: Task<Void, Never>?
-        var onCompleted: [@MainActor (Result<[RemoteFileEntry], Error>) -> Void]
-    }
-
-    private struct MoveDestinationLoadRequestKey: Hashable {
-        let serverId: UUID
-        let path: String
-    }
-
     @Published private(set) var states: [UUID: BrowserState] = [:]
     @Published var pendingToolbarCommand: ToolbarCommand?
 
@@ -131,6 +120,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     let workingDirectoryProvider: WorkingDirectoryProvider
     private let serviceAccessCoordinator: RemoteFileServiceAccessCoordinator
     private let requestLifecycleCoordinator = RemoteFileRequestLifecycleCoordinator()
+    private let moveDestinationLoadCoordinator = RemoteFileMoveDestinationLoadCoordinator()
 
     var persistedStates: [String: RemoteFileBrowserPersistedState] = [:]
     var directoryRequestIDs: [UUID: UUID] = [:]
@@ -139,9 +129,6 @@ final class RemoteFileBrowserStore: ObservableObject {
     var previewLoadRequestByTab: [UUID: UUID] = [:]
     var navigationRequests: [UUID: NavigationRequest] = [:]
     var navigationRequestByTab: [UUID: UUID] = [:]
-    private var moveDestinationLoadRequests: [UUID: MoveDestinationLoadRequest] = [:]
-    private var moveDestinationLoadRequestByKey: [MoveDestinationLoadRequestKey: UUID] = [:]
-
     static let directoryEntryLimit = 2_000
     static let defaultPreviewBytes = 512 * 1_024
     static let hardPreviewBytes = 2 * 1_024 * 1_024
@@ -165,7 +152,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     var pendingMoveDestinationLoadRequestIDs: Set<UUID> {
-        Set(moveDestinationLoadRequestByKey.values)
+        moveDestinationLoadCoordinator.pendingRequestIDs
     }
 
     init(
@@ -299,7 +286,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     func waitForMoveDestinationLoadRequest(_ requestID: UUID) async {
-        await moveDestinationLoadRequests[requestID]?.task?.value
+        await moveDestinationLoadCoordinator.waitForRequest(requestID)
     }
 
     @discardableResult
@@ -308,51 +295,15 @@ final class RemoteFileBrowserStore: ObservableObject {
         server: Server,
         onCompleted: @escaping @MainActor (Result<[RemoteFileEntry], Error>) -> Void
     ) -> UUID {
-        let normalizedPath = RemoteFilePath.normalize(path)
-        let key = MoveDestinationLoadRequestKey(serverId: server.id, path: normalizedPath)
-
-        if let requestID = moveDestinationLoadRequestByKey[key] {
-            moveDestinationLoadRequests[requestID]?.onCompleted.append(onCompleted)
-            return requestID
-        }
-
-        let requestID = UUID()
-        moveDestinationLoadRequests[requestID] = MoveDestinationLoadRequest(
-            key: key,
-            task: nil,
-            onCompleted: [onCompleted]
+        moveDestinationLoadCoordinator.requestLoad(
+            path: path,
+            server: server,
+            loadDirectories: { [weak self] path, server in
+                guard let self else { throw RemoteFileBrowserError.disconnected }
+                return try await self.listDirectories(at: path, server: server)
+            },
+            onCompleted: onCompleted
         )
-        moveDestinationLoadRequestByKey[key] = requestID
-
-        let task = Task { [weak self] in
-            guard let self else { return }
-            defer {
-                self.moveDestinationLoadRequests.removeValue(forKey: requestID)
-                if self.moveDestinationLoadRequestByKey[key] == requestID {
-                    self.moveDestinationLoadRequestByKey.removeValue(forKey: key)
-                }
-            }
-
-            let result: Result<[RemoteFileEntry], Error>
-            do {
-                let entries = try await self.listDirectories(at: normalizedPath, server: server)
-                result = .success(entries)
-            } catch {
-                result = .failure(error)
-            }
-
-            guard !Task.isCancelled else { return }
-            guard self.moveDestinationLoadRequestByKey[key] == requestID else { return }
-
-            let callbacks = self.moveDestinationLoadRequests[requestID]?.onCompleted ?? []
-            callbacks.forEach { $0(result) }
-        }
-
-        if moveDestinationLoadRequests[requestID]?.key == key {
-            moveDestinationLoadRequests[requestID]?.task = task
-        }
-
-        return requestID
     }
 
     func currentPathValue(for tab: RemoteFileTab) -> String? {
@@ -520,12 +471,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     private func cancelMoveDestinationLoadRequests(for serverId: UUID) {
-        for (requestID, request) in moveDestinationLoadRequests where request.key.serverId == serverId {
-            if moveDestinationLoadRequestByKey[request.key] == requestID {
-                moveDestinationLoadRequestByKey.removeValue(forKey: request.key)
-            }
-            request.task?.cancel()
-        }
+        moveDestinationLoadCoordinator.cancelRequests(for: serverId)
     }
 
     func withRemoteFileService<T>(
@@ -543,11 +489,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     func cancelMoveDestinationLoadRequestForTesting(_ requestID: UUID) {
-        guard let request = moveDestinationLoadRequests[requestID] else { return }
-        if moveDestinationLoadRequestByKey[request.key] == requestID {
-            moveDestinationLoadRequestByKey.removeValue(forKey: request.key)
-        }
-        moveDestinationLoadRequests[requestID]?.task?.cancel()
+        moveDestinationLoadCoordinator.cancelRequest(requestID)
     }
     #endif
 

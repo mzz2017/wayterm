@@ -171,6 +171,9 @@ struct RemoteFileMutationIntentBoundaryTests {
         let browserSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
         )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift")
+        )
         let sheetFactorySource = try source(
             at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen+Sheets.swift")
         )
@@ -221,6 +224,14 @@ struct RemoteFileMutationIntentBoundaryTests {
         #expect(
             !moveSheetFactory.contains("try await fileBrowser.listDirectories"),
             "RemoteFileBrowserScreen.moveSheet should not pass direct async listDirectories work into the sheet."
+        )
+        #expect(
+            storeSource.contains("RemoteFileMoveDestinationLoadCoordinator"),
+            "RemoteFileBrowserStore should delegate move destination request lifecycle to a focused application coordinator."
+        )
+        #expect(
+            !storeSource.contains("MoveDestinationLoadRequestKey"),
+            "RemoteFileBrowserStore should not own move destination request coalescing dictionaries directly."
         )
     }
 
