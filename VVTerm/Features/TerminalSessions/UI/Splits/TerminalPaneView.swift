@@ -481,12 +481,10 @@ struct TerminalPaneView: View {
     }
 
     private func requestCredentialLoad() {
-        let serverId = server.id
         tabManager.requestPaneCredentialLoad(
             paneId: paneId,
             server: server,
             onCompleted: { result in
-                guard tabManager.paneStates[paneId]?.serverId == serverId else { return }
                 if let loadedCredentials = result.credentials {
                     credentials = loadedCredentials
                     credentialLoadErrorMessage = nil

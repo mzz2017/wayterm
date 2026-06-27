@@ -297,6 +297,46 @@ struct PaneRetryCredentialLifecycleTests {
     }
 
     @Test
+    func tabManagerCredentialLoadSuppressesCompletionIfPaneChangesServerWhileLoading() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let replacementServer = makeServer()
+            let tab = TerminalTab(serverId: server.id, title: server.name)
+            let credentialGate = PaneCredentialProviderGate(credentials: makeCredentials(serverId: server.id))
+            manager.tabsByServer[server.id] = [tab]
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+            manager.setCredentialsProviderForTesting { _ in
+                await credentialGate.load()
+            }
+            var result: TerminalCredentialLoadResult?
+
+            let requestID = manager.requestPaneCredentialLoad(
+                paneId: tab.rootPaneId,
+                server: server,
+                onCompleted: { result = $0 }
+            )
+            await credentialGate.waitForLoadCount(1)
+
+            // Given credential loading is in flight and the pane is rebound to another server.
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: replacementServer.id
+            )
+            await credentialGate.release()
+            await manager.waitForPaneCredentialLoadRequest(requestID)
+
+            // Then the application layer suppresses the stale completion before UI sees it.
+            #expect(result == nil)
+            #expect(manager.pendingPaneCredentialLoadRequestIDs.isEmpty)
+        }
+    }
+
+    @Test
     func tabManagerClosePaneCancelsPendingCredentialLoadRequest() async {
         await withCleanTabManager { manager in
             let server = makeServer()

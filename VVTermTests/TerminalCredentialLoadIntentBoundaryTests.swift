@@ -65,6 +65,10 @@ struct TerminalCredentialLoadIntentBoundaryTests {
             !source.contains("await tabManager.loadCredentials"),
             "Split terminal UI should not call the low-level credential-load helper directly."
         )
+        #expect(
+            !source.contains("guard tabManager.paneStates[paneId]?.serverId"),
+            "Split terminal UI should not own stale credential-load result filtering."
+        )
     }
 
     private func source(at url: URL) throws -> String {
