@@ -17,6 +17,9 @@ struct RemoteFileBrowserScreenBoundaryTests {
         let transferSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFileTransferCoordinator.swift")
         )
+        let transferPolicySource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFileTransferPolicy.swift")
+        )
 
         // Given the RemoteFiles SwiftUI screen source.
         #expect(
@@ -28,9 +31,12 @@ struct RemoteFileBrowserScreenBoundaryTests {
             "RemoteFileBrowserScreen should not own remote directory path validation policy."
         )
 
-        // Then the Application layer owns the validation entry points used by UI intent handlers.
-        #expect(transferSource.contains("func validatedRemoteName"))
-        #expect(transferSource.contains("func validatedRemoteDirectoryPath"))
+        // Then the Application layer exposes validation entry points through
+        // the store, while transfer policy owns the value-only rules.
+        #expect(transferSource.contains("try transferPolicy.validatedRemoteName"))
+        #expect(transferSource.contains("try transferPolicy.validatedRemoteDirectoryPath"))
+        #expect(transferPolicySource.contains("func validatedRemoteName"))
+        #expect(transferPolicySource.contains("func validatedRemoteDirectoryPath"))
     }
 
     @Test

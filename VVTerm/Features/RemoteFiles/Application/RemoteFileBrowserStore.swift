@@ -25,14 +25,7 @@ final class RemoteFileBrowserStore: ObservableObject {
         let currentItemName: String
     }
 
-    struct LocalUploadPlanItem: Identifiable, Sendable {
-        let sourceURL: URL
-        let remoteName: String
-
-        var id: String {
-            "\(sourceURL.absoluteString)->\(remoteName)"
-        }
-    }
+    typealias LocalUploadPlanItem = RemoteFileLocalUploadPlanItem
 
     struct LocalUploadPlanCandidate: Identifiable, Sendable {
         let sourceURL: URL
@@ -132,6 +125,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     nonisolated let temporaryStorage: RemoteFileTemporaryStorage
     let previewLoader: RemoteFilePreviewLoader
     let conflictResolver: RemoteFileConflictResolver
+    let transferPolicy: RemoteFileTransferPolicy
     let serverProvider: ServerProvider
     let workingDirectoryProvider: WorkingDirectoryProvider
     private let serviceAccessCoordinator: RemoteFileServiceAccessCoordinator
@@ -180,6 +174,7 @@ final class RemoteFileBrowserStore: ObservableObject {
         temporaryStorage: RemoteFileTemporaryStorage = RemoteFileTemporaryStorage(),
         previewLoader: RemoteFilePreviewLoader = RemoteFilePreviewLoader(),
         conflictResolver: RemoteFileConflictResolver = RemoteFileConflictResolver(),
+        transferPolicy: RemoteFileTransferPolicy = RemoteFileTransferPolicy(),
         serverProvider: @escaping ServerProvider,
         workingDirectoryProvider: @escaping WorkingDirectoryProvider = { _ in nil }
     ) {
@@ -194,6 +189,7 @@ final class RemoteFileBrowserStore: ObservableObject {
         self.temporaryStorage = temporaryStorage
         self.previewLoader = previewLoader
         self.conflictResolver = conflictResolver
+        self.transferPolicy = transferPolicy
         self.serverProvider = serverProvider
         self.workingDirectoryProvider = workingDirectoryProvider
         loadPersistedStates()

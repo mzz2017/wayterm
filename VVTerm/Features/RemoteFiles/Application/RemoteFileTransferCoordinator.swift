@@ -192,7 +192,7 @@ extension RemoteFileBrowserStore {
         server: Server,
         onProgress: (@MainActor @Sendable (TransferProgress) -> Void)? = nil
     ) async throws {
-        let plans = urls.map { LocalUploadPlanItem(sourceURL: $0, remoteName: $0.lastPathComponent) }
+        let plans = transferPolicy.uploadPlans(for: urls)
         try await uploadFiles(
             plans: plans,
             to: directoryPath,
@@ -286,7 +286,7 @@ extension RemoteFileBrowserStore {
             throw RemoteFileBrowserError.disconnected
         }
 
-        let uniqueEntries = uniqueTransferEntries(entries)
+        let uniqueEntries = transferPolicy.uniqueTransferEntries(entries)
         guard !uniqueEntries.isEmpty else { return }
 
         let destinationDirectory = RemoteFilePath.normalize(destinationDirectoryPath)
@@ -613,8 +613,7 @@ extension RemoteFileBrowserStore {
     }
 
     func uniqueTransferEntries(_ entries: [RemoteFileEntry]) -> [RemoteFileEntry] {
-        var seenPaths: Set<String> = []
-        return entries.filter { seenPaths.insert($0.path).inserted }
+        transferPolicy.uniqueTransferEntries(entries)
     }
 
     func createLocalDirectory(at url: URL) async throws {
@@ -651,24 +650,10 @@ extension RemoteFileBrowserStore {
     }
 
     func validatedRemoteName(_ name: String) throws -> String {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw RemoteFileBrowserError.failed(String(localized: "A name is required."))
-        }
-        guard trimmed != "." && trimmed != ".." else {
-            throw RemoteFileBrowserError.failed(String(localized: "This name is not allowed."))
-        }
-        guard !trimmed.contains("/") else {
-            throw RemoteFileBrowserError.failed(String(localized: "Names cannot contain '/'."))
-        }
-        return trimmed
+        try transferPolicy.validatedRemoteName(name)
     }
 
     func validatedRemoteDirectoryPath(_ path: String, relativeTo currentPath: String) throws -> String {
-        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw RemoteFileBrowserError.failed(String(localized: "Destination folder cannot be empty."))
-        }
-        return RemoteFilePath.normalize(trimmed, relativeTo: currentPath)
+        try transferPolicy.validatedRemoteDirectoryPath(path, relativeTo: currentPath)
     }
 }
