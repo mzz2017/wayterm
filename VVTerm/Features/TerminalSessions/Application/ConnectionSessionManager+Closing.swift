@@ -90,11 +90,15 @@ extension ConnectionSessionManager {
 
     /// Handle shell exit without removing the session, keeping the tab for reconnect.
     func handleShellExit(for sessionId: UUID) {
+        let serverId = sessionWithID(sessionId)?.serverId
         setPresentationOverrides(.empty, for: sessionId)
         terminalSurfaceRegistry.surface(for: .session(sessionId))?.applyPresentationOverrides(.empty)
         updateSessionState(sessionId, to: .disconnected)
         markTerminalForReconnectReset(for: sessionId)
-        scheduleSSHUnregister(for: sessionId)
+        let unregisterTask = scheduleSSHUnregister(for: sessionId)
+        if let serverId {
+            trackServerTeardownTask(unregisterTask, for: serverId)
+        }
     }
 
     @discardableResult

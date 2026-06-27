@@ -146,6 +146,41 @@ struct TerminalProcessExitIntentTests {
     }
 
     @Test
+    func rootShellExitTracksSSHUnregisterUntilCleanupFinishes() async {
+        await withCleanConnectionManager { manager in
+            let serverId = UUID()
+            let session = ConnectionSession(
+                serverId: serverId,
+                title: "Exited Shell",
+                connectionState: .connected
+            )
+            manager.sessions = [session]
+            manager.updateSessionState(session.id, to: .connected)
+            manager.registerSSHClient(
+                SSHClient(),
+                shellId: UUID(),
+                for: session.id,
+                serverId: serverId,
+                skipTmuxLifecycle: true
+            )
+
+            // When Ghostty reports that the root session process exited.
+            manager.handleShellExit(for: session.id)
+
+            // Then SSH unregister cleanup is tracked so a same-server reopen can wait for it.
+            #expect(
+                manager.serverTeardownTaskStore.count(forServer: serverId) == 1,
+                "Process-exit cleanup must be tracked by server so open/reconnect waits for old shell teardown."
+            )
+
+            await manager.waitForServerTeardownTasks(serverId)
+
+            #expect(manager.serverTeardownTaskStore.count(forServer: serverId) == 0)
+            #expect(manager.shellId(for: session.id) == nil)
+        }
+    }
+
+    @Test
     func paneProcessExitRejectsMissingPaneWithoutCreatingRequest() async {
         await withCleanTabManager { manager in
             let paneId = UUID()
