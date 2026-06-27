@@ -22,6 +22,11 @@ enum TerminalSurfaceViewDisappearanceResolution: Equatable, Sendable {
     case closedAndCleanedUp
 }
 
+enum TerminalSurfaceUpdateDisposition: Equatable, Sendable {
+    case continueUpdating
+    case closedAndCleanedUp
+}
+
 struct TerminalSurfaceAttachContext: Equatable, Sendable {
     var isAppActive: Bool
     var isViewActive: Bool

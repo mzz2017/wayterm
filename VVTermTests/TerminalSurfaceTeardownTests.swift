@@ -156,6 +156,64 @@ struct TerminalSurfaceTeardownTests {
 
     @MainActor
     @Test
+    func rootSurfaceUpdateContinuesForLiveSession() async {
+        let manager = ConnectionSessionManager.shared
+        await manager.resetForTesting()
+
+        let session = ConnectionSession(
+            serverId: UUID(),
+            title: "Live Update",
+            connectionState: .connected
+        )
+        manager.sessions = [session]
+
+        // Given a root surface update arrives for a live session.
+        let disposition = manager.prepareSurfaceForUpdate(
+            sessionId: session.id,
+            serverId: session.serverId,
+            reason: "test live root update"
+        )
+
+        // Then the wrapper may continue UI-only update work.
+        #expect(disposition == .continueUpdating)
+
+        await manager.resetForTesting()
+    }
+
+    @MainActor
+    @Test
+    func rootSurfaceUpdateTracksClosedSessionCleanupUntilAwaited() async {
+        let manager = ConnectionSessionManager.shared
+        await manager.resetForTesting()
+
+        let sessionId = UUID()
+        let serverId = UUID()
+        let recorder = TerminalSurfaceRegistryRecorder()
+        manager.terminalSurfaceRegistry.registerForTesting(
+            entityId: .session(sessionId),
+            pause: { recorder.pauseCount += 1 },
+            cleanup: { recorder.cleanupCount += 1 }
+        )
+
+        // Given a root surface update arrives after its session has already closed.
+        let disposition = manager.prepareSurfaceForUpdate(
+            sessionId: sessionId,
+            serverId: serverId,
+            reason: "test closed root update"
+        )
+
+        // Then cleanup is tracked as teardown work and is complete after awaiting it.
+        #expect(disposition == .closedAndCleanedUp)
+        await manager.waitForServerTeardownTasks(serverId)
+        #expect(recorder.cleanupCount == 1)
+        #expect(recorder.pauseCount == 0)
+        #expect(!manager.hasTerminal(for: sessionId))
+
+        await manager.resetForTesting()
+    }
+
+    @MainActor
+    @Test
     func splitViewDisappearancePreservesLivePaneSurfaceWithoutCleanup() async {
         let manager = TerminalTabManager.shared
         await manager.resetForTesting()

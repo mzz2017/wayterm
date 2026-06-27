@@ -78,7 +78,7 @@ struct TerminalRootSurfaceCallbackBoundaryTests {
             "sessionManager.handleTerminalZoom",
             "sessionManager.presentationOverrides",
             "sessionManager.registerTerminal",
-            "sessionManager.handleClosedSessionSurfaceTeardown"
+            "sessionManager.prepareSurfaceForUpdate"
         ] {
             #expect(
                 wrapper.contains(expectedCall),
@@ -87,6 +87,8 @@ struct TerminalRootSurfaceCallbackBoundaryTests {
         }
 
         // Then instance callbacks must not bypass injection through the singleton.
+        #expect(!wrapper.contains("sessionManager.sessions"))
+        #expect(!wrapper.contains("sessionManager.handleClosedSessionSurfaceTeardown"))
         #expect(!wrapper.contains("ConnectionSessionManager.shared"))
     }
 
@@ -119,7 +121,7 @@ struct TerminalRootSurfaceCallbackBoundaryTests {
             "sessionManager.handleTerminalZoom",
             "sessionManager.presentationOverrides",
             "sessionManager.registerTerminal",
-            "sessionManager.handleClosedSessionSurfaceTeardown"
+            "sessionManager.prepareSurfaceForUpdate"
         ] {
             #expect(
                 representable.contains(expectedCall),
@@ -128,6 +130,8 @@ struct TerminalRootSurfaceCallbackBoundaryTests {
         }
 
         // Then instance callbacks must not bypass injection through the singleton.
+        #expect(!representable.contains("sessionManager.sessions"))
+        #expect(!representable.contains("sessionManager.handleClosedSessionSurfaceTeardown"))
         #expect(!representable.contains("ConnectionSessionManager.shared"))
     }
 

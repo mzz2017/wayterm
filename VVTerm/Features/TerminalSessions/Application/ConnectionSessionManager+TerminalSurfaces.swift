@@ -225,6 +225,23 @@ extension ConnectionSessionManager {
         return .closedAndCleanedUp
     }
 
+    func prepareSurfaceForUpdate(
+        sessionId: UUID,
+        serverId: UUID,
+        reason: String
+    ) -> TerminalSurfaceUpdateDisposition {
+        guard sessionWithID(sessionId) == nil else {
+            return .continueUpdating
+        }
+
+        handleClosedSessionSurfaceTeardown(
+            sessionId: sessionId,
+            serverId: serverId,
+            reason: reason
+        )
+        return .closedAndCleanedUp
+    }
+
     func handleClosedSessionSurfaceTeardown(
         sessionId: UUID,
         serverId: UUID,

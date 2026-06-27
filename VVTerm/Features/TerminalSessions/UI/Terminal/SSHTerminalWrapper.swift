@@ -205,14 +205,12 @@ struct SSHTerminalWrapper: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        // Check if session still exists - if not, cleanup and return
-        let sessionExists = sessionManager.sessions.contains { $0.id == session.id }
-        if !sessionExists {
-            sessionManager.handleClosedSessionSurfaceTeardown(
-                sessionId: session.id,
-                serverId: session.serverId,
-                reason: "mac update missing session"
-            )
+        let updateDisposition = sessionManager.prepareSurfaceForUpdate(
+            sessionId: session.id,
+            serverId: session.serverId,
+            reason: "mac update"
+        )
+        if updateDisposition == .closedAndCleanedUp {
             return
         }
 
@@ -490,15 +488,12 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             return
         }
 
-        // Check if session still exists - if not, cleanup and return
-        let sessionExists = sessionManager.sessions.contains { $0.id == session.id }
-        if !sessionExists {
-            // Session was closed externally, cleanup terminal
-            sessionManager.handleClosedSessionSurfaceTeardown(
-                sessionId: session.id,
-                serverId: session.serverId,
-                reason: "ios update missing session"
-            )
+        let updateDisposition = sessionManager.prepareSurfaceForUpdate(
+            sessionId: session.id,
+            serverId: session.serverId,
+            reason: "ios update"
+        )
+        if updateDisposition == .closedAndCleanedUp {
             terminalView.writeCallback = nil
             terminalView.onReady = nil
             terminalView.onProcessExit = nil
