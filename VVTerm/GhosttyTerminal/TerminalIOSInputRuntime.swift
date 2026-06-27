@@ -475,6 +475,15 @@ final class TerminalIOSInputRuntime {
         }
     }
 
+    func imePoint(surface: ghostty_surface_t) -> CGRect {
+        var x: Double = 0
+        var y: Double = 0
+        var width: Double = 0
+        var height: Double = 0
+        ghostty_surface_ime_point(surface, &x, &y, &width, &height)
+        return CGRect(x: CGFloat(x), y: CGFloat(y), width: CGFloat(width), height: CGFloat(height))
+    }
+
     private func ghosttyInputAction(_ action: ghostty_input_action_e) -> Ghostty.Input.Action {
         switch action {
         case GHOSTTY_ACTION_PRESS:

@@ -35,11 +35,13 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(viewSource.contains("inputRuntime.handleSpecialKey"))
         #expect(viewSource.contains("inputRuntime.handleControlKey"))
         #expect(viewSource.contains("inputRuntime.handleTerminalTextInputEffects"))
+        #expect(viewSource.contains("inputRuntime.imePoint(surface: surface)"))
 
         // Then the main UIKit view does not directly own those C/FFI calls,
         // visible preedit state, or the Ghostty action conversion helper.
         #expect(!viewSource.contains("ghostty_surface_key"))
         #expect(!viewSource.contains("ghostty_surface_preedit"))
+        #expect(!viewSource.contains("ghostty_surface_ime_point"))
         #expect(!viewSource.contains("private func ghosttyInputAction"))
         #expect(!viewSource.contains("private func sendToolbarKey"))
         #expect(!viewSource.contains("private func sendToolbarGhosttyKey"))
@@ -74,6 +76,7 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(runtimeSource.contains("func sendDirectHardwareKeyEvent"))
         #expect(runtimeSource.contains("func syncVisiblePreedit"))
         #expect(runtimeSource.contains("func syncPreedit"))
+        #expect(runtimeSource.contains("func imePoint(surface: ghostty_surface_t)"))
         #expect(runtimeSource.contains("func canResignIMEProxy"))
         #expect(runtimeSource.contains("func suppressUnexpectedIMEProxyResign"))
         #expect(runtimeSource.contains("func performProgrammaticIMEProxyResign"))
@@ -101,6 +104,7 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(runtimeSource.contains("private func sendToolbarControlShortcut"))
         #expect(runtimeSource.contains("ghostty_surface_key"))
         #expect(runtimeSource.contains("ghostty_surface_preedit"))
+        #expect(runtimeSource.contains("ghostty_surface_ime_point"))
         #expect(runtimeSource.contains("private func ghosttyInputAction"))
     }
 

@@ -762,23 +762,19 @@ class GhosttyTerminalView: UIView {
             return CGRect(x: 0, y: 0, width: metrics.cellSize.width, height: metrics.cellSize.height)
         }
 
-        var x: Double = 0
-        var y: Double = 0
-        var width: Double = 0
-        var height: Double = 0
-        ghostty_surface_ime_point(surface, &x, &y, &width, &height)
+        let imePoint = inputRuntime.imePoint(surface: surface)
 
-        let cellWidth = max(cellSize.width, CGFloat(max(width, 1)))
-        let cellHeight = max(cellSize.height, CGFloat(max(height, 1)))
+        let cellWidth = max(cellSize.width, max(imePoint.width, 1))
+        let cellHeight = max(cellSize.height, max(imePoint.height, 1))
         let currentCharacterIndex = textInputModel.committedCursorCharacterIndex
         let targetCharacterIndex = textInputModel.committedCharacterIndex(forDocumentOffset: clampTextInputIndex(index))
         let delta = targetCharacterIndex - currentCharacterIndex
 
         return CGRect(
-            x: CGFloat(x) + CGFloat(delta) * cellWidth,
-            y: CGFloat(y),
-            width: max(CGFloat(width), cellWidth),
-            height: max(CGFloat(height), cellHeight)
+            x: imePoint.minX + CGFloat(delta) * cellWidth,
+            y: imePoint.minY,
+            width: max(imePoint.width, cellWidth),
+            height: max(imePoint.height, cellHeight)
         )
     }
 
