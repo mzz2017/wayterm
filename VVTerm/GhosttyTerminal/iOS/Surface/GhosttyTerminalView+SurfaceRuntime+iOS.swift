@@ -7,10 +7,7 @@ extension GhosttyTerminalView {
 
     /// Create and configure the Ghostty surface.
     func setupSurface() {
-        guard let app = ghosttyApp else {
-            Self.logger.error("Cannot create surface: ghostty_app_t is nil")
-            return
-        }
+        let app = surfaceOwner.ghosttyApp
 
         let callbackContext = GhosttySurfaceCallbackContext(terminalView: self)
         guard let cSurface = renderingSetup.setupSurface(
@@ -31,7 +28,7 @@ extension GhosttyTerminalView {
         configureIOSurfaceLayers(size: bounds.size)
 
         surface = Ghostty.Surface(cSurface: cSurface, callbackContext: callbackContext)
-        surfaceRegistration.register(cSurface, appWrapper: ghosttyAppWrapper, terminalView: self)
+        surfaceRegistration.register(cSurface, appWrapper: surfaceOwner.appWrapper, terminalView: self)
 
         Self.logger.info("Ghostty surface created, sublayers: \(self.layer.sublayers?.count ?? 0)")
     }

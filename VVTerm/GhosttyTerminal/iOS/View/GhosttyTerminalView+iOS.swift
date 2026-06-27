@@ -23,9 +23,11 @@ class GhosttyTerminalView: UIView {
     private static let imeProxyOffscreenFrame = CGRect(x: -10_000, y: -10_000, width: 1, height: 1)
     // MARK: - Properties
 
-    var ghosttyApp: ghostty_app_t?
-    weak var ghosttyAppWrapper: Ghostty.App?
-    internal var surface: Ghostty.Surface?
+    let surfaceOwner: TerminalIOSSurfaceOwner
+    var surface: Ghostty.Surface? {
+        get { surfaceOwner.surface }
+        set { surfaceOwner.surface = newValue }
+    }
     let surfaceRegistration = GhosttySurfaceRegistration()
     let worktreePath: String
     let paneId: String?
@@ -264,8 +266,7 @@ class GhosttyTerminalView: UIView {
         presentationEnvironment: TerminalIOSPresentationEnvironment? = nil
     ) {
         self.worktreePath = worktreePath
-        self.ghosttyApp = ghosttyApp
-        self.ghosttyAppWrapper = appWrapper
+        self.surfaceOwner = TerminalIOSSurfaceOwner(ghosttyApp: ghosttyApp, appWrapper: appWrapper)
         self.paneId = paneId
         self.initialCommand = command
         self.useCustomIO = useCustomIO
@@ -435,7 +436,7 @@ class GhosttyTerminalView: UIView {
         surfacePresentationOverrides = presentationOverrides
 
         guard let surface = surface?.unsafeCValue else { return }
-        ghosttyAppWrapper?.updateSurfaceConfig(surface, presentationOverrides: presentationOverrides)
+        surfaceOwner.appWrapper?.updateSurfaceConfig(surface, presentationOverrides: presentationOverrides)
         surfaceDisplayRuntime.resetSizeTracking()
         sizeDidChange(bounds.size)
         requestRender()
