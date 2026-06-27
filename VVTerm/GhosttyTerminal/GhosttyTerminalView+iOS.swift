@@ -115,10 +115,7 @@ class GhosttyTerminalView: UIView {
     private var shouldRestoreIMEProxyFocusAfterNativeSelection = false
     private var nativeTextInteraction: UITextInteraction?
     private var nativeFindInteraction: UIFindInteraction?
-    @available(iOS 16.0, *)
-    private var nativeFindSession: GhosttyNativeFindSession?
-    private var ghosttyFindReportedTotal: Int?
-    private var ghosttyFindReportedSelectedIndex: Int?
+    private let findRuntime = TerminalIOSFindRuntime()
     private let nativeFindDocumentIdentifier = "terminal"
     private let nativeFindOverlay = TerminalNativeFindOverlayView()
     private var nativeFindDecorations: [TerminalNativeFindDecoration] = [] {
@@ -1402,7 +1399,9 @@ class GhosttyTerminalView: UIView {
         refreshNativeSelectionSnapshot()
         if prefillingSelectedText, let selectionText = normalizedSelectionMenuText() {
             nativeFindInteraction.searchText = selectionText
-            nativeFindSession?.applyExternalQuery(selectionText)
+            findRuntime.applyExternalQuery(selectionText) { [weak self] in
+                self?.nativeFindInteraction?.updateResultCount()
+            }
             performGhosttyFindQuery(selectionText)
         }
         nativeFindInteraction.presentFindNavigator(showingReplace: false)
@@ -1427,8 +1426,7 @@ class GhosttyTerminalView: UIView {
         keepNavigatorVisibleOnSearchEnd: Bool = false
     ) -> Bool {
         guard let surface else { return false }
-        ghosttyFindReportedTotal = 0
-        ghosttyFindReportedSelectedIndex = nil
+        findRuntime.resetReportedResults()
         let action = "search:\(query)"
         if keepNavigatorVisibleOnSearchEnd {
             findNavigatorLifecycle.suppressNextGhosttySearchEnd()
@@ -1440,8 +1438,11 @@ class GhosttyTerminalView: UIView {
             return false
         }
         if query.isEmpty {
-            nativeFindSession?.resetReportedResults()
-            nativeFindInteraction?.updateResultCount()
+            if #available(iOS 16.0, *) {
+                findRuntime.resetNativeSession { [weak self] in
+                    self?.nativeFindInteraction?.updateResultCount()
+                }
+            }
         }
         return true
     }
@@ -1456,8 +1457,7 @@ class GhosttyTerminalView: UIView {
     @MainActor
     private func endGhosttyFindSearchForNavigatorDismissal() {
         guard let surface else { return }
-        ghosttyFindReportedTotal = 0
-        ghosttyFindReportedSelectedIndex = nil
+        findRuntime.resetReportedResults()
         findNavigatorLifecycle.suppressNextGhosttySearchEnd()
         if !surface.perform(action: "end_search") {
             findNavigatorLifecycle.cancelSuppressedGhosttySearchEnd()
@@ -1469,25 +1469,14 @@ class GhosttyTerminalView: UIView {
         performGhosttyFindQuery("", keepNavigatorVisibleOnSearchEnd: true)
     }
 
-    @MainActor
-    private func applyStoredGhosttyFindResultsToNativeSession() {
-        guard #available(iOS 16.0, *), let nativeFindSession else { return }
-        if nativeFindSession.updateReportedResults(
-            total: ghosttyFindReportedTotal,
-            highlightedIndex: ghosttyFindReportedSelectedIndex
-        ) {
-            nativeFindInteraction?.updateResultCount()
-        }
-    }
-
     func handleGhosttySearchStarted(needle: String) {
         guard usesNativeTouchSelection else { return }
-        ghosttyFindReportedTotal = 0
-        ghosttyFindReportedSelectedIndex = nil
+        findRuntime.resetReportedResults()
         if #available(iOS 16.0, *) {
             nativeFindInteraction?.searchText = needle
-            nativeFindSession?.applyExternalQuery(needle)
-            applyStoredGhosttyFindResultsToNativeSession()
+            findRuntime.applyExternalQuery(needle) { [weak self] in
+                self?.nativeFindInteraction?.updateResultCount()
+            }
             if nativeFindInteraction?.isFindNavigatorVisible != true {
                 beginFindNavigatorPresentation(restoreTerminalFocus: imeProxyTextView.isFirstResponder)
                 nativeFindInteraction?.presentFindNavigator(showingReplace: false)
@@ -1497,11 +1486,11 @@ class GhosttyTerminalView: UIView {
 
     func handleGhosttySearchEnded() {
         guard usesNativeTouchSelection else { return }
-        ghosttyFindReportedTotal = 0
-        ghosttyFindReportedSelectedIndex = nil
+        findRuntime.resetReportedResults()
         if #available(iOS 16.0, *) {
-            nativeFindSession?.resetReportedResults()
-            nativeFindInteraction?.updateResultCount()
+            findRuntime.resetNativeSession { [weak self] in
+                self?.nativeFindInteraction?.updateResultCount()
+            }
             if findNavigatorLifecycle.consumeSuppressedGhosttySearchEnd() {
                 return
             } else if nativeFindInteraction?.isFindNavigatorVisible == true {
@@ -1515,17 +1504,19 @@ class GhosttyTerminalView: UIView {
 
     func handleGhosttySearchTotalChange(_ total: Int?) {
         guard usesNativeTouchSelection else { return }
-        ghosttyFindReportedTotal = total
         if #available(iOS 16.0, *) {
-            applyStoredGhosttyFindResultsToNativeSession()
+            findRuntime.updateReportedTotal(total) { [weak self] in
+                self?.nativeFindInteraction?.updateResultCount()
+            }
         }
     }
 
     func handleGhosttySearchSelectedChange(_ selected: Int?) {
         guard usesNativeTouchSelection else { return }
-        ghosttyFindReportedSelectedIndex = selected
         if #available(iOS 16.0, *) {
-            applyStoredGhosttyFindResultsToNativeSession()
+            findRuntime.updateReportedSelectedIndex(selected) { [weak self] in
+                self?.nativeFindInteraction?.updateResultCount()
+            }
         }
     }
 
@@ -2874,11 +2865,7 @@ extension GhosttyTerminalView: UIFindInteractionDelegate {
     func findInteraction(_ interaction: UIFindInteraction, sessionFor view: UIView) -> UIFindSession? {
         guard view === self, usesNativeTouchSelection else { return nil }
         refreshNativeSelectionSnapshot()
-        if let nativeFindSession {
-            return nativeFindSession
-        }
-
-        let session = GhosttyNativeFindSession(
+        return findRuntime.makeSession(
             onSearch: { [weak self] query, _ in
                 guard let self else { return }
                 self.performGhosttyFindQuery(
@@ -2891,11 +2878,11 @@ extension GhosttyTerminalView: UIFindInteractionDelegate {
             },
             onInvalidate: { [weak self] in
                 self?.invalidateGhosttyFindWithoutClosingNavigator()
+            },
+            updateResultCount: { [weak self] in
+                self?.nativeFindInteraction?.updateResultCount()
             }
         )
-        nativeFindSession = session
-        applyStoredGhosttyFindResultsToNativeSession()
-        return session
     }
 
     func findInteraction(_ interaction: UIFindInteraction, didBegin session: UIFindSession) {
@@ -2903,17 +2890,18 @@ extension GhosttyTerminalView: UIFindInteractionDelegate {
             findNavigatorLifecycle.begin(restoreTerminalFocus: imeProxyTextView.isFirstResponder)
         }
         refreshNativeSelectionSnapshot()
-        applyStoredGhosttyFindResultsToNativeSession()
+        findRuntime.applyStoredGhosttyFindResultsToNativeSession { [weak self] in
+            self?.nativeFindInteraction?.updateResultCount()
+        }
         notifyFindNavigatorVisibilityChange()
     }
 
     func findInteraction(_ interaction: UIFindInteraction, didEnd session: UIFindSession) {
         let shouldRestoreTerminalFocus = endFindNavigatorLifecycle()
         nativeFindDecorations.removeAll()
-        nativeFindSession?.resetReportedResults()
-        nativeFindSession = nil
-        ghosttyFindReportedTotal = 0
-        ghosttyFindReportedSelectedIndex = nil
+        findRuntime.clearSession { [weak self] in
+            self?.nativeFindInteraction?.updateResultCount()
+        }
         notifyFindNavigatorVisibilityChange()
         endGhosttyFindSearchForNavigatorDismissal()
         if shouldRestoreTerminalFocus {
