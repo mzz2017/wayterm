@@ -90,7 +90,6 @@ struct TerminalOpenIntentBoundaryTests {
             "VVTerm/Core/UI/SidebarComponents.swift",
             "VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift",
             "VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift",
-            "VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabComponents.swift",
             "VVTerm/App/iOS/iOSContentView.swift"
         ]
 

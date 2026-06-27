@@ -128,8 +128,41 @@ struct ConnectionTabsViewSuperfileBoundaryTests {
         }
     }
 
+    @Test
+    func terminalSessionTabChromeDoesNotReachIntoServersSharedState() throws {
+        let root = try sourceRoot()
+        let tabsDirectory = root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Tabs")
+        let tabSources = try swiftSources(in: tabsDirectory)
+
+        // Given TerminalSessions tab chrome may display terminal/session state.
+        #expect(
+            !tabSources.isEmpty,
+            "TerminalSessions tab UI sources should be discoverable."
+        )
+
+        // Then tab UI must not read Servers feature state through shared
+        // singletons. Server metadata should arrive through explicit providers
+        // or app composition.
+        for (url, source) in tabSources {
+            #expect(
+                !source.contains("ServerManager.shared"),
+                "\(url.lastPathComponent) should not read ServerManager.shared from TerminalSessions tab UI."
+            )
+        }
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func swiftSources(in directory: URL) throws -> [(URL, String)] {
+        let urls = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        )
+        return try urls
+            .filter { $0.pathExtension == "swift" }
+            .map { ($0, try source(at: $0)) }
     }
 
     private func sourceRoot() throws -> URL {
