@@ -24,9 +24,11 @@ import QuartzCore
 class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     // MARK: - Properties
 
-    private var ghosttyApp: ghostty_app_t?
-    private weak var ghosttyAppWrapper: Ghostty.App?
-    internal var surface: Ghostty.Surface?
+    let surfaceOwner: TerminalMacOSSurfaceOwner
+    var surface: Ghostty.Surface? {
+        get { surfaceOwner.surface }
+        set { surfaceOwner.surface = newValue }
+    }
     private let surfaceRegistration = GhosttySurfaceRegistration()
     private let worktreePath: String
     private let paneId: String?
@@ -153,8 +155,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     ///   - useCustomIO: If true, uses callback backend for custom I/O (SSH clients)
     init(frame: NSRect, worktreePath: String, ghosttyApp: ghostty_app_t, appWrapper: Ghostty.App? = nil, paneId: String? = nil, command: String? = nil, useCustomIO: Bool = false) {
         self.worktreePath = worktreePath
-        self.ghosttyApp = ghosttyApp
-        self.ghosttyAppWrapper = appWrapper
+        self.surfaceOwner = TerminalMacOSSurfaceOwner(ghosttyApp: ghosttyApp, appWrapper: appWrapper)
         self.paneId = paneId
         self.initialCommand = command
         self.useCustomIO = useCustomIO
@@ -183,7 +184,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
                     isShuttingDown: self.isShuttingDown,
                     surface: self.surface?.unsafeCValue,
                     appTick: { [weak self] in
-                        self?.ghosttyAppWrapper?.appTick()
+                        self?.surfaceOwner.appWrapper?.appTick()
                     }
                 )
             }
@@ -214,10 +215,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
 
     /// Create and configure the Ghostty surface
     private func setupSurface() {
-        guard let app = ghosttyApp else {
-            Self.logger.error("Cannot create surface: ghostty_app_t is nil")
-            return
-        }
+        let app = surfaceOwner.ghosttyApp
 
         let callbackContext = GhosttySurfaceCallbackContext(terminalView: self)
         guard let cSurface = renderingSetup.setupSurface(
@@ -241,7 +239,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
         imeHandler.updateSurface(self.surface)
         inputHandler.updateSurface(self.surface)
 
-        surfaceRegistration.register(cSurface, appWrapper: ghosttyAppWrapper, terminalView: self)
+        surfaceRegistration.register(cSurface, appWrapper: surfaceOwner.appWrapper, terminalView: self)
     }
 
     /// Setup mouse tracking area for the entire view
@@ -638,7 +636,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
         ghostty_surface_draw(surface)
 
         // Trigger app tick to process any pending updates
-        ghosttyAppWrapper?.appTick()
+        surfaceOwner.appWrapper?.appTick()
 
         // Force Metal layer to redraw
         if let metalLayer = layer as? CAMetalLayer {
@@ -654,7 +652,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
         surfacePresentationOverrides = presentationOverrides
 
         guard let surface = surface?.unsafeCValue else { return }
-        ghosttyAppWrapper?.updateSurfaceConfig(surface, presentationOverrides: presentationOverrides)
+        surfaceOwner.appWrapper?.updateSurfaceConfig(surface, presentationOverrides: presentationOverrides)
         forceRefresh()
     }
 
