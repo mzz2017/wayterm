@@ -38,16 +38,18 @@ struct ServerSidebarView: View {
     }
 
     private var selectedEnvironmentIds: Set<UUID> {
-        guard !storedEnvironmentFilters.isEmpty else { return [] }
-        return Set(storedEnvironmentFilters.split(separator: ",").compactMap { UUID(uuidString: String($0)) })
+        ServerSidebarPolicy.environmentFilterIds(from: storedEnvironmentFilters)
     }
 
     private var allEnvironmentIds: Set<UUID> {
-        Set((selectedWorkspace?.environments ?? []).map(\.id))
+        ServerSidebarPolicy.allEnvironmentIds(in: selectedWorkspace)
     }
 
     private var isEnvironmentFiltering: Bool {
-        !selectedEnvironmentIds.isEmpty && selectedEnvironmentIds != allEnvironmentIds
+        ServerSidebarPolicy.isEnvironmentFiltering(
+            selectedEnvironmentIds: selectedEnvironmentIds,
+            allEnvironmentIds: allEnvironmentIds
+        )
     }
 
     private var environmentFiltersVisible: Bool {
@@ -59,17 +61,16 @@ struct ServerSidebarView: View {
     }
 
     private func updateEnvironmentFilters(_ ids: Set<UUID>) {
-        storedEnvironmentFilters = ids.map(\.uuidString).joined(separator: ",")
+        storedEnvironmentFilters = ServerSidebarPolicy.storedEnvironmentFilters(from: ids)
     }
 
     private func toggleEnvironmentFilter(_ env: ServerEnvironment) {
-        var ids = selectedEnvironmentIds
-        if ids.contains(env.id) {
-            ids.remove(env.id)
-        } else {
-            ids.insert(env.id)
-        }
-        updateEnvironmentFilters(ids)
+        updateEnvironmentFilters(
+            ServerSidebarPolicy.toggledEnvironmentIds(
+                selectedEnvironmentIds,
+                environmentId: env.id
+            )
+        )
     }
 
     // MARK: - Styling
@@ -85,30 +86,19 @@ struct ServerSidebarView: View {
     // MARK: - Computed Properties
 
     private var serverCount: Int {
-        guard let workspace = selectedWorkspace else { return 0 }
-        return serverManager.servers.filter { $0.workspaceId == workspace.id }.count
+        ServerSidebarPolicy.serverCount(
+            serverManager.servers,
+            selectedWorkspace: selectedWorkspace
+        )
     }
 
     var filteredServers: [Server] {
-        guard let workspace = selectedWorkspace else { return [] }
-
-        var servers = serverManager.servers.filter { $0.workspaceId == workspace.id }
-
-        // Apply environment filter
-        if isEnvironmentFiltering {
-            servers = servers.filter { selectedEnvironmentIds.contains($0.environment.id) }
-        }
-
-        // Apply search
-        if !searchText.isEmpty {
-            let lowercased = searchText.lowercased()
-            servers = servers.filter {
-                $0.name.lowercased().contains(lowercased) ||
-                $0.host.lowercased().contains(lowercased)
-            }
-        }
-
-        return servers.sorted { $0.name < $1.name }
+        ServerSidebarPolicy.filteredServers(
+            serverManager.servers,
+            selectedWorkspace: selectedWorkspace,
+            selectedEnvironmentIds: selectedEnvironmentIds,
+            searchText: searchText
+        )
     }
 
     // MARK: - Body
@@ -658,7 +648,12 @@ struct ServerSidebarView: View {
             return
         }
 
-        if isEnvironmentFiltering && !selectedEnvironmentIds.contains(server.environment.id) {
+        if ServerSidebarPolicy.shouldClearEnvironmentFiltersAfterSavingServer(
+            originalServer: originalServer,
+            savedServer: server,
+            selectedEnvironmentIds: selectedEnvironmentIds,
+            allEnvironmentIds: allEnvironmentIds
+        ) {
             storedEnvironmentFilters = ""
         }
 
