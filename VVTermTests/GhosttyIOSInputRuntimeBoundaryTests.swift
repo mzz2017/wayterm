@@ -34,7 +34,7 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(viewSource.contains("inputRuntime.handleIMEInsertText"))
         #expect(viewSource.contains("inputRuntime.handleSpecialKey"))
         #expect(viewSource.contains("inputRuntime.handleControlKey"))
-        #expect(viewSource.contains("inputRuntime.handleTerminalInputText"))
+        #expect(viewSource.contains("inputRuntime.handleTerminalTextInputEffects"))
 
         // Then the main UIKit view does not directly own those C/FFI calls,
         // visible preedit state, or the Ghostty action conversion helper.
@@ -54,6 +54,10 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(!viewSource.contains("inputRuntime.imeInsertRoute"))
         #expect(!viewSource.contains("private func sendTerminalInputText"))
         #expect(!viewSource.contains("private func sendRawTerminalInputText"))
+        #expect(!viewSource.contains("private func applyTerminalTextInputEffects"))
+        #expect(!viewSource.contains("inputRuntime.handleTerminalInputText"))
+        #expect(!viewSource.contains("case let .sendBackspaces"))
+        #expect(!viewSource.contains("case let .moveCursor"))
         #expect(!viewSource.contains("replacingOccurrences(of: \"\\r\\n\", with: \"\\r\")"))
         #expect(!viewSource.contains("TerminalControlKey.controlCharacter"))
         #expect(!viewSource.contains("TerminalSpecialKeySequence.escapeSequence"))
@@ -84,7 +88,9 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(runtimeSource.contains("func handleControlKey"))
         #expect(runtimeSource.contains("func handleControlShortcut"))
         #expect(runtimeSource.contains("func handleTerminalInputText"))
+        #expect(runtimeSource.contains("func handleTerminalTextInputEffects"))
         #expect(runtimeSource.contains("struct TerminalTextInputExecutionContext"))
+        #expect(runtimeSource.contains("struct TerminalTextInputEffectExecutionContext"))
         #expect(runtimeSource.contains("replacingOccurrences(of: \"\\r\\n\", with: \"\\r\")"))
         #expect(runtimeSource.contains("private func executeIMEInsertRoute"))
         #expect(runtimeSource.contains("struct IMEInsertExecutionContext"))

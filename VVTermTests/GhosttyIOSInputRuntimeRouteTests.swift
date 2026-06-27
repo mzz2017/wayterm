@@ -315,5 +315,61 @@ struct GhosttyIOSInputRuntimeRouteTests {
         // Then raw terminal text converts LF to CR and does not invalidate the local session.
         #expect(events == ["raw-97,13,98-invalidate:false"])
     }
+
+    @Test
+    func terminalTextInputEffectsExecuteInRuntimeOwnedOrder() {
+        let runtime = TerminalIOSInputRuntime()
+        var events: [String] = []
+        let textContext = TerminalIOSInputRuntime.TerminalTextInputExecutionContext(
+            sendRawText: { text, invalidateLocalSession in
+                events.append("raw-\(text)-invalidate:\(invalidateLocalSession)")
+            },
+            sendGhosttyKey: { key, mods, text, codepoint, invalidateLocalSession in
+                events.append("mapped-\(key)-shift:\(mods.contains(.shift))-\(text ?? "nil")-\(codepoint)-invalidate:\(invalidateLocalSession)")
+            }
+        )
+        let effectContext = TerminalIOSInputRuntime.TerminalTextInputEffectExecutionContext(
+            textWillChange: { events.append("will-text") },
+            selectionWillChange: { events.append("will-selection") },
+            textDidChange: { events.append("did-text") },
+            selectionDidChange: { events.append("did-selection") },
+            syncPreedit: { text in events.append("preedit-\(text ?? "nil")") },
+            terminalTextInput: textContext,
+            sendGhosttyKeyPress: { key in events.append("key-\(key)") }
+        )
+
+        // Given a mixed set of text-model effects from an IME reconciliation.
+        runtime.handleTerminalTextInputEffects(
+            [
+                .willTextChange,
+                .willSelectionChange,
+                .syncPreedit("あ"),
+                .sendText("A"),
+                .sendBackspaces(2),
+                .moveCursor(-2),
+                .moveCursor(1),
+                .sendSpecialKey(.tab),
+                .didTextChange,
+                .didSelectionChange
+            ],
+            context: effectContext
+        )
+
+        // Then runtime owns the ordering and key expansion while the view only executes callbacks.
+        #expect(events == [
+            "will-text",
+            "will-selection",
+            "preedit-あ",
+            "mapped-a-shift:true-A-97-invalidate:false",
+            "key-backspace",
+            "key-backspace",
+            "key-arrowLeft",
+            "key-arrowLeft",
+            "key-arrowRight",
+            "key-tab",
+            "did-text",
+            "did-selection"
+        ])
+    }
 }
 #endif

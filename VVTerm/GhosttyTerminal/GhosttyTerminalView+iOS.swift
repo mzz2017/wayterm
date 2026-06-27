@@ -659,7 +659,7 @@ class GhosttyTerminalView: UIView {
             selectedRange: .init(location: snapshot.selectedRange.location, length: snapshot.selectedRange.length),
             markedRange: snapshot.markedRange.map { .init(location: $0.location, length: $0.length) }
         )
-        applyTerminalTextInputEffects(effects)
+        runTerminalTextInputEffects(effects)
         if snapshot.markedRange == nil {
             syncIMEPreedit(nil)
         }
@@ -724,7 +724,7 @@ class GhosttyTerminalView: UIView {
            before.markedRange == nil,
            before.selectedRange.length == 0,
            before.selectedRange.location == 0 {
-            applyTerminalTextInputEffects([.sendSpecialKey(.backspace)])
+            runTerminalTextInputEffects([.sendSpecialKey(.backspace)])
             return
         }
         syncTextInputModelFromIMEProxy()
@@ -756,45 +756,12 @@ class GhosttyTerminalView: UIView {
     private func invalidateLocalTextInputSession() {
         resetIMEProxyState()
         let effects = textInputModel.invalidateSession()
-        applyTerminalTextInputEffects(effects)
+        runTerminalTextInputEffects(effects)
         syncIMEPreedit(nil)
     }
 
-    private func applyTerminalTextInputEffects(_ effects: [TerminalTextInputModel.Effect]) {
-        for effect in effects {
-            switch effect {
-            case .willTextChange:
-                nativeTextInputDelegate?.textWillChange(self)
-            case .willSelectionChange:
-                nativeTextInputDelegate?.selectionWillChange(self)
-            case .didTextChange:
-                nativeTextInputDelegate?.textDidChange(self)
-            case .didSelectionChange:
-                nativeTextInputDelegate?.selectionDidChange(self)
-            case let .syncPreedit(text):
-                syncIMEPreedit(text)
-            case let .sendText(text):
-                inputRuntime.handleTerminalInputText(text, context: terminalTextInputExecutionContext())
-            case let .sendBackspaces(count):
-                for _ in 0..<count {
-                    sendKeyPress(.backspace)
-                }
-            case let .moveCursor(delta):
-                let key: Ghostty.Input.Key = delta < 0 ? .arrowLeft : .arrowRight
-                for _ in 0..<abs(delta) {
-                    sendKeyPress(key)
-                }
-            case let .sendSpecialKey(key):
-                switch key {
-                case .enter:
-                    sendKeyPress(.enter)
-                case .tab:
-                    sendKeyPress(.tab)
-                case .backspace:
-                    sendKeyPress(.backspace)
-                }
-            }
-        }
+    private func runTerminalTextInputEffects(_ effects: [TerminalTextInputModel.Effect]) {
+        inputRuntime.handleTerminalTextInputEffects(effects, context: terminalTextInputEffectExecutionContext())
     }
 
     private func textInputCaretRect(for index: Int) -> CGRect {
@@ -2451,6 +2418,34 @@ class GhosttyTerminalView: UIView {
         )
     }
 
+    private func terminalTextInputEffectExecutionContext() -> TerminalIOSInputRuntime.TerminalTextInputEffectExecutionContext {
+        TerminalIOSInputRuntime.TerminalTextInputEffectExecutionContext(
+            textWillChange: { [weak self] in
+                guard let self else { return }
+                self.nativeTextInputDelegate?.textWillChange(self)
+            },
+            selectionWillChange: { [weak self] in
+                guard let self else { return }
+                self.nativeTextInputDelegate?.selectionWillChange(self)
+            },
+            textDidChange: { [weak self] in
+                guard let self else { return }
+                self.nativeTextInputDelegate?.textDidChange(self)
+            },
+            selectionDidChange: { [weak self] in
+                guard let self else { return }
+                self.nativeTextInputDelegate?.selectionDidChange(self)
+            },
+            syncPreedit: { [weak self] text in
+                self?.syncIMEPreedit(text)
+            },
+            terminalTextInput: terminalTextInputExecutionContext(),
+            sendGhosttyKeyPress: { [weak self] key in
+                self?.sendKeyPress(key)
+            }
+        )
+    }
+
     func handleIMEProxyInsertText(_ text: String, fromIMEComposition: Bool = false) -> Bool {
         guard canRouteTerminalInput else { return true }
         if isNativeSelectionTextInputContext {
@@ -3102,7 +3097,7 @@ extension GhosttyTerminalView: UIKeyInput, UITextInputTraits {
         if isNativeSelectionTextInputContext {
             guard exitNativeSelectionTextInputContextForTerminalInput() else { return }
         }
-        applyTerminalTextInputEffects(textInputModel.handleDeleteBackward())
+        runTerminalTextInputEffects(textInputModel.handleDeleteBackward())
     }
 
     fileprivate func consumePendingSystemTextInputHardwareKey() -> UIKey? {
@@ -3248,9 +3243,7 @@ extension GhosttyTerminalView: UITextInput {
                 return
             }
             guard let range = terminalTextInputRange(from: newValue) else { return }
-            applyTerminalTextInputEffects(
-                textInputModel.handleSetSelection(location: range.location, length: range.length)
-            )
+            runTerminalTextInputEffects(textInputModel.handleSetSelection(location: range.location, length: range.length))
         }
     }
 
@@ -3297,7 +3290,7 @@ extension GhosttyTerminalView: UITextInput {
             return
         }
         let replacementRange = terminalTextInputRange(from: range)
-        applyTerminalTextInputEffects(
+        runTerminalTextInputEffects(
             textInputModel.handleReplace(
                 rangeStart: replacementRange?.location,
                 rangeEnd: replacementRange.map { $0.location + $0.length },
@@ -3311,7 +3304,7 @@ extension GhosttyTerminalView: UITextInput {
             guard exitNativeSelectionTextInputContextForTerminalInput() else { return }
         }
         discardPendingSystemTextInputHardwareKey()
-        applyTerminalTextInputEffects(
+        runTerminalTextInputEffects(
             textInputModel.handleSetMarkedText(
                 markedText,
                 selectedRangeLocation: selectedRange.location,
@@ -3325,7 +3318,7 @@ extension GhosttyTerminalView: UITextInput {
             guard exitNativeSelectionTextInputContextForTerminalInput() else { return }
         }
         discardPendingSystemTextInputHardwareKey()
-        applyTerminalTextInputEffects(textInputModel.handleUnmarkText())
+        runTerminalTextInputEffects(textInputModel.handleUnmarkText())
     }
 
     var textInputView: UIView {

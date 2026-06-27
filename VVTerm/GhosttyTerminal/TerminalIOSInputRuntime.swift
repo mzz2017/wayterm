@@ -83,6 +83,16 @@ final class TerminalIOSInputRuntime {
         let sendGhosttyKey: (Ghostty.Input.Key, Ghostty.Input.Mods, String?, UInt32, Bool) -> Void
     }
 
+    struct TerminalTextInputEffectExecutionContext {
+        let textWillChange: () -> Void
+        let selectionWillChange: () -> Void
+        let textDidChange: () -> Void
+        let selectionDidChange: () -> Void
+        let syncPreedit: (String?) -> Void
+        let terminalTextInput: TerminalTextInputExecutionContext
+        let sendGhosttyKeyPress: (Ghostty.Input.Key) -> Void
+    }
+
     private var renderedPreeditText: String?
     private var isIMEProxyProgrammaticResignAllowed = false
     private var suppressUnexpectedIMEProxyResignUntil = 0.0
@@ -364,6 +374,46 @@ final class TerminalIOSInputRuntime {
             mapping.codepoint,
             false
         )
+    }
+
+    func handleTerminalTextInputEffects(
+        _ effects: [TerminalTextInputModel.Effect],
+        context: TerminalTextInputEffectExecutionContext
+    ) {
+        for effect in effects {
+            switch effect {
+            case .willTextChange:
+                context.textWillChange()
+            case .willSelectionChange:
+                context.selectionWillChange()
+            case .didTextChange:
+                context.textDidChange()
+            case .didSelectionChange:
+                context.selectionDidChange()
+            case let .syncPreedit(text):
+                context.syncPreedit(text)
+            case let .sendText(text):
+                handleTerminalInputText(text, context: context.terminalTextInput)
+            case let .sendBackspaces(count):
+                for _ in 0..<count {
+                    context.sendGhosttyKeyPress(.backspace)
+                }
+            case let .moveCursor(delta):
+                let key: Ghostty.Input.Key = delta < 0 ? .arrowLeft : .arrowRight
+                for _ in 0..<abs(delta) {
+                    context.sendGhosttyKeyPress(key)
+                }
+            case let .sendSpecialKey(key):
+                switch key {
+                case .enter:
+                    context.sendGhosttyKeyPress(.enter)
+                case .tab:
+                    context.sendGhosttyKeyPress(.tab)
+                case .backspace:
+                    context.sendGhosttyKeyPress(.backspace)
+                }
+            }
+        }
     }
 
     @discardableResult
