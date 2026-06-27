@@ -20,16 +20,21 @@ struct GhosttyIOSZoomRuntimeBoundaryTests {
         let viewSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
+        let zoomGestureSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Zoom/GhosttyTerminalView+ZoomGesture+iOS.swift")
+        )
         let runtimeSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Zoom/TerminalIOSZoomRuntime.swift")
         )
 
         // Then the view delegates pinch state and indicator presentation to the runtime.
-        #expect(viewSource.contains("private let zoomRuntime = TerminalIOSZoomRuntime()"))
+        #expect(viewSource.contains("let zoomRuntime = TerminalIOSZoomRuntime()"))
         #expect(viewSource.contains("zoomRuntime.installIndicator"))
-        #expect(viewSource.contains("zoomRuntime.handlePinchGesture"))
-        #expect(viewSource.contains("zoomRuntime.isPinching"))
-        #expect(viewSource.contains("zoomRuntime.bringIndicatorToFront"))
+        #expect(!viewSource.contains("func handlePinchGesture"))
+        #expect(!viewSource.contains("var canHandlePinchZoom"))
+        #expect(zoomGestureSource.contains("zoomRuntime.handlePinchGesture"))
+        #expect(zoomGestureSource.contains("zoomRuntime.bringIndicatorToFront"))
+        #expect(zoomGestureSource.contains("var canHandlePinchZoom"))
 
         // And the view no longer owns the pinch zoom state machine or indicator lifecycle.
         #expect(!viewSource.contains("private var isPinchingTerminalZoom"))

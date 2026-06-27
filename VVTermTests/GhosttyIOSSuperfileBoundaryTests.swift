@@ -287,6 +287,30 @@ struct GhosttyIOSSuperfileBoundaryTests {
     }
 
     @Test
+    func zoomGestureRoutingLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
+        )
+        let zoomSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Zoom/GhosttyTerminalView+ZoomGesture+iOS.swift")
+        )
+
+        #expect(
+            !mainSource.contains("func handlePinchGesture"),
+            "GhosttyTerminalView+iOS.swift should not own pinch zoom gesture routing."
+        )
+        #expect(
+            !mainSource.contains("var canHandlePinchZoom"),
+            "GhosttyTerminalView+iOS.swift should not own pinch zoom availability policy."
+        )
+
+        #expect(zoomSource.contains("func handlePinchGesture"))
+        #expect(zoomSource.contains("var canHandlePinchZoom"))
+        #expect(zoomSource.contains("zoomRuntime.handlePinchGesture"))
+    }
+
+    @Test
     func surfaceLifecycleLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
