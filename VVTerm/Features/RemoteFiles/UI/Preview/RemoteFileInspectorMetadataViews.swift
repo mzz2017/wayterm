@@ -17,8 +17,7 @@ struct RemoteFileInspectorActions {
     }
 
     func canEditPermissions(_ entry: RemoteFileEntry) -> Bool {
-        guard onEditPermissions != nil, entry.permissions != nil else { return false }
-        return entry.type != .symlink
+        onEditPermissions != nil && RemoteFilePermissionEditPolicy.canEditPermissions(for: entry)
     }
 
     func showsPrimaryActions(for entry: RemoteFileEntry) -> Bool {

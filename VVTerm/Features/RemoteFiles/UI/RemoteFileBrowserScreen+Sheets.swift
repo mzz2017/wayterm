@@ -93,8 +93,8 @@ extension RemoteFileBrowserScreen {
         RemoteFilePermissionEditorSheet(
             entry: entry,
             draft: $permissionDraft,
-            originalAccessBits: permissionOriginalAccessBits,
-            preservedBits: permissionPreservedBits,
+            originalAccessBits: permissionEditContext?.originalAccessBits ?? 0,
+            preservedBits: permissionEditContext?.preservedBits ?? 0,
             errorMessage: permissionErrorMessage,
             isSubmitting: isPermissionSubmitting,
             onCancel: resetPermissionEditor,

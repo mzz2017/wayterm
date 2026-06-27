@@ -420,6 +420,41 @@ struct RemoteFileBrowserScreenBoundaryTests {
     }
 
     @Test
+    func screenAndInspectorDoNotOwnPermissionEditPolicy() throws {
+        let root = try sourceRoot()
+        let screenSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift")
+        )
+        let inspectorSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Preview/RemoteFileInspectorMetadataViews.swift")
+        )
+        let policySource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFilePermissionEditPolicy.swift")
+        )
+
+        #expect(
+            !screenSource.contains("entry.type != .symlink"),
+            "RemoteFileBrowserScreen.swift should not own permission edit eligibility."
+        )
+        #expect(
+            !inspectorSource.contains("entry.type != .symlink"),
+            "RemoteFileInspectorActions should not own permission edit eligibility."
+        )
+        #expect(
+            !screenSource.contains("permissionDraft.accessBits"),
+            "RemoteFileBrowserScreen.swift should not compose chmod permission bits."
+        )
+        #expect(
+            policySource.contains("enum RemoteFilePermissionEditPolicy"),
+            "RemoteFiles Application should own permission edit policy."
+        )
+        #expect(
+            policySource.contains("requestedPermissions"),
+            "RemoteFiles Application should own requested chmod bit composition."
+        )
+    }
+
+    @Test
     func screenDoesNotOwnMacOSInlineEditRouting() throws {
         let root = try sourceRoot()
         let screenSource = try source(

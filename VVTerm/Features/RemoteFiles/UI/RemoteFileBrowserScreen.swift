@@ -32,9 +32,7 @@ struct RemoteFileBrowserScreen: View {
     @State var deleteTargetEntry: RemoteFileEntry?
     @State var permissionTargetEntry: RemoteFileEntry?
     @State var permissionDraft = RemoteFilePermissionDraft(accessBits: 0)
-    @State var permissionOriginalAccessBits: UInt32 = 0
-    @State var permissionPreservedBits: UInt32 = 0
-    @State var permissionFileTypeBits: UInt32 = 0
+    @State var permissionEditContext: RemoteFilePermissionEditContext?
     @State var isPermissionSubmitting = false
     @State var permissionErrorMessage: String?
     @State var operationErrorMessage: String?
@@ -520,24 +518,16 @@ struct RemoteFileBrowserScreen: View {
     }
 
     func beginEditPermissions(_ entry: RemoteFileEntry) {
-        guard canEditPermissions(for: entry), let permissions = entry.permissions else { return }
+        guard let context = RemoteFilePermissionEditPolicy.context(for: entry) else { return }
         permissionTargetEntry = entry
-        permissionDraft = RemoteFilePermissionDraft(accessBits: permissions)
-        permissionOriginalAccessBits = permissions & 0o777
-        permissionPreservedBits = entry.specialPermissionBits
-        permissionFileTypeBits = permissions & UInt32(LIBSSH2_SFTP_S_IFMT)
+        permissionDraft = context.draft
+        permissionEditContext = context
         permissionErrorMessage = nil
         isPermissionSubmitting = false
     }
 
     func canEditPermissions(for entry: RemoteFileEntry) -> Bool {
-        guard entry.permissions != nil else { return false }
-        switch entry.type {
-        case .symlink:
-            return false
-        case .file, .directory, .other:
-            return true
-        }
+        RemoteFilePermissionEditPolicy.canEditPermissions(for: entry)
     }
 
     func previewEntry(_ entry: RemoteFileEntry) {
@@ -699,13 +689,18 @@ struct RemoteFileBrowserScreen: View {
     }
 
     func applyPermissions() {
-        guard let entry = permissionTargetEntry, !isPermissionSubmitting else { return }
+        guard let entry = permissionTargetEntry,
+              let context = permissionEditContext,
+              !isPermissionSubmitting else { return }
         permissionErrorMessage = nil
         isPermissionSubmitting = true
 
         performOperation(
             operation: {
-                let requestedPermissions = permissionFileTypeBits | permissionPreservedBits | permissionDraft.accessBits
+                let requestedPermissions = RemoteFilePermissionEditPolicy.requestedPermissions(
+                    draft: permissionDraft,
+                    context: context
+                )
                 try await browser.setPermissions(entry, permissions: requestedPermissions, in: fileTab, server: server)
             },
             onSuccess: { _ in
@@ -721,9 +716,7 @@ struct RemoteFileBrowserScreen: View {
     func resetPermissionEditor() {
         permissionTargetEntry = nil
         permissionDraft = RemoteFilePermissionDraft(accessBits: 0)
-        permissionOriginalAccessBits = 0
-        permissionPreservedBits = 0
-        permissionFileTypeBits = 0
+        permissionEditContext = nil
         permissionErrorMessage = nil
         isPermissionSubmitting = false
     }
