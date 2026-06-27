@@ -548,37 +548,7 @@ struct ServerFormSheet: View {
     // MARK: - Validation
 
     private var isValid: Bool {
-        !name.isEmpty &&
-        !host.isEmpty &&
-        ServerPortValidator.normalizedPort(from: port) != nil &&
-        hasValidCredentials
-    }
-
-    private var hasValidCredentials: Bool {
-        guard transportSelection != .tailscale else {
-            return true
-        }
-
-        if transportSelection == .cloudflare {
-            switch selectedCloudflareAccessMode {
-            case .oauth:
-                break
-            case .serviceToken:
-                guard !cloudflareClientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      !cloudflareClientSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    return false
-                }
-            }
-        }
-
-        switch selectedAuthMethod {
-        case .password:
-            return !password.isEmpty
-        case .sshKey:
-            return !sshKey.isEmpty
-        case .sshKeyWithPassphrase:
-            return !sshKey.isEmpty && !sshPassphrase.isEmpty
-        }
+        ServerFormValidationPolicy.isValid(draft: currentDraft)
     }
 
     // MARK: - Connection Test

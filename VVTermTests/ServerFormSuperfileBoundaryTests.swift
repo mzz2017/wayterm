@@ -50,6 +50,9 @@ struct ServerFormSuperfileBoundaryTests {
         let submissionBuilderSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerFormSubmissionBuilder.swift")
         )
+        let validationPolicySource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/Application/ServerFormValidationPolicy.swift")
+        )
 
         // Given transport selection is UI support and credential assembly is
         // application-layer form orchestration, the root form should only call into
@@ -75,6 +78,14 @@ struct ServerFormSuperfileBoundaryTests {
             "ServerFormSheet.swift should not read terminal defaults directly."
         )
         #expect(
+            !formSource.contains("private var hasValidCredentials"),
+            "ServerFormSheet.swift should not own credential validation policy."
+        )
+        #expect(
+            !formSource.contains("ServerPortValidator.normalizedPort(from: port)"),
+            "ServerFormSheet.swift should not own port validation policy."
+        )
+        #expect(
             selectionSource.contains("enum ServerTransportSelection"),
             "ServerTransportSelection.swift should own transport selection UI support."
         )
@@ -93,6 +104,14 @@ struct ServerFormSuperfileBoundaryTests {
         #expect(
             submissionBuilderSource.contains("struct ServerFormDefaults"),
             "Servers Application should own form default resolution."
+        )
+        #expect(
+            formSource.contains("ServerFormValidationPolicy.isValid(draft: currentDraft)"),
+            "ServerFormSheet.swift should delegate form validation to Servers Application policy."
+        )
+        #expect(
+            validationPolicySource.contains("enum ServerFormValidationPolicy"),
+            "Servers Application should own server form validation policy."
         )
     }
 
