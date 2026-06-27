@@ -16,6 +16,7 @@ struct ConnectionTerminalContainer: View {
     @ObservedObject var tabManager: TerminalTabManager
     @ObservedObject var fileTabManager: RemoteFileTabManager
     @ObservedObject var storeManager: StoreManager
+    @ObservedObject var viewTabConfig: ViewTabConfigurationManager
     let serverManager: ServerManager
     let fileBrowser: RemoteFileBrowserStore
     let server: Server
@@ -25,7 +26,6 @@ struct ConnectionTerminalContainer: View {
 
     @EnvironmentObject var ghosttyApp: Ghostty.App
     @Environment(\.colorScheme) private var colorScheme
-    @ObservedObject private var viewTabConfig = ViewTabConfigurationManager.shared
 
     /// Theme name from settings
     @AppStorage(CloudKitSyncConstants.terminalThemeNameKey) private var terminalThemeName = "Aizen Dark"

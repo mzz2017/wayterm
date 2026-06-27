@@ -152,6 +152,10 @@ struct ConnectionTabsViewSuperfileBoundaryTests {
                 !source.contains("StoreManager.shared"),
                 "\(url.lastPathComponent) should receive StoreManager or entitlement providers instead of reading StoreManager.shared."
             )
+            #expect(
+                !source.contains("ViewTabConfigurationManager.shared"),
+                "\(url.lastPathComponent) should receive view tab configuration from app composition instead of reading ViewTabConfigurationManager.shared."
+            )
         }
     }
 

@@ -342,6 +342,32 @@ struct IOSTerminalViewSuperfileBoundaryTests {
     }
 
     @Test
+    func iosTerminalViewUsesInjectedViewTabConfiguration() throws {
+        let root = try sourceRoot()
+        let rootSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/iOS/iOSTerminalView.swift")
+        )
+        let appSource = try source(
+            at: root.appendingPathComponent("VVTerm/App/iOS/iOSContentView.swift")
+        )
+
+        // Given iOSTerminalView coordinates visible connection views but does
+        // not own global connection-view configuration.
+        #expect(
+            rootSource.contains("@ObservedObject var viewTabConfig: ViewTabConfigurationManager"),
+            "iOSTerminalView should receive view tab configuration from iOS app composition."
+        )
+        #expect(
+            !rootSource.contains("ViewTabConfigurationManager.shared"),
+            "iOSTerminalView should not resolve ViewTabConfigurationManager.shared from terminal UI."
+        )
+        #expect(
+            appSource.contains("viewTabConfig: viewTabConfig"),
+            "iOSContentView should pass the app-owned view tab configuration into iOSTerminalView."
+        )
+    }
+
+    @Test
     func iosTerminalViewUsesPolicyForDerivedDisplayState() throws {
         let root = try sourceRoot()
         let rootSource = try source(

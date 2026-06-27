@@ -15,6 +15,7 @@ struct ContentView: View {
     @StateObject private var serverManager = ServerManager.shared
     @StateObject private var tabManager = TerminalTabManager.shared
     @StateObject private var storeManager = StoreManager.shared
+    @StateObject private var viewTabConfig = ViewTabConfigurationManager.shared
     @StateObject private var engagementTracker = EngagementTracker.shared
     @Environment(\.requestReview) private var requestReview
     @Environment(\.colorScheme) private var colorScheme
@@ -95,6 +96,7 @@ struct ContentView: View {
                     tabManager: tabManager,
                     fileTabManager: fileTabs,
                     storeManager: storeManager,
+                    viewTabConfig: viewTabConfig,
                     serverManager: serverManager,
                     fileBrowser: fileBrowser,
                     server: server,

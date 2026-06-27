@@ -7,6 +7,7 @@ struct iOSTerminalView: View {
     @ObservedObject var serverManager: ServerManager
     @ObservedObject var fileTabs: RemoteFileTabManager
     @ObservedObject var storeManager: StoreManager
+    @ObservedObject var viewTabConfig: ViewTabConfigurationManager
     let fileBrowser: RemoteFileBrowserStore
     let connectingServer: Server?
     let isConnecting: Bool
@@ -14,7 +15,6 @@ struct iOSTerminalView: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
-    @ObservedObject private var viewTabConfig = ViewTabConfigurationManager.shared
 
     /// Delayed flag to allow tab animation to complete before creating terminal
     @State private var shouldShowTerminalBySession: [UUID: Bool] = [:]

@@ -34,6 +34,27 @@ struct IOSActiveConnectionOpenIntentBoundaryTests {
         #expect(!helper.contains("reconnectSessionIfRuntimeInactive"))
     }
 
+    @Test
+    func iosActiveConnectionOpenUsesInjectedViewTabConfiguration() throws {
+        let root = try sourceRoot()
+        let listSource = try source(at: root.appendingPathComponent("VVTerm/Features/Servers/UI/iOS/iOSServerListView.swift"))
+        let appSource = try source(at: root.appendingPathComponent("VVTerm/App/iOS/iOSContentView.swift"))
+
+        // Given iOS server list open intent chooses the preferred connection view.
+        #expect(
+            listSource.contains("@ObservedObject var viewTabConfig: ViewTabConfigurationManager"),
+            "iOSServerListView should receive view tab configuration from iOS app composition."
+        )
+        #expect(
+            !listSource.contains("ViewTabConfigurationManager.shared"),
+            "iOSServerListView should not resolve ViewTabConfigurationManager.shared from Servers UI."
+        )
+        #expect(
+            appSource.contains("viewTabConfig: viewTabConfig"),
+            "iOSContentView should pass the app-owned view tab configuration into iOSServerListView."
+        )
+    }
+
     private func slice(startingAt marker: String, endingBefore endMarker: String, in source: String) throws -> String {
         guard let start = source.range(of: marker),
               let end = source.range(of: endMarker, range: start.lowerBound..<source.endIndex)
