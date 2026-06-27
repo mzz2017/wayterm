@@ -218,6 +218,36 @@ struct ServerFormSuperfileBoundaryTests {
         }
     }
 
+    @Test
+    func workspaceFormUsesInjectedStoreManager() throws {
+        let root = try sourceRoot()
+        let workspaceFormSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/Workspace/WorkspaceFormSheet.swift")
+        )
+        let callerSources = try [
+            "VVTerm/Features/Servers/UI/ServerDetail/MoveServerSheet.swift",
+            "VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift",
+            "VVTerm/Features/Servers/UI/Workspace/WorkspaceSwitcherSheet.swift",
+            "VVTerm/Features/Servers/UI/iOS/iOSServerComponents.swift",
+            "VVTerm/Features/Servers/UI/iOS/iOSServerListView.swift"
+        ].map { path in
+            try source(at: root.appendingPathComponent(path))
+        }.joined(separator: "\n")
+
+        #expect(
+            workspaceFormSource.contains("@ObservedObject var storeManager: StoreManager"),
+            "WorkspaceFormSheet should receive StoreManager from its caller."
+        )
+        #expect(
+            !workspaceFormSource.contains("StoreManager.shared"),
+            "WorkspaceFormSheet should not resolve StoreManager.shared from workspace form UI."
+        )
+        #expect(
+            callerSources.contains("storeManager: storeManager"),
+            "WorkspaceFormSheet callers should pass the existing StoreManager dependency through."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

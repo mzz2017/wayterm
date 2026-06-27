@@ -4,11 +4,11 @@ import SwiftUI
 
 struct WorkspaceFormSheet: View {
     @ObservedObject var serverManager: ServerManager
+    @ObservedObject var storeManager: StoreManager
     let workspace: Workspace?
     let onSave: (Workspace) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var storeManager = StoreManager.shared
 
     @State private var name: String = ""
     @State private var selectedColor: Color = .blue
@@ -29,10 +29,12 @@ struct WorkspaceFormSheet: View {
 
     init(
         serverManager: ServerManager,
+        storeManager: StoreManager,
         workspace: Workspace? = nil,
         onSave: @escaping (Workspace) -> Void
     ) {
         self.serverManager = serverManager
+        self.storeManager = storeManager
         self.workspace = workspace
         self.onSave = onSave
 
@@ -234,6 +236,7 @@ extension Color {
 #Preview {
     WorkspaceFormSheet(
         serverManager: ServerManager.makeForTesting(),
+        storeManager: StoreManager.makeForTesting(),
         onSave: { _ in }
     )
 }

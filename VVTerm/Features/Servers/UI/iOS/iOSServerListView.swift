@@ -105,6 +105,7 @@ struct iOSServerListView: View {
             NavigationStack {
                 WorkspaceFormSheet(
                     serverManager: serverManager,
+                    storeManager: storeManager,
                     onSave: { workspace in
                         selectedWorkspace = workspace
                         showingAddWorkspace = false

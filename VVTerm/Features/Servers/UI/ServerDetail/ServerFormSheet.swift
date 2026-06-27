@@ -315,6 +315,7 @@ struct ServerFormSheet: View {
     private var createWorkspaceSheet: some View {
         WorkspaceFormSheet(
             serverManager: serverManager,
+            storeManager: storeManager,
             onSave: { workspace in
                 selectedWorkspaceId = workspace.id
             }

@@ -199,6 +199,7 @@ struct MoveServerSheet: View {
         .sheet(isPresented: $showingCreateWorkspace) {
             WorkspaceFormSheet(
                 serverManager: serverManager,
+                storeManager: storeManager,
                 onSave: { workspace in
                     selectedWorkspaceId = workspace.id
                 }

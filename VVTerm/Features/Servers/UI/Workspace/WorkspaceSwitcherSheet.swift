@@ -78,6 +78,7 @@ struct WorkspaceSwitcherSheet: View {
         .sheet(isPresented: $showingCreateWorkspace) {
             WorkspaceFormSheet(
                 serverManager: serverManager,
+                storeManager: storeManager,
                 onSave: { newWorkspace in
                     selectedWorkspace = newWorkspace
                 }
@@ -86,6 +87,7 @@ struct WorkspaceSwitcherSheet: View {
         .sheet(item: $workspaceToEdit) { workspace in
             WorkspaceFormSheet(
                 serverManager: serverManager,
+                storeManager: storeManager,
                 workspace: workspace,
                 onSave: { updatedWorkspace in
                     if selectedWorkspace?.id == updatedWorkspace.id {
