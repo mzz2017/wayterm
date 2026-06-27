@@ -79,6 +79,31 @@ struct GhosttyIOSSuperfileBoundaryTests {
     }
 
     @Test
+    func textInputConformanceLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
+        )
+        let textInputSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+TextInput+iOS.swift")
+        )
+
+        #expect(
+            !mainSource.contains("extension GhosttyTerminalView: UIKeyInput"),
+            "GhosttyTerminalView+iOS.swift should not own software keyboard conformance."
+        )
+        #expect(
+            !mainSource.contains("extension GhosttyTerminalView: UITextInput"),
+            "GhosttyTerminalView+iOS.swift should not own native text input conformance."
+        )
+
+        #expect(textInputSource.contains("extension GhosttyTerminalView: UIKeyInput, UITextInputTraits"))
+        #expect(textInputSource.contains("extension GhosttyTerminalView: UITextInput"))
+        #expect(textInputSource.contains("func consumePendingSystemTextInputHardwareKey()"))
+        #expect(textInputSource.contains("func sendInterpretedHardwareKeyText"))
+    }
+
+    @Test
     func interactionDelegatesLiveOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
