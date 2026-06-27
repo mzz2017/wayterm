@@ -137,5 +137,91 @@ struct GhosttyIOSInputRuntimeRouteTests {
             return
         }
     }
+
+    @Test
+    func imeInsertHandlerDoesNotConsumeModifiersWhenPendingHardwareKeyHandlesText() {
+        let runtime = TerminalIOSInputRuntime()
+        var modifierConsumptionCount = 0
+        var events: [String] = []
+        let context = TerminalIOSInputRuntime.IMEInsertExecutionContext(
+            consumeModifiers: {
+                modifierConsumptionCount += 1
+                return .init(ctrl: true, alt: false, command: false, shift: false)
+            },
+            interpretPendingHardwareKey: { text in
+                events.append("pending-\(text)")
+                return true
+            },
+            routeToolbarKey: { key in events.append("toolbar-\(key)") },
+            interceptRichPaste: {
+                events.append("rich-paste")
+                return false
+            },
+            invalidateLocalTextInputSession: { events.append("invalidate") },
+            commitTextToIMEProxy: { text in events.append("commit-\(text)") },
+            commitMarkedTextIfNeeded: { events.append("commit-marked") },
+            sendGhosttyKey: { key, mods, text, codepoint in
+                events.append("ghostty-\(key)-ctrl:\(mods.contains(.ctrl))-\(text ?? "nil")-\(codepoint)")
+            },
+            sendAnsiData: { data in events.append("ansi-\(Array(data))") },
+            sendText: { text in events.append("text-\(text)") }
+        )
+
+        // Given text delivered by the system text-input path for a pending hardware key.
+        let handled = runtime.handleIMEInsertText(
+            "x",
+            fromIMEComposition: false,
+            hasPendingSystemTextInputHardwareKey: true,
+            context: context
+        )
+
+        // Then the runtime returns after the pending hardware handler succeeds.
+        #expect(handled)
+        #expect(modifierConsumptionCount == 0)
+        #expect(events == ["pending-x"])
+    }
+
+    @Test
+    func imeInsertHandlerFallsBackFromRejectedRichPasteWithConsumedModifiers() {
+        let runtime = TerminalIOSInputRuntime()
+        var modifierConsumptionCount = 0
+        var events: [String] = []
+        let context = TerminalIOSInputRuntime.IMEInsertExecutionContext(
+            consumeModifiers: {
+                modifierConsumptionCount += 1
+                return .init(ctrl: true, alt: false, command: false, shift: false)
+            },
+            interpretPendingHardwareKey: { text in
+                events.append("pending-\(text)")
+                return false
+            },
+            routeToolbarKey: { key in events.append("toolbar-\(key)") },
+            interceptRichPaste: {
+                events.append("rich-paste")
+                return false
+            },
+            invalidateLocalTextInputSession: { events.append("invalidate") },
+            commitTextToIMEProxy: { text in events.append("commit-\(text)") },
+            commitMarkedTextIfNeeded: { events.append("commit-marked") },
+            sendGhosttyKey: { key, mods, text, codepoint in
+                events.append("ghostty-\(key)-ctrl:\(mods.contains(.ctrl))-\(text ?? "nil")-\(codepoint)")
+            },
+            sendAnsiData: { data in events.append("ansi-\(Array(data))") },
+            sendText: { text in events.append("text-\(text)") }
+        )
+
+        // Given Ctrl+V reaches the app rich-paste interceptor but the interceptor declines it.
+        let handled = runtime.handleIMEInsertText(
+            "v",
+            fromIMEComposition: false,
+            hasPendingSystemTextInputHardwareKey: false,
+            context: context
+        )
+
+        // Then fallback uses the already-consumed Ctrl state instead of reading toolbar state again.
+        #expect(handled)
+        #expect(modifierConsumptionCount == 1)
+        #expect(events == ["rich-paste", "ghostty-v-ctrl:true-nil-118"])
+    }
 }
 #endif

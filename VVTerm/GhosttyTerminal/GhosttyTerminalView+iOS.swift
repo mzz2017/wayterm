@@ -2468,74 +2468,12 @@ class GhosttyTerminalView: UIView {
             clearNativeSelectionStateForTerminalInput()
         }
 
-        let normalized = text.precomposedStringWithCanonicalMapping
-        let route = inputRuntime.imeInsertRoute(
-            for: normalized,
-            modifiers: consumeIMEProxyModifierState,
+        return inputRuntime.handleIMEInsertText(
+            text,
+            fromIMEComposition: fromIMEComposition,
             hasPendingSystemTextInputHardwareKey: !fromIMEComposition && pendingSystemTextInputHardwareKeyCount > 0,
-            fromIMEComposition: fromIMEComposition
+            context: imeInsertExecutionContext()
         )
-        return executeIMEInsertRoute(route, normalizedText: normalized)
-    }
-
-    private func executeIMEInsertRoute(
-        _ route: TerminalIOSInputRuntime.IMEInsertRoute,
-        normalizedText: String
-    ) -> Bool {
-        switch route {
-        case .ignore:
-            return true
-        case .interpretPendingHardwareKey(let text):
-            if let key = consumePendingSystemTextInputHardwareKey(),
-               sendInterpretedHardwareKeyText(text, for: key) {
-                invalidateLocalTextInputSession()
-                return true
-            }
-
-            let fallbackRoute = inputRuntime.imeInsertRoute(
-                for: text,
-                modifiers: consumeIMEProxyModifierState,
-                hasPendingSystemTextInputHardwareKey: false,
-                fromIMEComposition: false
-            )
-            return executeIMEInsertRoute(fallbackRoute, normalizedText: text)
-        case .routeToolbarKey(let key, let suppressUnexpectedResign):
-            if suppressUnexpectedResign {
-                inputRuntime.suppressUnexpectedIMEProxyResign()
-            }
-            routeToolbarKey(key)
-            return true
-        case .interceptRichPaste(let fallbackModifiers):
-            if interceptRichPasteIfNeeded() {
-                invalidateLocalTextInputSession()
-                return true
-            }
-
-            let fallbackRoute = inputRuntime.imeInsertRoute(
-                for: normalizedText,
-                modifiers: fallbackModifiers,
-                hasPendingSystemTextInputHardwareKey: false,
-                fromIMEComposition: false,
-                allowRichPasteInterception: false
-            )
-            return executeIMEInsertRoute(fallbackRoute, normalizedText: normalizedText)
-        case .commitTextToIMEProxy(let text):
-            // Plain text goes into the persistent local document; the text input
-            // model reconciles it with the terminal by sending the delta.
-            imeProxyTextView.insertCommittedText(text)
-            return true
-        case .sendGhosttyKey(let key, let mods, let text, let unshiftedCodepoint, let commitMarkedTextFirst):
-            if commitMarkedTextFirst {
-                commitIMEProxyMarkedTextIfNeeded()
-            }
-            sendModifiedKey(key, mods: mods, text: text, unshiftedCodepoint: unshiftedCodepoint)
-            sendRemainingIMEInsertTextIfNeeded(after: normalizedText)
-            return true
-        case .sendAnsiData(let data):
-            sendAnsiSequence(data)
-            sendRemainingIMEInsertTextIfNeeded(after: normalizedText)
-            return true
-        }
     }
 
     private func consumeIMEProxyModifierState() -> TerminalIOSInputRuntime.ModifierState {
@@ -2548,9 +2486,48 @@ class GhosttyTerminalView: UIView {
         )
     }
 
-    private func sendRemainingIMEInsertTextIfNeeded(after normalized: String) {
-        guard normalized.count > 1 else { return }
-        sendText(String(normalized.dropFirst()))
+    private func imeInsertExecutionContext() -> TerminalIOSInputRuntime.IMEInsertExecutionContext {
+        TerminalIOSInputRuntime.IMEInsertExecutionContext(
+            consumeModifiers: { [weak self] in
+                self?.consumeIMEProxyModifierState() ?? .none
+            },
+            interpretPendingHardwareKey: { [weak self] text in
+                guard let self,
+                      let key = self.consumePendingSystemTextInputHardwareKey(),
+                      self.sendInterpretedHardwareKeyText(text, for: key)
+                else {
+                    return false
+                }
+                self.invalidateLocalTextInputSession()
+                return true
+            },
+            routeToolbarKey: { [weak self] key in
+                self?.routeToolbarKey(key)
+            },
+            interceptRichPaste: { [weak self] in
+                self?.interceptRichPasteIfNeeded() ?? false
+            },
+            invalidateLocalTextInputSession: { [weak self] in
+                self?.invalidateLocalTextInputSession()
+            },
+            commitTextToIMEProxy: { [weak self] text in
+                // Plain text goes into the persistent local document; the text
+                // input model reconciles it with the terminal by sending the delta.
+                self?.imeProxyTextView.insertCommittedText(text)
+            },
+            commitMarkedTextIfNeeded: { [weak self] in
+                self?.commitIMEProxyMarkedTextIfNeeded()
+            },
+            sendGhosttyKey: { [weak self] key, mods, text, unshiftedCodepoint in
+                self?.sendModifiedKey(key, mods: mods, text: text, unshiftedCodepoint: unshiftedCodepoint)
+            },
+            sendAnsiData: { [weak self] data in
+                self?.sendAnsiSequence(data)
+            },
+            sendText: { [weak self] text in
+                self?.sendText(text)
+            }
+        )
     }
 
     private func commitIMEProxyMarkedTextIfNeeded() {

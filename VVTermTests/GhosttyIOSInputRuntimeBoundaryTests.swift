@@ -32,7 +32,7 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(viewSource.contains("inputRuntime.handleToolbarCustomAction"))
         #expect(viewSource.contains("inputRuntime.ghosttyKeyMapping"))
         #expect(viewSource.contains("inputRuntime.terminalKey"))
-        #expect(viewSource.contains("inputRuntime.imeInsertRoute"))
+        #expect(viewSource.contains("inputRuntime.handleIMEInsertText"))
 
         // Then the main UIKit view does not directly own those C/FFI calls,
         // visible preedit state, or the Ghostty action conversion helper.
@@ -46,6 +46,9 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(!viewSource.contains("private func ghosttyKeyMapping"))
         #expect(!viewSource.contains("private func terminalKey(forKeyCommandInput"))
         #expect(!viewSource.contains("private func imeProxyGhosttyModifiers"))
+        #expect(!viewSource.contains("private func executeIMEInsertRoute"))
+        #expect(!viewSource.contains("private func sendRemainingIMEInsertTextIfNeeded"))
+        #expect(!viewSource.contains("inputRuntime.imeInsertRoute"))
         #expect(!viewSource.contains("TerminalControlKey.controlCharacter(for: firstChar)"))
         #expect(!viewSource.contains("private var renderedIMEPreeditText"))
         #expect(!viewSource.contains("private func shouldDisplayVisiblePreedit"))
@@ -69,6 +72,9 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(runtimeSource.contains("func terminalKey(forKeyCommandInput"))
         #expect(runtimeSource.contains("func ghosttyModifiers"))
         #expect(runtimeSource.contains("func imeInsertRoute"))
+        #expect(runtimeSource.contains("func handleIMEInsertText"))
+        #expect(runtimeSource.contains("private func executeIMEInsertRoute"))
+        #expect(runtimeSource.contains("struct IMEInsertExecutionContext"))
         #expect(runtimeSource.contains("TerminalControlKey.controlCharacter"))
         #expect(runtimeSource.contains("private func sendToolbarKey"))
         #expect(runtimeSource.contains("private func sendToolbarGhosttyKey"))

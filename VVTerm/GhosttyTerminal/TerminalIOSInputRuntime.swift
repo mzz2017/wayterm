@@ -59,6 +59,19 @@ final class TerminalIOSInputRuntime {
         case sendAnsiData(Data)
     }
 
+    struct IMEInsertExecutionContext {
+        let consumeModifiers: () -> ModifierState
+        let interpretPendingHardwareKey: (String) -> Bool
+        let routeToolbarKey: (TerminalKey) -> Void
+        let interceptRichPaste: () -> Bool
+        let invalidateLocalTextInputSession: () -> Void
+        let commitTextToIMEProxy: (String) -> Void
+        let commitMarkedTextIfNeeded: () -> Void
+        let sendGhosttyKey: (Ghostty.Input.Key, Ghostty.Input.Mods, String?, UInt32) -> Void
+        let sendAnsiData: (Data) -> Void
+        let sendText: (String) -> Void
+    }
+
     private var renderedPreeditText: String?
     private var isIMEProxyProgrammaticResignAllowed = false
     private var suppressUnexpectedIMEProxyResignUntil = 0.0
@@ -263,6 +276,22 @@ final class TerminalIOSInputRuntime {
         return .sendAnsiData(data)
     }
 
+    func handleIMEInsertText(
+        _ text: String,
+        fromIMEComposition: Bool,
+        hasPendingSystemTextInputHardwareKey: Bool,
+        context: IMEInsertExecutionContext
+    ) -> Bool {
+        let normalized = text.precomposedStringWithCanonicalMapping
+        let route = imeInsertRoute(
+            for: normalized,
+            modifiers: context.consumeModifiers,
+            hasPendingSystemTextInputHardwareKey: hasPendingSystemTextInputHardwareKey,
+            fromIMEComposition: fromIMEComposition
+        )
+        return executeIMEInsertRoute(route, normalizedText: normalized, context: context)
+    }
+
     @discardableResult
     func syncVisiblePreedit(
         _ text: String?,
@@ -337,6 +366,68 @@ final class TerminalIOSInputRuntime {
 
     private var shouldSuppressUnexpectedIMEProxyResign: Bool {
         Date.timeIntervalSinceReferenceDate < suppressUnexpectedIMEProxyResignUntil
+    }
+
+    private func executeIMEInsertRoute(
+        _ route: IMEInsertRoute,
+        normalizedText: String,
+        context: IMEInsertExecutionContext
+    ) -> Bool {
+        switch route {
+        case .ignore:
+            return true
+        case .interpretPendingHardwareKey(let text):
+            if context.interpretPendingHardwareKey(text) {
+                return true
+            }
+
+            let fallbackRoute = imeInsertRoute(
+                for: text,
+                modifiers: context.consumeModifiers,
+                hasPendingSystemTextInputHardwareKey: false,
+                fromIMEComposition: false
+            )
+            return executeIMEInsertRoute(fallbackRoute, normalizedText: text, context: context)
+        case .routeToolbarKey(let key, let suppressUnexpectedResign):
+            if suppressUnexpectedResign {
+                suppressUnexpectedIMEProxyResign()
+            }
+            context.routeToolbarKey(key)
+            return true
+        case .interceptRichPaste(let fallbackModifiers):
+            if context.interceptRichPaste() {
+                context.invalidateLocalTextInputSession()
+                return true
+            }
+
+            let fallbackRoute = imeInsertRoute(
+                for: normalizedText,
+                modifiers: fallbackModifiers,
+                hasPendingSystemTextInputHardwareKey: false,
+                fromIMEComposition: false,
+                allowRichPasteInterception: false
+            )
+            return executeIMEInsertRoute(fallbackRoute, normalizedText: normalizedText, context: context)
+        case .commitTextToIMEProxy(let text):
+            context.commitTextToIMEProxy(text)
+            return true
+        case .sendGhosttyKey(let key, let mods, let text, let unshiftedCodepoint, let commitMarkedTextFirst):
+            if commitMarkedTextFirst {
+                context.commitMarkedTextIfNeeded()
+            }
+            context.sendGhosttyKey(key, mods, text, unshiftedCodepoint)
+            sendRemainingIMEInsertTextIfNeeded(after: normalizedText, sendText: context.sendText)
+            return true
+        case .sendAnsiData(let data):
+            context.sendAnsiData(data)
+            sendRemainingIMEInsertTextIfNeeded(after: normalizedText, sendText: context.sendText)
+            return true
+        }
+    }
+
+    private func sendRemainingIMEInsertTextIfNeeded(after normalized: String, sendText: (String) -> Void) {
+        guard normalized.count > 1 else { return }
+        sendText(String(normalized.dropFirst()))
     }
 
     private func isEscapeKey(_ key: TerminalKey) -> Bool {
