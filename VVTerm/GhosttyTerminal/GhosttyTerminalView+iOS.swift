@@ -1504,49 +1504,11 @@ class GhosttyTerminalView: UIView {
     }
 
     private func readNativeSelectionLine(surface: ghostty_surface_t, row: Int, columns: Int) -> String {
-        guard columns > 0 else { return "" }
-
-        var text = ghostty_text_s()
-        let selection = ghostty_selection_s(
-            top_left: ghostty_point_s(
-                tag: GHOSTTY_POINT_VIEWPORT,
-                coord: GHOSTTY_POINT_COORD_EXACT,
-                x: 0,
-                y: UInt32(row)
-            ),
-            bottom_right: ghostty_point_s(
-                tag: GHOSTTY_POINT_VIEWPORT,
-                coord: GHOSTTY_POINT_COORD_EXACT,
-                x: UInt32(columns - 1),
-                y: UInt32(row)
-            ),
-            rectangle: true
+        GhosttyTerminalTextReader.readViewportLine(
+            surface: surface,
+            row: row,
+            columns: columns
         )
-
-        let rawLine: String
-        if ghostty_surface_read_text(surface, selection, &text) {
-            defer { ghostty_surface_free_text(surface, &text) }
-            rawLine = ghosttyTextString(text)
-        } else {
-            rawLine = ""
-        }
-
-        var line = rawLine
-        while line.last == "\n" || line.last == "\r" {
-            line.removeLast()
-        }
-
-        while let scalar = line.unicodeScalars.last,
-              CharacterSet.whitespaces.contains(scalar) {
-            line.removeLast()
-        }
-
-        let lineNSString = line as NSString
-        if lineNSString.length > columns {
-            line = lineNSString.substring(to: columns)
-        }
-
-        return line
     }
 
     private func setNativeSelectedRange(_ range: NSRange?) {
@@ -1843,11 +1805,10 @@ class GhosttyTerminalView: UIView {
 
         let pos = ghosttyPoint(location)
         surface.sendMousePos(.init(x: pos.x, y: pos.y, mods: []))
-
-        var text = ghostty_text_s()
-        guard ghostty_surface_quicklook_word(cSurface, &text) else { return nil }
-        defer { ghostty_surface_free_text(cSurface, &text) }
-        return layout.selection(fromViewportText: text)
+        return GhosttyTerminalTextReader.quickLookWordSelection(
+            surface: cSurface,
+            layout: layout
+        )
     }
 
     private func startTouchSelection(at location: CGPoint) {
@@ -1922,7 +1883,6 @@ class GhosttyTerminalView: UIView {
               let surface = surface?.unsafeCValue else { return nil }
 
         let normalized = touchSelection.normalized
-        var text = ghostty_text_s()
         let selection = ghostty_selection_s(
             top_left: ghostty_point_s(
                 tag: GHOSTTY_POINT_VIEWPORT,
@@ -1938,26 +1898,12 @@ class GhosttyTerminalView: UIView {
             ),
             rectangle: false
         )
-        guard ghostty_surface_read_text(surface, selection, &text) else { return nil }
-        defer { ghostty_surface_free_text(surface, &text) }
-        return ghosttyTextString(text)
+        return GhosttyTerminalTextReader.readText(surface: surface, selection: selection)
     }
 
     private func ghosttySelectionText() -> String? {
         guard let surface = surface?.unsafeCValue else { return nil }
-        var text = ghostty_text_s()
-        guard ghostty_surface_read_selection(surface, &text) else { return nil }
-        defer { ghostty_surface_free_text(surface, &text) }
-        return ghosttyTextString(text)
-    }
-
-    private func ghosttyTextString(_ text: ghostty_text_s) -> String {
-        guard let rawText = text.text else { return "" }
-        let buffer = UnsafeBufferPointer(
-            start: UnsafeRawPointer(rawText).assumingMemoryBound(to: UInt8.self),
-            count: Int(text.text_len)
-        )
-        return String(decoding: buffer, as: UTF8.self)
+        return GhosttyTerminalTextReader.readSelection(surface: surface)
     }
 
     private func copyTextToClipboard(_ text: String) {
