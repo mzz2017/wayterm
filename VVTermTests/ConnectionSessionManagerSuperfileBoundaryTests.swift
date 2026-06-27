@@ -195,6 +195,9 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
         let reliabilitySource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionReliabilityManager.swift")
         )
+        let appDependencySource = try source(
+            at: root.appendingPathComponent("VVTerm/App/TerminalSessionLiveDependencies.swift")
+        )
 
         // Given the connection session manager source.
         #expect(
@@ -204,8 +207,16 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
 
         // Then reconnect reliability policy has a dedicated Application file.
         #expect(reliabilitySource.contains("actor ConnectionReliabilityManager"))
+        #expect(reliabilitySource.contains("typealias ReconnectOperation"))
+        #expect(reliabilitySource.contains("typealias DelayOperation"))
         #expect(reliabilitySource.contains("handleDisconnect"))
         #expect(reliabilitySource.contains("resetAttempts"))
+        #expect(
+            !reliabilitySource.contains("ConnectionSessionManager.shared"),
+            "ConnectionReliabilityManager retry policy should not reach directly into the shared manager."
+        )
+        #expect(appDependencySource.contains("extension ConnectionReliabilityManager"))
+        #expect(appDependencySource.contains("ConnectionSessionManager.shared.reconnect(session: session)"))
     }
 
     @Test

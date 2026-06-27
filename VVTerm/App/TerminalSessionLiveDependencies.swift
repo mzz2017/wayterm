@@ -1,5 +1,12 @@
 import Foundation
 
+extension ConnectionReliabilityManager {
+    @MainActor
+    static func liveReconnect(session: ConnectionSession) async throws {
+        try await ConnectionSessionManager.shared.reconnect(session: session)
+    }
+}
+
 extension ConnectionSessionManager.Dependencies {
     static var live: Self {
         Self(
