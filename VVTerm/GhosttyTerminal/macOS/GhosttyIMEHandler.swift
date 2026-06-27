@@ -16,7 +16,7 @@ class GhosttyIMEHandler {
     // MARK: - Properties
 
     private weak var view: NSView?
-    private weak var surface: Ghostty.Surface?
+    private weak var surfaceOwner: TerminalMacOSSurfaceOwner?
 
     /// Track marked text for IME composition
     private(set) var markedText: String = ""
@@ -41,16 +41,15 @@ class GhosttyIMEHandler {
 
     // MARK: - Initialization
 
-    init(view: NSView, surface: Ghostty.Surface?) {
+    init(view: NSView, surfaceOwner: TerminalMacOSSurfaceOwner) {
         self.view = view
-        self.surface = surface
+        self.surfaceOwner = surfaceOwner
     }
 
     // MARK: - Public API
 
-    /// Update surface reference
-    func updateSurface(_ surface: Ghostty.Surface?) {
-        self.surface = surface
+    /// Reset cached preedit state after the underlying surface changes.
+    func surfaceDidChange() {
         renderedPreeditText = nil
         syncPreedit(markedText)
     }
@@ -97,7 +96,7 @@ class GhosttyIMEHandler {
         }
 
         // Otherwise send directly to terminal (e.g., paste operation)
-        surface?.sendText(text)
+        surfaceOwner?.sendText(text)
     }
 
     func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
@@ -165,27 +164,19 @@ class GhosttyIMEHandler {
         ]
     }
 
-    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?, viewFrame: NSRect, window: NSWindow?, surface: ghostty_surface_t?) -> NSRect {
+    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?, viewFrame: NSRect, window: NSWindow?) -> NSRect {
         // Get cursor position from Ghostty for IME window placement
-        guard let surface = surface else {
+        guard let imePoint = surfaceOwner?.imePoint() else {
             return NSRect(x: viewFrame.origin.x, y: viewFrame.origin.y, width: 0, height: 0)
         }
-
-        var x: Double = 0
-        var y: Double = 0
-        var width: Double = 0
-        var height: Double = 0
-
-        // Get IME cursor position from Ghostty
-        ghostty_surface_ime_point(surface, &x, &y, &width, &height)
 
         // Ghostty coordinates are in top-left (0, 0) origin, but AppKit expects bottom-left
         // Convert Y coordinate by subtracting from frame height
         let viewRect = NSRect(
-            x: x,
-            y: viewFrame.size.height - y,
-            width: range.length == 0 ? 0 : max(width, 1),
-            height: max(height, 1)
+            x: imePoint.origin.x,
+            y: viewFrame.size.height - imePoint.origin.y,
+            width: range.length == 0 ? 0 : max(imePoint.width, 1),
+            height: max(imePoint.height, 1)
         )
 
         // Convert to window coordinates
@@ -218,22 +209,7 @@ class GhosttyIMEHandler {
         guard visibleText != renderedPreeditText else { return }
         renderedPreeditText = visibleText
 
-        guard let cSurface = surface?.unsafeCValue else { return }
-
-        if let visibleText, !visibleText.isEmpty {
-            let len = visibleText.utf8CString.count
-            guard len > 0 else {
-                ghostty_surface_preedit(cSurface, nil, 0)
-                view?.needsDisplay = true
-                return
-            }
-            visibleText.withCString { ptr in
-                ghostty_surface_preedit(cSurface, ptr, UInt(len - 1))
-            }
-        } else {
-            ghostty_surface_preedit(cSurface, nil, 0)
-        }
-
+        surfaceOwner?.syncPreedit(visibleText)
         view?.needsDisplay = true
     }
 

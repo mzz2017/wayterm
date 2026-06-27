@@ -6,6 +6,7 @@
 //
 
 #if os(macOS)
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -69,6 +70,66 @@ final class TerminalMacOSSurfaceOwner {
     func externalExited(_ exitCode: UInt32) {
         guard let cSurface = surface?.unsafeCValue else { return }
         ghostty_surface_external_exited(cSurface, exitCode)
+    }
+
+    func sendText(_ text: String) {
+        surface?.sendText(text)
+    }
+
+    @discardableResult
+    func perform(action: String) -> Bool {
+        surface?.perform(action: action) ?? false
+    }
+
+    func sendKeyEvent(_ event: Ghostty.Input.KeyEvent) {
+        surface?.sendKeyEvent(event)
+    }
+
+    func sendRawKeyEvent(_ event: ghostty_input_key_s) {
+        guard let cSurface = surface?.unsafeCValue else { return }
+        ghostty_surface_key(cSurface, event)
+    }
+
+    func sendMouseButton(_ event: Ghostty.Input.MouseButtonEvent) {
+        surface?.sendMouseButton(event)
+    }
+
+    func sendMousePos(_ event: Ghostty.Input.MousePosEvent) {
+        surface?.sendMousePos(event)
+    }
+
+    func sendMouseScroll(_ event: Ghostty.Input.MouseScrollEvent) {
+        surface?.sendMouseScroll(event)
+    }
+
+    func syncPreedit(_ text: String?) {
+        guard let cSurface = surface?.unsafeCValue else { return }
+
+        guard let text, !text.isEmpty else {
+            ghostty_surface_preedit(cSurface, nil, 0)
+            return
+        }
+
+        let len = text.utf8CString.count
+        guard len > 0 else {
+            ghostty_surface_preedit(cSurface, nil, 0)
+            return
+        }
+        text.withCString { ptr in
+            ghostty_surface_preedit(cSurface, ptr, UInt(len - 1))
+        }
+    }
+
+    func imePoint() -> NSRect? {
+        guard let cSurface = surface?.unsafeCValue else { return nil }
+
+        var x: Double = 0
+        var y: Double = 0
+        var width: Double = 0
+        var height: Double = 0
+        ghostty_surface_ime_point(cSurface, &x, &y, &width, &height)
+
+        return NSRect(x: x, y: y, width: width, height: height)
     }
 }
 #endif

@@ -165,8 +165,8 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
         super.init(frame: initialFrame)
 
         // Initialize handlers before setup
-        self.imeHandler = GhosttyIMEHandler(view: self, surface: nil)
-        self.inputHandler = GhosttyInputHandler(view: self, surface: nil, imeHandler: self.imeHandler)
+        self.imeHandler = GhosttyIMEHandler(view: self, surfaceOwner: surfaceOwner)
+        self.inputHandler = GhosttyInputHandler(view: self, surfaceOwner: surfaceOwner, imeHandler: self.imeHandler)
 
         setupLayer()
         setupSurface()
@@ -230,8 +230,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
         self.surface = Ghostty.Surface(cSurface: cSurface, callbackContext: callbackContext)
 
         // Update handlers with surface
-        imeHandler.updateSurface(self.surface)
-        inputHandler.updateSurface(self.surface)
+        imeHandler.surfaceDidChange()
 
         surfaceRegistration.register(cSurface, appWrapper: surfaceOwner.appWrapper, terminalView: self)
     }
@@ -736,8 +735,7 @@ extension GhosttyTerminalView: NSTextInputClient {
             forCharacterRange: range,
             actualRange: actualRange,
             viewFrame: frame,
-            window: window,
-            surface: surface?.unsafeCValue
+            window: window
         )
     }
 

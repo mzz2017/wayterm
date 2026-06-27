@@ -15,30 +15,23 @@ class GhosttyInputHandler {
     // MARK: - Properties
 
     private weak var view: NSView?
-    private weak var surface: Ghostty.Surface?
+    private weak var surfaceOwner: TerminalMacOSSurfaceOwner?
     private weak var imeHandler: GhosttyIMEHandler?
 
     private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "win.aizen.app", category: "GhosttyInput")
 
     // MARK: - Initialization
 
-    init(view: NSView, surface: Ghostty.Surface?, imeHandler: GhosttyIMEHandler) {
+    init(view: NSView, surfaceOwner: TerminalMacOSSurfaceOwner, imeHandler: GhosttyIMEHandler) {
         self.view = view
-        self.surface = surface
+        self.surfaceOwner = surfaceOwner
         self.imeHandler = imeHandler
     }
 
     // MARK: - Public API
 
-    /// Update surface reference
-    func updateSurface(_ surface: Ghostty.Surface?) {
-        self.surface = surface
-    }
-
-    // MARK: - Keyboard Input
-
     func handleKeyDown(with event: NSEvent, interpretKeyEvents: @escaping ([NSEvent]) -> Void) {
-        guard let surface = surface else {
+        guard let surfaceOwner, surfaceOwner.surface != nil else {
             Self.logger.warning("keyDown: no surface")
             // Even without surface, call interpretKeyEvents for IME support
             interpretKeyEvents([event])
@@ -69,7 +62,7 @@ class GhosttyInputHandler {
                     var keyEvent = event.ghosttyKeyEvent(action)
                     keyEvent.text = ptr
                     keyEvent.composing = false
-                    ghostty_surface_key(surface.unsafeCValue, keyEvent)
+                    surfaceOwner.sendRawKeyEvent(keyEvent)
                 }
             }
             return
@@ -97,28 +90,28 @@ class GhosttyInputHandler {
             chars.withCString { textPtr in
                 keyEvent.text = textPtr
                 keyEvent.composing = false
-                ghostty_surface_key(surface.unsafeCValue, keyEvent)
+                surfaceOwner.sendRawKeyEvent(keyEvent)
             }
         } else {
             keyEvent.text = nil
             keyEvent.composing = false
-            ghostty_surface_key(surface.unsafeCValue, keyEvent)
+            surfaceOwner.sendRawKeyEvent(keyEvent)
         }
     }
 
     func handleKeyUp(with event: NSEvent) {
-        guard let surface = surface else { return }
+        guard let surfaceOwner else { return }
 
         var keyEvent = event.ghosttyKeyEvent(GHOSTTY_ACTION_RELEASE)
         keyEvent.text = nil
 
         if let inputEvent = Ghostty.Input.KeyEvent(cValue: keyEvent) {
-            surface.sendKeyEvent(inputEvent)
+            surfaceOwner.sendKeyEvent(inputEvent)
         }
     }
 
     func handleFlagsChanged(with event: NSEvent) {
-        guard let surface = surface?.unsafeCValue else { return }
+        guard let surfaceOwner else { return }
 
         // Determine which modifier key changed
         let mods = Ghostty.ghosttyMods(event.modifierFlags)
@@ -141,81 +134,81 @@ class GhosttyInputHandler {
         // Send to Ghostty
         var keyEvent = event.ghosttyKeyEvent(action)
         keyEvent.text = nil
-        ghostty_surface_key(surface, keyEvent)
+        surfaceOwner.sendRawKeyEvent(keyEvent)
     }
 
     // MARK: - Mouse Input
 
     func handleMouseDown(with event: NSEvent) {
-        guard let surface = surface else { return }
+        guard let surfaceOwner else { return }
 
         let mouseEvent = Ghostty.Input.MouseButtonEvent(
             action: .press,
             button: .left,
             mods: Ghostty.Input.Mods(nsFlags: event.modifierFlags)
         )
-        surface.sendMouseButton(mouseEvent)
+        surfaceOwner.sendMouseButton(mouseEvent)
     }
 
     func handleMouseUp(with event: NSEvent) {
-        guard let surface = surface else { return }
+        guard let surfaceOwner else { return }
 
         let mouseEvent = Ghostty.Input.MouseButtonEvent(
             action: .release,
             button: .left,
             mods: Ghostty.Input.Mods(nsFlags: event.modifierFlags)
         )
-        surface.sendMouseButton(mouseEvent)
+        surfaceOwner.sendMouseButton(mouseEvent)
     }
 
     func handleRightMouseDown(with event: NSEvent) {
-        guard let surface = surface else { return }
+        guard let surfaceOwner else { return }
 
         let mouseEvent = Ghostty.Input.MouseButtonEvent(
             action: .press,
             button: .right,
             mods: Ghostty.Input.Mods(nsFlags: event.modifierFlags)
         )
-        surface.sendMouseButton(mouseEvent)
+        surfaceOwner.sendMouseButton(mouseEvent)
     }
 
     func handleRightMouseUp(with event: NSEvent) {
-        guard let surface = surface else { return }
+        guard let surfaceOwner else { return }
 
         let mouseEvent = Ghostty.Input.MouseButtonEvent(
             action: .release,
             button: .right,
             mods: Ghostty.Input.Mods(nsFlags: event.modifierFlags)
         )
-        surface.sendMouseButton(mouseEvent)
+        surfaceOwner.sendMouseButton(mouseEvent)
     }
 
     func handleOtherMouseDown(with event: NSEvent) {
         guard event.buttonNumber == 2 else { return }
-        guard let surface = surface else { return }
+        guard let surfaceOwner else { return }
 
         let mouseEvent = Ghostty.Input.MouseButtonEvent(
             action: .press,
             button: .middle,
             mods: Ghostty.Input.Mods(nsFlags: event.modifierFlags)
         )
-        surface.sendMouseButton(mouseEvent)
+        surfaceOwner.sendMouseButton(mouseEvent)
     }
 
     func handleOtherMouseUp(with event: NSEvent) {
         guard event.buttonNumber == 2 else { return }
-        guard let surface = surface else { return }
+        guard let surfaceOwner else { return }
 
         let mouseEvent = Ghostty.Input.MouseButtonEvent(
             action: .release,
             button: .middle,
             mods: Ghostty.Input.Mods(nsFlags: event.modifierFlags)
         )
-        surface.sendMouseButton(mouseEvent)
+        surfaceOwner.sendMouseButton(mouseEvent)
     }
 
     func handleMouseMoved(with event: NSEvent, viewFrame: NSRect, convertPoint: (NSPoint, NSView?) -> NSPoint) {
-        guard let surface = surface else { return }
+        guard let surfaceOwner else { return }
 
         // Convert window coords to view coords
         // Ghostty expects top-left origin (y inverted from AppKit)
@@ -225,11 +218,11 @@ class GhosttyInputHandler {
             y: viewFrame.height - pos.y,
             mods: Ghostty.Input.Mods(nsFlags: event.modifierFlags)
         )
-        surface.sendMousePos(mouseEvent)
+        surfaceOwner.sendMousePos(mouseEvent)
     }
 
     func handleMouseEntered(with event: NSEvent, viewFrame: NSRect, convertPoint: (NSPoint, NSView?) -> NSPoint) {
-        guard let surface = surface else { return }
+        guard let surfaceOwner else { return }
 
         // Report mouse entering the viewport
         let pos = convertPoint(event.locationInWindow, nil)
@@ -238,11 +231,11 @@ class GhosttyInputHandler {
             y: viewFrame.height - pos.y,
             mods: Ghostty.Input.Mods(nsFlags: event.modifierFlags)
         )
-        surface.sendMousePos(mouseEvent)
+        surfaceOwner.sendMousePos(mouseEvent)
     }
 
     func handleMouseExited(with event: NSEvent) {
-        guard let surface = surface else { return }
+        guard let surfaceOwner else { return }
 
         // Negative values signal cursor left viewport
         let mouseEvent = Ghostty.Input.MousePosEvent(
@@ -250,13 +243,13 @@ class GhosttyInputHandler {
             y: -1,
             mods: Ghostty.Input.Mods(nsFlags: event.modifierFlags)
         )
-        surface.sendMousePos(mouseEvent)
+        surfaceOwner.sendMousePos(mouseEvent)
     }
 
     // MARK: - Scroll Input
 
     func handleScrollWheel(with event: NSEvent) {
-        guard let surface = surface else { return }
+        guard let surfaceOwner else { return }
 
         var x = event.scrollingDeltaX
         var y = event.scrollingDeltaY
@@ -276,7 +269,7 @@ class GhosttyInputHandler {
                 momentum: Ghostty.Input.Momentum(event.momentumPhase)
             )
         )
-        surface.sendMouseScroll(scrollEvent)
+        surfaceOwner.sendMouseScroll(scrollEvent)
     }
 }
 

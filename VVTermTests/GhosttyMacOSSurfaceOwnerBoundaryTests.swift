@@ -19,6 +19,12 @@ struct GhosttyMacOSSurfaceOwnerBoundaryTests {
         let ownerSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/macOS/TerminalMacOSSurfaceOwner.swift")
         )
+        let inputHandlerSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/macOS/GhosttyInputHandler.swift")
+        )
+        let imeHandlerSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/macOS/GhosttyIMEHandler.swift")
+        )
 
         #expect(viewSource.contains("let surfaceOwner: TerminalMacOSSurfaceOwner"))
         #expect(viewSource.contains("TerminalMacOSSurfaceOwner(ghosttyApp: ghosttyApp, appWrapper: appWrapper)"))
@@ -57,6 +63,20 @@ struct GhosttyMacOSSurfaceOwnerBoundaryTests {
         #expect(ownerSource.contains("ghostty_surface_write_output("))
         #expect(ownerSource.contains("ghostty_surface_external_exited("))
         #expect(ownerSource.contains("ghostty_surface_has_selection("))
+        #expect(ownerSource.contains("func sendRawKeyEvent("))
+        #expect(ownerSource.contains("func syncPreedit("))
+        #expect(ownerSource.contains("func imePoint()"))
+        #expect(ownerSource.contains("func sendMouseButton("))
+
+        #expect(viewSource.contains("GhosttyIMEHandler(view: self, surfaceOwner: surfaceOwner)"))
+        #expect(viewSource.contains("GhosttyInputHandler(view: self, surfaceOwner: surfaceOwner, imeHandler: self.imeHandler)"))
+        #expect(viewSource.contains("imeHandler.surfaceDidChange()"))
+        #expect(inputHandlerSource.contains("weak var surfaceOwner: TerminalMacOSSurfaceOwner?"))
+        #expect(imeHandlerSource.contains("weak var surfaceOwner: TerminalMacOSSurfaceOwner?"))
+        #expect(!inputHandlerSource.contains("weak var surface: Ghostty.Surface?"))
+        #expect(!imeHandlerSource.contains("weak var surface: Ghostty.Surface?"))
+        #expect(!inputHandlerSource.contains("unsafeCValue"))
+        #expect(!imeHandlerSource.contains("unsafeCValue"))
 
         #expect(
             !viewSource.contains("ghostty_surface_set_size("),
