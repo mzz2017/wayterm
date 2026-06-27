@@ -374,21 +374,22 @@ extension ConnectionSessionManager {
         let logger = self.logger
         let shellGeneration = startResult.generation
 
-        let shellTask = Task.detached(priority: .userInitiated) { [weak terminal] in
+        let shellTask = Task.detached(priority: .userInitiated) { [weak self, weak terminal] in
             defer {
-                Task { @MainActor in
-                    ConnectionSessionManager.shared.finishShellStart(
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.finishShellStart(
                         for: sessionId,
                         client: sshClient,
                         generation: shellGeneration
                     )
-                    if let runtime = ConnectionSessionManager.shared.sessionRuntimes[sessionId]?.runtime {
+                    if let runtime = self.sessionRuntimes[sessionId]?.runtime {
                         await runtime.clearShellTask(ifUsing: sshClient)
                     }
                 }
             }
 
-            guard let terminal else { return }
+            guard let self, let terminal else { return }
             await TerminalConnectionRunner.run(
                 server: server,
                 credentials: credentials,
@@ -397,20 +398,20 @@ extension ConnectionSessionManager {
                 logger: logger,
                 onAttempt: { attempt in
                     if attempt == 1 {
-                        ConnectionSessionManager.shared.updateSessionState(sessionId, to: .connecting)
+                        self.updateSessionState(sessionId, to: .connecting)
                     } else {
-                        ConnectionSessionManager.shared.updateSessionState(sessionId, to: .reconnecting(attempt: attempt))
+                        self.updateSessionState(sessionId, to: .reconnecting(attempt: attempt))
                     }
                 },
                 startupPlan: {
-                    await ConnectionSessionManager.shared.tmuxStartupPlan(
+                    await self.tmuxStartupPlan(
                         for: sessionId,
                         serverId: server.id,
                         client: sshClient
                     )
                 },
                 registerShell: { shell, skipTmuxLifecycle in
-                    let accepted = ConnectionSessionManager.shared.registerSSHClient(
+                    let accepted = self.registerSSHClient(
                         sshClient,
                         shellId: shell.id,
                         for: sessionId,
@@ -421,24 +422,24 @@ extension ConnectionSessionManager {
                         skipTmuxLifecycle: skipTmuxLifecycle
                     )
                     guard accepted else { return false }
-                    await ConnectionSessionManager.shared.sessionRuntimes[sessionId]?.runtime.setShellId(shell.id)
-                    ConnectionSessionManager.shared.updateSessionState(sessionId, to: .connected)
+                    await self.sessionRuntimes[sessionId]?.runtime.setShellId(shell.id)
+                    self.updateSessionState(sessionId, to: .connected)
                     return true
                 },
                 onBeforeShellStart: { cols, rows in
-                    await ConnectionSessionManager.shared.sessionRuntimes[sessionId]?.runtime.updateLastSize(cols: cols, rows: rows)
+                    await self.sessionRuntimes[sessionId]?.runtime.updateLastSize(cols: cols, rows: rows)
                 },
                 onShellStarted: { _, shellId in
                     await TerminalWorkingDirectoryService.shared.apply(using: sshClient, shellId: shellId) {
-                        guard ConnectionSessionManager.shared.shouldApplyWorkingDirectory(for: sessionId) else { return nil }
-                        return ConnectionSessionManager.shared.workingDirectory(for: sessionId)
+                        guard self.shouldApplyWorkingDirectory(for: sessionId) else { return nil }
+                        return self.workingDirectory(for: sessionId)
                     }
                 },
                 onTitleChange: { title in
-                    ConnectionSessionManager.shared.updateSessionTitle(sessionId, rawTitle: title)
+                    self.updateSessionTitle(sessionId, rawTitle: title)
                 },
                 shouldContinueStreaming: { data, terminal in
-                    let sessionExists = ConnectionSessionManager.shared.sessions.contains { $0.id == sessionId }
+                    let sessionExists = self.sessions.contains { $0.id == sessionId }
                     guard sessionExists else { return false }
                     terminal.writeConnectionOutput(data)
                     return true
@@ -448,7 +449,7 @@ extension ConnectionSessionManager {
                     case .notConnected, .connectionFailed, .socketError, .timeout, .libssh2:
                         return true
                     case .channelOpenFailed, .shellRequestFailed:
-                        let hasOtherRegistrations = await ConnectionSessionManager.shared.hasOtherRegistrations(
+                        let hasOtherRegistrations = await self.hasOtherRegistrations(
                             using: sshClient,
                             excluding: sessionId
                         )
@@ -465,7 +466,7 @@ extension ConnectionSessionManager {
                     if let data = errorMsg.data(using: .utf8) {
                         terminal.writeConnectionOutput(data)
                     }
-                    ConnectionSessionManager.shared.updateSessionState(sessionId, to: .failed(error.localizedDescription))
+                    self.updateSessionState(sessionId, to: .failed(error.localizedDescription))
                 }
             )
         }

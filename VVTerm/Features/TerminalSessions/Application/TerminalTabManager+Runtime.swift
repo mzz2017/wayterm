@@ -333,21 +333,22 @@ extension TerminalTabManager {
         let logger = self.logger
         let shellGeneration = startResult.generation
 
-        let shellTask = Task.detached(priority: .userInitiated) { [weak terminal] in
+        let shellTask = Task.detached(priority: .userInitiated) { [weak self, weak terminal] in
             defer {
-                Task { @MainActor in
-                    TerminalTabManager.shared.finishShellStart(
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.finishShellStart(
                         for: paneId,
                         client: sshClient,
                         generation: shellGeneration
                     )
-                    if let runtime = TerminalTabManager.shared.paneRuntimes[paneId]?.runtime {
+                    if let runtime = self.paneRuntimes[paneId]?.runtime {
                         await runtime.clearShellTask(ifUsing: sshClient)
                     }
                 }
             }
 
-            guard let terminal else { return }
+            guard let self, let terminal else { return }
             await TerminalConnectionRunner.run(
                 server: server,
                 credentials: credentials,
@@ -356,20 +357,20 @@ extension TerminalTabManager {
                 logger: logger,
                 onAttempt: { attempt in
                     if attempt == 1 {
-                        TerminalTabManager.shared.updatePaneState(paneId, connectionState: .connecting)
+                        self.updatePaneState(paneId, connectionState: .connecting)
                     } else {
-                        TerminalTabManager.shared.updatePaneState(paneId, connectionState: .reconnecting(attempt: attempt))
+                        self.updatePaneState(paneId, connectionState: .reconnecting(attempt: attempt))
                     }
                 },
                 startupPlan: {
-                    await TerminalTabManager.shared.tmuxStartupPlan(
+                    await self.tmuxStartupPlan(
                         for: paneId,
                         serverId: server.id,
                         client: sshClient
                     )
                 },
                 registerShell: { shell, skipTmuxLifecycle in
-                    let accepted = TerminalTabManager.shared.registerSSHClient(
+                    let accepted = self.registerSSHClient(
                         sshClient,
                         shellId: shell.id,
                         for: paneId,
@@ -380,24 +381,24 @@ extension TerminalTabManager {
                         skipTmuxLifecycle: skipTmuxLifecycle
                     )
                     guard accepted else { return false }
-                    await TerminalTabManager.shared.paneRuntimes[paneId]?.runtime.setShellId(shell.id)
-                    TerminalTabManager.shared.updatePaneState(paneId, connectionState: .connected)
+                    await self.paneRuntimes[paneId]?.runtime.setShellId(shell.id)
+                    self.updatePaneState(paneId, connectionState: .connected)
                     return true
                 },
                 onBeforeShellStart: { cols, rows in
-                    await TerminalTabManager.shared.paneRuntimes[paneId]?.runtime.updateLastSize(cols: cols, rows: rows)
+                    await self.paneRuntimes[paneId]?.runtime.updateLastSize(cols: cols, rows: rows)
                 },
                 onShellStarted: { _, shellId in
                     await TerminalWorkingDirectoryService.shared.apply(using: sshClient, shellId: shellId) {
-                        guard TerminalTabManager.shared.shouldApplyWorkingDirectory(for: paneId) else { return nil }
-                        return TerminalTabManager.shared.workingDirectory(for: paneId)
+                        guard self.shouldApplyWorkingDirectory(for: paneId) else { return nil }
+                        return self.workingDirectory(for: paneId)
                     }
                 },
                 onTitleChange: { title in
-                    TerminalTabManager.shared.updatePaneTitle(paneId, rawTitle: title)
+                    self.updatePaneTitle(paneId, rawTitle: title)
                 },
                 shouldContinueStreaming: { data, terminal in
-                    guard TerminalTabManager.shared.paneStates[paneId] != nil else { return false }
+                    guard self.paneStates[paneId] != nil else { return false }
                     terminal.writeConnectionOutput(data)
                     return true
                 },
@@ -406,7 +407,7 @@ extension TerminalTabManager {
                     case .notConnected, .connectionFailed, .socketError, .timeout, .libssh2:
                         return true
                     case .channelOpenFailed, .shellRequestFailed:
-                        let hasOtherRegistrations = await TerminalTabManager.shared.hasOtherRegistrations(
+                        let hasOtherRegistrations = await self.hasOtherRegistrations(
                             using: sshClient,
                             excluding: paneId
                         )
@@ -423,7 +424,7 @@ extension TerminalTabManager {
                     if let data = errorMsg.data(using: .utf8) {
                         terminal.writeConnectionOutput(data)
                     }
-                    TerminalTabManager.shared.updatePaneState(paneId, connectionState: .failed(error.localizedDescription))
+                    self.updatePaneState(paneId, connectionState: .failed(error.localizedDescription))
                 }
             )
         }

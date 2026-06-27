@@ -378,7 +378,14 @@ struct ConnectionSessionManagerSuperfileBoundaryTests {
         #expect(runtimeSource.contains("func registeredShellRoute"))
         #expect(runtimeSource.contains("func beginShellStart"))
 
-        // Then the superfile should not own session runtime/SSH lifecycle directly.
+        // Then the runtime callbacks stay bound to the manager instance instead
+        // of resolving the shared singleton from detached lifecycle work.
+        #expect(
+            !runtimeSource.contains("ConnectionSessionManager.shared"),
+            "Session runtime callbacks should not resolve ConnectionSessionManager.shared."
+        )
+
+        // And the superfile should not own session runtime/SSH lifecycle directly.
         #expect(
             !managerSource.containsRegex(#"func\s+registerSSHClient\s*\("#),
             "ConnectionSessionManager.swift should not own SSH registration lifecycle."

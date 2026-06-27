@@ -537,7 +537,14 @@ struct TerminalTabManagerSuperfileBoundaryTests {
         #expect(runtimeSource.contains("func registeredShellRoute"))
         #expect(runtimeSource.contains("func beginShellStart"))
 
-        // Then the superfile should not own pane runtime/SSH lifecycle directly.
+        // Then the runtime callbacks stay bound to the manager instance instead
+        // of resolving the shared singleton from detached lifecycle work.
+        #expect(
+            !runtimeSource.contains("TerminalTabManager.shared"),
+            "Pane runtime callbacks should not resolve TerminalTabManager.shared."
+        )
+
+        // And the superfile should not own pane runtime/SSH lifecycle directly.
         #expect(
             !managerSource.containsRegex(#"func\s+registerSSHClient\s*\("#),
             "TerminalTabManager.swift should not own pane SSH registration lifecycle."
