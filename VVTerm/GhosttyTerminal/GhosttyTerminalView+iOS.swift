@@ -103,11 +103,8 @@ class GhosttyTerminalView: UIView {
 
     private var isSelecting = false
     private var isScrolling = false
-    private var isPinchingTerminalZoom = false
     private var isNativeHostScrollContainerEnabled = false
-    private var pinchReferenceScale: CGFloat = 1
-    private let zoomIndicatorView = TerminalZoomIndicatorView()
-    private var zoomIndicatorHideWorkItem: DispatchWorkItem?
+    private let zoomRuntime = TerminalIOSZoomRuntime()
     private var nativeSelectionSnapshot = TerminalNativeTextSnapshot.empty
     private var nativeSelectedRange: NSRange?
     private weak var nativeTextInputDelegate: UITextInputDelegate?
@@ -309,16 +306,7 @@ class GhosttyTerminalView: UIView {
 
         setupSurface()
         addSubview(imeProxyTextView)
-        zoomIndicatorView.isHidden = true
-        zoomIndicatorView.alpha = 0
-        zoomIndicatorView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(zoomIndicatorView)
-        NSLayoutConstraint.activate([
-            zoomIndicatorView.centerXAnchor.constraint(equalTo: centerXAnchor),
-            zoomIndicatorView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            zoomIndicatorView.widthAnchor.constraint(greaterThanOrEqualToConstant: TerminalZoomPresentation.indicatorMinimumWidth),
-            zoomIndicatorView.heightAnchor.constraint(greaterThanOrEqualToConstant: TerminalZoomPresentation.indicatorMinimumHeight)
-        ])
+        zoomRuntime.installIndicator(in: self)
         if usesNativeTouchSelection {
             nativeFindOverlay.frame = bounds
             addSubview(nativeFindOverlay)
@@ -388,8 +376,7 @@ class GhosttyTerminalView: UIView {
         isShuttingDown = true
         isPaused = true
         stopMomentumScrolling()
-        zoomIndicatorHideWorkItem?.cancel()
-        zoomIndicatorHideWorkItem = nil
+        zoomRuntime.cancelPendingIndicatorHide()
 
         lifecycleObservers.invalidateAll()
 
@@ -1053,7 +1040,7 @@ class GhosttyTerminalView: UIView {
         bringSubviewToFront(nativeFindOverlay)
         bringSubviewToFront(touchSelectionOverlay)
         bringSubviewToFront(touchSelectionLoupe)
-        bringSubviewToFront(zoomIndicatorView)
+        zoomRuntime.bringIndicatorToFront(in: self)
 
         guard !isShuttingDown else { return }
 
@@ -1212,7 +1199,7 @@ class GhosttyTerminalView: UIView {
             remoteAlternateScreenActive: surface?.inAlternateScreen ?? false,
             hasHostScrollableRows: hasHostScrollableRows,
             isSelecting: isTerminalSelectionActive,
-            isPinching: isPinchingTerminalZoom
+            isPinching: zoomRuntime.isPinchingTerminalZoom
         ))
     }
 
@@ -1228,7 +1215,7 @@ class GhosttyTerminalView: UIView {
             return
         }
         if isSelecting { return }
-        if isPinchingTerminalZoom { return }
+        if zoomRuntime.isPinchingTerminalZoom { return }
         if touchSelectionState.hasSelection {
             if recognizer.state == .began,
                !isPointOnTouchSelectionHandle(recognizer.location(in: self)) {
@@ -1316,75 +1303,24 @@ class GhosttyTerminalView: UIView {
     }
 
     @objc private func handlePinchGesture(_ recognizer: UIPinchGestureRecognizer) {
-        guard canHandlePinchZoom else {
-            isPinchingTerminalZoom = false
-            return
-        }
-
-        switch recognizer.state {
-        case .began:
-            isPinchingTerminalZoom = true
-            pinchReferenceScale = recognizer.scale
-            stopMomentumScrolling()
-            showZoomIndicator()
-        case .changed:
-            guard isPinchingTerminalZoom else { return }
-            let relativeScale = recognizer.scale / pinchReferenceScale
-            if relativeScale >= CGFloat(TerminalZoomPresentation.pinchZoomInThreshold) {
-                if let result = onZoomAction?(.zoomIn) {
-                    showZoomIndicator(fontSize: result.effectiveFontSize)
+        zoomRuntime.handlePinchGesture(
+            recognizer,
+            canHandlePinchZoom: canHandlePinchZoom,
+            currentFontSize: { [weak self] in
+                self?.surfacePresentationOverrides.resolvedFontSize() ?? TerminalDefaults.storedFontSize()
+            },
+            performZoomAction: onZoomAction,
+            stopMomentumScrolling: { [weak self] in
+                self?.stopMomentumScrolling()
+            },
+            requestIndicatorLayout: { [weak self] in
+                self?.setNeedsLayout()
+                self?.layoutIfNeeded()
+                if let self {
+                    self.zoomRuntime.bringIndicatorToFront(in: self)
                 }
-                pinchReferenceScale = recognizer.scale
-            } else if relativeScale <= CGFloat(TerminalZoomPresentation.pinchZoomOutThreshold) {
-                if let result = onZoomAction?(.zoomOut) {
-                    showZoomIndicator(fontSize: result.effectiveFontSize)
-                }
-                pinchReferenceScale = recognizer.scale
             }
-        case .ended, .cancelled, .failed:
-            isPinchingTerminalZoom = false
-            pinchReferenceScale = 1
-            scheduleZoomIndicatorHide(after: TerminalZoomPresentation.indicatorGestureEndHideDelay)
-        default:
-            break
-        }
-    }
-
-    private func showZoomIndicator() {
-        showZoomIndicator(fontSize: surfacePresentationOverrides.resolvedFontSize())
-    }
-
-    private func showZoomIndicator(fontSize: Double) {
-        zoomIndicatorView.update(fontSize: fontSize)
-        updateZoomIndicatorLayout()
-        bringSubviewToFront(zoomIndicatorView)
-
-        zoomIndicatorHideWorkItem?.cancel()
-        zoomIndicatorView.isHidden = false
-        UIView.animate(withDuration: TerminalZoomPresentation.indicatorFadeInDuration) {
-            self.zoomIndicatorView.alpha = 1
-        }
-        scheduleZoomIndicatorHide(after: TerminalZoomPresentation.indicatorHideDelay)
-    }
-
-    private func scheduleZoomIndicatorHide(after delay: TimeInterval) {
-        zoomIndicatorHideWorkItem?.cancel()
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            UIView.animate(withDuration: TerminalZoomPresentation.indicatorFadeOutDuration, animations: {
-                self.zoomIndicatorView.alpha = 0
-            }, completion: { _ in
-                self.zoomIndicatorView.isHidden = true
-            })
-        }
-        zoomIndicatorHideWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
-    }
-
-    private func updateZoomIndicatorLayout() {
-        setNeedsLayout()
-        layoutIfNeeded()
-        zoomIndicatorView.layoutIfNeeded()
+        )
     }
 
     private var canHandlePinchZoom: Bool {
