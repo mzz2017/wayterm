@@ -133,13 +133,7 @@ class GhosttyTerminalView: UIView {
             updateNativeFindOverlay()
         }
     }
-    private var touchSelectionAnchor: TerminalGridPoint?
-    private var touchSelectionSeed: TerminalGridSelection?
-    private var touchSelection: TerminalGridSelection? {
-        didSet {
-            updateTouchSelectionOverlay()
-        }
-    }
+    private let touchSelectionState = TerminalIOSTouchSelectionState()
     private let touchSelectionOverlay = TerminalTouchSelectionOverlayView()
     private let touchSelectionLoupe = TerminalTouchSelectionLoupeView()
     private lazy var selectionRecognizer: UILongPressGestureRecognizer = {
@@ -1172,7 +1166,7 @@ class GhosttyTerminalView: UIView {
             return
         }
         if usesAppOwnedTouchSelection,
-           touchSelection != nil,
+           touchSelectionState.hasSelection,
            let location,
            !isPointOnTouchSelectionHandle(location) {
             clearTouchSelection()
@@ -1244,7 +1238,7 @@ class GhosttyTerminalView: UIView {
         }
         if isSelecting { return }
         if isPinchingTerminalZoom { return }
-        if touchSelection != nil {
+        if touchSelectionState.hasSelection {
             if recognizer.state == .began,
                !isPointOnTouchSelectionHandle(recognizer.location(in: self)) {
                 clearTouchSelection()
@@ -1406,7 +1400,7 @@ class GhosttyTerminalView: UIView {
         if usesNativeTouchSelection, nativeSelectionInteractionActive || nativeSelectedRange != nil {
             return false
         }
-        if usesAppOwnedTouchSelection, touchSelection != nil {
+        if usesAppOwnedTouchSelection, touchSelectionState.hasSelection {
             return false
         }
         return true
@@ -1414,7 +1408,7 @@ class GhosttyTerminalView: UIView {
 
     private var isTerminalSelectionActive: Bool {
         isSelecting
-            || touchSelection != nil
+            || touchSelectionState.hasSelection
             || (usesNativeTouchSelection && (nativeSelectionInteractionActive || nativeSelectedRange != nil))
     }
 
@@ -1713,7 +1707,7 @@ class GhosttyTerminalView: UIView {
 
     private func updateTouchSelectionOverlay() {
         guard usesAppOwnedTouchSelection,
-              let touchSelection,
+              let touchSelection = touchSelectionState.selection,
               let layout = touchSelectionLayout() else {
             touchSelectionOverlay.isHidden = true
             touchSelectionOverlay.clear()
@@ -1733,7 +1727,7 @@ class GhosttyTerminalView: UIView {
     }
 
     private func isPointOnTouchSelectionHandle(_ point: CGPoint) -> Bool {
-        guard usesAppOwnedTouchSelection, touchSelection != nil else { return false }
+        guard usesAppOwnedTouchSelection, touchSelectionState.hasSelection else { return false }
 
         let startHandlePoint = touchSelectionOverlay.convert(point, from: self)
         return touchSelectionOverlay.startHandle.frame.insetBy(dx: -22, dy: -22).contains(startHandlePoint) ||
@@ -1745,9 +1739,8 @@ class GhosttyTerminalView: UIView {
     }
 
     private func clearTouchSelection() {
-        touchSelectionAnchor = nil
-        touchSelectionSeed = nil
-        touchSelection = nil
+        touchSelectionState.clear()
+        updateTouchSelectionOverlay()
         touchSelectionLoupe.hideLoupe()
         isSelecting = false
     }
@@ -1783,58 +1776,33 @@ class GhosttyTerminalView: UIView {
     }
 
     private func startTouchSelection(at location: CGPoint) {
-        if let wordSelection = quickLookWordSelection(at: location) {
-            let normalized = wordSelection.normalized
-            touchSelectionAnchor = nil
-            touchSelectionSeed = normalized
-            touchSelection = normalized
-            isSelecting = true
+        let wordSelection = quickLookWordSelection(at: location)
+        let point = touchSelectionLayout()?.gridPoint(for: location)
+        guard touchSelectionState.begin(wordSelection: wordSelection, point: point) else {
             return
         }
-
-        guard let point = touchSelectionLayout()?.gridPoint(for: location) else { return }
-        touchSelectionAnchor = point
-        touchSelectionSeed = nil
-        touchSelection = TerminalGridSelection(start: point, end: point)
+        updateTouchSelectionOverlay()
         isSelecting = true
     }
 
     private func updateTouchSelection(at location: CGPoint) {
         guard let point = touchSelectionLayout()?.gridPoint(for: location) else { return }
-
-        if touchSelectionAnchor == nil, let seed = touchSelectionSeed?.normalized {
-            if point < seed.start {
-                touchSelectionAnchor = seed.end
-            } else if point > seed.end {
-                touchSelectionAnchor = seed.start
-            } else {
-                touchSelection = seed
-                return
-            }
+        if touchSelectionState.update(to: point) {
+            updateTouchSelectionOverlay()
+            isSelecting = true
         }
-
-        guard let anchor = touchSelectionAnchor else { return }
-        touchSelection = TerminalGridSelection(start: anchor, end: point).normalized
     }
 
     private func updateTouchSelectionHandle(_ kind: TerminalTouchSelectionHandleKind, at location: CGPoint) {
-        guard var selection = touchSelection?.normalized,
-              let point = touchSelectionLayout()?.gridPoint(for: location) else { return }
-
-        switch kind {
-        case .start:
-            selection.start = point
-        case .end:
-            selection.end = point
-        }
-
-        touchSelection = selection.normalized
+        guard let point = touchSelectionLayout()?.gridPoint(for: location) else { return }
+        guard touchSelectionState.updateHandle(kind, to: point) else { return }
+        updateTouchSelectionOverlay()
     }
 
     private func finishTouchSelection() {
         isSelecting = false
         touchSelectionLoupe.hideLoupe()
-        guard let touchSelection,
+        guard let touchSelection = touchSelectionState.selection,
               let menuPoint = touchSelectionLayout()?.menuPoint(for: touchSelection) else { return }
         showEditMenu(at: menuPoint)
     }
@@ -1850,7 +1818,7 @@ class GhosttyTerminalView: UIView {
     }
 
     private func touchSelectionText() -> String? {
-        guard let touchSelection,
+        guard let touchSelection = touchSelectionState.selection,
               let surface = surface?.unsafeCValue else { return nil }
 
         let normalized = touchSelection.normalized
@@ -1962,10 +1930,11 @@ class GhosttyTerminalView: UIView {
 
         guard usesAppOwnedTouchSelection,
               let metrics = selectionGridMetrics() else { return }
-        touchSelection = TerminalGridSelection(
+        touchSelectionState.setSelection(TerminalGridSelection(
             start: TerminalGridPoint(row: 0, column: 0),
             end: TerminalGridPoint(row: metrics.rows - 1, column: metrics.cols - 1)
-        )
+        ))
+        updateTouchSelectionOverlay()
         finishTouchSelection()
     }
 
@@ -2070,7 +2039,7 @@ class GhosttyTerminalView: UIView {
     }
 
     @objc private func handleSelectionHandlePan(_ recognizer: UIPanGestureRecognizer) {
-        guard usesAppOwnedTouchSelection, touchSelection != nil else { return }
+        guard usesAppOwnedTouchSelection, touchSelectionState.hasSelection else { return }
 
         let kind: TerminalTouchSelectionHandleKind
         if recognizer.view === touchSelectionOverlay.startHandle {
@@ -2103,7 +2072,7 @@ class GhosttyTerminalView: UIView {
 
     private func showEditMenu(at location: CGPoint) {
         let hasGhosttySelection = selectionRuntime.hasGhosttySelection(surface: surface?.unsafeCValue)
-        guard touchSelection != nil || hasGhosttySelection else {
+        guard touchSelectionState.hasSelection || hasGhosttySelection else {
             return
         }
         let config = UIEditMenuConfiguration(identifier: nil, sourcePoint: location)
@@ -2116,7 +2085,7 @@ class GhosttyTerminalView: UIView {
             if let nativeSelectedRange, nativeSelectedRange.length > 0 {
                 return true
             }
-            if touchSelection != nil {
+            if touchSelectionState.hasSelection {
                 return true
             }
             return selectionRuntime.hasGhosttySelection(surface: surface?.unsafeCValue)
@@ -2180,7 +2149,7 @@ class GhosttyTerminalView: UIView {
             setNativeSelectedRange(nil)
             prefersNativeSelectionFirstResponder = false
         }
-        if usesAppOwnedTouchSelection, touchSelection != nil {
+        if usesAppOwnedTouchSelection, touchSelectionState.hasSelection {
             clearTouchSelection()
         }
     }
@@ -3233,7 +3202,7 @@ extension GhosttyTerminalView: UIGestureRecognizerDelegate {
             if usesNativeTouchSelection, nativeSelectionInteractionActive || nativeSelectedRange != nil {
                 return false
             }
-            if touchSelection != nil,
+            if touchSelectionState.hasSelection,
                isPointOnTouchSelectionHandle(touch.location(in: self)) {
                 return false
             }
