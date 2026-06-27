@@ -7,13 +7,13 @@ extension GhosttyTerminalView {
     /// Send text to the terminal (called from keyboard toolbar or software keyboard)
     func sendText(_ text: String) {
         guard canRouteTerminalInput else { return }
-        surface?.sendText(text)
+        surfaceOwner.sendText(text)
         requestRender()
     }
     
     func pasteTextFromClipboard() {
         guard canRouteTerminalInput else { return }
-        _ = surface?.perform(action: "paste_from_clipboard")
+        _ = surfaceOwner.perform(action: "paste_from_clipboard")
         requestRender()
     }
     
@@ -28,7 +28,7 @@ extension GhosttyTerminalView {
         if let writeCallback {
             writeCallback(data)
         } else {
-            surface?.sendText(text)
+            surfaceOwner.sendText(text)
         }
         requestRender()
     }
@@ -156,9 +156,8 @@ extension GhosttyTerminalView {
     
     func sendKeyPress(_ key: Ghostty.Input.Key) {
         guard canRouteTerminalInput else { return }
-        guard let surface = surface else { return }
-        surface.sendKeyEvent(.init(key: key, action: .press))
-        surface.sendKeyEvent(.init(key: key, action: .release))
+        guard surfaceOwner.hasLiveSurface else { return }
+        surfaceOwner.sendKeyPress(key)
         requestRender()
     }
     
@@ -174,10 +173,10 @@ extension GhosttyTerminalView {
     }
     
     func syncIMEPreedit(_ text: String?) {
-        if inputRuntime.syncVisiblePreedit(
+        if surfaceOwner.syncVisiblePreedit(
             text,
             inputModePrimaryLanguage: currentIMEPrimaryLanguage,
-            surface: surface?.unsafeCValue
+            using: inputRuntime
         ) {
             requestRender()
         }
@@ -191,42 +190,28 @@ extension GhosttyTerminalView {
         invalidateLocalSession: Bool = true
     ) {
         guard canRouteTerminalInput else { return }
-        guard let surface = surface else { return }
+        guard surfaceOwner.hasLiveSurface else { return }
         if invalidateLocalSession {
             invalidateLocalTextInputSession()
         }
-        let press = Ghostty.Input.KeyEvent(
-            key: key,
-            action: .press,
+        surfaceOwner.sendModifiedKey(
+            key,
+            mods: mods,
             text: text,
-            composing: false,
-            mods: mods,
-            consumedMods: [],
             unshiftedCodepoint: unshiftedCodepoint
         )
-        surface.sendKeyEvent(press)
-        let release = Ghostty.Input.KeyEvent(
-            key: key,
-            action: .release,
-            text: nil,
-            composing: false,
-            mods: mods,
-            consumedMods: [],
-            unshiftedCodepoint: unshiftedCodepoint
-        )
-        surface.sendKeyEvent(release)
         requestRender()
     }
     
     /// Send a special key to the terminal
     func sendSpecialKey(_ key: TerminalSpecialKey) {
-        guard surface != nil else { return }
+        guard surfaceOwner.hasLiveSurface else { return }
         inputRuntime.handleSpecialKey(key, context: terminalInputExecutionContext())
     }
     
     /// Send control key combination (e.g., Ctrl+C)
     func sendControlKey(_ char: Character) {
-        guard surface != nil else { return }
+        guard surfaceOwner.hasLiveSurface else { return }
         inputRuntime.handleControlKey(char, context: terminalInputExecutionContext())
     }
     

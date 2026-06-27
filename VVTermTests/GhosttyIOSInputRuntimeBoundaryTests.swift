@@ -2,12 +2,12 @@ import Foundation
 import Testing
 
 // Test Context:
-// These source-boundary tests protect iOS Ghostty input runtime ownership. The
-// UIKit terminal view may execute surface/UI side effects, but direct hardware
-// key FFI, visible IME preedit state, IME proxy focus/resign state, toolbar key
-// routing, and committed-text routing policy should be owned by a focused
-// runtime helper. Update these tests only if those responsibilities
-// intentionally move to another non-view owner.
+// These source-boundary tests protect iOS Ghostty input ownership. The UIKit
+// terminal view may route UI events, but raw surface access, direct hardware key
+// FFI, visible IME preedit state, IME proxy focus/resign state, toolbar key
+// routing, and committed-text routing policy should be owned by
+// TerminalIOSSurfaceOwner and TerminalIOSInputRuntime. Update these tests only
+// if those responsibilities intentionally move to another non-view owner.
 
 @Suite(.serialized)
 struct GhosttyIOSInputRuntimeBoundaryTests {
@@ -32,11 +32,14 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         let imeProxySource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+IMEProxy+iOS.swift")
         )
+        let ownerSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/TerminalIOSSurfaceOwner.swift")
+        )
 
         // Given the iOS terminal view routes hardware keys and IME preedit.
         #expect(viewSource.contains("let inputRuntime = TerminalIOSInputRuntime()"))
-        #expect(hardwareKeyboardSource.contains("inputRuntime.sendDirectHardwareKeyEvent"))
-        #expect(terminalInputSource.contains("inputRuntime.syncVisiblePreedit"))
+        #expect(hardwareKeyboardSource.contains("surfaceOwner.sendDirectHardwareKeyEvent"))
+        #expect(terminalInputSource.contains("surfaceOwner.syncVisiblePreedit"))
         #expect(imeProxySource.contains("inputRuntime.canResignIMEProxy"))
         #expect(hardwareKeyboardSource.contains("inputRuntime.suppressUnexpectedIMEProxyResign"))
         #expect(viewSource.contains("inputRuntime.performProgrammaticIMEProxyResign"))
@@ -45,7 +48,7 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(terminalInputSource.contains("inputRuntime.handleSpecialKey"))
         #expect(terminalInputSource.contains("inputRuntime.handleControlKey"))
         #expect(imeProxySource.contains("inputRuntime.handleTerminalTextInputEffects"))
-        #expect(imeProxySource.contains("inputRuntime.imePoint(surface: surface)"))
+        #expect(imeProxySource.contains("surfaceOwner.imePoint(using: inputRuntime)"))
         #expect(keyboardAccessorySource.contains("inputRuntime.handleToolbarKey"))
         #expect(keyboardAccessorySource.contains("inputRuntime.handleToolbarCustomAction"))
 
@@ -80,6 +83,11 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(!viewSource.contains("private var allowIMEProxyProgrammaticResign"))
         #expect(!viewSource.contains("private var suppressUnexpectedIMEProxyResignUntil"))
         #expect(!viewSource.contains("private var shouldSuppressUnexpectedIMEProxyResign"))
+        #expect(!hardwareKeyboardSource.contains("unsafeCValue"))
+        #expect(!terminalInputSource.contains("unsafeCValue"))
+        #expect(!imeProxySource.contains("unsafeCValue"))
+        #expect(!hardwareKeyboardSource.contains("surface.sendKeyEvent"))
+        #expect(!terminalInputSource.contains("surface.sendKeyEvent"))
 
         #expect(runtimeSource.contains("final class TerminalIOSInputRuntime"))
         #expect(runtimeSource.contains("private var renderedPreeditText"))
@@ -118,6 +126,11 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(runtimeSource.contains("ghostty_surface_preedit"))
         #expect(runtimeSource.contains("ghostty_surface_ime_point"))
         #expect(runtimeSource.contains("private func ghosttyInputAction"))
+        #expect(ownerSource.contains("func sendDirectHardwareKeyEvent("))
+        #expect(ownerSource.contains("func sendKeyPress("))
+        #expect(ownerSource.contains("func sendModifiedKey("))
+        #expect(ownerSource.contains("func syncVisiblePreedit("))
+        #expect(ownerSource.contains("func imePoint(using inputRuntime: TerminalIOSInputRuntime)"))
     }
 
     private func source(at url: URL) throws -> String {

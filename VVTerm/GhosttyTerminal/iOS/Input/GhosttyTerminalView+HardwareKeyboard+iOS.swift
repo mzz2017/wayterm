@@ -171,17 +171,16 @@ extension GhosttyTerminalView {
                 self?.canRouteTerminalInput == true
             },
             sendDirectRepeat: { [weak self] repeatKey in
-                guard let self,
-                      let cSurface = self.surface?.unsafeCValue else { return false }
-                return self.sendDirectHardwareKeyEvent(
+                guard let self else { return false }
+                return self.surfaceOwner.sendDirectHardwareKeyEvent(
                     repeatKey,
                     action: GHOSTTY_ACTION_REPEAT,
-                    surface: cSurface
+                    using: self.inputRuntime
                 )
             },
             sendFallbackRepeat: { [weak self] fallbackKey, modifiers in
-                guard let self, let surface = self.surface else { return }
-                surface.sendKeyEvent(
+                guard let self else { return }
+                self.surfaceOwner.sendKeyEvent(
                     self.fallbackHardwareEvent(
                         key: fallbackKey,
                         action: .repeat,
@@ -221,10 +220,9 @@ extension GhosttyTerminalView {
     
     private func sendDirectHardwareKeyEvent(
         _ key: UIKey,
-        action: ghostty_input_action_e,
-        surface cSurface: ghostty_surface_t
+        action: ghostty_input_action_e
     ) -> Bool {
-        inputRuntime.sendDirectHardwareKeyEvent(key, action: action, surface: cSurface)
+        surfaceOwner.sendDirectHardwareKeyEvent(key, action: action, using: inputRuntime)
     }
     
     private func shouldRoutePressToSystemTextInput(_ key: UIKey) -> Bool {
@@ -239,9 +237,9 @@ extension GhosttyTerminalView {
             keyProducesText: keyProducesText
         )
     }
-    
+
     func processHardwarePressesBegan(_ presses: Set<UIPress>, event _: UIPressesEvent?) -> HardwarePressResult {
-        guard let surface = surface, let cSurface = surface.unsafeCValue else {
+        guard surfaceOwner.hasLiveSurface else {
             return HardwarePressResult(forwardedToSystem: presses, didHandleGhosttyInput: false)
         }
         guard canRouteTerminalInput else {
@@ -294,12 +292,12 @@ extension GhosttyTerminalView {
             if hasLocalTextInputSession {
                 invalidateLocalTextInputSession()
             }
-            if sendDirectHardwareKeyEvent(key, action: GHOSTTY_ACTION_PRESS, surface: cSurface) {
+            if sendDirectHardwareKeyEvent(key, action: GHOSTTY_ACTION_PRESS) {
                 hardwarePressState.recordDirectGhosttyPress(keyCode: keyCode)
                 startKeyRepeat(for: key)
                 result.didHandleGhosttyInput = true
             } else if let fallbackKey = fallbackHardwareKey(for: key) {
-                surface.sendKeyEvent(
+                surfaceOwner.sendKeyEvent(
                     fallbackHardwareEvent(
                         key: fallbackKey,
                         action: .press,
@@ -318,9 +316,9 @@ extension GhosttyTerminalView {
     
         return result
     }
-    
+
     func processHardwarePressesEnded(_ presses: Set<UIPress>, event _: UIPressesEvent?) -> HardwarePressResult {
-        guard let surface = surface, let cSurface = surface.unsafeCValue else {
+        guard surfaceOwner.hasLiveSurface else {
             return HardwarePressResult(forwardedToSystem: presses, didHandleGhosttyInput: false)
         }
         guard canRouteTerminalInput || hardwarePressState.hasGhosttyPresses else {
@@ -344,11 +342,11 @@ extension GhosttyTerminalView {
             if keyRepeatRuntime.isRepeating(keyCode: keyCode) {
                 stopKeyRepeat()
             }
-    
-            if sendDirectHardwareKeyEvent(key, action: GHOSTTY_ACTION_RELEASE, surface: cSurface) {
+
+            if sendDirectHardwareKeyEvent(key, action: GHOSTTY_ACTION_RELEASE) {
                 result.didHandleGhosttyInput = true
             } else if let fallbackKey = release.fallbackKey {
-                surface.sendKeyEvent(
+                surfaceOwner.sendKeyEvent(
                     fallbackHardwareEvent(
                         key: fallbackKey,
                         action: .release,

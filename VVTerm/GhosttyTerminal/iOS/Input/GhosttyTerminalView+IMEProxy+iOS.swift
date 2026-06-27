@@ -199,12 +199,10 @@ extension GhosttyTerminalView {
     }
 
     func textInputCaretRect(for index: Int) -> CGRect {
-        guard let surface = surface?.unsafeCValue else {
+        guard let imePoint = surfaceOwner.imePoint(using: inputRuntime) else {
             let metrics = textInputGridMetrics()
             return CGRect(x: 0, y: 0, width: metrics.cellSize.width, height: metrics.cellSize.height)
         }
-
-        let imePoint = inputRuntime.imePoint(surface: surface)
 
         let cellWidth = max(cellSize.width, max(imePoint.width, 1))
         let cellHeight = max(cellSize.height, max(imePoint.height, 1))

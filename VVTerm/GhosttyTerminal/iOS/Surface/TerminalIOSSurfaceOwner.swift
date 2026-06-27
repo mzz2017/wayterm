@@ -107,5 +107,77 @@ final class TerminalIOSSurfaceOwner {
     func ghosttySelectionText(using selectionRuntime: TerminalIOSSelectionRuntime) -> String? {
         selectionRuntime.ghosttySelectionText(surface: surface?.unsafeCValue)
     }
+
+    func sendText(_ text: String) {
+        surface?.sendText(text)
+    }
+
+    @discardableResult
+    func perform(action: String) -> Bool {
+        surface?.perform(action: action) ?? false
+    }
+
+    func sendKeyPress(_ key: Ghostty.Input.Key) {
+        surface?.sendKeyEvent(.init(key: key, action: .press))
+        surface?.sendKeyEvent(.init(key: key, action: .release))
+    }
+
+    func sendModifiedKey(
+        _ key: Ghostty.Input.Key,
+        mods: Ghostty.Input.Mods,
+        text: String?,
+        unshiftedCodepoint: UInt32
+    ) {
+        let press = Ghostty.Input.KeyEvent(
+            key: key,
+            action: .press,
+            text: text,
+            composing: false,
+            mods: mods,
+            consumedMods: [],
+            unshiftedCodepoint: unshiftedCodepoint
+        )
+        surface?.sendKeyEvent(press)
+        let release = Ghostty.Input.KeyEvent(
+            key: key,
+            action: .release,
+            text: nil,
+            composing: false,
+            mods: mods,
+            consumedMods: [],
+            unshiftedCodepoint: unshiftedCodepoint
+        )
+        surface?.sendKeyEvent(release)
+    }
+
+    func sendKeyEvent(_ event: Ghostty.Input.KeyEvent) {
+        surface?.sendKeyEvent(event)
+    }
+
+    func sendDirectHardwareKeyEvent(
+        _ key: UIKey,
+        action: ghostty_input_action_e,
+        using inputRuntime: TerminalIOSInputRuntime
+    ) -> Bool {
+        guard let cSurface = surface?.unsafeCValue else { return false }
+        return inputRuntime.sendDirectHardwareKeyEvent(key, action: action, surface: cSurface)
+    }
+
+    func syncVisiblePreedit(
+        _ text: String?,
+        inputModePrimaryLanguage: String?,
+        using inputRuntime: TerminalIOSInputRuntime
+    ) -> Bool {
+        inputRuntime.syncVisiblePreedit(
+            text,
+            inputModePrimaryLanguage: inputModePrimaryLanguage,
+            surface: surface?.unsafeCValue
+        )
+    }
+
+    func imePoint(using inputRuntime: TerminalIOSInputRuntime) -> CGRect? {
+        guard let cSurface = surface?.unsafeCValue else { return nil }
+        return inputRuntime.imePoint(surface: cSurface)
+    }
 }
 #endif
