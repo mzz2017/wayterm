@@ -56,21 +56,26 @@ struct SettingsLifecycleBoundaryTests {
 
     @Test
     func terminalSettingsDoesNotSwallowCustomThemePersistenceFailures() throws {
-        // Given the terminal settings SwiftUI source.
+        // Given the terminal settings SwiftUI source and its custom theme
+        // management child views.
         let root = try sourceRoot()
-        let source = try source(
+        let terminalSettingsSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Settings/UI/TerminalSettingsView.swift")
         )
+        let customThemeManagementSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/UI/TerminalCustomThemeManagementViews.swift")
+        )
+        let combinedSource = terminalSettingsSource + "\n" + customThemeManagementSource
 
         // Then custom theme deletion must keep using the throwing
         // TerminalThemeManager intent so persistence failure can be surfaced to
         // the sheet instead of being swallowed by UI code.
         #expect(
-            !source.contains("try? terminalThemeManager.deleteCustomTheme"),
+            !combinedSource.contains("try? terminalThemeManager.deleteCustomTheme"),
             "TerminalSettingsView should not swallow custom theme delete failures with try?."
         )
         #expect(
-            source.contains("let onDelete: (UUID) throws -> Void"),
+            customThemeManagementSource.contains("let onDelete: (UUID) throws -> Void"),
             "ManageCustomThemesSheet should keep custom theme deletion as a throwing intent."
         )
     }
