@@ -67,10 +67,16 @@ final class MLXModelManager: NSObject, ObservableObject {
     private var storageTask: Task<Void, Never>?
     private var repoSizeTask: Task<Void, Never>?
     private var lastRepoSizeModelId: String?
+    private let modelSizeProvider: any MLXModelSizing
 
-    init(kind: MLXModelKind, modelId: String) {
+    init(
+        kind: MLXModelKind,
+        modelId: String,
+        modelSizeProvider: any MLXModelSizing = NoopMLXModelSizer()
+    ) {
         self.kind = kind
         self.modelId = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.modelSizeProvider = modelSizeProvider
         super.init()
         session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
     }
@@ -283,8 +289,9 @@ final class MLXModelManager: NSObject, ObservableObject {
         repoSizeTask?.cancel()
         lastRepoSizeModelId = modelId
         repoSizeBytes = nil
-        repoSizeTask = Task.detached { [weak self] in
-            let size = await MLXModelSizeCache.shared.size(for: modelId)
+        let modelSizeProvider = modelSizeProvider
+        repoSizeTask = Task.detached { [weak self, modelSizeProvider] in
+            let size = await modelSizeProvider.size(for: modelId)
             guard let self, !Task.isCancelled else { return }
             await MainActor.run {
                 self.repoSizeBytes = size

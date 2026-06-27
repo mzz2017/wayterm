@@ -1,7 +1,10 @@
 import Foundation
 
 extension VoiceModelDownloadStore {
-    static let shared = VoiceModelDownloadStore(settings: .live)
+    static let shared = VoiceModelDownloadStore(
+        settings: .live,
+        modelSizeProvider: MLXModelSizeCache.shared
+    )
 }
 
 extension TranscriptionSettingsReader {

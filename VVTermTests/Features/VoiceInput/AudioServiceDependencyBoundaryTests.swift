@@ -68,6 +68,15 @@ struct AudioServiceDependencyBoundaryTests {
         let audioCaptureService = try source(
             at: voiceInput.appendingPathComponent("Infrastructure/AudioCaptureService.swift")
         )
+        let modelManager = try source(
+            at: voiceInput.appendingPathComponent("Infrastructure/MLXModelManager.swift")
+        )
+        let modelSizeCache = try source(
+            at: voiceInput.appendingPathComponent("Infrastructure/MLXModelSizeCache.swift")
+        )
+        let liveModelInfoFetcher = try source(
+            at: voiceInput.appendingPathComponent("Infrastructure/LiveMLXModelInfoFetcher.swift")
+        )
         let liveDependencies = try source(
             at: root.appendingPathComponent("VVTerm/App/VoiceInputLiveDependencies.swift")
         )
@@ -102,6 +111,26 @@ struct AudioServiceDependencyBoundaryTests {
         #expect(
             !modelDownloadStore.contains("TranscriptionSettingsStore.current"),
             "VoiceModelDownloadStore should receive model IDs through injected settings instead of reading global defaults."
+        )
+        #expect(
+            !modelDownloadStore.contains("MLXModelSizeCache.shared"),
+            "VoiceModelDownloadStore should receive model size lookup through App live dependencies."
+        )
+        #expect(
+            !modelManager.contains("MLXModelSizeCache.shared"),
+            "MLXModelManager should receive model size lookup through injected dependencies."
+        )
+        #expect(
+            !modelSizeCache.contains("URLSession.shared"),
+            "MLXModelSizeCache should receive repository metadata through an injected fetcher."
+        )
+        #expect(
+            liveModelInfoFetcher.contains("URLSession.shared.data"),
+            "Live MLX model metadata fetching should be isolated to the live URLSession adapter."
+        )
+        #expect(
+            liveDependencies.contains("modelSizeProvider: MLXModelSizeCache.shared"),
+            "App live VoiceInput dependencies should provide the shared model size cache."
         )
         #expect(
             !audioCaptureService.contains("AVAudioSession.sharedInstance()"),

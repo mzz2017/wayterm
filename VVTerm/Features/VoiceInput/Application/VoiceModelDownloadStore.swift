@@ -13,16 +13,19 @@ final class VoiceModelDownloadStore: ObservableObject {
 
     init(
         settings: TranscriptionSettingsReader,
-        downloadAction: DownloadAction? = nil
+        downloadAction: DownloadAction? = nil,
+        modelSizeProvider: any MLXModelSizing = NoopMLXModelSizer()
     ) {
         let snapshot = settings.current()
         self.whisperManager = MLXModelManager(
             kind: .whisper,
-            modelId: snapshot.whisperModelId
+            modelId: snapshot.whisperModelId,
+            modelSizeProvider: modelSizeProvider
         )
         self.parakeetManager = MLXModelManager(
             kind: .parakeetTDT,
-            modelId: snapshot.parakeetModelId
+            modelId: snapshot.parakeetModelId,
+            modelSizeProvider: modelSizeProvider
         )
         self.downloadAction = downloadAction
     }
