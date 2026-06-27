@@ -7,7 +7,9 @@ extension TerminalAccessoryPreferencesDependencies {
             isPro: { StoreManager.shared.isPro },
             trackCustomActionCreated: { kind in
                 AnalyticsTracker.shared.trackCustomActionCreated(kind: kind.rawValue)
-            }
+            },
+            cloudProfileSync: CloudKitManager.shared,
+            syncCoordinator: CloudKitSyncCoordinator.shared
         )
     }
 }

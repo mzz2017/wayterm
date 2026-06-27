@@ -21,16 +21,36 @@ protocol TerminalAccessoryPendingSyncCoordinating {
 extension CloudKitManager: TerminalAccessoryCloudProfileSyncing {}
 extension CloudKitSyncCoordinator: TerminalAccessoryPendingSyncCoordinating {}
 
+@MainActor
+private struct NoopTerminalAccessoryCloudProfileSync: TerminalAccessoryCloudProfileSyncing {
+    func syncTerminalAccessoryProfile(_ profile: TerminalAccessoryProfile) async throws -> TerminalAccessoryProfile {
+        profile
+    }
+}
+
+@MainActor
+private struct NoopTerminalAccessoryPendingSyncCoordinator: TerminalAccessoryPendingSyncCoordinating {
+    func enqueueTerminalAccessoryProfileUpsert(_ profile: TerminalAccessoryProfile) {}
+    func drainPendingMutations() async {}
+}
+
+@MainActor
 struct TerminalAccessoryPreferencesDependencies {
     var isPro: @MainActor () -> Bool
     var trackCustomActionCreated: @MainActor (TerminalAccessoryCustomActionKind) -> Void
+    var cloudProfileSync: any TerminalAccessoryCloudProfileSyncing
+    var syncCoordinator: any TerminalAccessoryPendingSyncCoordinating
 
     init(
         isPro: @escaping @MainActor () -> Bool = { false },
-        trackCustomActionCreated: @escaping @MainActor (TerminalAccessoryCustomActionKind) -> Void = { _ in }
+        trackCustomActionCreated: @escaping @MainActor (TerminalAccessoryCustomActionKind) -> Void = { _ in },
+        cloudProfileSync: (any TerminalAccessoryCloudProfileSyncing)? = nil,
+        syncCoordinator: (any TerminalAccessoryPendingSyncCoordinating)? = nil
     ) {
         self.isPro = isPro
         self.trackCustomActionCreated = trackCustomActionCreated
+        self.cloudProfileSync = cloudProfileSync ?? NoopTerminalAccessoryCloudProfileSync()
+        self.syncCoordinator = syncCoordinator ?? NoopTerminalAccessoryPendingSyncCoordinator()
     }
 }
 
@@ -69,10 +89,11 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
         startObservers: Bool = true,
         startInitialSync: Bool = true
     ) {
+        let resolvedDependencies = dependencies ?? TerminalAccessoryPreferencesDependencies()
         self.defaults = defaults
-        self.cloudProfileSync = cloudProfileSync ?? CloudKitManager.shared
-        self.syncCoordinator = syncCoordinator ?? CloudKitSyncCoordinator.shared
-        self.dependencies = dependencies ?? TerminalAccessoryPreferencesDependencies()
+        self.cloudProfileSync = cloudProfileSync ?? resolvedDependencies.cloudProfileSync
+        self.syncCoordinator = syncCoordinator ?? resolvedDependencies.syncCoordinator
+        self.dependencies = resolvedDependencies
         self.profile = TerminalAccessoryPreferencesManager.loadProfile(from: defaults)
         self.lastKnownSyncEnabled = SyncSettings.isEnabled
 

@@ -238,6 +238,40 @@ final class TerminalAccessoryPreferencesManagerTests: XCTestCase {
         )
     }
 
+    func testLiveCloudSyncDependenciesStayOutsidePreferencesManager() throws {
+        // Given the TerminalAccessories application owner and App live wiring source.
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent(
+                "VVTerm/Features/TerminalAccessories/Application/TerminalAccessoryPreferencesManager.swift"
+            )
+        )
+        let liveDependencySource = try source(
+            at: root.appendingPathComponent(
+                "VVTerm/App/TerminalAccessoryPreferencesLiveDependencies.swift"
+            )
+        )
+
+        // Then live CloudKit singletons should be wired at the App boundary, not
+        // hidden inside the feature manager constructor.
+        XCTAssertFalse(
+            managerSource.contains("CloudKitManager.shared"),
+            "TerminalAccessoryPreferencesManager should receive CloudKit profile sync through injected dependencies."
+        )
+        XCTAssertFalse(
+            managerSource.contains("CloudKitSyncCoordinator.shared"),
+            "TerminalAccessoryPreferencesManager should receive pending sync coordination through injected dependencies."
+        )
+        XCTAssertTrue(
+            liveDependencySource.contains("cloudProfileSync: CloudKitManager.shared"),
+            "App live wiring should provide CloudKit profile sync for terminal accessories."
+        )
+        XCTAssertTrue(
+            liveDependencySource.contains("syncCoordinator: CloudKitSyncCoordinator.shared"),
+            "App live wiring should provide CloudKit pending sync coordination for terminal accessories."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
