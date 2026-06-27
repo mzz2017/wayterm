@@ -34,6 +34,26 @@ struct TranscriptionSettingsDefaults {
     static let autoLanguageCode = "auto"
 }
 
+struct TranscriptionSettingsSnapshot: Equatable {
+    var provider: TranscriptionProvider
+    var whisperModelId: String
+    var parakeetModelId: String
+    var languageCode: String
+}
+
+struct TranscriptionSettingsReader {
+    var snapshot: @MainActor () -> TranscriptionSettingsSnapshot
+
+    init(snapshot: @escaping @MainActor () -> TranscriptionSettingsSnapshot) {
+        self.snapshot = snapshot
+    }
+
+    @MainActor
+    func current() -> TranscriptionSettingsSnapshot {
+        snapshot()
+    }
+}
+
 struct TranscriptionSettingsStore {
     static func currentProvider() -> TranscriptionProvider {
         guard let raw = UserDefaults.standard.string(forKey: TranscriptionSettingsKeys.provider) else {

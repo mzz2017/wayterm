@@ -1,17 +1,24 @@
 import Foundation
 
 final class MLXParakeetProvider {
-    static let shared = MLXParakeetProvider()
+    static let shared = MLXParakeetProvider(settings: .live)
 
     static var isSupported: Bool {
         MLXAudioSupport.isSupported
     }
 
-    private init() {}
+    private let settings: TranscriptionSettingsReader
+
+    private init(settings: TranscriptionSettingsReader) {
+        self.settings = settings
+    }
 
     func transcribe(samples: [Float]) async throws -> String {
         #if arch(arm64)
-        let modelId = TranscriptionSettingsStore.currentParakeetModelId()
+        let settingsSnapshot = await MainActor.run {
+            settings.current()
+        }
+        let modelId = settingsSnapshot.parakeetModelId
         let modelDirectory = await MainActor.run {
             MLXModelManager.modelDirectory(for: .parakeetTDT, modelId: modelId)
         }

@@ -1,18 +1,25 @@
 import Foundation
 
 final class MLXWhisperProvider {
-    static let shared = MLXWhisperProvider()
+    static let shared = MLXWhisperProvider(settings: .live)
 
     static var isSupported: Bool {
         MLXAudioSupport.isSupported
     }
 
-    private init() {}
+    private let settings: TranscriptionSettingsReader
+
+    private init(settings: TranscriptionSettingsReader) {
+        self.settings = settings
+    }
 
     func transcribe(samples: [Float]) async throws -> String {
         #if arch(arm64)
-        let modelId = TranscriptionSettingsStore.currentWhisperModelId()
-        let requestedLanguage = Self.requestedLanguage(for: TranscriptionSettingsStore.currentLanguageCode())
+        let settingsSnapshot = await MainActor.run {
+            settings.current()
+        }
+        let modelId = settingsSnapshot.whisperModelId
+        let requestedLanguage = Self.requestedLanguage(for: settingsSnapshot.languageCode)
         let modelDirectory = await MainActor.run {
             MLXModelManager.modelDirectory(for: .whisper, modelId: modelId)
         }

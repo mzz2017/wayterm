@@ -2,6 +2,22 @@ import Foundation
 import Combine
 import os.log
 
+protocol VoiceSampleTranscribing: AnyObject {
+    func transcribe(samples: [Float]) async throws -> String
+}
+
+extension MLXWhisperProvider: VoiceSampleTranscribing {}
+extension MLXParakeetProvider: VoiceSampleTranscribing {}
+
+struct AudioServiceDependencies {
+    var settings: TranscriptionSettingsReader
+    var whisperProvider: any VoiceSampleTranscribing
+    var parakeetProvider: any VoiceSampleTranscribing
+    var isWhisperSupported: @MainActor () -> Bool
+    var isParakeetSupported: @MainActor () -> Bool
+    var isModelAvailable: @MainActor (MLXModelKind, String) -> Bool
+}
+
 @MainActor
 class AudioService: NSObject, ObservableObject {
     private let logger = Logger.audio
@@ -16,12 +32,12 @@ class AudioService: NSObject, ObservableObject {
     private let permissionManager = AudioPermissionManager()
     private let speechRecognitionService = SpeechRecognitionService()
     private let audioCaptureService = AudioCaptureService()
-    private let mlxWhisperProvider = MLXWhisperProvider.shared
-    private let mlxParakeetProvider = MLXParakeetProvider.shared
+    private let dependencies: AudioServiceDependencies
 
     private var activeProvider: TranscriptionProvider = .system
 
-    override init() {
+    init(dependencies: AudioServiceDependencies? = nil) {
+        self.dependencies = dependencies ?? .live
         super.init()
         setupBindings()
     }
@@ -61,8 +77,9 @@ class AudioService: NSObject, ObservableObject {
     // MARK: - Recording Control
 
     func startRecording() async throws {
-        let requestedProvider = TranscriptionSettingsStore.currentProvider()
-        let effectiveProvider = resolveProvider(for: requestedProvider)
+        let settings = dependencies.settings.current()
+        let requestedProvider = settings.provider
+        let effectiveProvider = resolveProvider(for: requestedProvider, settings: settings)
         if requestedProvider == .mlxWhisper && effectiveProvider == .system {
             logger.warning("MLX Whisper not available; falling back to Apple Speech")
         } else if requestedProvider == .mlxParakeet && effectiveProvider == .system {
@@ -106,7 +123,7 @@ class AudioService: NSObject, ObservableObject {
             return finalText
         case .mlxWhisper:
             do {
-                let text = try await mlxWhisperProvider.transcribe(samples: samples)
+                let text = try await dependencies.whisperProvider.transcribe(samples: samples)
                 transcribedText = text
                 return text
             } catch {
@@ -119,7 +136,7 @@ class AudioService: NSObject, ObservableObject {
             }
         case .mlxParakeet:
             do {
-                let text = try await mlxParakeetProvider.transcribe(samples: samples)
+                let text = try await dependencies.parakeetProvider.transcribe(samples: samples)
                 transcribedText = text
                 return text
             } catch {
@@ -167,22 +184,30 @@ class AudioService: NSObject, ObservableObject {
 
     // MARK: - Provider Resolution
 
-    private func resolveProvider(for requested: TranscriptionProvider) -> TranscriptionProvider {
+    private func resolveProvider(
+        for requested: TranscriptionProvider,
+        settings: TranscriptionSettingsSnapshot
+    ) -> TranscriptionProvider {
         switch requested {
         case .system:
             return .system
         case .mlxWhisper:
-            guard MLXWhisperProvider.isSupported else { return .system }
-            let modelId = TranscriptionSettingsStore.currentWhisperModelId()
-            guard MLXModelManager.isModelAvailable(kind: .whisper, modelId: modelId) else { return .system }
+            guard dependencies.isWhisperSupported() else { return .system }
+            guard dependencies.isModelAvailable(.whisper, settings.whisperModelId) else { return .system }
             return .mlxWhisper
         case .mlxParakeet:
-            guard MLXParakeetProvider.isSupported else { return .system }
-            let modelId = TranscriptionSettingsStore.currentParakeetModelId()
-            guard MLXModelManager.isModelAvailable(kind: .parakeetTDT, modelId: modelId) else { return .system }
+            guard dependencies.isParakeetSupported() else { return .system }
+            guard dependencies.isModelAvailable(.parakeetTDT, settings.parakeetModelId) else { return .system }
             return .mlxParakeet
         }
     }
+
+    #if DEBUG
+    func resolveProviderForTesting() -> TranscriptionProvider {
+        let settings = dependencies.settings.current()
+        return resolveProvider(for: settings.provider, settings: settings)
+    }
+    #endif
 
     // MARK: - Apple Speech
 
