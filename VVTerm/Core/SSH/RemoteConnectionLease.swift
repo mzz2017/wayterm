@@ -62,15 +62,22 @@ nonisolated struct RemoteConnectionLeaseProvider {
 extension SSHClient: RemoteConnectionLeaseClient {}
 
 private actor RemoteConnectionLeaseState {
+    private enum CloseState {
+        case open
+        case closing
+        case closed
+    }
+
     private struct OperationWaiter {
         let id: UUID
         let continuation: CheckedContinuation<Void, Error>
     }
 
-    private var didClose = false
+    private var closeState: CloseState = .open
     private var isOperationInFlight = false
     private var operationWaiters: [OperationWaiter] = []
     private var closeWaiters: [CheckedContinuation<Void, Never>] = []
+    private var closeCompletionWaiters: [CheckedContinuation<Void, Never>] = []
 
     func withExclusiveClient<T>(
         client: any RemoteConnectionLeaseClient,
@@ -94,17 +101,28 @@ private actor RemoteConnectionLeaseState {
         client: any RemoteConnectionLeaseClient,
         ownership: RemoteConnectionLeaseOwnership
     ) async {
-        guard !didClose else { return }
-        didClose = true
+        switch closeState {
+        case .open:
+            closeState = .closing
+        case .closing:
+            await waitForCloseToFinish()
+            return
+        case .closed:
+            return
+        }
+
         cancelQueuedOperationWaiters()
         await waitForExclusiveOperationsToFinish()
 
-        guard case .owned = ownership else { return }
-        await client.disconnect()
+        if case .owned = ownership {
+            await client.disconnect()
+        }
+
+        finishClose()
     }
 
     private func beginExclusiveOperation() async throws {
-        guard !didClose else {
+        guard closeState == .open else {
             throw CancellationError()
         }
 
@@ -116,7 +134,7 @@ private actor RemoteConnectionLeaseState {
         let waiterId = UUID()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                guard !didClose else {
+                guard closeState == .open else {
                     continuation.resume(throwing: CancellationError())
                     return
                 }
@@ -133,7 +151,7 @@ private actor RemoteConnectionLeaseState {
     }
 
     private func finishExclusiveOperation() {
-        if didClose {
+        if closeState != .open {
             isOperationInFlight = false
             cancelQueuedOperationWaiters()
             resumeCloseWaiters()
@@ -158,6 +176,19 @@ private actor RemoteConnectionLeaseState {
         }
     }
 
+    private func waitForCloseToFinish() async {
+        guard closeState == .closing else { return }
+
+        await withCheckedContinuation { continuation in
+            closeCompletionWaiters.append(continuation)
+        }
+    }
+
+    private func finishClose() {
+        closeState = .closed
+        resumeCloseCompletionWaiters()
+    }
+
     private func cancelOperationWaiter(_ waiterId: UUID) {
         guard let index = operationWaiters.firstIndex(where: { $0.id == waiterId }) else {
             return
@@ -178,6 +209,14 @@ private actor RemoteConnectionLeaseState {
     private func resumeCloseWaiters() {
         let waiters = closeWaiters
         closeWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    private func resumeCloseCompletionWaiters() {
+        let waiters = closeCompletionWaiters
+        closeCompletionWaiters.removeAll()
         for waiter in waiters {
             waiter.resume()
         }

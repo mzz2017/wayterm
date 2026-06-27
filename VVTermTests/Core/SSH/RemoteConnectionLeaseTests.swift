@@ -62,6 +62,37 @@ struct RemoteConnectionLeaseTests {
     }
 
     @Test
+    func concurrentCloseWaitsForDisconnectAlreadyInProgress() async throws {
+        let client = BlockingDisconnectRemoteConnectionClient()
+        let lease = RemoteConnectionLease(client: client, ownership: .owned)
+        let secondClose = CloseCompletionProbe()
+
+        let firstCloseTask = Task {
+            await lease.close()
+        }
+        await client.waitUntilDisconnectStarted()
+
+        let secondCloseTask = Task {
+            await lease.close()
+            await secondClose.markCompleted()
+        }
+
+        try await Task.sleep(for: .milliseconds(20))
+        let didSecondCloseCompleteBeforeDisconnect = await secondClose.didComplete()
+        #expect(
+            !didSecondCloseCompleteBeforeDisconnect,
+            "Concurrent close callers must wait for the in-flight owned disconnect to finish."
+        )
+
+        await client.releaseDisconnect()
+        await firstCloseTask.value
+        await secondCloseTask.value
+
+        let disconnectCount = await client.disconnectCount()
+        #expect(disconnectCount == 1, "Concurrent close callers should still share one owned disconnect.")
+    }
+
+    @Test
     func exclusiveOperationsForSameLeaseDoNotOverlap() async throws {
         let client = RecordingRemoteConnectionClient()
         let lease = RemoteConnectionLease(client: client, ownership: .borrowed)
@@ -193,6 +224,79 @@ private actor RecordingRemoteConnectionClient: RemoteConnectionLeaseClient {
 
     func remoteTerminalType(forceRefresh: Bool) async -> RemoteTerminalType {
         .xterm256Color
+    }
+}
+
+private actor BlockingDisconnectRemoteConnectionClient: RemoteConnectionLeaseClient {
+    private var disconnects = 0
+    private var didStartDisconnect = false
+    private var didReleaseDisconnect = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func disconnect() async {
+        disconnects += 1
+        didStartDisconnect = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+        guard !didReleaseDisconnect else { return }
+        await withCheckedContinuation { continuation in
+            releaseWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilDisconnectStarted() async {
+        if didStartDisconnect { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func releaseDisconnect() {
+        didReleaseDisconnect = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func disconnectCount() -> Int {
+        disconnects
+    }
+
+    func execute(_ command: String, timeout: Duration?) async throws -> String {
+        ""
+    }
+
+    func upload(
+        _ data: Data,
+        to path: String,
+        permissions: Int32,
+        strategy: SSHUploadStrategy
+    ) async throws {}
+
+    func remoteEnvironment(forceRefresh: Bool) async -> RemoteEnvironment {
+        .fallbackPOSIX
+    }
+
+    func remoteTerminalType(forceRefresh: Bool) async -> RemoteTerminalType {
+        .xterm256Color
+    }
+}
+
+private actor CloseCompletionProbe {
+    private var completed = false
+
+    func markCompleted() {
+        completed = true
+    }
+
+    func didComplete() -> Bool {
+        completed
     }
 }
 
