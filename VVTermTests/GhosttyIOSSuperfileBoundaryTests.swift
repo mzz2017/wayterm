@@ -104,6 +104,35 @@ struct GhosttyIOSSuperfileBoundaryTests {
     }
 
     @Test
+    func hardwareKeyboardRoutingLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
+        )
+        let hardwareKeyboardSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+HardwareKeyboard+iOS.swift")
+        )
+
+        #expect(
+            !mainSource.contains("override func pressesBegan"),
+            "GhosttyTerminalView+iOS.swift should not own hardware keyboard press routing."
+        )
+        #expect(
+            !mainSource.contains("override func pressesEnded"),
+            "GhosttyTerminalView+iOS.swift should not own hardware keyboard release routing."
+        )
+        #expect(
+            !mainSource.contains("private func fallbackHardwareKey"),
+            "GhosttyTerminalView+iOS.swift should not own hardware key fallback mapping."
+        )
+
+        #expect(hardwareKeyboardSource.contains("override func pressesBegan"))
+        #expect(hardwareKeyboardSource.contains("override func pressesEnded"))
+        #expect(hardwareKeyboardSource.contains("func processHardwarePressesBegan"))
+        #expect(hardwareKeyboardSource.contains("TerminalHardwareTextInputRoutingPolicy.shouldRoutePressToSystemTextInput"))
+    }
+
+    @Test
     func interactionDelegatesLiveOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(

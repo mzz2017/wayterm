@@ -14,6 +14,9 @@ struct GhosttyIOSHardwarePressStateBoundaryTests {
         let viewSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
+        let hardwareKeyboardSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+HardwareKeyboard+iOS.swift")
+        )
         let textInputSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+TextInput+iOS.swift")
         )
@@ -25,9 +28,9 @@ struct GhosttyIOSHardwarePressStateBoundaryTests {
         )
 
         #expect(viewSource.contains("let hardwarePressState = TerminalIOSHardwarePressState()"))
-        #expect(viewSource.contains("hardwarePressState.recordDirectGhosttyPress"))
-        #expect(viewSource.contains("hardwarePressState.recordFallbackGhosttyPress"))
-        #expect(viewSource.contains("hardwarePressState.releaseGhosttyPress"))
+        #expect(hardwareKeyboardSource.contains("hardwarePressState.recordDirectGhosttyPress"))
+        #expect(hardwareKeyboardSource.contains("hardwarePressState.recordFallbackGhosttyPress"))
+        #expect(hardwareKeyboardSource.contains("hardwarePressState.releaseGhosttyPress"))
         #expect(textInputSource.contains("hardwarePressState.consumePendingSystemTextInputHardwareKey()"))
         #expect(textInputSource.contains("hardwarePressState.pendingSystemTextInputHardwareKeyCount"))
 
