@@ -221,6 +221,39 @@ struct GhosttyIOSSuperfileBoundaryTests {
     }
 
     @Test
+    func surfaceLifecycleLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
+        )
+        let surfaceSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/GhosttyTerminalView+SurfaceRuntime+iOS.swift")
+        )
+
+        #expect(
+            !mainSource.contains("func setupSurface"),
+            "GhosttyTerminalView+iOS.swift should not own Ghostty C surface creation."
+        )
+        #expect(
+            !mainSource.contains("func cleanup()"),
+            "GhosttyTerminalView+iOS.swift should not own terminal surface teardown sequencing."
+        )
+        #expect(
+            !mainSource.contains("func pauseRendering"),
+            "GhosttyTerminalView+iOS.swift should not own surface pause lifecycle."
+        )
+        #expect(
+            !mainSource.contains("func resumeRendering"),
+            "GhosttyTerminalView+iOS.swift should not own surface resume lifecycle."
+        )
+
+        #expect(surfaceSource.contains("func setupSurface"))
+        #expect(surfaceSource.contains("surfaceLifecycleRuntime.cleanup"))
+        #expect(surfaceSource.contains("surfaceRegistration.register"))
+        #expect(surfaceSource.contains("renderingSetup.setupSurface"))
+    }
+
+    @Test
     func interactionDelegatesLiveOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(

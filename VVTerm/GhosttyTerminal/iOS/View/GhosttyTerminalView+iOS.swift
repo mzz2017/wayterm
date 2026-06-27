@@ -7,11 +7,8 @@
 
 #if os(iOS)
 import UIKit
-import Metal
 import OSLog
 import SwiftUI
-import IOSurface
-import CoreImage
 import GameController
 
 /// UIView that embeds a Ghostty terminal surface with Metal rendering
@@ -26,13 +23,13 @@ class GhosttyTerminalView: UIView {
     private static let imeProxyOffscreenFrame = CGRect(x: -10_000, y: -10_000, width: 1, height: 1)
     // MARK: - Properties
 
-    private var ghosttyApp: ghostty_app_t?
-    private weak var ghosttyAppWrapper: Ghostty.App?
+    var ghosttyApp: ghostty_app_t?
+    weak var ghosttyAppWrapper: Ghostty.App?
     internal var surface: Ghostty.Surface?
-    private let surfaceRegistration = GhosttySurfaceRegistration()
-    private let worktreePath: String
-    private let paneId: String?
-    private let initialCommand: String?
+    let surfaceRegistration = GhosttySurfaceRegistration()
+    let worktreePath: String
+    let paneId: String?
+    let initialCommand: String?
     let useCustomIO: Bool
     let presentationEnvironment: TerminalIOSPresentationEnvironment
 
@@ -92,7 +89,7 @@ class GhosttyTerminalView: UIView {
     /// Current scrollbar state from Ghostty core
     var scrollbar: Ghostty.Action.Scrollbar?
 
-    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "app.vivy.vvterm", category: "GhosttyTerminal")
+    static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "app.vivy.vvterm", category: "GhosttyTerminal")
 
     var isSelecting = false
     var isNativeHostScrollContainerEnabled = false
@@ -188,7 +185,7 @@ class GhosttyTerminalView: UIView {
 
     var editMenuInteraction: UIEditMenuInteraction?
 
-    private let lifecycleObservers = TerminalLifecycleObserverBag()
+    let lifecycleObservers = TerminalLifecycleObserverBag()
     var hasHardwareKeyboardAttached = false
 
     // MARK: - Text Input (for spacebar cursor control)
@@ -219,7 +216,7 @@ class GhosttyTerminalView: UIView {
 
     // MARK: - Rendering Components
 
-    private let renderingSetup = GhosttyRenderingSetup()
+    let renderingSetup = GhosttyRenderingSetup()
     let surfaceDisplayRuntime = TerminalIOSSurfaceDisplayRuntime()
     let surfaceLifecycleRuntime = TerminalIOSSurfaceLifecycleRuntime()
     let inputRuntime = TerminalIOSInputRuntime()
@@ -347,60 +344,6 @@ class GhosttyTerminalView: UIView {
         surfaceRegistration.unregisterLaterFromDeinit()
     }
 
-    /// Explicitly cleanup the terminal before removal from view hierarchy.
-    /// Call this in dismantleUIView to ensure proper cleanup.
-    func cleanup() {
-        isShuttingDown = true
-        isPaused = true
-        surface = surfaceLifecycleRuntime.cleanup(
-            surface: surface,
-            surfaceRegistration: surfaceRegistration,
-            stopMomentumScrolling: { [scrollRuntime] in
-                scrollRuntime.stopMomentumScrolling()
-            },
-            cancelPendingZoomIndicatorHide: { [zoomRuntime] in
-                zoomRuntime.cancelPendingIndicatorHide()
-            },
-            invalidateLifecycleObservers: { [lifecycleObservers] in
-                lifecycleObservers.invalidateAll()
-            },
-            clearCallbacks: { [weak self] in
-                self?.clearLifecycleCallbacks()
-            }
-        )
-    }
-
-    /// Pause rendering and input without destroying the surface.
-    func pauseRendering() {
-        guard !isShuttingDown else { return }
-        isPaused = true
-        surfaceLifecycleRuntime.pauseRendering(surface: surface)
-    }
-
-    /// Resume rendering/input after a pause.
-    func resumeRendering() {
-        guard !isShuttingDown else { return }
-        isPaused = false
-        surfaceLifecycleRuntime.resumeRendering(surface: surface) { [weak self] in
-            guard let self else { return }
-            sizeDidChange(bounds.size)
-            requestRender()
-        }
-    }
-
-    private func clearLifecycleCallbacks() {
-        onReady = nil
-        onProcessExit = nil
-        onTitleChange = nil
-        onPwdChange = nil
-        onProgressReport = nil
-        onResize = nil
-        onKeyboardBrowseModeChange = nil
-        onFindNavigatorVisibilityChange = nil
-        richPasteInterceptor = nil
-        writeCallback = nil
-    }
-
     // MARK: - Layer Type
     // On iOS, Ghostty adds its own IOSurfaceLayer as a sublayer of the view's
     // existing CALayer. Keep the default layer type to avoid CAMetalLayer
@@ -450,40 +393,6 @@ class GhosttyTerminalView: UIView {
 
     private var isDictationInputModeActive: Bool {
         TerminalVisiblePreeditPolicy.isDictationInputMode(currentIMEPrimaryLanguage)
-    }
-
-    private func setupSurface() {
-        guard let app = ghosttyApp else {
-            Self.logger.error("Cannot create surface: ghostty_app_t is nil")
-            return
-        }
-
-        let callbackContext = GhosttySurfaceCallbackContext(terminalView: self)
-        guard let cSurface = renderingSetup.setupSurface(
-            view: self,
-            ghosttyApp: app,
-            worktreePath: worktreePath,
-            initialBounds: bounds,
-            surfaceCallbackContext: callbackContext,
-            paneId: paneId,
-            command: initialCommand,
-            useCustomIO: useCustomIO
-        ) else {
-            return
-        }
-
-        // CRITICAL: Configure the IOSurfaceLayer that Ghostty just added as a sublayer.
-        // Ghostty's Metal renderer on iOS adds IOSurfaceLayer as a sublayer but doesn't
-        // set its frame/contentsScale - we must do it here immediately after creation.
-        // Without this, setSurfaceCallback will discard all frames due to size mismatch.
-        configureIOSurfaceLayers(size: bounds.size)
-
-        // Wrap in Swift Surface class
-        self.surface = Ghostty.Surface(cSurface: cSurface, callbackContext: callbackContext)
-
-        surfaceRegistration.register(cSurface, appWrapper: ghosttyAppWrapper, terminalView: self)
-
-        Self.logger.info("Ghostty surface created, sublayers: \(self.layer.sublayers?.count ?? 0)")
     }
 
     // MARK: - Size Change Handling (matches official Ghostty iOS pattern)

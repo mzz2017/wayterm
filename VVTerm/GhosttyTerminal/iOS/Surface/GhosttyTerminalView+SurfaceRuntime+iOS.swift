@@ -1,8 +1,94 @@
 #if os(iOS)
+import OSLog
 import UIKit
 
 extension GhosttyTerminalView {
     // MARK: - Process Lifecycle
+
+    /// Create and configure the Ghostty surface.
+    func setupSurface() {
+        guard let app = ghosttyApp else {
+            Self.logger.error("Cannot create surface: ghostty_app_t is nil")
+            return
+        }
+
+        let callbackContext = GhosttySurfaceCallbackContext(terminalView: self)
+        guard let cSurface = renderingSetup.setupSurface(
+            view: self,
+            ghosttyApp: app,
+            worktreePath: worktreePath,
+            initialBounds: bounds,
+            surfaceCallbackContext: callbackContext,
+            paneId: paneId,
+            command: initialCommand,
+            useCustomIO: useCustomIO
+        ) else {
+            return
+        }
+
+        // Ghostty's iOS renderer adds IOSurface layers that need immediate sizing
+        // before frame callbacks can be accepted.
+        configureIOSurfaceLayers(size: bounds.size)
+
+        surface = Ghostty.Surface(cSurface: cSurface, callbackContext: callbackContext)
+        surfaceRegistration.register(cSurface, appWrapper: ghosttyAppWrapper, terminalView: self)
+
+        Self.logger.info("Ghostty surface created, sublayers: \(self.layer.sublayers?.count ?? 0)")
+    }
+
+    /// Explicitly cleanup the terminal before removal from view hierarchy.
+    /// Call this in dismantleUIView to ensure proper cleanup.
+    func cleanup() {
+        isShuttingDown = true
+        isPaused = true
+        surface = surfaceLifecycleRuntime.cleanup(
+            surface: surface,
+            surfaceRegistration: surfaceRegistration,
+            stopMomentumScrolling: { [scrollRuntime] in
+                scrollRuntime.stopMomentumScrolling()
+            },
+            cancelPendingZoomIndicatorHide: { [zoomRuntime] in
+                zoomRuntime.cancelPendingIndicatorHide()
+            },
+            invalidateLifecycleObservers: { [lifecycleObservers] in
+                lifecycleObservers.invalidateAll()
+            },
+            clearCallbacks: { [weak self] in
+                self?.clearLifecycleCallbacks()
+            }
+        )
+    }
+
+    /// Pause rendering and input without destroying the surface.
+    func pauseRendering() {
+        guard !isShuttingDown else { return }
+        isPaused = true
+        surfaceLifecycleRuntime.pauseRendering(surface: surface)
+    }
+
+    /// Resume rendering/input after a pause.
+    func resumeRendering() {
+        guard !isShuttingDown else { return }
+        isPaused = false
+        surfaceLifecycleRuntime.resumeRendering(surface: surface) { [weak self] in
+            guard let self else { return }
+            sizeDidChange(bounds.size)
+            requestRender()
+        }
+    }
+
+    private func clearLifecycleCallbacks() {
+        onReady = nil
+        onProcessExit = nil
+        onTitleChange = nil
+        onPwdChange = nil
+        onProgressReport = nil
+        onResize = nil
+        onKeyboardBrowseModeChange = nil
+        onFindNavigatorVisibilityChange = nil
+        richPasteInterceptor = nil
+        writeCallback = nil
+    }
 
     /// Check if the terminal process has exited
     var processExited: Bool {
