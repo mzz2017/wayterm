@@ -29,20 +29,23 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         let terminalInputSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+TerminalInput+iOS.swift")
         )
+        let imeProxySource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+IMEProxy+iOS.swift")
+        )
 
         // Given the iOS terminal view routes hardware keys and IME preedit.
         #expect(viewSource.contains("let inputRuntime = TerminalIOSInputRuntime()"))
         #expect(hardwareKeyboardSource.contains("inputRuntime.sendDirectHardwareKeyEvent"))
         #expect(terminalInputSource.contains("inputRuntime.syncVisiblePreedit"))
-        #expect(viewSource.contains("inputRuntime.canResignIMEProxy"))
+        #expect(imeProxySource.contains("inputRuntime.canResignIMEProxy"))
         #expect(hardwareKeyboardSource.contains("inputRuntime.suppressUnexpectedIMEProxyResign"))
         #expect(viewSource.contains("inputRuntime.performProgrammaticIMEProxyResign"))
         #expect(hardwareKeyboardSource.contains("inputRuntime.terminalKey"))
         #expect(terminalInputSource.contains("inputRuntime.handleIMEInsertText"))
         #expect(terminalInputSource.contains("inputRuntime.handleSpecialKey"))
         #expect(terminalInputSource.contains("inputRuntime.handleControlKey"))
-        #expect(viewSource.contains("inputRuntime.handleTerminalTextInputEffects"))
-        #expect(viewSource.contains("inputRuntime.imePoint(surface: surface)"))
+        #expect(imeProxySource.contains("inputRuntime.handleTerminalTextInputEffects"))
+        #expect(imeProxySource.contains("inputRuntime.imePoint(surface: surface)"))
         #expect(keyboardAccessorySource.contains("inputRuntime.handleToolbarKey"))
         #expect(keyboardAccessorySource.contains("inputRuntime.handleToolbarCustomAction"))
 

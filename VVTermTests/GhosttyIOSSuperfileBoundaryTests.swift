@@ -104,6 +104,39 @@ struct GhosttyIOSSuperfileBoundaryTests {
     }
 
     @Test
+    func imeProxyRoutingLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
+        )
+        let imeProxySource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+IMEProxy+iOS.swift")
+        )
+
+        #expect(
+            !mainSource.contains("func imeProxySnapshot"),
+            "GhosttyTerminalView+iOS.swift should not own IME proxy state snapshots."
+        )
+        #expect(
+            !mainSource.contains("func syncTextInputModelFromIMEProxy"),
+            "GhosttyTerminalView+iOS.swift should not own IME proxy-to-model sync."
+        )
+        #expect(
+            !mainSource.contains("func imeProxyFocusDidChange"),
+            "GhosttyTerminalView+iOS.swift should not own IME proxy focus effects."
+        )
+        #expect(
+            !mainSource.contains("func runTerminalTextInputEffects"),
+            "GhosttyTerminalView+iOS.swift should not own terminal text-input effect routing."
+        )
+
+        #expect(imeProxySource.contains("func imeProxySnapshot"))
+        #expect(imeProxySource.contains("func syncTextInputModelFromIMEProxy"))
+        #expect(imeProxySource.contains("func imeProxyFocusDidChange"))
+        #expect(imeProxySource.contains("inputRuntime.handleTerminalTextInputEffects"))
+    }
+
+    @Test
     func hardwareKeyboardRoutingLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
