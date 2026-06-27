@@ -133,6 +133,36 @@ struct GhosttyIOSSuperfileBoundaryTests {
     }
 
     @Test
+    func terminalInputRoutingLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
+        )
+        let terminalInputSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+TerminalInput+iOS.swift")
+        )
+
+        #expect(
+            !mainSource.contains("func handleIMEProxyInsertText"),
+            "GhosttyTerminalView+iOS.swift should not own IME text insertion routing."
+        )
+        #expect(
+            !mainSource.contains("func sendModifiedKey("),
+            "GhosttyTerminalView+iOS.swift should not own modified terminal key routing."
+        )
+        #expect(
+            !mainSource.contains("private func terminalInputExecutionContext"),
+            "GhosttyTerminalView+iOS.swift should not own terminal input execution contexts."
+        )
+
+        #expect(terminalInputSource.contains("func handleIMEProxyInsertText"))
+        #expect(terminalInputSource.contains("func sendModifiedKey("))
+        #expect(terminalInputSource.contains("func sendSpecialKey"))
+        #expect(terminalInputSource.contains("func sendControlKey"))
+        #expect(terminalInputSource.contains("TerminalIOSInputRuntime.IMEInsertExecutionContext"))
+    }
+
+    @Test
     func interactionDelegatesLiveOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
