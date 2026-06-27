@@ -36,6 +36,29 @@ final class TerminalIOSInputRuntime {
         let requiresShift: Bool
     }
 
+    struct ModifierState {
+        let ctrl: Bool
+        let alt: Bool
+        let command: Bool
+        let shift: Bool
+
+        static let none = ModifierState(ctrl: false, alt: false, command: false, shift: false)
+
+        var hasCommandRoutingModifier: Bool {
+            ctrl || alt || command
+        }
+    }
+
+    enum IMEInsertRoute {
+        case ignore
+        case interpretPendingHardwareKey(String)
+        case routeToolbarKey(TerminalKey, suppressUnexpectedResign: Bool)
+        case interceptRichPaste(fallbackModifiers: ModifierState)
+        case commitTextToIMEProxy(String)
+        case sendGhosttyKey(Ghostty.Input.Key, Ghostty.Input.Mods, String?, UInt32, commitMarkedTextFirst: Bool)
+        case sendAnsiData(Data)
+    }
+
     private var renderedPreeditText: String?
     private var isIMEProxyProgrammaticResignAllowed = false
     private var suppressUnexpectedIMEProxyResignUntil = 0.0
@@ -144,12 +167,100 @@ final class TerminalIOSInputRuntime {
     }
 
     func ghosttyModifiers(from mods: (ctrl: Bool, alt: Bool, command: Bool, shift: Bool)) -> Ghostty.Input.Mods {
+        ghosttyModifiers(from: ModifierState(ctrl: mods.ctrl, alt: mods.alt, command: mods.command, shift: mods.shift))
+    }
+
+    func ghosttyModifiers(from mods: ModifierState) -> Ghostty.Input.Mods {
         var ghostMods: Ghostty.Input.Mods = []
         if mods.ctrl { ghostMods.insert(.ctrl) }
         if mods.alt { ghostMods.insert(.alt) }
         if mods.command { ghostMods.insert(.super) }
         if mods.shift { ghostMods.insert(.shift) }
         return ghostMods
+    }
+
+    func imeInsertRoute(
+        for text: String,
+        modifiers: ModifierState,
+        hasPendingSystemTextInputHardwareKey: Bool,
+        fromIMEComposition: Bool,
+        allowRichPasteInterception: Bool = true
+    ) -> IMEInsertRoute {
+        imeInsertRoute(
+            for: text,
+            modifiers: { modifiers },
+            hasPendingSystemTextInputHardwareKey: hasPendingSystemTextInputHardwareKey,
+            fromIMEComposition: fromIMEComposition,
+            allowRichPasteInterception: allowRichPasteInterception
+        )
+    }
+
+    func imeInsertRoute(
+        for text: String,
+        modifiers consumeModifiers: () -> ModifierState,
+        hasPendingSystemTextInputHardwareKey: Bool,
+        fromIMEComposition: Bool,
+        allowRichPasteInterception: Bool = true
+    ) -> IMEInsertRoute {
+        let normalized = text.precomposedStringWithCanonicalMapping
+        guard !normalized.isEmpty else { return .ignore }
+        if let key = terminalKey(forKeyCommandInput: normalized) {
+            return .routeToolbarKey(key, suppressUnexpectedResign: isEscapeKey(key))
+        }
+        if normalized.hasPrefix("UIKeyInput") {
+            return .ignore
+        }
+
+        if !fromIMEComposition, hasPendingSystemTextInputHardwareKey {
+            return .interpretPendingHardwareKey(normalized)
+        }
+
+        let mods = consumeModifiers()
+        if allowRichPasteInterception,
+           mods.ctrl,
+           normalized.compare("v", options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame {
+            return .interceptRichPaste(fallbackModifiers: mods)
+        }
+        if normalized == "\n" || normalized == "\r" {
+            return .sendGhosttyKey(.enter, ghosttyModifiers(from: mods), nil, 0, commitMarkedTextFirst: true)
+        }
+        if normalized == "\t" {
+            return .sendGhosttyKey(.tab, ghosttyModifiers(from: mods), nil, 0, commitMarkedTextFirst: true)
+        }
+
+        guard mods.hasCommandRoutingModifier else {
+            return .commitTextToIMEProxy(normalized)
+        }
+        guard let firstChar = normalized.first else { return .ignore }
+
+        if let mapping = ghosttyKeyMapping(for: firstChar) {
+            var ghostMods = ghosttyModifiers(from: mods)
+            if mapping.requiresShift {
+                ghostMods.insert(.shift)
+            }
+            return .sendGhosttyKey(
+                mapping.key,
+                ghostMods,
+                nil,
+                mapping.codepoint,
+                commitMarkedTextFirst: false
+            )
+        }
+
+        if mods.command {
+            return .ignore
+        }
+
+        var data = Data()
+        if mods.alt {
+            data.append(0x1B)
+        }
+        if mods.ctrl, let controlChar = TerminalControlKey.controlCharacter(for: firstChar) {
+            data.append(contentsOf: String(controlChar).utf8)
+        } else {
+            data.append(contentsOf: String(firstChar).utf8)
+        }
+        return .sendAnsiData(data)
     }
 
     @discardableResult
@@ -226,6 +337,13 @@ final class TerminalIOSInputRuntime {
 
     private var shouldSuppressUnexpectedIMEProxyResign: Bool {
         Date.timeIntervalSinceReferenceDate < suppressUnexpectedIMEProxyResignUntil
+    }
+
+    private func isEscapeKey(_ key: TerminalKey) -> Bool {
+        if case .escape = key {
+            return true
+        }
+        return false
     }
 
     private func sendToolbarKey(

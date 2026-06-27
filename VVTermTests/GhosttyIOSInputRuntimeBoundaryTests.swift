@@ -3,10 +3,11 @@ import Testing
 
 // Test Context:
 // These source-boundary tests protect iOS Ghostty input runtime ownership. The
-// UIKit terminal view may decide routing policy, but direct hardware key FFI,
-// visible IME preedit state, IME proxy focus/resign state, and toolbar key
-// routing should be owned by a focused runtime helper. Update these tests only
-// if those responsibilities intentionally move to another non-view owner.
+// UIKit terminal view may execute surface/UI side effects, but direct hardware
+// key FFI, visible IME preedit state, IME proxy focus/resign state, toolbar key
+// routing, and committed-text routing policy should be owned by a focused
+// runtime helper. Update these tests only if those responsibilities
+// intentionally move to another non-view owner.
 
 @Suite(.serialized)
 struct GhosttyIOSInputRuntimeBoundaryTests {
@@ -31,7 +32,7 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(viewSource.contains("inputRuntime.handleToolbarCustomAction"))
         #expect(viewSource.contains("inputRuntime.ghosttyKeyMapping"))
         #expect(viewSource.contains("inputRuntime.terminalKey"))
-        #expect(viewSource.contains("inputRuntime.ghosttyModifiers"))
+        #expect(viewSource.contains("inputRuntime.imeInsertRoute"))
 
         // Then the main UIKit view does not directly own those C/FFI calls,
         // visible preedit state, or the Ghostty action conversion helper.
@@ -45,6 +46,7 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(!viewSource.contains("private func ghosttyKeyMapping"))
         #expect(!viewSource.contains("private func terminalKey(forKeyCommandInput"))
         #expect(!viewSource.contains("private func imeProxyGhosttyModifiers"))
+        #expect(!viewSource.contains("TerminalControlKey.controlCharacter(for: firstChar)"))
         #expect(!viewSource.contains("private var renderedIMEPreeditText"))
         #expect(!viewSource.contains("private func shouldDisplayVisiblePreedit"))
         #expect(!viewSource.contains("private var allowIMEProxyProgrammaticResign"))
@@ -66,6 +68,8 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(runtimeSource.contains("func ghosttyKeyMapping"))
         #expect(runtimeSource.contains("func terminalKey(forKeyCommandInput"))
         #expect(runtimeSource.contains("func ghosttyModifiers"))
+        #expect(runtimeSource.contains("func imeInsertRoute"))
+        #expect(runtimeSource.contains("TerminalControlKey.controlCharacter"))
         #expect(runtimeSource.contains("private func sendToolbarKey"))
         #expect(runtimeSource.contains("private func sendToolbarGhosttyKey"))
         #expect(runtimeSource.contains("private func sendToolbarControlShortcut"))

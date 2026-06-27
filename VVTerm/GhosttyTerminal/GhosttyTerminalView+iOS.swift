@@ -2469,78 +2469,88 @@ class GhosttyTerminalView: UIView {
         }
 
         let normalized = text.precomposedStringWithCanonicalMapping
-        guard !normalized.isEmpty else { return true }
-        if let key = inputRuntime.terminalKey(forKeyCommandInput: normalized) {
-            if case .escape = key {
+        let route = inputRuntime.imeInsertRoute(
+            for: normalized,
+            modifiers: consumeIMEProxyModifierState,
+            hasPendingSystemTextInputHardwareKey: !fromIMEComposition && pendingSystemTextInputHardwareKeyCount > 0,
+            fromIMEComposition: fromIMEComposition
+        )
+        return executeIMEInsertRoute(route, normalizedText: normalized)
+    }
+
+    private func executeIMEInsertRoute(
+        _ route: TerminalIOSInputRuntime.IMEInsertRoute,
+        normalizedText: String
+    ) -> Bool {
+        switch route {
+        case .ignore:
+            return true
+        case .interpretPendingHardwareKey(let text):
+            if let key = consumePendingSystemTextInputHardwareKey(),
+               sendInterpretedHardwareKeyText(text, for: key) {
+                invalidateLocalTextInputSession()
+                return true
+            }
+
+            let fallbackRoute = inputRuntime.imeInsertRoute(
+                for: text,
+                modifiers: consumeIMEProxyModifierState,
+                hasPendingSystemTextInputHardwareKey: false,
+                fromIMEComposition: false
+            )
+            return executeIMEInsertRoute(fallbackRoute, normalizedText: text)
+        case .routeToolbarKey(let key, let suppressUnexpectedResign):
+            if suppressUnexpectedResign {
                 inputRuntime.suppressUnexpectedIMEProxyResign()
             }
             routeToolbarKey(key)
             return true
-        }
-        if normalized.hasPrefix("UIKeyInput") {
-            return true
-        }
-
-        if !fromIMEComposition,
-           let key = consumePendingSystemTextInputHardwareKey(),
-           sendInterpretedHardwareKeyText(normalized, for: key) {
-            invalidateLocalTextInputSession()
-            return true
-        }
-
-        let mods = keyboardToolbar?.consumeModifiers() ?? (ctrl: false, alt: false, command: false, shift: false)
-        if mods.ctrl, normalized.compare("v", options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame,
-           interceptRichPasteIfNeeded() {
-            invalidateLocalTextInputSession()
-            return true
-        }
-        if normalized == "\n" || normalized == "\r" {
-            commitIMEProxyMarkedTextIfNeeded()
-            sendModifiedKey(.enter, mods: inputRuntime.ghosttyModifiers(from: mods), unshiftedCodepoint: 0)
-            return true
-        }
-        if normalized == "\t" {
-            commitIMEProxyMarkedTextIfNeeded()
-            sendModifiedKey(.tab, mods: inputRuntime.ghosttyModifiers(from: mods), unshiftedCodepoint: 0)
-            return true
-        }
-
-        guard mods.ctrl || mods.alt || mods.command else {
-            // Plain text goes into the persistent local document; the text input
-            // model reconciles it with the terminal by sending the delta.
-            imeProxyTextView.insertCommittedText(normalized)
-            return true
-        }
-        guard let firstChar = normalized.first else { return true }
-
-        if let mapping = inputRuntime.ghosttyKeyMapping(for: firstChar) {
-            var ghostMods: Ghostty.Input.Mods = []
-            if mods.ctrl { ghostMods.insert(.ctrl) }
-            if mods.alt { ghostMods.insert(.alt) }
-            if mods.command { ghostMods.insert(.super) }
-            if mods.shift || mapping.requiresShift { ghostMods.insert(.shift) }
-            let keyText = mods.ctrl || mods.alt || mods.command ? nil : mapping.text
-            sendModifiedKey(mapping.key, mods: ghostMods, text: keyText, unshiftedCodepoint: mapping.codepoint)
-        } else {
-            if mods.command {
+        case .interceptRichPaste(let fallbackModifiers):
+            if interceptRichPasteIfNeeded() {
+                invalidateLocalTextInputSession()
                 return true
             }
-            var data = Data()
-            if mods.alt {
-                data.append(0x1B)
-            }
-            if mods.ctrl, let controlChar = TerminalControlKey.controlCharacter(for: firstChar) {
-                data.append(contentsOf: String(controlChar).utf8)
-            } else {
-                data.append(contentsOf: String(firstChar).utf8)
-            }
-            sendAnsiSequence(data)
-        }
 
-        if normalized.count > 1 {
-            sendText(String(normalized.dropFirst()))
+            let fallbackRoute = inputRuntime.imeInsertRoute(
+                for: normalizedText,
+                modifiers: fallbackModifiers,
+                hasPendingSystemTextInputHardwareKey: false,
+                fromIMEComposition: false,
+                allowRichPasteInterception: false
+            )
+            return executeIMEInsertRoute(fallbackRoute, normalizedText: normalizedText)
+        case .commitTextToIMEProxy(let text):
+            // Plain text goes into the persistent local document; the text input
+            // model reconciles it with the terminal by sending the delta.
+            imeProxyTextView.insertCommittedText(text)
+            return true
+        case .sendGhosttyKey(let key, let mods, let text, let unshiftedCodepoint, let commitMarkedTextFirst):
+            if commitMarkedTextFirst {
+                commitIMEProxyMarkedTextIfNeeded()
+            }
+            sendModifiedKey(key, mods: mods, text: text, unshiftedCodepoint: unshiftedCodepoint)
+            sendRemainingIMEInsertTextIfNeeded(after: normalizedText)
+            return true
+        case .sendAnsiData(let data):
+            sendAnsiSequence(data)
+            sendRemainingIMEInsertTextIfNeeded(after: normalizedText)
+            return true
         }
-        return true
+    }
+
+    private func consumeIMEProxyModifierState() -> TerminalIOSInputRuntime.ModifierState {
+        let mods = keyboardToolbar?.consumeModifiers() ?? (ctrl: false, alt: false, command: false, shift: false)
+        return TerminalIOSInputRuntime.ModifierState(
+            ctrl: mods.ctrl,
+            alt: mods.alt,
+            command: mods.command,
+            shift: mods.shift
+        )
+    }
+
+    private func sendRemainingIMEInsertTextIfNeeded(after normalized: String) {
+        guard normalized.count > 1 else { return }
+        sendText(String(normalized.dropFirst()))
     }
 
     private func commitIMEProxyMarkedTextIfNeeded() {
