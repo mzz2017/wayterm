@@ -6,6 +6,7 @@ struct iOSServerListView: View {
     @ObservedObject var sessionManager: ConnectionSessionManager
     @ObservedObject var storeManager: StoreManager
     @ObservedObject var viewTabConfig: ViewTabConfigurationManager
+    @ObservedObject var appLockManager: AppLockManager
     let disconnectCoordinator: ServerConnectionLifecycleCoordinator
     let fileBrowser: RemoteFileBrowserStore
     @Binding var selectedWorkspace: Workspace?
@@ -454,7 +455,7 @@ struct iOSServerListView: View {
         let targetViewId = preferredConnectViewId
         guard let server = server(for: connection.id) else { return }
 
-        AppLockManager.shared.requestServerUnlock(server, onUnlocked: {
+        appLockManager.requestServerUnlock(server, onUnlocked: {
             sessionManager.requestActiveConnectionOpen(
                 session: connection.session,
                 preferredViewId: targetViewId

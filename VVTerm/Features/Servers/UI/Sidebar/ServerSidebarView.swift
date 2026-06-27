@@ -6,6 +6,7 @@ struct ServerSidebarView: View {
     @ObservedObject var serverManager: ServerManager
     @ObservedObject var tabManager: TerminalTabManager
     @ObservedObject var storeManager: StoreManager
+    @ObservedObject var appLockManager: AppLockManager
     let backgroundColor: Color
     @Binding var selectedWorkspace: Workspace?
     @Binding var selectedServer: Server?
@@ -625,7 +626,7 @@ struct ServerSidebarView: View {
     // MARK: - Empty States
 
     private func selectServer(_ server: Server) {
-        AppLockManager.shared.requestServerUnlock(server, onUnlocked: {
+        appLockManager.requestServerUnlock(server, onUnlocked: {
             selectedServer = server
         })
     }

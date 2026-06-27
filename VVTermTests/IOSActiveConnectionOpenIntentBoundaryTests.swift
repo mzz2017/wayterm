@@ -21,8 +21,12 @@ struct IOSActiveConnectionOpenIntentBoundaryTests {
 
         // Given the iOS Active Connections open action.
         #expect(
-            helper.contains("AppLockManager.shared.requestServerUnlock"),
+            helper.contains("appLockManager.requestServerUnlock"),
             "Active Connection open should keep sending server-unlock intent before opening."
+        )
+        #expect(
+            !source.contains("AppLockManager.shared"),
+            "iOS Active Connection open UI should use the injected AppLockManager."
         )
         #expect(
             helper.contains("sessionManager.requestActiveConnectionOpen"),

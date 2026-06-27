@@ -79,14 +79,22 @@ struct AppLockIntentBoundaryTests {
         )
 
         // Then the selection path should send server-unlock intent to the
-        // application owner instead of directly awaiting biometric auth.
+        // injected application owner instead of directly awaiting biometric auth.
+        #expect(
+            source.contains("@ObservedObject var appLockManager: AppLockManager"),
+            "ServerSidebarView should receive AppLockManager from app composition."
+        )
         #expect(
             !selectServerSource.contains("ensureServerUnlocked("),
             "ServerSidebarView should not call the async server-unlock behavior boundary directly."
         )
         #expect(
-            selectServerSource.contains("requestServerUnlock"),
-            "ServerSidebarView should send server-unlock intent to AppLockManager."
+            selectServerSource.contains("appLockManager.requestServerUnlock"),
+            "ServerSidebarView should send server-unlock intent to the injected AppLockManager."
+        )
+        #expect(
+            !source.contains("AppLockManager.shared"),
+            "ServerSidebarView should not resolve AppLockManager.shared from Servers UI."
         )
     }
 
@@ -106,12 +114,42 @@ struct AppLockIntentBoundaryTests {
         // Then opening an active connection should not directly own the server
         // biometric-auth await; it should send unlock intent first.
         #expect(
+            source.contains("@ObservedObject var appLockManager: AppLockManager"),
+            "iOSServerListView should receive AppLockManager from iOS app composition."
+        )
+        #expect(
             !openActiveConnectionSource.contains("ensureServerUnlocked("),
             "iOSServerListView should not call the async server-unlock behavior boundary directly."
         )
         #expect(
-            openActiveConnectionSource.contains("requestServerUnlock"),
-            "iOSServerListView should send server-unlock intent to AppLockManager."
+            openActiveConnectionSource.contains("appLockManager.requestServerUnlock"),
+            "iOSServerListView should send server-unlock intent to the injected AppLockManager."
+        )
+        #expect(
+            !source.contains("AppLockManager.shared"),
+            "iOSServerListView should not resolve AppLockManager.shared from Servers UI."
+        )
+    }
+
+    @Test
+    func appRootsInjectAppLockManagerIntoServerUI() throws {
+        let root = try sourceRoot()
+        let appSource = try source(at: root.appendingPathComponent("VVTerm/App/VVTermApp.swift"))
+        let macRootSource = try source(at: root.appendingPathComponent("VVTerm/App/ContentView.swift"))
+        let iosRootSource = try source(at: root.appendingPathComponent("VVTerm/App/iOS/iOSContentView.swift"))
+
+        // Given AppLockManager owns tracked biometric-auth request lifecycle.
+        #expect(
+            appSource.contains("@StateObject private var appLockManager = AppLockManager.shared"),
+            "VVTermApp should be the composition boundary that owns the shared AppLockManager."
+        )
+        #expect(
+            macRootSource.contains("appLockManager: appLockManager"),
+            "ContentView should pass the app-owned AppLockManager into macOS server UI."
+        )
+        #expect(
+            iosRootSource.contains("appLockManager: appLockManager"),
+            "iOSContentView should pass the app-owned AppLockManager into iOS server UI."
         )
     }
 

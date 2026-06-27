@@ -81,6 +81,7 @@ struct VVTermApp: App {
                         iOSContentView(
                             fileTabs: remoteFileTabManager,
                             fileBrowser: remoteFileBrowserStore,
+                            appLockManager: appLockManager,
                             disconnectCoordinator: serverConnectionLifecycleCoordinator
                         )
                             .environmentObject(ghosttyApp)
@@ -100,6 +101,7 @@ struct VVTermApp: App {
                         ContentView(
                             fileTabs: remoteFileTabManager,
                             fileBrowser: remoteFileBrowserStore,
+                            appLockManager: appLockManager,
                             disconnectCoordinator: serverConnectionLifecycleCoordinator
                         )
                             .environmentObject(ghosttyApp)

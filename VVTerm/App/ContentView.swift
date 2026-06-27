@@ -12,6 +12,7 @@ import AppKit
 struct ContentView: View {
     let fileTabs: RemoteFileTabManager
     let fileBrowser: RemoteFileBrowserStore
+    let appLockManager: AppLockManager
     let disconnectCoordinator: ServerConnectionLifecycleCoordinator
     @StateObject private var serverManager = ServerManager.shared
     @StateObject private var tabManager = TerminalTabManager.shared
@@ -183,6 +184,7 @@ struct ContentView: View {
                 serverManager: serverManager,
                 tabManager: tabManager,
                 storeManager: storeManager,
+                appLockManager: appLockManager,
                 backgroundColor: macOSWindowBackgroundColor,
                 selectedWorkspace: $selectedWorkspace,
                 selectedServer: $selectedServer
@@ -255,11 +257,12 @@ struct ContentView: View {
 // MARK: - Preview
 
 #Preview {
-        ContentView(
-            fileTabs: RemoteFileTabManager(isProProvider: { false }),
-            fileBrowser: RemoteFileBrowserStore(serverProvider: { _ in nil }),
-            disconnectCoordinator: ServerConnectionLifecycleCoordinator()
-        )
+    ContentView(
+        fileTabs: RemoteFileTabManager(isProProvider: { false }),
+        fileBrowser: RemoteFileBrowserStore(serverProvider: { _ in nil }),
+        appLockManager: AppLockManager(),
+        disconnectCoordinator: ServerConnectionLifecycleCoordinator()
+    )
 }
 
 #if os(macOS)
