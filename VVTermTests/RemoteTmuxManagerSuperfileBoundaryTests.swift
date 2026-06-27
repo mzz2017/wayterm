@@ -91,6 +91,49 @@ struct RemoteTmuxManagerSuperfileBoundaryTests {
         }
     }
 
+    @Test
+    func managerRootDoesNotOwnCommandBuilderImplementation() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/RemoteTmuxManager.swift")
+        )
+        let commandSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/RemoteTmuxManager+Commands.swift")
+        )
+
+        // Given RemoteTmuxManager owns backend detection, execution timeouts,
+        // and cleanup orchestration, pure tmux/psmux command construction
+        // should live in a non-resource-owning extension file.
+        for functionName in [
+            "configWriteExecutionCommand",
+            "attachCommand",
+            "installAndAttachScript",
+            "tmuxAvailabilityProbeCommand",
+            "windowsPsmuxAvailabilityProbeCommand",
+            "listSessionCommands",
+            "killSessionCommand",
+            "currentPathCommand"
+        ] {
+            #expect(
+                !managerSource.contains("func \(functionName)"),
+                "RemoteTmuxManager.swift should not own command-builder implementation \(functionName)."
+            )
+            #expect(
+                commandSource.contains("func \(functionName)"),
+                "RemoteTmuxManager+Commands.swift should own command-builder implementation \(functionName)."
+            )
+        }
+
+        #expect(
+            managerSource.contains("func availableBackend("),
+            "RemoteTmuxManager.swift should keep backend detection orchestration."
+        )
+        #expect(
+            managerSource.contains("func cleanupDetachedSessions("),
+            "RemoteTmuxManager.swift should keep tmux lifecycle cleanup orchestration."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
