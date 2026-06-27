@@ -223,10 +223,7 @@ class GhosttyTerminalView: UIView {
 
     private var editMenuInteraction: UIEditMenuInteraction?
 
-    /// Observer for config reload notifications
-    private var configReloadObserver: NSObjectProtocol?
-    private var inputModeObserver: NSObjectProtocol?
-    private var hardwareKeyboardObservers: [NSObjectProtocol] = []
+    private let lifecycleObservers = TerminalLifecycleObserverBag()
     private var hasHardwareKeyboardAttached = false
     private var allowIMEProxyProgrammaticResign = false
     private var suppressUnexpectedIMEProxyResignUntil = 0.0
@@ -397,12 +394,6 @@ class GhosttyTerminalView: UIView {
     }
 
     deinit {
-        for observer in hardwareKeyboardObservers {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = inputModeObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
         let wrapper = self.ghosttyAppWrapper
         let ref = self.surfaceReference
         if let wrapper = wrapper, let ref = ref {
@@ -421,16 +412,7 @@ class GhosttyTerminalView: UIView {
         zoomIndicatorHideWorkItem?.cancel()
         zoomIndicatorHideWorkItem = nil
 
-        // Remove config reload observer
-        if let observer = configReloadObserver {
-            NotificationCenter.default.removeObserver(observer)
-            configReloadObserver = nil
-        }
-        if let observer = inputModeObserver {
-            NotificationCenter.default.removeObserver(observer)
-            inputModeObserver = nil
-        }
-        removeHardwareKeyboardObservers()
+        lifecycleObservers.invalidateAll()
 
         // Clear all callbacks first to prevent any further interactions
         onReady = nil
@@ -496,27 +478,14 @@ class GhosttyTerminalView: UIView {
 
     /// Create and configure the Ghostty surface
     private func setupConfigReloadObservation() {
-        configReloadObserver = NotificationCenter.default.addObserver(
-            forName: Ghostty.configDidReloadNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self = self else { return }
-            Task { @MainActor [weak self] in
-                self?.requestRender()
-            }
+        lifecycleObservers.observeConfigReload { [weak self] in
+            self?.requestRender()
         }
     }
 
     private func setupInputModeObservation() {
-        inputModeObserver = NotificationCenter.default.addObserver(
-            forName: UITextInputMode.currentInputModeDidChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.handleCurrentInputModeDidChange()
-            }
+        lifecycleObservers.observeInputModeChanges { [weak self] in
+            self?.handleCurrentInputModeDidChange()
         }
     }
 
@@ -1173,38 +1142,10 @@ class GhosttyTerminalView: UIView {
     }
 
     private func setupHardwareKeyboardObservation() {
-        guard hardwareKeyboardObservers.isEmpty else { return }
-        let center = NotificationCenter.default
-        hardwareKeyboardObservers.append(
-            center.addObserver(
-                forName: NSNotification.Name.GCKeyboardDidConnect,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.updateHardwareKeyboardState(reloadInputViewsIfNeeded: true)
-                }
-            }
-        )
-        hardwareKeyboardObservers.append(
-            center.addObserver(
-                forName: NSNotification.Name.GCKeyboardDidDisconnect,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.updateHardwareKeyboardState(reloadInputViewsIfNeeded: true)
-                }
-            }
-        )
-        updateHardwareKeyboardState(reloadInputViewsIfNeeded: false)
-    }
-
-    private func removeHardwareKeyboardObservers() {
-        for observer in hardwareKeyboardObservers {
-            NotificationCenter.default.removeObserver(observer)
+        lifecycleObservers.observeHardwareKeyboardChanges { [weak self] in
+            self?.updateHardwareKeyboardState(reloadInputViewsIfNeeded: true)
         }
-        hardwareKeyboardObservers.removeAll()
+        updateHardwareKeyboardState(reloadInputViewsIfNeeded: false)
     }
 
     private func updateHardwareKeyboardState(reloadInputViewsIfNeeded: Bool) {
