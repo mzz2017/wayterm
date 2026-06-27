@@ -3,10 +3,10 @@ import Testing
 
 // Test Context:
 // These source-boundary tests protect iOS Ghostty input runtime ownership. The
-// UIKit terminal view may decide routing policy, but direct hardware key FFI and
-// visible IME preedit state should be owned by a focused runtime helper. Update
-// these tests only if those responsibilities intentionally move to another
-// non-view owner.
+// UIKit terminal view may decide routing policy, but direct hardware key FFI,
+// visible IME preedit state, and IME proxy focus/resign state should be owned by
+// a focused runtime helper. Update these tests only if those responsibilities
+// intentionally move to another non-view owner.
 
 @Suite(.serialized)
 struct GhosttyIOSInputRuntimeBoundaryTests {
@@ -24,6 +24,9 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(viewSource.contains("private let inputRuntime = TerminalIOSInputRuntime()"))
         #expect(viewSource.contains("inputRuntime.sendDirectHardwareKeyEvent"))
         #expect(viewSource.contains("inputRuntime.syncVisiblePreedit"))
+        #expect(viewSource.contains("inputRuntime.canResignIMEProxy"))
+        #expect(viewSource.contains("inputRuntime.suppressUnexpectedIMEProxyResign"))
+        #expect(viewSource.contains("inputRuntime.performProgrammaticIMEProxyResign"))
 
         // Then the main UIKit view does not directly own those C/FFI calls,
         // visible preedit state, or the Ghostty action conversion helper.
@@ -32,12 +35,20 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(!viewSource.contains("private func ghosttyInputAction"))
         #expect(!viewSource.contains("private var renderedIMEPreeditText"))
         #expect(!viewSource.contains("private func shouldDisplayVisiblePreedit"))
+        #expect(!viewSource.contains("private var allowIMEProxyProgrammaticResign"))
+        #expect(!viewSource.contains("private var suppressUnexpectedIMEProxyResignUntil"))
+        #expect(!viewSource.contains("private var shouldSuppressUnexpectedIMEProxyResign"))
 
         #expect(runtimeSource.contains("final class TerminalIOSInputRuntime"))
         #expect(runtimeSource.contains("private var renderedPreeditText"))
+        #expect(runtimeSource.contains("private var isIMEProxyProgrammaticResignAllowed"))
+        #expect(runtimeSource.contains("private var suppressUnexpectedIMEProxyResignUntil"))
         #expect(runtimeSource.contains("func sendDirectHardwareKeyEvent"))
         #expect(runtimeSource.contains("func syncVisiblePreedit"))
         #expect(runtimeSource.contains("func syncPreedit"))
+        #expect(runtimeSource.contains("func canResignIMEProxy"))
+        #expect(runtimeSource.contains("func suppressUnexpectedIMEProxyResign"))
+        #expect(runtimeSource.contains("func performProgrammaticIMEProxyResign"))
         #expect(runtimeSource.contains("ghostty_surface_key"))
         #expect(runtimeSource.contains("ghostty_surface_preedit"))
         #expect(runtimeSource.contains("private func ghosttyInputAction"))

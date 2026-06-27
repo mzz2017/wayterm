@@ -5,6 +5,8 @@ import UIKit
 @MainActor
 final class TerminalIOSInputRuntime {
     private var renderedPreeditText: String?
+    private var isIMEProxyProgrammaticResignAllowed = false
+    private var suppressUnexpectedIMEProxyResignUntil = 0.0
 
     func sendDirectHardwareKeyEvent(
         _ key: UIKey,
@@ -45,6 +47,24 @@ final class TerminalIOSInputRuntime {
         return true
     }
 
+    func canResignIMEProxy(isTextInputSessionEligible: Bool) -> Bool {
+        if isIMEProxyProgrammaticResignAllowed || !isTextInputSessionEligible {
+            return true
+        }
+        return !shouldSuppressUnexpectedIMEProxyResign
+    }
+
+    func suppressUnexpectedIMEProxyResign() {
+        suppressUnexpectedIMEProxyResignUntil = Date.timeIntervalSinceReferenceDate + 0.35
+    }
+
+    func performProgrammaticIMEProxyResign(_ resign: () -> Bool) -> Bool {
+        let previous = isIMEProxyProgrammaticResignAllowed
+        isIMEProxyProgrammaticResignAllowed = true
+        defer { isIMEProxyProgrammaticResignAllowed = previous }
+        return resign()
+    }
+
     func syncPreedit(_ text: String?, surface: ghostty_surface_t) {
         guard let text, !text.isEmpty else {
             ghostty_surface_preedit(surface, nil, 0)
@@ -72,6 +92,10 @@ final class TerminalIOSInputRuntime {
         default:
             return .press
         }
+    }
+
+    private var shouldSuppressUnexpectedIMEProxyResign: Bool {
+        Date.timeIntervalSinceReferenceDate < suppressUnexpectedIMEProxyResignUntil
     }
 }
 #endif

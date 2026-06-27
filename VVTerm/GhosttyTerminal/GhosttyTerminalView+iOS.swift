@@ -200,8 +200,6 @@ class GhosttyTerminalView: UIView {
 
     private let lifecycleObservers = TerminalLifecycleObserverBag()
     private var hasHardwareKeyboardAttached = false
-    private var allowIMEProxyProgrammaticResign = false
-    private var suppressUnexpectedIMEProxyResignUntil = 0.0
 
     // MARK: - Text Input (for spacebar cursor control)
     private var textInputModel = TerminalTextInputModel()
@@ -610,10 +608,7 @@ class GhosttyTerminalView: UIView {
     }
 
     var imeProxyCanResignFirstResponder: Bool {
-        if allowIMEProxyProgrammaticResign || !isTextInputSessionEligible {
-            return true
-        }
-        return !shouldSuppressUnexpectedIMEProxyResign
+        inputRuntime.canResignIMEProxy(isTextInputSessionEligible: isTextInputSessionEligible)
     }
 
     var currentTextInputContextIdentifier: String? {
@@ -749,14 +744,6 @@ class GhosttyTerminalView: UIView {
             invalidateLocalTextInputSession()
             stopKeyRepeat()
         }
-    }
-
-    private func suppressUnexpectedIMEProxyResign() {
-        suppressUnexpectedIMEProxyResignUntil = Date.timeIntervalSinceReferenceDate + 0.35
-    }
-
-    private var shouldSuppressUnexpectedIMEProxyResign: Bool {
-        Date.timeIntervalSinceReferenceDate < suppressUnexpectedIMEProxyResignUntil
     }
 
     func imeProxyCaretRect(for position: UITextPosition) -> CGRect {
@@ -1007,16 +994,15 @@ class GhosttyTerminalView: UIView {
         guard imeProxyTextView.isFirstResponder || super.isFirstResponder else { return true }
         if imeProxyTextView.isFirstResponder,
            isTextInputSessionEligible,
-           shouldSuppressUnexpectedIMEProxyResign {
+           !inputRuntime.canResignIMEProxy(isTextInputSessionEligible: true) {
             imeProxyFocusDidChange(isFocused: true)
             return false
         }
         let proxyResult: Bool
         if imeProxyTextView.isFirstResponder {
-            let previous = allowIMEProxyProgrammaticResign
-            allowIMEProxyProgrammaticResign = true
-            defer { allowIMEProxyProgrammaticResign = previous }
-            proxyResult = imeProxyTextView.resignFirstResponder()
+            proxyResult = inputRuntime.performProgrammaticIMEProxyResign {
+                imeProxyTextView.resignFirstResponder()
+            }
         } else {
             proxyResult = true
         }
@@ -2032,7 +2018,7 @@ class GhosttyTerminalView: UIView {
         guard let input = command.input,
               let key = terminalKey(forKeyCommandInput: input) else { return }
         if case .escape = key {
-            suppressUnexpectedIMEProxyResign()
+            inputRuntime.suppressUnexpectedIMEProxyResign()
         }
         let mods = Ghostty.Input.Mods(uiKeyModifiers: command.modifierFlags)
         sendToolbarKey(key, accumulatedMods: mods)
@@ -2521,7 +2507,7 @@ class GhosttyTerminalView: UIView {
         guard !normalized.isEmpty else { return true }
         if let key = terminalKey(forKeyCommandInput: normalized) {
             if case .escape = key {
-                suppressUnexpectedIMEProxyResign()
+                inputRuntime.suppressUnexpectedIMEProxyResign()
             }
             sendToolbarKey(key)
             return true
