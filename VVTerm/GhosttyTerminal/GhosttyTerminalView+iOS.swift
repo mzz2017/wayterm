@@ -102,8 +102,8 @@ class GhosttyTerminalView: UIView {
     private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "app.vivy.vvterm", category: "GhosttyTerminal")
 
     private var isSelecting = false
-    private var isScrolling = false
     private var isNativeHostScrollContainerEnabled = false
+    private let scrollRuntime = TerminalIOSScrollRuntime()
     private let zoomRuntime = TerminalIOSZoomRuntime()
     private var nativeSelectionSnapshot = TerminalNativeTextSnapshot.empty
     private var nativeSelectedRange: NSRange?
@@ -375,7 +375,7 @@ class GhosttyTerminalView: UIView {
     func cleanup() {
         isShuttingDown = true
         isPaused = true
-        stopMomentumScrolling()
+        scrollRuntime.stopMomentumScrolling()
         zoomRuntime.cancelPendingIndicatorHide()
 
         lifecycleObservers.invalidateAll()
@@ -1177,20 +1177,15 @@ class GhosttyTerminalView: UIView {
 
     // MARK: - Scroll Gesture
 
-    /// Display link for momentum animation
-    private var momentumDisplayLink: CADisplayLink?
-    private var momentumScrollState = TerminalMomentumScrollState()
-
     func setNativeHostScrollContainerEnabled(_ enabled: Bool) {
         isNativeHostScrollContainerEnabled = enabled
         if enabled {
-            stopMomentumScrolling()
+            scrollRuntime.stopMomentumScrolling()
         }
     }
 
     func prepareForNativeHostScroll() {
-        isScrolling = false
-        stopMomentumScrolling()
+        scrollRuntime.prepareForNativeHostScroll()
     }
 
     func currentScrollOwner() -> TerminalScrollOwner {
@@ -1209,7 +1204,7 @@ class GhosttyTerminalView: UIView {
     }
 
     @objc private func handlePanGesture(_ recognizer: UIPanGestureRecognizer) {
-        guard let surface = surface else { return }
+        guard surface != nil else { return }
         if isNativeHostScrollContainerEnabled,
            currentScrollOwner() == .hostScrollback {
             return
@@ -1224,82 +1219,25 @@ class GhosttyTerminalView: UIView {
             return
         }
 
-        let translation = recognizer.translation(in: self)
-        let location = recognizer.location(in: self)
-
-        switch recognizer.state {
-        case .began:
-            isScrolling = true
-            stopMomentumScrolling()
-        case .changed:
-            // Update mouse position so TUI apps receive wheel events with coordinates.
-            let pos = ghosttyPoint(location)
-            surface.sendMousePos(.init(x: pos.x, y: pos.y, mods: []))
-            // Send scroll delta directly with increased multiplier for snappy feel
-            let scrollEvent = Ghostty.Input.MouseScrollEvent(
-                x: Double(translation.x) * TerminalScrollGesturePresentation.scrollMultiplier,
-                y: Double(translation.y) * TerminalScrollGesturePresentation.scrollMultiplier,
-                mods: Ghostty.Input.ScrollMods(precision: true, momentum: .none)
-            )
-            surface.sendMouseScroll(scrollEvent)
-            requestRender()
-
-            // Reset translation so we get delta on next call
-            recognizer.setTranslation(.zero, in: self)
-        case .ended:
-            isScrolling = false
-            // Get velocity for momentum scrolling
-            let velocity = recognizer.velocity(in: self)
-            startMomentumScrolling(velocity: velocity)
-        case .cancelled, .failed:
-            isScrolling = false
-            stopMomentumScrolling()
-        default:
-            break
-        }
-    }
-
-    private func startMomentumScrolling(velocity: CGPoint) {
-        guard momentumScrollState.start(gestureVelocity: velocity) else {
-            sendMomentumEnd()
-            return
-        }
-
-        momentumDisplayLink = CADisplayLink(target: self, selector: #selector(momentumScrollTick))
-        momentumDisplayLink?.add(to: .main, forMode: .common)
-    }
-
-    @objc private func momentumScrollTick() {
-        guard let surface = surface else {
-            stopMomentumScrolling()
-            return
-        }
-
-        guard let scrollEvent = momentumScrollState.nextFrameEvent() else {
-            stopMomentumScrolling()
-            sendMomentumEnd()
-            return
-        }
-
-        surface.sendMouseScroll(scrollEvent)
-        requestRender()
-    }
-
-    private func stopMomentumScrolling() {
-        momentumDisplayLink?.invalidate()
-        momentumDisplayLink = nil
-        momentumScrollState.reset()
-    }
-
-    private func sendMomentumEnd() {
-        guard let surface = surface else { return }
-        let endEvent = Ghostty.Input.MouseScrollEvent(
-            x: 0,
-            y: 0,
-            mods: Ghostty.Input.ScrollMods(precision: true, momentum: .ended)
+        scrollRuntime.handlePanGesture(
+            recognizer,
+            in: self,
+            mapLocation: { [weak self] location in
+                self?.ghosttyPoint(location) ?? location
+            },
+            hasSurface: { [weak self] in
+                self?.surface != nil
+            },
+            sendMousePosition: { [weak self] position in
+                self?.surface?.sendMousePos(.init(x: position.x, y: position.y, mods: []))
+            },
+            sendScrollEvent: { [weak self] event in
+                self?.surface?.sendMouseScroll(event)
+            },
+            requestRender: { [weak self] in
+                self?.requestRender()
+            }
         )
-        surface.sendMouseScroll(endEvent)
-        momentumScrollState.reset()
     }
 
     @objc private func handlePinchGesture(_ recognizer: UIPinchGestureRecognizer) {
@@ -1311,7 +1249,7 @@ class GhosttyTerminalView: UIView {
             },
             performZoomAction: onZoomAction,
             stopMomentumScrolling: { [weak self] in
-                self?.stopMomentumScrolling()
+                self?.scrollRuntime.stopMomentumScrolling()
             },
             requestIndicatorLayout: { [weak self] in
                 self?.setNeedsLayout()
