@@ -309,21 +309,57 @@ struct TerminalSessionDependencyBoundaryTests {
     @Test
     func terminalCloseAnalyticsUsesInjectedEntitlementBoundary() throws {
         let root = try sourceRoot()
+        let connectionManagerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let tabManagerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
         let connectionClosingSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Closing.swift")
         )
         let tabClosingSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Closing.swift")
         )
+        let connectionTestingSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Testing.swift")
+        )
+        let tabTestingSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Testing.swift")
+        )
+        let liveDependencySource = try source(
+            at: root.appendingPathComponent("VVTerm/App/TerminalSessionLiveDependencies.swift")
+        )
+        let terminalTelemetrySources = [
+            connectionManagerSource,
+            tabManagerSource,
+            connectionClosingSource,
+            tabClosingSource,
+            connectionTestingSource,
+            tabTestingSource
+        ].joined(separator: "\n")
 
         // Given close lifecycle records whether other terminals remain active
         // and whether the user is Pro at the manager boundary.
-        #expect(connectionClosingSource.contains("isPro: isProProvider()"))
-        #expect(tabClosingSource.contains("isPro: isProProvider()"))
+        #expect(connectionClosingSource.contains("terminalSessionEndRecorder(!activeSessions.isEmpty, isProProvider())"))
+        #expect(tabClosingSource.contains("terminalSessionEndRecorder(hasConnectedPanes, isProProvider())"))
+        #expect(connectionManagerSource.contains("liveActivityRefresher: LiveActivityRefresher"))
+        #expect(connectionManagerSource.contains("successfulConnectionRecorder: SuccessfulConnectionRecorder"))
+        #expect(connectionManagerSource.contains("terminalSessionEndRecorder: TerminalSessionEndRecorder"))
+        #expect(tabManagerSource.contains("splitPaneCreatedTracker: SplitPaneCreatedTracker"))
+        #expect(tabManagerSource.contains("splitPaneCreatedTracker()"))
+        #expect(liveDependencySource.contains("LiveActivityManager.shared.refresh"))
+        #expect(liveDependencySource.contains("EngagementTracker.shared.recordSuccessfulConnection"))
+        #expect(liveDependencySource.contains("EngagementTracker.shared.noteTerminalSessionEnded"))
+        #expect(liveDependencySource.contains("AnalyticsTracker.shared.trackSplitPaneCreated"))
 
-        // Then close lifecycle files do not reach directly into Store state.
+        // Then terminal application files do not reach directly into live app
+        // telemetry/activity singletons or Store state.
         #expect(!connectionClosingSource.contains("StoreManager.shared.isPro"))
         #expect(!tabClosingSource.contains("StoreManager.shared.isPro"))
+        #expect(!terminalTelemetrySources.contains("LiveActivityManager.shared"))
+        #expect(!terminalTelemetrySources.contains("EngagementTracker.shared"))
+        #expect(!terminalTelemetrySources.contains("AnalyticsTracker.shared"))
     }
 
     @Test

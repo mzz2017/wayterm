@@ -36,6 +36,9 @@ final class ConnectionSessionManager: ObservableObject {
     typealias IsProProvider = @MainActor () -> Bool
     typealias CredentialsProvider = @MainActor (Server) async throws -> ServerCredentials
     typealias KnownHostRemover = @MainActor (_ host: String, _ port: Int) async -> Void
+    typealias LiveActivityRefresher = @MainActor ([TerminalLiveActivitySnapshot]) -> Void
+    typealias SuccessfulConnectionRecorder = @MainActor (_ id: UUID, _ transport: String) -> Void
+    typealias TerminalSessionEndRecorder = @MainActor (_ otherTerminalsActive: Bool, _ isPro: Bool) -> Void
 
     struct Dependencies {
         var serverProvider: ServerProvider
@@ -48,19 +51,16 @@ final class ConnectionSessionManager: ObservableObject {
         var moshService: any TerminalMoshServicing
         var knownHostRemover: KnownHostRemover
         var workingDirectoryService: any TerminalWorkingDirectoryApplying
+        var liveActivityRefresher: LiveActivityRefresher
+        var successfulConnectionRecorder: SuccessfulConnectionRecorder
+        var terminalSessionEndRecorder: TerminalSessionEndRecorder
     }
 
     @Published var sessions: [ConnectionSession] = [] {
         didSet {
-            liveActivityRefresh(liveActivitySnapshots)
+            liveActivityRefresher(liveActivitySnapshots)
             schedulePersist()
         }
-    }
-    var liveActivityRefresh: @MainActor ([TerminalLiveActivitySnapshot]) -> Void = {
-        LiveActivityManager.shared.refresh(with: $0)
-    }
-    var successfulConnectionRecorder: @MainActor (_ id: UUID, _ transport: String) -> Void = {
-        EngagementTracker.shared.recordSuccessfulConnection(id: $0, transport: $1)
     }
     @Published var selectedSessionId: UUID? {
         didSet {
@@ -276,6 +276,22 @@ final class ConnectionSessionManager: ObservableObject {
     var workingDirectoryService: any TerminalWorkingDirectoryApplying {
         get { dependencies.workingDirectoryService }
         set { updateDependencies { $0.workingDirectoryService = newValue } }
+    }
+    var liveActivityRefresh: LiveActivityRefresher {
+        get { dependencies.liveActivityRefresher }
+        set { updateDependencies { $0.liveActivityRefresher = newValue } }
+    }
+    var liveActivityRefresher: LiveActivityRefresher {
+        get { dependencies.liveActivityRefresher }
+        set { updateDependencies { $0.liveActivityRefresher = newValue } }
+    }
+    var successfulConnectionRecorder: SuccessfulConnectionRecorder {
+        get { dependencies.successfulConnectionRecorder }
+        set { updateDependencies { $0.successfulConnectionRecorder = newValue } }
+    }
+    var terminalSessionEndRecorder: TerminalSessionEndRecorder {
+        get { dependencies.terminalSessionEndRecorder }
+        set { updateDependencies { $0.terminalSessionEndRecorder = newValue } }
     }
     /// Per-server teardown work from ordinary tab closes. New opens wait for this too.
     var serverTeardownTaskStore = TerminalTeardownTaskStore()

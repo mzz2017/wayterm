@@ -39,10 +39,7 @@ extension TerminalTabManager {
             }
         }
 
-        EngagementTracker.shared.noteTerminalSessionEnded(
-            otherTerminalsActive: hasConnectedPanes,
-            isPro: isProProvider()
-        )
+        terminalSessionEndRecorder(hasConnectedPanes, isProProvider())
 
         logger.info("Closed tab \(currentTab.id)")
         return TabCloseResult(

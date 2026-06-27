@@ -40,6 +40,9 @@ final class TerminalTabManager: ObservableObject {
     typealias ServerUnlocker = @MainActor (Server) async -> Bool
     typealias CredentialsProvider = @MainActor (Server) async throws -> ServerCredentials
     typealias KnownHostRemover = @MainActor (_ host: String, _ port: Int) async -> Void
+    typealias SuccessfulConnectionRecorder = @MainActor (_ id: UUID, _ transport: String) -> Void
+    typealias SplitPaneCreatedTracker = @MainActor () -> Void
+    typealias TerminalSessionEndRecorder = @MainActor (_ otherTerminalsActive: Bool, _ isPro: Bool) -> Void
 
     struct Dependencies {
         var isProProvider: IsProProvider
@@ -51,6 +54,9 @@ final class TerminalTabManager: ObservableObject {
         var moshService: any TerminalMoshServicing
         var knownHostRemover: KnownHostRemover
         var workingDirectoryService: any TerminalWorkingDirectoryApplying
+        var successfulConnectionRecorder: SuccessfulConnectionRecorder
+        var splitPaneCreatedTracker: SplitPaneCreatedTracker
+        var terminalSessionEndRecorder: TerminalSessionEndRecorder
     }
 
     // MARK: - Published State
@@ -202,12 +208,21 @@ final class TerminalTabManager: ObservableObject {
         get { dependencies.workingDirectoryService }
         set { updateDependencies { $0.workingDirectoryService = newValue } }
     }
+    var successfulConnectionRecorder: SuccessfulConnectionRecorder {
+        get { dependencies.successfulConnectionRecorder }
+        set { updateDependencies { $0.successfulConnectionRecorder = newValue } }
+    }
+    var splitPaneCreatedTracker: SplitPaneCreatedTracker {
+        get { dependencies.splitPaneCreatedTracker }
+        set { updateDependencies { $0.splitPaneCreatedTracker = newValue } }
+    }
+    var terminalSessionEndRecorder: TerminalSessionEndRecorder {
+        get { dependencies.terminalSessionEndRecorder }
+        set { updateDependencies { $0.terminalSessionEndRecorder = newValue } }
+    }
     /// Application-owned pane SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
     var paneRuntimes: [UUID: PaneRuntimeState] = [:]
     let terminalConnectionRegistry = TerminalConnectionRegistry()
-    var successfulConnectionRecorder: @MainActor (_ id: UUID, _ transport: String) -> Void = {
-        EngagementTracker.shared.recordSuccessfulConnection(id: $0, transport: $1)
-    }
     #if DEBUG
     var testingTerminalConnectionClientFactory: (@MainActor (TerminalEntityID, Server?) -> any TerminalConnectionClient)?
     var rejectedShellCleanupOperationForTesting: (@MainActor @Sendable () async -> Void)?
@@ -345,7 +360,7 @@ final class TerminalTabManager: ObservableObject {
         guard isProProvider() else { return nil }
         let newPaneId = splitPane(tab: tab, paneId: paneId, direction: .horizontal)
         if newPaneId != nil {
-            AnalyticsTracker.shared.trackSplitPaneCreated()
+            splitPaneCreatedTracker()
         }
         return newPaneId
     }
@@ -355,7 +370,7 @@ final class TerminalTabManager: ObservableObject {
         guard isProProvider() else { return nil }
         let newPaneId = splitPane(tab: tab, paneId: paneId, direction: .vertical)
         if newPaneId != nil {
-            AnalyticsTracker.shared.trackSplitPaneCreated()
+            splitPaneCreatedTracker()
         }
         return newPaneId
     }

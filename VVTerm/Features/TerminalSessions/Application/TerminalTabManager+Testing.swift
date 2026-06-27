@@ -26,7 +26,7 @@ extension TerminalTabManager {
 
         let terminals = terminalSurfaceRegistry.removeAll(cleanup: false)
         isRestoring = true
-        successfulConnectionRecorder = { EngagementTracker.shared.recordSuccessfulConnection(id: $0, transport: $1) }
+        restoreLiveDependencies()
         tabsByServer = [:]
         selectedTabByServer = [:]
         selectedViewByServer = [:]

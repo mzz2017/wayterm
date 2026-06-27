@@ -33,7 +33,19 @@ extension ConnectionSessionManager.Dependencies {
             knownHostRemover: { host, port in
                 await KnownHostsStore.shared.remove(host: host, port: port)
             },
-            workingDirectoryService: TerminalWorkingDirectoryService()
+            workingDirectoryService: TerminalWorkingDirectoryService(),
+            liveActivityRefresher: { snapshots in
+                LiveActivityManager.shared.refresh(with: snapshots)
+            },
+            successfulConnectionRecorder: { id, transport in
+                EngagementTracker.shared.recordSuccessfulConnection(id: id, transport: transport)
+            },
+            terminalSessionEndRecorder: { otherTerminalsActive, isPro in
+                EngagementTracker.shared.noteTerminalSessionEnded(
+                    otherTerminalsActive: otherTerminalsActive,
+                    isPro: isPro
+                )
+            }
         )
     }
 }
@@ -61,7 +73,19 @@ extension TerminalTabManager.Dependencies {
             knownHostRemover: { host, port in
                 await KnownHostsStore.shared.remove(host: host, port: port)
             },
-            workingDirectoryService: TerminalWorkingDirectoryService()
+            workingDirectoryService: TerminalWorkingDirectoryService(),
+            successfulConnectionRecorder: { id, transport in
+                EngagementTracker.shared.recordSuccessfulConnection(id: id, transport: transport)
+            },
+            splitPaneCreatedTracker: {
+                AnalyticsTracker.shared.trackSplitPaneCreated()
+            },
+            terminalSessionEndRecorder: { otherTerminalsActive, isPro in
+                EngagementTracker.shared.noteTerminalSessionEnded(
+                    otherTerminalsActive: otherTerminalsActive,
+                    isPro: isPro
+                )
+            }
         )
     }
 }

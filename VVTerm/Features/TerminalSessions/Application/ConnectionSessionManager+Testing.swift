@@ -24,8 +24,7 @@ extension ConnectionSessionManager {
 
         let terminals = terminalSurfaceRegistry.removeAll(cleanup: false)
         isRestoring = true
-        liveActivityRefresh = { LiveActivityManager.shared.refresh(with: $0) }
-        successfulConnectionRecorder = { EngagementTracker.shared.recordSuccessfulConnection(id: $0, transport: $1) }
+        restoreLiveDependencies()
         sessions = []
         selectedSessionId = nil
         selectedViewByServer = [:]

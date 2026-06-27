@@ -370,10 +370,7 @@ extension ConnectionSessionManager {
         }
 
         if notingSessionEnd {
-            EngagementTracker.shared.noteTerminalSessionEnded(
-                otherTerminalsActive: !activeSessions.isEmpty,
-                isPro: isProProvider()
-            )
+            terminalSessionEndRecorder(!activeSessions.isEmpty, isProProvider())
         }
 
         logger.info("Closed terminal session \(title)")
