@@ -32,8 +32,12 @@ private let contactOptions: [ContactOption] = [
 // MARK: - About Settings View
 
 struct AboutSettingsView: View {
-    @StateObject private var storeManager = StoreManager.shared
+    @ObservedObject private var storeManager: StoreManager
     @State private var showingReviewSheet = false
+
+    init(storeManager: StoreManager) {
+        _storeManager = ObservedObject(wrappedValue: storeManager)
+    }
 
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.1"
@@ -225,7 +229,7 @@ struct AboutSettingsView: View {
         }
         .formStyle(.grouped)
         .sheet(isPresented: $showingReviewSheet) {
-            ReviewModeSheet()
+            ReviewModeSheet(storeManager: storeManager)
         }
     }
 
@@ -242,10 +246,14 @@ struct AboutSettingsView: View {
 // MARK: - Review Mode Sheet
 
 private struct ReviewModeSheet: View {
-    @ObservedObject private var storeManager = StoreManager.shared
+    @ObservedObject private var storeManager: StoreManager
     @State private var reviewCode = ""
     @State private var reviewError: String?
     @Environment(\.dismiss) private var dismiss
+
+    init(storeManager: StoreManager) {
+        _storeManager = ObservedObject(wrappedValue: storeManager)
+    }
 
     var body: some View {
         NavigationStack {

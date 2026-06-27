@@ -204,7 +204,7 @@ struct SettingsView: View {
                     }
 
                     NavigationLink {
-                        AboutSettingsView()
+                        AboutSettingsView(storeManager: storeManager)
                             .navigationTitle("About")
                             .navigationBarTitleDisplayMode(.inline)
                     } label: {
@@ -266,7 +266,7 @@ struct SettingsView: View {
                                 .navigationTitle("Sync")
                                 .navigationSubtitle(String(localized: "iCloud sync and data management"))
         case .about:
-                            AboutSettingsView()
+                            AboutSettingsView(storeManager: storeManager)
                                 .navigationTitle("About")
                                 .navigationSubtitle(String(localized: "Version and links"))
         case .none:

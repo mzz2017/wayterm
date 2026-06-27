@@ -3,12 +3,14 @@ import Testing
 
 // Test Context:
 // These tests protect Settings UI/Application boundaries for lifecycle-critical
-// persistence, purchase, sync, SSH key storage, trusted-host cleanup, and
-// tab-configuration actions. Settings views may send user intent, but they must
-// not own destructive cleanup tasks or call lower-level stores directly.
+// persistence, purchase/review mode, sync, SSH key storage, trusted-host cleanup,
+// tab-configuration actions, and model-download lifecycle. Settings views may
+// send user intent, but they must not own destructive cleanup tasks or call
+// lower-level stores directly.
 // The tests inspect source placement only; update them only when the trusted
-// host, reusable SSH key, sync settings, or custom terminal theme settings owner
-// intentionally moves to another application-layer type.
+// host, reusable SSH key, sync settings, purchase/review mode, transcription
+// download, or custom terminal theme settings owner intentionally moves to
+// another application-layer type.
 @Suite
 struct SettingsLifecycleBoundaryTests {
     @Test
@@ -185,6 +187,29 @@ struct SettingsLifecycleBoundaryTests {
         #expect(
             settingsSource.contains("KeychainSettingsView(keyStore: keyStore)"),
             "SettingsView should inject SSHKeySettingsStore into KeychainSettingsView."
+        )
+    }
+
+    @Test
+    func aboutSettingsReceivesStoreManagerFromSettingsRoot() throws {
+        // Given the About leaf view and Settings root SwiftUI source.
+        let root = try sourceRoot()
+        let aboutSettingsSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/UI/AboutSettingsView.swift")
+        )
+        let settingsSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/UI/SettingsView.swift")
+        )
+
+        // Then review-mode UI should render injected StoreManager state rather
+        // than resolving the live purchase store by itself.
+        #expect(
+            !aboutSettingsSource.contains("StoreManager.shared"),
+            "AboutSettingsView and ReviewModeSheet should receive StoreManager from SettingsView."
+        )
+        #expect(
+            settingsSource.contains("AboutSettingsView(storeManager: storeManager)"),
+            "SettingsView should inject StoreManager into AboutSettingsView."
         )
     }
 
