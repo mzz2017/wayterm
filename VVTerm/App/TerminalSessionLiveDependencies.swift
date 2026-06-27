@@ -28,7 +28,8 @@ extension ConnectionSessionManager.Dependencies {
             credentialsProvider: { server in
                 try KeychainManager.shared.getCredentials(for: server)
             },
-            tmuxService: RemoteTmuxManager.shared
+            tmuxService: RemoteTmuxManager.shared,
+            moshService: RemoteMoshManager.shared
         )
     }
 }
@@ -51,7 +52,8 @@ extension TerminalTabManager.Dependencies {
             credentialsProvider: { server in
                 try KeychainManager.shared.getCredentials(for: server)
             },
-            tmuxService: RemoteTmuxManager.shared
+            tmuxService: RemoteTmuxManager.shared,
+            moshService: RemoteMoshManager.shared
         )
     }
 }

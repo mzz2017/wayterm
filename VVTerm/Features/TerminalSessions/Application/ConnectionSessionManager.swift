@@ -44,6 +44,7 @@ final class ConnectionSessionManager: ObservableObject {
         var isProProvider: IsProProvider
         var credentialsProvider: CredentialsProvider
         var tmuxService: any TerminalTmuxServicing
+        var moshService: any TerminalMoshServicing
     }
 
     @Published var sessions: [ConnectionSession] = [] {
@@ -260,6 +261,10 @@ final class ConnectionSessionManager: ObservableObject {
     var tmuxService: any TerminalTmuxServicing {
         get { dependencies.tmuxService }
         set { updateDependencies { $0.tmuxService = newValue } }
+    }
+    var moshService: any TerminalMoshServicing {
+        get { dependencies.moshService }
+        set { updateDependencies { $0.moshService = newValue } }
     }
     /// Per-server teardown work from ordinary tab closes. New opens wait for this too.
     var serverTeardownTaskStore = TerminalTeardownTaskStore()

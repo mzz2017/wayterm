@@ -234,6 +234,10 @@ extension ConnectionSessionManager {
         tmuxService = service
     }
 
+    func setMoshServiceForTesting(_ service: any TerminalMoshServicing) {
+        moshService = service
+    }
+
     func setServerProviderForTesting(
         _ provider: @escaping ServerProvider
     ) {

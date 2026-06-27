@@ -221,6 +221,49 @@ struct TerminalSessionDependencyBoundaryTests {
     }
 
     @Test
+    func moshInstallUsesInjectedServiceBoundary() throws {
+        let root = try sourceRoot()
+        let connectionManagerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift")
+        )
+        let tabManagerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift")
+        )
+        let connectionTmuxSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Tmux.swift")
+        )
+        let tabTmuxSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Tmux.swift")
+        )
+        let connectionTestingSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager+Testing.swift")
+        )
+        let tabTestingSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalTabManager+Testing.swift")
+        )
+        let moshServiceSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/TerminalMoshService.swift")
+        )
+        let liveDependencySource = try source(
+            at: root.appendingPathComponent("VVTerm/App/TerminalSessionLiveDependencies.swift")
+        )
+        let moshInstallSources = [connectionTmuxSource, tabTmuxSource].joined(separator: "\n")
+
+        #expect(moshServiceSource.contains("protocol TerminalMoshServicing"))
+        #expect(connectionManagerSource.contains("moshService: any TerminalMoshServicing"))
+        #expect(tabManagerSource.contains("moshService: any TerminalMoshServicing"))
+        #expect(connectionManagerSource.contains("get { dependencies.moshService }"))
+        #expect(tabManagerSource.contains("get { dependencies.moshService }"))
+        #expect(connectionTmuxSource.contains("try await moshService.installMoshServer("))
+        #expect(tabTmuxSource.contains("try await moshService.installMoshServer("))
+        #expect(connectionTestingSource.contains("func setMoshServiceForTesting"))
+        #expect(tabTestingSource.contains("func setMoshServiceForTesting"))
+
+        #expect(!moshInstallSources.contains("RemoteMoshManager.shared"))
+        #expect(liveDependencySource.contains("moshService: RemoteMoshManager.shared"))
+    }
+
+    @Test
     func terminalCloseAnalyticsUsesInjectedEntitlementBoundary() throws {
         let root = try sourceRoot()
         let connectionClosingSource = try source(

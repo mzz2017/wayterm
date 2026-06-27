@@ -47,6 +47,7 @@ final class TerminalTabManager: ObservableObject {
         var serverProvider: ServerProvider
         var credentialsProvider: CredentialsProvider
         var tmuxService: any TerminalTmuxServicing
+        var moshService: any TerminalMoshServicing
     }
 
     // MARK: - Published State
@@ -185,6 +186,10 @@ final class TerminalTabManager: ObservableObject {
     var tmuxService: any TerminalTmuxServicing {
         get { dependencies.tmuxService }
         set { updateDependencies { $0.tmuxService = newValue } }
+    }
+    var moshService: any TerminalMoshServicing {
+        get { dependencies.moshService }
+        set { updateDependencies { $0.moshService = newValue } }
     }
     /// Application-owned pane SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
     var paneRuntimes: [UUID: PaneRuntimeState] = [:]

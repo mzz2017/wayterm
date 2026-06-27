@@ -306,7 +306,7 @@ extension ConnectionSessionManager {
         guard let registration = shellRegistry.registration(for: sessionId) else {
             throw SSHError.notConnected
         }
-        try await RemoteMoshManager.shared.installMoshServer(using: registration.client)
+        try await moshService.installMoshServer(using: registration.client)
     }
 
     func managedTmuxSessionNameToKill(for sessionId: UUID, status: TmuxStatus) -> String? {

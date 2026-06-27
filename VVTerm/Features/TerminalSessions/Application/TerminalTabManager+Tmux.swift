@@ -314,7 +314,7 @@ extension TerminalTabManager {
         guard let registration = shellRegistry.registration(for: paneId) else {
             throw SSHError.notConnected
         }
-        try await RemoteMoshManager.shared.installMoshServer(using: registration.client)
+        try await moshService.installMoshServer(using: registration.client)
     }
 
     func managedTmuxSessionNameToKill(for paneId: UUID, status: TmuxStatus) -> String? {
