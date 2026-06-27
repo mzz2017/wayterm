@@ -4,6 +4,38 @@ import UIKit
 
 @MainActor
 final class TerminalIOSInputRuntime {
+    typealias ToolbarGhosttyKeySender = (
+        _ key: Ghostty.Input.Key,
+        _ mods: Ghostty.Input.Mods,
+        _ text: String?,
+        _ unshiftedCodepoint: UInt32?,
+        _ invalidateLocalSession: Bool
+    ) -> Void
+
+    struct ToolbarRoutingContext {
+        let hasLocalTextInputSession: Bool
+        let invalidateLocalTextInputSession: () -> Void
+        let deleteBackward: () -> Void
+        let moveCursorLeft: () -> Void
+        let moveCursorRight: () -> Void
+        let moveCursorToStart: () -> Void
+        let moveCursorToEnd: () -> Void
+        let sendGhosttyKey: ToolbarGhosttyKeySender
+    }
+
+    struct ToolbarCustomActionContext {
+        let sendText: (String) -> Void
+        let sendKeyPress: (Ghostty.Input.Key) -> Void
+        let sendGhosttyKey: ToolbarGhosttyKeySender
+    }
+
+    struct GhosttyKeyMapping {
+        let key: Ghostty.Input.Key
+        let text: String?
+        let codepoint: UInt32
+        let requiresShift: Bool
+    }
+
     private var renderedPreeditText: String?
     private var isIMEProxyProgrammaticResignAllowed = false
     private var suppressUnexpectedIMEProxyResignUntil = 0.0
@@ -20,6 +52,70 @@ final class TerminalIOSInputRuntime {
         return event.withCValue { cEvent in
             ghostty_surface_key(surface, cEvent)
         }
+    }
+
+    func handleToolbarKey(_ key: TerminalKey, context: ToolbarRoutingContext) {
+        sendToolbarKey(key, accumulatedMods: [], context: context)
+    }
+
+    func handleToolbarCustomAction(_ action: TerminalAccessoryCustomAction, context: ToolbarCustomActionContext) {
+        switch action.kind {
+        case .command:
+            context.sendText(action.commandContent)
+            if action.commandSendMode == .insertAndEnter {
+                context.sendKeyPress(.enter)
+            }
+        case .shortcut:
+            guard let key = Ghostty.Input.Key(rawValue: action.shortcutKey.rawValue) else { return }
+            let mods = action.shortcutModifiers.ghosttyModifiers
+            let text: String?
+            if action.shortcutModifiers.control || action.shortcutModifiers.alternate || action.shortcutModifiers.command {
+                text = nil
+            } else if action.shortcutModifiers.shift {
+                text = action.shortcutKey.shiftedText ?? action.shortcutKey.unshiftedText
+            } else {
+                text = action.shortcutKey.unshiftedText
+            }
+
+            let codepoint = action.shortcutKey.unshiftedText?.unicodeScalars.first?.value ?? 0
+            sendToolbarGhosttyKey(
+                key,
+                mods: mods,
+                text: text,
+                unshiftedCodepoint: codepoint,
+                context: context
+            )
+        }
+    }
+
+    func ghosttyKeyMapping(for character: Character) -> GhosttyKeyMapping? {
+        let string = String(character)
+
+        for shortcutKey in TerminalAccessoryShortcutKey.allCases {
+            if shortcutKey.unshiftedText == string,
+               let ghosttyKey = Ghostty.Input.Key(rawValue: shortcutKey.rawValue) {
+                let codepoint = shortcutKey.unshiftedText?.unicodeScalars.first?.value ?? 0
+                return GhosttyKeyMapping(
+                    key: ghosttyKey,
+                    text: shortcutKey.unshiftedText,
+                    codepoint: codepoint,
+                    requiresShift: false
+                )
+            }
+
+            if shortcutKey.shiftedText == string,
+               let ghosttyKey = Ghostty.Input.Key(rawValue: shortcutKey.rawValue) {
+                let codepoint = shortcutKey.unshiftedText?.unicodeScalars.first?.value ?? 0
+                return GhosttyKeyMapping(
+                    key: ghosttyKey,
+                    text: shortcutKey.shiftedText,
+                    codepoint: codepoint,
+                    requiresShift: true
+                )
+            }
+        }
+
+        return nil
     }
 
     @discardableResult
@@ -96,6 +192,142 @@ final class TerminalIOSInputRuntime {
 
     private var shouldSuppressUnexpectedIMEProxyResign: Bool {
         Date.timeIntervalSinceReferenceDate < suppressUnexpectedIMEProxyResignUntil
+    }
+
+    private func sendToolbarKey(
+        _ key: TerminalKey,
+        accumulatedMods: Ghostty.Input.Mods,
+        context: ToolbarRoutingContext
+    ) {
+        switch key {
+        case .modified(let baseKey, let mods):
+            sendToolbarKey(baseKey, accumulatedMods: accumulatedMods.union(mods), context: context)
+        case .escape:
+            if accumulatedMods.isEmpty, context.hasLocalTextInputSession {
+                context.invalidateLocalTextInputSession()
+            }
+            sendToolbarGhosttyKey(.escape, mods: accumulatedMods, invalidateLocalSession: false, context: context)
+        case .tab:
+            sendToolbarGhosttyKey(.tab, mods: accumulatedMods, context: context)
+        case .enter:
+            sendToolbarGhosttyKey(.enter, mods: accumulatedMods, context: context)
+        case .backspace:
+            if accumulatedMods.isEmpty, context.hasLocalTextInputSession {
+                context.deleteBackward()
+            } else {
+                sendToolbarGhosttyKey(.backspace, mods: accumulatedMods, context: context)
+            }
+        case .delete:
+            sendToolbarGhosttyKey(.delete, mods: accumulatedMods, context: context)
+        case .insert:
+            sendToolbarGhosttyKey(.insert, mods: accumulatedMods, context: context)
+        case .arrowUp:
+            sendToolbarGhosttyKey(.arrowUp, mods: accumulatedMods, context: context)
+        case .arrowDown:
+            sendToolbarGhosttyKey(.arrowDown, mods: accumulatedMods, context: context)
+        case .arrowLeft:
+            if accumulatedMods.isEmpty, context.hasLocalTextInputSession {
+                context.moveCursorLeft()
+            } else {
+                sendToolbarGhosttyKey(.arrowLeft, mods: accumulatedMods, context: context)
+            }
+        case .arrowRight:
+            if accumulatedMods.isEmpty, context.hasLocalTextInputSession {
+                context.moveCursorRight()
+            } else {
+                sendToolbarGhosttyKey(.arrowRight, mods: accumulatedMods, context: context)
+            }
+        case .home:
+            if accumulatedMods.isEmpty, context.hasLocalTextInputSession {
+                context.moveCursorToStart()
+            } else {
+                sendToolbarGhosttyKey(.home, mods: accumulatedMods, context: context)
+            }
+        case .end:
+            if accumulatedMods.isEmpty, context.hasLocalTextInputSession {
+                context.moveCursorToEnd()
+            } else {
+                sendToolbarGhosttyKey(.end, mods: accumulatedMods, context: context)
+            }
+        case .pageUp:
+            sendToolbarGhosttyKey(.pageUp, mods: accumulatedMods, context: context)
+        case .pageDown:
+            sendToolbarGhosttyKey(.pageDown, mods: accumulatedMods, context: context)
+        case .f1:
+            sendToolbarGhosttyKey(.f1, mods: accumulatedMods, context: context)
+        case .f2:
+            sendToolbarGhosttyKey(.f2, mods: accumulatedMods, context: context)
+        case .f3:
+            sendToolbarGhosttyKey(.f3, mods: accumulatedMods, context: context)
+        case .f4:
+            sendToolbarGhosttyKey(.f4, mods: accumulatedMods, context: context)
+        case .f5:
+            sendToolbarGhosttyKey(.f5, mods: accumulatedMods, context: context)
+        case .f6:
+            sendToolbarGhosttyKey(.f6, mods: accumulatedMods, context: context)
+        case .f7:
+            sendToolbarGhosttyKey(.f7, mods: accumulatedMods, context: context)
+        case .f8:
+            sendToolbarGhosttyKey(.f8, mods: accumulatedMods, context: context)
+        case .f9:
+            sendToolbarGhosttyKey(.f9, mods: accumulatedMods, context: context)
+        case .f10:
+            sendToolbarGhosttyKey(.f10, mods: accumulatedMods, context: context)
+        case .f11:
+            sendToolbarGhosttyKey(.f11, mods: accumulatedMods, context: context)
+        case .f12:
+            sendToolbarGhosttyKey(.f12, mods: accumulatedMods, context: context)
+        case .ctrlC:
+            sendToolbarControlShortcut(.c, letter: "c", mods: accumulatedMods, context: context)
+        case .ctrlD:
+            sendToolbarControlShortcut(.d, letter: "d", mods: accumulatedMods, context: context)
+        case .ctrlZ:
+            sendToolbarControlShortcut(.z, letter: "z", mods: accumulatedMods, context: context)
+        case .ctrlL:
+            sendToolbarControlShortcut(.l, letter: "l", mods: accumulatedMods, context: context)
+        case .ctrlA:
+            sendToolbarControlShortcut(.a, letter: "a", mods: accumulatedMods, context: context)
+        case .ctrlE:
+            sendToolbarControlShortcut(.e, letter: "e", mods: accumulatedMods, context: context)
+        case .ctrlK:
+            sendToolbarControlShortcut(.k, letter: "k", mods: accumulatedMods, context: context)
+        case .ctrlU:
+            sendToolbarControlShortcut(.u, letter: "u", mods: accumulatedMods, context: context)
+        }
+    }
+
+    private func sendToolbarGhosttyKey(
+        _ key: Ghostty.Input.Key,
+        mods: Ghostty.Input.Mods,
+        text: String? = nil,
+        unshiftedCodepoint: UInt32? = nil,
+        invalidateLocalSession: Bool = true,
+        context: ToolbarRoutingContext
+    ) {
+        context.sendGhosttyKey(key, mods, text, unshiftedCodepoint, invalidateLocalSession)
+    }
+
+    private func sendToolbarGhosttyKey(
+        _ key: Ghostty.Input.Key,
+        mods: Ghostty.Input.Mods,
+        text: String? = nil,
+        unshiftedCodepoint: UInt32? = nil,
+        invalidateLocalSession: Bool = true,
+        context: ToolbarCustomActionContext
+    ) {
+        context.sendGhosttyKey(key, mods, text, unshiftedCodepoint, invalidateLocalSession)
+    }
+
+    private func sendToolbarControlShortcut(
+        _ key: Ghostty.Input.Key,
+        letter: String,
+        mods: Ghostty.Input.Mods,
+        context: ToolbarRoutingContext
+    ) {
+        var mergedMods = mods
+        mergedMods.insert(.ctrl)
+        let codepoint = letter.unicodeScalars.first?.value ?? 0
+        sendToolbarGhosttyKey(key, mods: mergedMods, text: nil, unshiftedCodepoint: codepoint, context: context)
     }
 }
 #endif

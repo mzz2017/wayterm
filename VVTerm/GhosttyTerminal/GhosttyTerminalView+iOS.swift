@@ -78,7 +78,7 @@ class GhosttyTerminalView: UIView {
     @discardableResult
     func sendReturnKey() -> Bool {
         guard canRouteTerminalInput else { return false }
-        sendToolbarKey(.enter)
+        routeToolbarKey(.enter)
         return true
     }
 
@@ -2011,7 +2011,7 @@ class GhosttyTerminalView: UIView {
             inputRuntime.suppressUnexpectedIMEProxyResign()
         }
         let mods = Ghostty.Input.Mods(uiKeyModifiers: command.modifierFlags)
-        sendToolbarKey(key, accumulatedMods: mods)
+        routeToolbarKey(key, accumulatedMods: mods)
     }
 
     private func handlePasteShortcut(_ key: UIKey) -> Bool {
@@ -2450,7 +2450,7 @@ class GhosttyTerminalView: UIView {
             sendRawTerminalInputText(normalized, invalidateLocalSession: false)
             return
         }
-        guard let mapping = ghosttyKeyMapping(for: character) else {
+        guard let mapping = inputRuntime.ghosttyKeyMapping(for: character) else {
             sendRawTerminalInputText(normalized, invalidateLocalSession: false)
             return
         }
@@ -2499,7 +2499,7 @@ class GhosttyTerminalView: UIView {
             if case .escape = key {
                 inputRuntime.suppressUnexpectedIMEProxyResign()
             }
-            sendToolbarKey(key)
+            routeToolbarKey(key)
             return true
         }
         if normalized.hasPrefix("UIKeyInput") {
@@ -2521,12 +2521,12 @@ class GhosttyTerminalView: UIView {
         }
         if normalized == "\n" || normalized == "\r" {
             commitIMEProxyMarkedTextIfNeeded()
-            sendToolbarGhosttyKey(.enter, mods: imeProxyGhosttyModifiers(from: mods))
+            sendModifiedKey(.enter, mods: imeProxyGhosttyModifiers(from: mods), unshiftedCodepoint: 0)
             return true
         }
         if normalized == "\t" {
             commitIMEProxyMarkedTextIfNeeded()
-            sendToolbarGhosttyKey(.tab, mods: imeProxyGhosttyModifiers(from: mods))
+            sendModifiedKey(.tab, mods: imeProxyGhosttyModifiers(from: mods), unshiftedCodepoint: 0)
             return true
         }
 
@@ -2538,7 +2538,7 @@ class GhosttyTerminalView: UIView {
         }
         guard let firstChar = normalized.first else { return true }
 
-        if let mapping = ghosttyKeyMapping(for: firstChar) {
+        if let mapping = inputRuntime.ghosttyKeyMapping(for: firstChar) {
             var ghostMods: Ghostty.Input.Mods = []
             if mods.ctrl { ghostMods.insert(.ctrl) }
             if mods.alt { ghostMods.insert(.alt) }
@@ -3070,9 +3070,9 @@ extension GhosttyTerminalView {
         }
         if keyboardToolbar == nil {
             let toolbar = TerminalInputAccessoryView(onKey: { [weak self] key in
-                self?.handleToolbarKey(key)
+                self?.routeToolbarKey(key)
             }, onCustomAction: { [weak self] action in
-                self?.handleToolbarCustomAction(action)
+                self?.routeToolbarCustomAction(action)
             }, onVoice: onVoiceButtonTapped, onDismissKeyboard: { [weak self] in
                 self?.dismissKeyboardFromToolbar()
             })
@@ -3087,116 +3087,74 @@ extension GhosttyTerminalView {
         resolvedInputAccessoryView()
     }
 
-    private func handleToolbarKey(_ key: TerminalKey) {
-        sendToolbarKey(key)
+    private func routeToolbarKey(_ key: TerminalKey, accumulatedMods: Ghostty.Input.Mods = []) {
+        let routedKey = accumulatedMods.isEmpty ? key : TerminalKey.modified(key, mods: accumulatedMods)
+        inputRuntime.handleToolbarKey(routedKey, context: toolbarRoutingContext())
     }
 
-    private func sendToolbarKey(_ key: TerminalKey, accumulatedMods: Ghostty.Input.Mods = []) {
-        switch key {
-        case .modified(let baseKey, let mods):
-            sendToolbarKey(baseKey, accumulatedMods: accumulatedMods.union(mods))
-        case .escape:
-            if accumulatedMods.isEmpty, hasLocalTextInputSession {
-                invalidateLocalTextInputSession()
-                sendToolbarGhosttyKey(.escape, mods: accumulatedMods, invalidateLocalSession: false)
-            } else {
-                sendToolbarGhosttyKey(.escape, mods: accumulatedMods, invalidateLocalSession: false)
-            }
-        case .tab:
-            sendToolbarGhosttyKey(.tab, mods: accumulatedMods)
-        case .enter:
-            sendToolbarGhosttyKey(.enter, mods: accumulatedMods)
-        case .backspace:
-            if accumulatedMods.isEmpty, hasLocalTextInputSession {
-                imeProxyTextView.deleteBackward()
-            } else {
-                sendToolbarGhosttyKey(.backspace, mods: accumulatedMods)
-            }
-        case .delete:
-            sendToolbarGhosttyKey(.delete, mods: accumulatedMods)
-        case .insert:
-            sendToolbarGhosttyKey(.insert, mods: accumulatedMods)
-        case .arrowUp:
-            sendToolbarGhosttyKey(.arrowUp, mods: accumulatedMods)
-        case .arrowDown:
-            sendToolbarGhosttyKey(.arrowDown, mods: accumulatedMods)
-        case .arrowLeft:
-            if accumulatedMods.isEmpty, hasLocalTextInputSession {
-                moveIMEProxyCursorLeft()
-            } else {
-                sendToolbarGhosttyKey(.arrowLeft, mods: accumulatedMods)
-            }
-        case .arrowRight:
-            if accumulatedMods.isEmpty, hasLocalTextInputSession {
-                moveIMEProxyCursorRight()
-            } else {
-                sendToolbarGhosttyKey(.arrowRight, mods: accumulatedMods)
-            }
-        case .home:
-            if accumulatedMods.isEmpty, hasLocalTextInputSession {
-                moveIMEProxyCursorToStart()
-            } else {
-                sendToolbarGhosttyKey(.home, mods: accumulatedMods)
-            }
-        case .end:
-            if accumulatedMods.isEmpty, hasLocalTextInputSession {
-                moveIMEProxyCursorToEnd()
-            } else {
-                sendToolbarGhosttyKey(.end, mods: accumulatedMods)
-            }
-        case .pageUp:
-            sendToolbarGhosttyKey(.pageUp, mods: accumulatedMods)
-        case .pageDown:
-            sendToolbarGhosttyKey(.pageDown, mods: accumulatedMods)
-        case .f1:
-            sendToolbarGhosttyKey(.f1, mods: accumulatedMods)
-        case .f2:
-            sendToolbarGhosttyKey(.f2, mods: accumulatedMods)
-        case .f3:
-            sendToolbarGhosttyKey(.f3, mods: accumulatedMods)
-        case .f4:
-            sendToolbarGhosttyKey(.f4, mods: accumulatedMods)
-        case .f5:
-            sendToolbarGhosttyKey(.f5, mods: accumulatedMods)
-        case .f6:
-            sendToolbarGhosttyKey(.f6, mods: accumulatedMods)
-        case .f7:
-            sendToolbarGhosttyKey(.f7, mods: accumulatedMods)
-        case .f8:
-            sendToolbarGhosttyKey(.f8, mods: accumulatedMods)
-        case .f9:
-            sendToolbarGhosttyKey(.f9, mods: accumulatedMods)
-        case .f10:
-            sendToolbarGhosttyKey(.f10, mods: accumulatedMods)
-        case .f11:
-            sendToolbarGhosttyKey(.f11, mods: accumulatedMods)
-        case .f12:
-            sendToolbarGhosttyKey(.f12, mods: accumulatedMods)
-        case .ctrlC:
-            sendToolbarControlShortcut(.c, letter: "c", mods: accumulatedMods)
-        case .ctrlD:
-            sendToolbarControlShortcut(.d, letter: "d", mods: accumulatedMods)
-        case .ctrlZ:
-            sendToolbarControlShortcut(.z, letter: "z", mods: accumulatedMods)
-        case .ctrlL:
-            sendToolbarControlShortcut(.l, letter: "l", mods: accumulatedMods)
-        case .ctrlA:
-            sendToolbarControlShortcut(.a, letter: "a", mods: accumulatedMods)
-        case .ctrlE:
-            sendToolbarControlShortcut(.e, letter: "e", mods: accumulatedMods)
-        case .ctrlK:
-            sendToolbarControlShortcut(.k, letter: "k", mods: accumulatedMods)
-        case .ctrlU:
-            sendToolbarControlShortcut(.u, letter: "u", mods: accumulatedMods)
-        }
+    private func routeToolbarCustomAction(_ action: TerminalAccessoryCustomAction) {
+        inputRuntime.handleToolbarCustomAction(action, context: toolbarCustomActionContext())
     }
 
-    private func sendToolbarGhosttyKey(
+    private func toolbarRoutingContext() -> TerminalIOSInputRuntime.ToolbarRoutingContext {
+        TerminalIOSInputRuntime.ToolbarRoutingContext(
+            hasLocalTextInputSession: hasLocalTextInputSession,
+            invalidateLocalTextInputSession: { [weak self] in
+                self?.invalidateLocalTextInputSession()
+            },
+            deleteBackward: { [weak self] in
+                self?.imeProxyTextView.deleteBackward()
+            },
+            moveCursorLeft: { [weak self] in
+                self?.moveIMEProxyCursorLeft()
+            },
+            moveCursorRight: { [weak self] in
+                self?.moveIMEProxyCursorRight()
+            },
+            moveCursorToStart: { [weak self] in
+                self?.moveIMEProxyCursorToStart()
+            },
+            moveCursorToEnd: { [weak self] in
+                self?.moveIMEProxyCursorToEnd()
+            },
+            sendGhosttyKey: { [weak self] key, mods, text, unshiftedCodepoint, invalidateLocalSession in
+                self?.sendToolbarRoutedGhosttyKey(
+                    key,
+                    mods: mods,
+                    text: text,
+                    unshiftedCodepoint: unshiftedCodepoint,
+                    invalidateLocalSession: invalidateLocalSession
+                )
+            }
+        )
+    }
+
+    private func toolbarCustomActionContext() -> TerminalIOSInputRuntime.ToolbarCustomActionContext {
+        TerminalIOSInputRuntime.ToolbarCustomActionContext(
+            sendText: { [weak self] text in
+                self?.sendText(text)
+            },
+            sendKeyPress: { [weak self] key in
+                self?.sendKeyPress(key)
+            },
+            sendGhosttyKey: { [weak self] key, mods, text, unshiftedCodepoint, invalidateLocalSession in
+                self?.sendToolbarRoutedGhosttyKey(
+                    key,
+                    mods: mods,
+                    text: text,
+                    unshiftedCodepoint: unshiftedCodepoint,
+                    invalidateLocalSession: invalidateLocalSession
+                )
+            }
+        )
+    }
+
+    private func sendToolbarRoutedGhosttyKey(
         _ key: Ghostty.Input.Key,
         mods: Ghostty.Input.Mods,
-        text: String? = nil,
-        unshiftedCodepoint: UInt32? = nil,
-        invalidateLocalSession: Bool = true
+        text: String?,
+        unshiftedCodepoint: UInt32?,
+        invalidateLocalSession: Bool
     ) {
         let codepoint = unshiftedCodepoint ?? text?.unicodeScalars.first?.value ?? 0
         sendModifiedKey(
@@ -3206,61 +3164,6 @@ extension GhosttyTerminalView {
             unshiftedCodepoint: codepoint,
             invalidateLocalSession: invalidateLocalSession
         )
-    }
-
-    private func sendToolbarControlShortcut(
-        _ key: Ghostty.Input.Key,
-        letter: String,
-        mods: Ghostty.Input.Mods
-    ) {
-        var mergedMods = mods
-        mergedMods.insert(.ctrl)
-        let codepoint = letter.unicodeScalars.first?.value ?? 0
-        sendToolbarGhosttyKey(key, mods: mergedMods, text: nil, unshiftedCodepoint: codepoint)
-    }
-
-    private func handleToolbarCustomAction(_ action: TerminalAccessoryCustomAction) {
-        switch action.kind {
-        case .command:
-            sendText(action.commandContent)
-            if action.commandSendMode == .insertAndEnter {
-                sendKeyPress(.enter)
-            }
-        case .shortcut:
-            guard let key = Ghostty.Input.Key(rawValue: action.shortcutKey.rawValue) else { return }
-            let mods = action.shortcutModifiers.ghosttyModifiers
-            let text: String?
-            if action.shortcutModifiers.control || action.shortcutModifiers.alternate || action.shortcutModifiers.command {
-                text = nil
-            } else if action.shortcutModifiers.shift {
-                text = action.shortcutKey.shiftedText ?? action.shortcutKey.unshiftedText
-            } else {
-                text = action.shortcutKey.unshiftedText
-            }
-
-            let codepoint = action.shortcutKey.unshiftedText?.unicodeScalars.first?.value ?? 0
-            sendToolbarGhosttyKey(key, mods: mods, text: text, unshiftedCodepoint: codepoint)
-        }
-    }
-
-    private func ghosttyKeyMapping(for character: Character) -> (key: Ghostty.Input.Key, text: String?, codepoint: UInt32, requiresShift: Bool)? {
-        let string = String(character)
-
-        for shortcutKey in TerminalAccessoryShortcutKey.allCases {
-            if shortcutKey.unshiftedText == string,
-               let ghosttyKey = Ghostty.Input.Key(rawValue: shortcutKey.rawValue) {
-                let codepoint = shortcutKey.unshiftedText?.unicodeScalars.first?.value ?? 0
-                return (ghosttyKey, shortcutKey.unshiftedText, codepoint, false)
-            }
-
-            if shortcutKey.shiftedText == string,
-               let ghosttyKey = Ghostty.Input.Key(rawValue: shortcutKey.rawValue) {
-                let codepoint = shortcutKey.unshiftedText?.unicodeScalars.first?.value ?? 0
-                return (ghosttyKey, shortcutKey.shiftedText, codepoint, true)
-            }
-        }
-
-        return nil
     }
 }
 
