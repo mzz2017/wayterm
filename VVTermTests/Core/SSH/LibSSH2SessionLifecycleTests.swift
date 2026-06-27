@@ -423,21 +423,22 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         // Given the SSHSession implementation that owns libssh2 shell and exec
         // channels.
         let source = try sshSessionSource()
+        let channelsSource = try sshSessionChannelsSource()
         let registrySource = try sshChannelCleanupTaskRegistrySource()
         let sessionSource = try slice(
             startingAt: "actor SSHSession {",
-            endingBefore: "// MARK: - fd_set helpers for select()",
+            endingBefore: "    // MARK: - Keep Alive",
             in: source
         )
         let startShellSource = try slice(
             startingAt: "    func startShell(",
-            endingBefore: "    private func startIOLoop()",
-            in: sessionSource
+            endingBefore: "    func startIOLoop()",
+            in: channelsSource
         )
         let executeSource = try slice(
             startingAt: "    func execute(_ command: String) async throws -> String",
-            endingBefore: "    // MARK: - Keep Alive",
-            in: sessionSource
+            endingBefore: "\n}\n",
+            in: channelsSource
         )
         let disconnectSource = try slice(
             startingAt: "    func disconnect() async {",
@@ -875,6 +876,13 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
     private func sshSessionSource() throws -> String {
         try String(
             contentsOf: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHSession.swift"),
+            encoding: .utf8
+        )
+    }
+
+    private func sshSessionChannelsSource() throws -> String {
+        try String(
+            contentsOf: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHSession+Channels.swift"),
             encoding: .utf8
         )
     }

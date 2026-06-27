@@ -253,6 +253,9 @@ struct SSHClientSuperfileBoundaryTests {
         let sessionSource = try source(
             at: root.appendingPathComponent("VVTerm/Core/SSH/SSHSession.swift")
         )
+        let channelSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/SSH/SSHSession+Channels.swift")
+        )
 
         // Given the SSH client superfile source.
         #expect(
@@ -264,7 +267,9 @@ struct SSHClientSuperfileBoundaryTests {
         #expect(sessionSource.contains("nonisolated actor SSHSession"))
         #expect(sessionSource.contains("func connect() async throws"))
         #expect(sessionSource.contains("func disconnect() async"))
-        #expect(sessionSource.contains("func startShell"))
+        #expect(!sessionSource.contains("func startShell"))
+        #expect(channelSource.contains("func startShell"))
+        #expect(channelSource.contains("func execute(_ command: String) async throws -> String"))
         #expect(
             sessionSource.split(separator: "\n", omittingEmptySubsequences: false).count < 1_200,
             "SSHSession.swift should not become a replacement superfile."
