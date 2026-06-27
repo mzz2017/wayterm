@@ -19,7 +19,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
         var clients: [BlockingDisconnectRemoteFileClient] = [disconnectingClient, nextClient]
         let operationProbe = RemoteFileBrowserOperationProbe()
         let store = RemoteFileBrowserStore(
-            defaults: defaults,
+            persistedStateStore: makeRemoteFileBrowserPersistedStateStore(defaults: defaults),
             remoteFileServiceAdapter: SSHSFTPAdapter(
                 credentialsProvider: { server in makeRemoteFileBrowserCredentials(serverId: server.id) },
                 ownedClientFactory: {
@@ -69,7 +69,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
         var clients: [BlockingDisconnectRemoteFileClient] = [firstClient, secondClient, thirdClient]
         let operationProbe = RemoteFileBrowserOperationProbe()
         let store = RemoteFileBrowserStore(
-            defaults: defaults,
+            persistedStateStore: makeRemoteFileBrowserPersistedStateStore(defaults: defaults),
             remoteFileServiceAdapter: SSHSFTPAdapter(
                 credentialsProvider: { server in makeRemoteFileBrowserCredentials(serverId: server.id) },
                 ownedClientFactory: {
@@ -121,7 +121,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
 
     @Test
     func mutationRequestTracksTaskAndRunsSuccessAfterOperation() async throws {
-        let store = RemoteFileBrowserStore(defaults: makeRemoteFileBrowserDefaults(), serverProvider: { _ in nil })
+        let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
         let gate = RemoteFileMutationGate()
         var events: [String] = []
 
@@ -156,7 +156,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
 
     @Test
     func mutationRequestTracksFailureAndSkipsSuccessContinuation() async throws {
-        let store = RemoteFileBrowserStore(defaults: makeRemoteFileBrowserDefaults(), serverProvider: { _ in nil })
+        let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
         var events: [String] = []
 
         // Given a RemoteFiles mutation whose async operation fails before it
@@ -183,7 +183,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
 
     @Test
     func transferRequestTracksTaskProgressAndSuccessAfterOperation() async throws {
-        let store = RemoteFileBrowserStore(defaults: makeRemoteFileBrowserDefaults(), serverProvider: { _ in nil })
+        let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
         let gate = RemoteFileMutationGate()
         var events: [String] = []
 
@@ -232,7 +232,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
     @Test
     func disconnectCancelsVisibleMutationRequestsForServerAndSkipsLateSuccess() async throws {
         let server = makeRemoteFileBrowserServer()
-        let store = RemoteFileBrowserStore(defaults: makeRemoteFileBrowserDefaults(), serverProvider: { _ in nil })
+        let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
         let gate = RemoteFileMutationGate()
         let waitProbe = RemoteFileWaitProbe()
         var operationEvents: [String] = []
@@ -285,7 +285,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
     @Test
     func disconnectCancelsVisibleTransferRequestsForServerAndSkipsLateProgressAndSuccess() async throws {
         let server = makeRemoteFileBrowserServer()
-        let store = RemoteFileBrowserStore(defaults: makeRemoteFileBrowserDefaults(), serverProvider: { _ in nil })
+        let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
         let gate = RemoteFileMutationGate()
         let waitProbe = RemoteFileWaitProbe()
         var operationEvents: [String] = []
@@ -346,7 +346,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
     func disconnectLeavesOtherServerMutationAndTransferRequestsPending() async throws {
         let disconnectingServer = makeRemoteFileBrowserServer()
         let otherServer = makeRemoteFileBrowserServer()
-        let store = RemoteFileBrowserStore(defaults: makeRemoteFileBrowserDefaults(), serverProvider: { _ in nil })
+        let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
         let mutationGate = RemoteFileMutationGate()
         let transferGate = RemoteFileMutationGate()
         var events: [String] = []

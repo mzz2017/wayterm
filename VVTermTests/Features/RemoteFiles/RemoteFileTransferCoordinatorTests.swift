@@ -11,7 +11,7 @@ import Testing
 struct RemoteFileTransferCoordinatorTests {
     @Test
     func deleteDirectoryRecursivelyRemovesNestedContentsBeforeParent() async throws {
-        let store = RemoteFileBrowserStore(defaults: makeDefaults(), serverProvider: { _ in nil })
+        let store = RemoteFileBrowserStore(persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()), serverProvider: { _ in nil })
         let service = RecordingRemoteFileService(
             directoryContents: [
                 "/root/.vivyterm": [

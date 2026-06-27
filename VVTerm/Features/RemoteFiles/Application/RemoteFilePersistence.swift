@@ -3,12 +3,7 @@ import Foundation
 
 extension RemoteFileBrowserStore {
     func loadPersistedStates() {
-        if defaults.object(forKey: legacyPersistenceKey) != nil {
-            defaults.removeObject(forKey: legacyPersistenceKey)
-        }
-
-        guard let data = defaults.data(forKey: persistenceKey),
-              let decoded = try? JSONDecoder().decode([String: RemoteFileBrowserPersistedState].self, from: data) else {
+        guard let decoded = try? persistedStateStore.load() else {
             persistedStates = [:]
             return
         }
@@ -33,7 +28,6 @@ extension RemoteFileBrowserStore {
     }
 
     func persistStates() {
-        guard let data = try? JSONEncoder().encode(persistedStates) else { return }
-        defaults.set(data, forKey: persistenceKey)
+        try? persistedStateStore.save(persistedStates)
     }
 }

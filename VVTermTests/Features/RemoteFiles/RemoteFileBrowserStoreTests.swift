@@ -12,8 +12,10 @@ import Testing
 struct RemoteFileBrowserStoreTests {
     @Test
     func displayedEntriesHideDotFilesAndKeepDirectoryOrdering() {
-        let defaults = makeRemoteFileBrowserDefaults()
-        let store = RemoteFileBrowserStore(defaults: defaults, serverProvider: { _ in nil })
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: makeRemoteFileBrowserPersistedStateStore(),
+            serverProvider: { _ in nil }
+        )
         let tab = makeRemoteFileBrowserTab()
 
         store.updateState(for: tab) { state in
@@ -33,9 +35,10 @@ struct RemoteFileBrowserStoreTests {
     @Test
     func persistedStateLoadsIntoFreshStoreInstance() {
         let defaults = makeRemoteFileBrowserDefaults()
+        let persistedStateStore = makeRemoteFileBrowserPersistedStateStore(defaults: defaults)
         let tab = makeRemoteFileBrowserTab()
 
-        let store = RemoteFileBrowserStore(defaults: defaults, serverProvider: { _ in nil })
+        let store = RemoteFileBrowserStore(persistedStateStore: persistedStateStore, serverProvider: { _ in nil })
         store.updateState(for: tab) { state in
             state.currentPath = "/srv/releases"
             state.sort = .size
@@ -45,7 +48,7 @@ struct RemoteFileBrowserStoreTests {
         }
         store.persistState(for: tab.id)
 
-        let reloadedStore = RemoteFileBrowserStore(defaults: defaults, serverProvider: { _ in nil })
+        let reloadedStore = RemoteFileBrowserStore(persistedStateStore: persistedStateStore, serverProvider: { _ in nil })
         let persisted = reloadedStore.persistedState(for: tab.id)
 
         #expect(persisted.lastVisitedPath == "/srv/releases")
@@ -64,7 +67,10 @@ struct RemoteFileBrowserStoreTests {
         ])
         defaults.set(legacyPayload, forKey: legacyKey)
 
-        let store = RemoteFileBrowserStore(defaults: defaults, serverProvider: { _ in nil })
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: makeRemoteFileBrowserPersistedStateStore(defaults: defaults),
+            serverProvider: { _ in nil }
+        )
 
         #expect(defaults.object(forKey: legacyKey) == nil)
         #expect(store.persistedStates.isEmpty)
@@ -73,11 +79,12 @@ struct RemoteFileBrowserStoreTests {
     @Test
     func initialDirectoryCandidatesPreferPersistedPathOverSeedPath() {
         let defaults = makeRemoteFileBrowserDefaults()
+        let persistedStateStore = makeRemoteFileBrowserPersistedStateStore(defaults: defaults)
         let server = makeRemoteFileBrowserServer()
         let tab = RemoteFileTab(serverId: server.id, seedPath: "/etc")
 
         let store = RemoteFileBrowserStore(
-            defaults: defaults,
+            persistedStateStore: persistedStateStore,
             serverProvider: { _ in nil },
             workingDirectoryProvider: { _ in "/srv/app" }
         )
@@ -87,7 +94,7 @@ struct RemoteFileBrowserStoreTests {
         store.persistState(for: tab.id)
 
         let reloadedStore = RemoteFileBrowserStore(
-            defaults: defaults,
+            persistedStateStore: persistedStateStore,
             serverProvider: { _ in nil },
             workingDirectoryProvider: { _ in "/srv/app" }
         )

@@ -95,9 +95,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     @Published private(set) var states: [UUID: BrowserState] = [:]
     @Published var pendingToolbarCommand: ToolbarCommand?
 
-    let defaults: UserDefaults
-    let persistenceKey = "remoteFileBrowserState.v2"
-    let legacyPersistenceKey = "remoteFileBrowserState.v1"
+    let persistedStateStore: RemoteFileBrowserPersistedStateStore
     let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "RemoteFiles")
     nonisolated let temporaryStorage: RemoteFileTemporaryStorage
     nonisolated let localFileService: RemoteFileLocalFileService
@@ -142,7 +140,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     init(
-        defaults: UserDefaults = .standard,
+        persistedStateStore: RemoteFileBrowserPersistedStateStore? = nil,
         remoteFileServiceAdapter: SSHSFTPAdapter? = nil,
         serviceAccessCoordinator: RemoteFileServiceAccessCoordinator? = nil,
         temporaryStorage: RemoteFileTemporaryStorage = RemoteFileTemporaryStorage(),
@@ -153,7 +151,7 @@ final class RemoteFileBrowserStore: ObservableObject {
         serverProvider: @escaping ServerProvider,
         workingDirectoryProvider: @escaping WorkingDirectoryProvider = { _ in nil }
     ) {
-        self.defaults = defaults
+        self.persistedStateStore = persistedStateStore ?? RemoteFileBrowserPersistedStateStore()
         self.serviceAccessCoordinator = serviceAccessCoordinator ?? RemoteFileServiceAccessCoordinator(
             remoteFileServiceAdapter: remoteFileServiceAdapter ?? SSHSFTPAdapter(
                 credentialsProvider: { _ in

@@ -45,13 +45,19 @@ func makeRemoteFileBrowserDefaults() -> UserDefaults {
     return defaults
 }
 
+func makeRemoteFileBrowserPersistedStateStore(
+    defaults: UserDefaults = makeRemoteFileBrowserDefaults()
+) -> RemoteFileBrowserPersistedStateStore {
+    RemoteFileBrowserPersistedStateStore(userDefaults: defaults)
+}
+
 @MainActor
 func makeRemoteFileBrowserStore(
     server: Server,
     client: BlockingNavigationRemoteFileClient
 ) -> RemoteFileBrowserStore {
     RemoteFileBrowserStore(
-        defaults: makeRemoteFileBrowserDefaults(),
+        persistedStateStore: makeRemoteFileBrowserPersistedStateStore(),
         remoteFileServiceAdapter: SSHSFTPAdapter(
             credentialsProvider: { server in makeRemoteFileBrowserCredentials(serverId: server.id) },
             ownedClientFactory: {

@@ -253,7 +253,7 @@ struct RemoteFilePreviewCoordinatorTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let temporaryStorage = RemoteFileTemporaryStorage(rootDirectory: rootDirectory)
         let store = RemoteFileBrowserStore(
-            defaults: makeDefaults(),
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
             temporaryStorage: temporaryStorage,
             serverProvider: { _ in nil }
         )
@@ -299,7 +299,7 @@ struct RemoteFilePreviewCoordinatorTests {
             permissions: 0o600
         ))
         let store = RemoteFileBrowserStore(
-            defaults: makeDefaults(),
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
             remoteFileServiceAdapter: SSHSFTPAdapter(
                 credentialsProvider: { server in makeCredentials(serverId: server.id) },
                 ownedClientFactory: { client }
@@ -404,7 +404,7 @@ struct RemoteFilePreviewCoordinatorTests {
 
     private func makeStore(client: SFTPRemoteFileClient) -> RemoteFileBrowserStore {
         RemoteFileBrowserStore(
-            defaults: makeDefaults(),
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
             remoteFileServiceAdapter: SSHSFTPAdapter(
                 credentialsProvider: { server in makeCredentials(serverId: server.id) },
                 ownedClientFactory: { client }

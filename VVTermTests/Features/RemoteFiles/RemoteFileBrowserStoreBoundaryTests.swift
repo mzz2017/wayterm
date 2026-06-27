@@ -4,8 +4,8 @@ import Testing
 // Test Context:
 // These source-boundary tests protect RemoteFileBrowserStore superfile control.
 // The store owns shared state and dependency composition, while directory
-// loading and snapshot application live in a focused Application extension.
-// Update only when that ownership boundary intentionally changes.
+// loading, snapshot application, and infrastructure persistence live in focused
+// owned files. Update only when that ownership boundary intentionally changes.
 struct RemoteFileBrowserStoreBoundaryTests {
     @Test
     func browserStoreMainFileDoesNotOwnDirectoryLoadingImplementation() throws {
@@ -71,6 +71,38 @@ struct RemoteFileBrowserStoreBoundaryTests {
         #expect(!managerSource.contains("UserDefaults"))
         #expect(!managerSource.contains("JSONEncoder()"))
         #expect(!managerSource.contains("JSONDecoder()"))
+    }
+
+    @Test
+    func browserStoreUsesInfrastructureForPersistedStateCodec() throws {
+        let root = try sourceRoot()
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift")
+        )
+        let persistenceSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFilePersistence.swift")
+        )
+        let persistedStateStoreSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Infrastructure/RemoteFileBrowserPersistedStateStore.swift")
+        )
+
+        // Given browser state persistence is durable feature infrastructure,
+        // RemoteFileBrowserStore may request load/save but should not own the codec.
+        #expect(storeSource.contains("RemoteFileBrowserPersistedStateStore"))
+        #expect(persistenceSource.contains("persistedStateStore.load()"))
+        #expect(persistenceSource.contains("persistedStateStore.save(persistedStates)"))
+        #expect(persistedStateStoreSource.contains("struct RemoteFileBrowserPersistedStateStore"))
+        #expect(persistedStateStoreSource.contains("func load() throws -> [String: RemoteFileBrowserPersistedState]"))
+        #expect(persistedStateStoreSource.contains("func save(_ states: [String: RemoteFileBrowserPersistedState]) throws"))
+
+        // Then UserDefaults keys and JSON codec details stay out of the
+        // application-layer browser state owner.
+        #expect(!storeSource.contains("UserDefaults"))
+        #expect(!storeSource.contains("JSONEncoder()"))
+        #expect(!storeSource.contains("JSONDecoder()"))
+        #expect(!persistenceSource.contains("UserDefaults"))
+        #expect(!persistenceSource.contains("JSONEncoder()"))
+        #expect(!persistenceSource.contains("JSONDecoder()"))
     }
 
     private func source(at url: URL) throws -> String {
