@@ -3,18 +3,19 @@ import Testing
 @testable import VVTerm
 
 // Test Context:
-// These tests protect iOS remote-file tab title policy after it moved out of
-// the app root view. The policy should derive compact, stable tab labels from
-// the most recent remote path and disambiguate duplicate labels without asking
-// SwiftUI view code to own path parsing or title collision rules. Update these
-// tests only when RemoteFiles intentionally changes iOS file-tab title behavior.
-struct IOSFileTabTitlePolicyTests {
+// These tests protect remote-file tab title policy after it moved out of
+// platform terminal containers. The policy should derive compact, stable tab
+// labels from the most recent remote path and disambiguate duplicate labels
+// without asking SwiftUI view code to own path parsing or title collision rules.
+// Update these tests only when RemoteFiles intentionally changes file-tab title
+// behavior across iOS and macOS.
+struct RemoteFileTabTitlePolicyTests {
     @Test
     func baseTitleFallsBackToServerNameWhenTabHasNoPath() {
         let tab = makeTab(seedPath: nil, lastKnownPath: nil, lastVisitedPath: nil)
 
         // Given a tab without any remote path history.
-        let title = IOSFileTabTitlePolicy.baseTitle(for: tab, serverName: "Tencent")
+        let title = RemoteFileTabTitlePolicy.baseTitle(for: tab, serverName: "Tencent")
 
         // Then the visible title falls back to the server context.
         #expect(title == "Tencent")
@@ -29,7 +30,7 @@ struct IOSFileTabTitlePolicyTests {
         )
 
         // Given a tab with seed, known, and visited paths.
-        let title = IOSFileTabTitlePolicy.baseTitle(for: tab, serverName: "Tencent")
+        let title = RemoteFileTabTitlePolicy.baseTitle(for: tab, serverName: "Tencent")
 
         // Then the most recent visited path determines the compact title.
         #expect(title == "releases")
@@ -40,7 +41,7 @@ struct IOSFileTabTitlePolicyTests {
         let tab = makeTab(seedPath: "//", lastKnownPath: nil, lastVisitedPath: nil)
 
         // Given a tab whose only path normalizes to remote root.
-        let title = IOSFileTabTitlePolicy.baseTitle(for: tab, serverName: "Tencent")
+        let title = RemoteFileTabTitlePolicy.baseTitle(for: tab, serverName: "Tencent")
 
         // Then root is not shown as a noisy tab label when server context exists.
         #expect(title == "Tencent")
@@ -53,7 +54,7 @@ struct IOSFileTabTitlePolicyTests {
         let third = makeTab(id: UUID(), seedPath: "/var/log")
 
         // Given multiple tabs collapse to the same compact base label.
-        let titles = IOSFileTabTitlePolicy.displayedTitles(
+        let titles = RemoteFileTabTitlePolicy.displayedTitles(
             for: [first, second, third],
             serverName: "Tencent"
         )
@@ -69,8 +70,8 @@ struct IOSFileTabTitlePolicyTests {
         seedPath: String?,
         lastKnownPath: String? = nil,
         lastVisitedPath: String? = nil
-    ) -> IOSFileTabTitleInput {
-        IOSFileTabTitleInput(
+    ) -> RemoteFileTabTitleInput {
+        RemoteFileTabTitleInput(
             id: id,
             serverId: UUID(),
             seedPath: seedPath,

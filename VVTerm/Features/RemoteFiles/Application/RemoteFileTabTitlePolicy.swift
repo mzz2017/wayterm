@@ -3,7 +3,7 @@ import Foundation
 import VVTermRemoteFilesDomain
 #endif
 
-struct IOSFileTabTitleInput: Equatable, Identifiable {
+struct RemoteFileTabTitleInput: Equatable, Identifiable {
     let id: UUID
     let serverId: UUID
     let seedPath: String?
@@ -11,8 +11,8 @@ struct IOSFileTabTitleInput: Equatable, Identifiable {
     let lastVisitedPath: String?
 }
 
-enum IOSFileTabTitlePolicy {
-    static func baseTitle(for tab: IOSFileTabTitleInput, serverName: String?) -> String {
+enum RemoteFileTabTitlePolicy {
+    static func baseTitle(for tab: RemoteFileTabTitleInput, serverName: String?) -> String {
         let fallbackTitle = nonEmpty(serverName) ?? "/"
         let candidatePath = tab.lastVisitedPath ?? tab.lastKnownPath ?? tab.seedPath
 
@@ -29,7 +29,7 @@ enum IOSFileTabTitlePolicy {
     }
 
     static func displayedTitles(
-        for tabs: [IOSFileTabTitleInput],
+        for tabs: [RemoteFileTabTitleInput],
         serverName: String?
     ) -> [UUID: String] {
         let baseTitles = Dictionary(

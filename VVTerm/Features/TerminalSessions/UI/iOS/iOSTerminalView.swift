@@ -192,22 +192,22 @@ struct iOSTerminalView: View {
     }
 
     private func baseFileTabTitle(for tab: RemoteFileTab) -> String {
-        IOSFileTabTitlePolicy.baseTitle(
+        RemoteFileTabTitlePolicy.baseTitle(
             for: fileTabTitleInput(for: tab),
             serverName: selectedServer?.name.nonEmptyString
         )
     }
 
     private func displayedFileTabTitle(for tab: RemoteFileTab) -> String {
-        let resolvedTitles = IOSFileTabTitlePolicy.displayedTitles(
+        let resolvedTitles = RemoteFileTabTitlePolicy.displayedTitles(
             for: serverFileTabs.map { fileTabTitleInput(for: $0) },
             serverName: selectedServer?.name.nonEmptyString
         )
         return resolvedTitles[tab.id] ?? baseFileTabTitle(for: tab)
     }
 
-    private func fileTabTitleInput(for tab: RemoteFileTab) -> IOSFileTabTitleInput {
-        IOSFileTabTitleInput(
+    private func fileTabTitleInput(for tab: RemoteFileTab) -> RemoteFileTabTitleInput {
+        RemoteFileTabTitleInput(
             id: tab.id,
             serverId: tab.serverId,
             seedPath: tab.seedPath,

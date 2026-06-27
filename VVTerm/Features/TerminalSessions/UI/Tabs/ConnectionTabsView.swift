@@ -402,42 +402,28 @@ struct ConnectionTerminalContainer: View {
     }
 
     private func baseFileTabTitle(for tab: RemoteFileTab) -> String {
-        let candidatePath = fileBrowser.lastVisitedPath(for: tab)
-            ?? tab.lastKnownPath
-            ?? tab.seedPath
-
-        guard let candidatePath else {
-            return server.name.nonEmptyString ?? "/"
-        }
-
-        let normalizedPath = RemoteFilePath.normalize(candidatePath)
-        guard normalizedPath != "/" else {
-            return server.name.nonEmptyString ?? "/"
-        }
-
-        return RemoteFilePath.breadcrumbs(for: normalizedPath).last?.title ?? (server.name.nonEmptyString ?? "/")
+        RemoteFileTabTitlePolicy.baseTitle(
+            for: fileTabTitleInput(for: tab),
+            serverName: server.name.nonEmptyString
+        )
     }
 
     private func displayedFileTabTitle(for tab: RemoteFileTab) -> String {
-        let baseTitles = Dictionary(
-            uniqueKeysWithValues: serverFileTabs.map { ($0.id, baseFileTabTitle(for: $0)) }
+        let resolvedTitles = RemoteFileTabTitlePolicy.displayedTitles(
+            for: serverFileTabs.map { fileTabTitleInput(for: $0) },
+            serverName: server.name.nonEmptyString
         )
-        let titleCounts = Dictionary(grouping: baseTitles.values, by: { $0 }).mapValues(\.count)
-        var seenCounts: [String: Int] = [:]
-        var resolvedTitles: [UUID: String] = [:]
-
-        for tab in serverFileTabs {
-            let baseTitle = baseTitles[tab.id] ?? (server.name.nonEmptyString ?? "/")
-            guard (titleCounts[baseTitle] ?? 0) > 1 else {
-                resolvedTitles[tab.id] = baseTitle
-                continue
-            }
-
-            seenCounts[baseTitle, default: 0] += 1
-            resolvedTitles[tab.id] = "\(baseTitle) (\(seenCounts[baseTitle, default: 0]))"
-        }
-
         return resolvedTitles[tab.id] ?? baseFileTabTitle(for: tab)
+    }
+
+    private func fileTabTitleInput(for tab: RemoteFileTab) -> RemoteFileTabTitleInput {
+        RemoteFileTabTitleInput(
+            id: tab.id,
+            serverId: tab.serverId,
+            seedPath: tab.seedPath,
+            lastKnownPath: tab.lastKnownPath,
+            lastVisitedPath: fileBrowser.lastVisitedPath(for: tab)
+        )
     }
 
     private func closeSelectedFileTab() {
