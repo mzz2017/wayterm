@@ -28,15 +28,18 @@ struct SyncSettingsStoreTests {
             accountStatusDetail: "noAccount - User not signed into iCloud"
         )
         let coordinator = FakeSyncSettingsCoordinator()
+        let preferences = FakeSyncSettingsPreferencePersistence(isEnabled: false)
 
         // When the Settings application store is created.
         let store = SyncSettingsStore(
             statusProvider: statusProvider,
-            coordinator: coordinator
+            coordinator: coordinator,
+            preferences: preferences
         )
 
         // Then the SwiftUI layer can render a complete value snapshot without
         // observing CloudKitManager directly.
+        #expect(store.isSyncEnabled == false)
         #expect(store.syncStatus == .offline)
         #expect(store.lastSyncDate == lastSyncDate)
         #expect(store.isAvailable == false)
@@ -51,7 +54,8 @@ struct SyncSettingsStoreTests {
         let coordinator = FakeSyncSettingsCoordinator()
         let store = SyncSettingsStore(
             statusProvider: statusProvider,
-            coordinator: coordinator
+            coordinator: coordinator,
+            preferences: FakeSyncSettingsPreferencePersistence()
         )
 
         // When the status provider publishes a new account/sync status.
@@ -80,7 +84,8 @@ struct SyncSettingsStoreTests {
         let coordinator = FakeSyncSettingsCoordinator()
         let store = SyncSettingsStore(
             statusProvider: statusProvider,
-            coordinator: coordinator
+            coordinator: coordinator,
+            preferences: FakeSyncSettingsPreferencePersistence()
         )
 
         // When the provider announces the new snapshot before mutating its
@@ -105,9 +110,11 @@ struct SyncSettingsStoreTests {
         // Given Settings needs to disable iCloud sync.
         let statusProvider = FakeSyncSettingsCloudStatusProvider()
         let coordinator = FakeSyncSettingsCoordinator()
+        let preferences = FakeSyncSettingsPreferencePersistence()
         let store = SyncSettingsStore(
             statusProvider: statusProvider,
-            coordinator: coordinator
+            coordinator: coordinator,
+            preferences: preferences
         )
 
         // When the UI sends sync-toggle intent to the store.
@@ -116,6 +123,8 @@ struct SyncSettingsStoreTests {
 
         // Then the store delegates to the app-level coordinator and keeps the
         // returned lifecycle task awaitable for tests and later operations.
+        #expect(store.isSyncEnabled == false)
+        #expect(preferences.savedValues == [false])
         #expect(coordinator.toggleRequests == [false])
         #expect(
             store.pendingSyncSettingsChangeIDs.isEmpty,
@@ -136,7 +145,8 @@ struct SyncSettingsStoreTests {
         }
         let store = SyncSettingsStore(
             statusProvider: statusProvider,
-            coordinator: coordinator
+            coordinator: coordinator,
+            preferences: FakeSyncSettingsPreferencePersistence()
         )
 
         // When Settings asks to re-check iCloud status twice before the first
@@ -154,6 +164,24 @@ struct SyncSettingsStoreTests {
             store.pendingCloudKitStatusRefreshID == nil,
             "Completed CloudKit status refresh tasks should clear from the Settings application store."
         )
+    }
+}
+
+@MainActor
+private final class FakeSyncSettingsPreferencePersistence: SyncSettingsPreferencePersisting {
+    private let initialValue: Bool
+    private(set) var savedValues: [Bool] = []
+
+    init(isEnabled: Bool = true) {
+        initialValue = isEnabled
+    }
+
+    func loadSyncEnabled() -> Bool {
+        initialValue
+    }
+
+    func setSyncEnabled(_ enabled: Bool) {
+        savedValues.append(enabled)
     }
 }
 

@@ -47,9 +47,16 @@ protocol SyncSettingsCoordinating: AnyObject {
 extension AppSyncCoordinator: SyncSettingsCoordinating {}
 
 @MainActor
+protocol SyncSettingsPreferencePersisting: AnyObject {
+    func loadSyncEnabled() -> Bool
+    func setSyncEnabled(_ enabled: Bool)
+}
+
+@MainActor
 final class SyncSettingsStore: ObservableObject {
     static let shared = SyncSettingsStore()
 
+    @Published private(set) var isSyncEnabled: Bool
     @Published private(set) var syncStatus: CloudKitManager.SyncStatus
     @Published private(set) var lastSyncDate: Date?
     @Published private(set) var isAvailable: Bool
@@ -57,6 +64,7 @@ final class SyncSettingsStore: ObservableObject {
 
     private let statusProvider: any SyncSettingsCloudStatusProviding
     private let coordinator: any SyncSettingsCoordinating
+    private let preferences: any SyncSettingsPreferencePersisting
     private var statusCancellable: AnyCancellable?
     private var syncSettingsChangeTasks: [UUID: Task<Void, Never>] = [:]
     private var cloudKitStatusRefreshTask: (id: UUID, task: Task<Void, Never>)?
@@ -72,17 +80,21 @@ final class SyncSettingsStore: ObservableObject {
     convenience init() {
         self.init(
             statusProvider: CloudKitManager.shared,
-            coordinator: AppSyncCoordinator.shared
+            coordinator: AppSyncCoordinator.shared,
+            preferences: UserDefaultsSyncSettingsPersistence()
         )
     }
 
     init(
         statusProvider: any SyncSettingsCloudStatusProviding,
-        coordinator: any SyncSettingsCoordinating
+        coordinator: any SyncSettingsCoordinating,
+        preferences: any SyncSettingsPreferencePersisting
     ) {
         self.statusProvider = statusProvider
         self.coordinator = coordinator
+        self.preferences = preferences
         let snapshot = statusProvider.currentStatusSnapshot
+        isSyncEnabled = preferences.loadSyncEnabled()
         syncStatus = snapshot.syncStatus
         lastSyncDate = snapshot.lastSyncDate
         isAvailable = snapshot.isAvailable
@@ -103,6 +115,9 @@ final class SyncSettingsStore: ObservableObject {
 
     @discardableResult
     func handleSyncEnabledChanged(_ enabled: Bool) -> UUID {
+        isSyncEnabled = enabled
+        preferences.setSyncEnabled(enabled)
+
         let requestID = UUID()
         let coordinatorTask = coordinator.handleSyncSettingsChanged(enabled)
         let task = Task { [weak self] in

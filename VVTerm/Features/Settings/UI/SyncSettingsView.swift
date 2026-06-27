@@ -12,7 +12,6 @@ struct SyncSettingsView: View {
     @ObservedObject private var serverManager: ServerManager
     @EnvironmentObject private var terminalThemeManager: TerminalThemeManager
     @EnvironmentObject private var terminalAccessory: TerminalAccessoryPreferencesManager
-    @AppStorage(SyncSettings.enabledKey) private var syncEnabled = true
 
     init(syncStore: SyncSettingsStore, serverManager: ServerManager) {
         _syncStore = ObservedObject(wrappedValue: syncStore)
@@ -22,7 +21,7 @@ struct SyncSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Enable iCloud Sync", isOn: $syncEnabled)
+                Toggle("Enable iCloud Sync", isOn: syncEnabledBinding)
 
                 HStack {
                     Label("iCloud Account", systemImage: "icloud")
@@ -35,7 +34,7 @@ struct SyncSettingsView: View {
                 Text("Sync servers, workspaces, themes, and keyboard accessory settings across all your Apple devices.")
             }
 
-            if syncEnabled {
+            if syncStore.isSyncEnabled {
                 Section("Sync Status") {
                     HStack {
                         Text("Status")
@@ -104,7 +103,7 @@ struct SyncSettingsView: View {
             }
 
             // Debug section when CloudKit is unavailable
-            if syncEnabled && !syncStore.isAvailable {
+            if syncStore.isSyncEnabled && !syncStore.isAvailable {
                 Section {
                     HStack {
                         Text("Account Status")
@@ -136,18 +135,22 @@ struct SyncSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .onChangeCompat(of: syncEnabled) { enabled in
-            syncStore.handleSyncEnabledChanged(enabled)
-        }
     }
 
     private var customThemeCount: Int {
         terminalThemeManager.customThemes.filter { !$0.isDeleted }.count
     }
 
+    private var syncEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { syncStore.isSyncEnabled },
+            set: { syncStore.handleSyncEnabledChanged($0) }
+        )
+    }
+
     @ViewBuilder
     private var statusBadge: some View {
-        if !syncEnabled {
+        if !syncStore.isSyncEnabled {
             Label("Disabled", systemImage: "pause.circle")
                 .font(.caption)
                 .foregroundStyle(.secondary)

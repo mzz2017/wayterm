@@ -101,6 +101,11 @@ struct SettingsLifecycleBoundaryTests {
             !source.contains("AppSyncCoordinator.shared"),
             "SyncSettingsView should send sync intent through SyncSettingsStore instead of AppSyncCoordinator.shared."
         )
+        #expect(
+            !source.contains("@AppStorage")
+                && !source.contains("SyncSettings.enabledKey"),
+            "SyncSettingsView should delegate sync-enabled persistence to SyncSettingsStore."
+        )
     }
 
     @Test
