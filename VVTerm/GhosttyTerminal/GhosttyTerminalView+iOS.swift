@@ -96,9 +96,6 @@ class GhosttyTerminalView: UIView {
     private var repeatingFallbackModifiers: UIKeyModifierFlags = []
     private var repeatingKeyCode: UInt16?
 
-    /// Track last surface size in pixels to avoid redundant resize/draw work.
-    private var lastPixelSize: CGSize = .zero
-    private var lastContentScale: CGFloat = 0
     private var lastReportedGrid: (cols: Int, rows: Int) = (0, 0)
     /// Cell size in points for row-to-pixel conversion
     var cellSize: CGSize = .zero
@@ -254,6 +251,7 @@ class GhosttyTerminalView: UIView {
     // MARK: - Rendering Components
 
     private let renderingSetup = GhosttyRenderingSetup()
+    private let surfaceDisplayRuntime = TerminalIOSSurfaceDisplayRuntime()
 
     func requestRender() {
         if isShuttingDown { return }
@@ -280,8 +278,7 @@ class GhosttyTerminalView: UIView {
 
             self.updateContentScaleIfNeeded()
             self.configureIOSurfaceLayers(size: self.bounds.size)
-            ghostty_surface_refresh(surface)
-            ghostty_surface_draw(surface)
+            self.surfaceDisplayRuntime.redraw(surface: surface)
             self.markIOSurfaceLayersForDisplay()
         }
     }
@@ -561,28 +558,12 @@ class GhosttyTerminalView: UIView {
         configureIOSurfaceLayers(size: size)
 
         let scale = self.contentScaleFactor
-        let pixelWidth = floor(size.width * scale)
-        let pixelHeight = floor(size.height * scale)
-        guard pixelWidth > 0 && pixelHeight > 0 else { return }
-        let pixelSize = CGSize(width: pixelWidth, height: pixelHeight)
-
-        let sizeChanged = pixelSize != lastPixelSize || scale != lastContentScale
-        if sizeChanged {
-            lastPixelSize = pixelSize
-            lastContentScale = scale
-
-            ghostty_surface_set_content_scale(surface, scale, scale)
-            ghostty_surface_set_size(
-                surface,
-                UInt32(pixelWidth),
-                UInt32(pixelHeight)
-            )
+        if surfaceDisplayRuntime.resizeIfNeeded(surface: surface, pointSize: size, scale: scale) {
             reportGridResizeIfNeeded()
         }
 
         if !isPaused {
-            ghostty_surface_refresh(surface)
-            ghostty_surface_draw(surface)
+            surfaceDisplayRuntime.redraw(surface: surface)
             if usesNativeTouchSelection {
                 refreshNativeSelectionSnapshot()
             }
@@ -602,7 +583,7 @@ class GhosttyTerminalView: UIView {
 
         guard let surface = surface?.unsafeCValue else { return }
         ghosttyAppWrapper?.updateSurfaceConfig(surface, presentationOverrides: presentationOverrides)
-        lastPixelSize = .zero
+        surfaceDisplayRuntime.resetSizeTracking()
         sizeDidChange(bounds.size)
         requestRender()
     }
@@ -3037,21 +3018,13 @@ class GhosttyTerminalView: UIView {
         updateContentScaleIfNeeded()
         configureIOSurfaceLayers(size: bounds.size)
 
-        // Set scale and size
         let scale = self.contentScaleFactor
-        let pixelWidth = floor(bounds.width * scale)
-        let pixelHeight = floor(bounds.height * scale)
-        guard pixelWidth > 0 && pixelHeight > 0 else { return }
-        lastPixelSize = CGSize(width: pixelWidth, height: pixelHeight)
-        lastContentScale = scale
-        ghostty_surface_set_content_scale(surface, scale, scale)
-        ghostty_surface_set_size(surface, UInt32(pixelWidth), UInt32(pixelHeight))
+        guard surfaceDisplayRuntime.forceResize(surface: surface, pointSize: bounds.size, scale: scale) else { return }
         if window != nil {
-            ghostty_surface_set_occlusion(surface, true)
+            surfaceDisplayRuntime.setOcclusion(true, surface: surface)
         }
 
-        ghostty_surface_refresh(surface)
-        ghostty_surface_draw(surface)
+        surfaceDisplayRuntime.redraw(surface: surface)
         markIOSurfaceLayersForDisplay()
         requestRender()
     }
@@ -3113,12 +3086,7 @@ class GhosttyTerminalView: UIView {
     func writeOutput(_ data: Data) {
         guard let surface = surface?.unsafeCValue else { return }
 
-        // Feed data to terminal
-        data.withUnsafeBytes { buffer in
-            guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: CChar.self) else { return }
-            ghostty_surface_write_output(surface, ptr, UInt(buffer.count))
-        }
-
+        surfaceDisplayRuntime.writeOutput(data, to: surface)
         scheduleCustomIORedraw()
         requestRender()
     }
@@ -3126,7 +3094,7 @@ class GhosttyTerminalView: UIView {
     /// Notify the terminal that the SSH session ended (External backend).
     func externalExited(_ exitCode: UInt32 = 0) {
         guard let surface = surface?.unsafeCValue else { return }
-        ghostty_surface_external_exited(surface, exitCode)
+        surfaceDisplayRuntime.externalExited(exitCode, surface: surface)
         scheduleCustomIORedraw()
         requestRender()
     }
