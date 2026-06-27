@@ -53,6 +53,32 @@ struct GhosttyIOSSuperfileBoundaryTests {
     }
 
     @Test
+    func keyboardAccessoryRoutingLivesOutsideMainGhosttyTerminalViewFile() throws {
+        let root = try sourceRoot()
+        let mainSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift")
+        )
+        let accessoryRoutingSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/GhosttyTerminalView+KeyboardAccessory+iOS.swift")
+        )
+
+        // Given the iOS Ghostty terminal main view source.
+        #expect(
+            !mainSource.contains("private func toolbarRoutingContext"),
+            "GhosttyTerminalView+iOS.swift should not own keyboard toolbar routing contexts."
+        )
+        #expect(
+            !mainSource.contains("override var inputAccessoryView"),
+            "GhosttyTerminalView+iOS.swift should not own keyboard accessory presentation."
+        )
+
+        // Then keyboard accessory routing has a dedicated GhosttyTerminalView extension.
+        #expect(accessoryRoutingSource.contains("func resolvedInputAccessoryView()"))
+        #expect(accessoryRoutingSource.contains("func routeToolbarKey"))
+        #expect(accessoryRoutingSource.contains("TerminalIOSInputRuntime.ToolbarRoutingContext"))
+    }
+
+    @Test
     func terminalKeyModelLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(

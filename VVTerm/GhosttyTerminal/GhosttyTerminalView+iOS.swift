@@ -75,13 +75,6 @@ class GhosttyTerminalView: UIView {
         return true
     }
 
-    @discardableResult
-    func sendReturnKey() -> Bool {
-        guard canRouteTerminalInput else { return false }
-        routeToolbarKey(.enter)
-        return true
-    }
-
     /// Optional app-level paste interceptor used for rich clipboard routing.
     var richPasteInterceptor: ((GhosttyTerminalView) -> Bool)?
     private var didSignalReady = false
@@ -196,13 +189,13 @@ class GhosttyTerminalView: UIView {
     private var editMenuInteraction: UIEditMenuInteraction?
 
     private let lifecycleObservers = TerminalLifecycleObserverBag()
-    private var hasHardwareKeyboardAttached = false
+    var hasHardwareKeyboardAttached = false
 
     // MARK: - Text Input (for spacebar cursor control)
     private var textInputModel = TerminalTextInputModel()
     private let hardwarePressState = TerminalIOSHardwarePressState()
     private var suppressIMEProxyCallbacks = false
-    private lazy var imeProxyTextView: TerminalIMEProxyTextView = {
+    lazy var imeProxyTextView: TerminalIMEProxyTextView = {
         let textView = TerminalIMEProxyTextView(frame: bounds)
         textView.terminalOwner = self
         textView.backgroundColor = .clear
@@ -229,7 +222,7 @@ class GhosttyTerminalView: UIView {
     private let renderingSetup = GhosttyRenderingSetup()
     let surfaceDisplayRuntime = TerminalIOSSurfaceDisplayRuntime()
     let surfaceLifecycleRuntime = TerminalIOSSurfaceLifecycleRuntime()
-    private let inputRuntime = TerminalIOSInputRuntime()
+    let inputRuntime = TerminalIOSInputRuntime()
     private let selectionRuntime = TerminalIOSSelectionRuntime()
 
     func requestRender() {
@@ -648,7 +641,7 @@ class GhosttyTerminalView: UIView {
         }
     }
 
-    private var hasLocalTextInputSession: Bool {
+    var hasLocalTextInputSession: Bool {
         textInputModel.documentLength > 0 || textInputModel.hasActiveIMEComposition
     }
 
@@ -659,7 +652,7 @@ class GhosttyTerminalView: UIView {
         syncTextInputModelFromIMEProxy()
     }
 
-    private func moveIMEProxyCursorLeft() {
+    func moveIMEProxyCursorLeft() {
         let selection = imeProxyTextView.selectedRange
         let nsText = (imeProxyTextView.text ?? "") as NSString
         let newLocation: Int
@@ -674,7 +667,7 @@ class GhosttyTerminalView: UIView {
         setIMEProxySelection(NSRange(location: newLocation, length: 0))
     }
 
-    private func moveIMEProxyCursorRight() {
+    func moveIMEProxyCursorRight() {
         let selection = imeProxyTextView.selectedRange
         let nsText = (imeProxyTextView.text ?? "") as NSString
         let newLocation: Int
@@ -689,11 +682,11 @@ class GhosttyTerminalView: UIView {
         setIMEProxySelection(NSRange(location: newLocation, length: 0))
     }
 
-    private func moveIMEProxyCursorToStart() {
+    func moveIMEProxyCursorToStart() {
         setIMEProxySelection(NSRange(location: 0, length: 0))
     }
 
-    private func moveIMEProxyCursorToEnd() {
+    func moveIMEProxyCursorToEnd() {
         let length = (imeProxyTextView.text ?? "").utf16.count
         setIMEProxySelection(NSRange(location: length, length: 0))
     }
@@ -734,7 +727,7 @@ class GhosttyTerminalView: UIView {
         return textInputCaretRect(for: index)
     }
 
-    private func invalidateLocalTextInputSession() {
+    func invalidateLocalTextInputSession() {
         resetIMEProxyState()
         let effects = textInputModel.invalidateSession()
         runTerminalTextInputEffects(effects)
@@ -783,7 +776,7 @@ class GhosttyTerminalView: UIView {
     }
 
     var acceptsTerminalInput = true
-    private var keyboardFocusPolicy = TerminalKeyboardFocusPolicy()
+    var keyboardFocusPolicy = TerminalKeyboardFocusPolicy()
     private var suppressDirectTouchKeyboardFocusUntil = Date.distantPast
     var onKeyboardBrowseModeChange: (@MainActor (Bool) -> Void)?
     var onFindNavigatorVisibilityChange: (@MainActor (Bool) -> Void)?
@@ -804,13 +797,13 @@ class GhosttyTerminalView: UIView {
         isFindNavigatorActive
     }
 
-    private var isFindNavigatorActive: Bool {
+    var isFindNavigatorActive: Bool {
         guard #available(iOS 16.0, *) else { return false }
         return findRuntime.isNavigatorLifecycleActive
             || nativeFindInteraction?.isFindNavigatorVisible == true
     }
 
-    private var canRouteTerminalInput: Bool {
+    var canRouteTerminalInput: Bool {
         acceptsTerminalInput && !isFindNavigatorActive
     }
 
@@ -2480,7 +2473,7 @@ class GhosttyTerminalView: UIView {
         syncTextInputModelFromIMEProxy()
     }
 
-    private func sendKeyPress(_ key: Ghostty.Input.Key) {
+    func sendKeyPress(_ key: Ghostty.Input.Key) {
         guard canRouteTerminalInput else { return }
         guard let surface = surface else { return }
         surface.sendKeyEvent(.init(key: key, action: .press))
@@ -2509,7 +2502,7 @@ class GhosttyTerminalView: UIView {
         }
     }
 
-    private func sendModifiedKey(
+    func sendModifiedKey(
         _ key: Ghostty.Input.Key,
         mods: Ghostty.Input.Mods,
         text: String? = nil,
@@ -2801,123 +2794,6 @@ extension GhosttyTerminalView: UIEditMenuInteractionDelegate {
         }
 
         return UIMenu(children: actions)
-    }
-}
-
-// MARK: - Keyboard Accessory View
-
-extension GhosttyTerminalView {
-    private static var keyboardToolbarKey: UInt8 = 0
-
-    private var keyboardToolbar: TerminalInputAccessoryView? {
-        get { objc_getAssociatedObject(self, &Self.keyboardToolbarKey) as? TerminalInputAccessoryView }
-        set { objc_setAssociatedObject(self, &Self.keyboardToolbarKey, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
-    }
-
-    private var shouldHideKeyboardAccessoryBar: Bool {
-        hasHardwareKeyboardAttached || keyboardFocusPolicy.isBrowsing
-    }
-
-    func resolvedInputAccessoryView() -> UIView? {
-        guard !isFindNavigatorActive, !shouldHideKeyboardAccessoryBar else {
-            return nil
-        }
-        if keyboardToolbar == nil {
-            let toolbar = TerminalInputAccessoryView(onKey: { [weak self] key in
-                self?.routeToolbarKey(key)
-            }, onCustomAction: { [weak self] action in
-                self?.routeToolbarCustomAction(action)
-            }, onVoice: onVoiceButtonTapped, onDismissKeyboard: { [weak self] in
-                self?.dismissKeyboardFromToolbar()
-            })
-            keyboardToolbar = toolbar
-        } else {
-            keyboardToolbar?.onVoice = onVoiceButtonTapped
-        }
-        return keyboardToolbar
-    }
-
-    override var inputAccessoryView: UIView? {
-        resolvedInputAccessoryView()
-    }
-
-    private func routeToolbarKey(_ key: TerminalKey, accumulatedMods: Ghostty.Input.Mods = []) {
-        let routedKey = accumulatedMods.isEmpty ? key : TerminalKey.modified(key, mods: accumulatedMods)
-        inputRuntime.handleToolbarKey(routedKey, context: toolbarRoutingContext())
-    }
-
-    private func routeToolbarCustomAction(_ action: TerminalAccessoryCustomAction) {
-        inputRuntime.handleToolbarCustomAction(action, context: toolbarCustomActionContext())
-    }
-
-    private func toolbarRoutingContext() -> TerminalIOSInputRuntime.ToolbarRoutingContext {
-        TerminalIOSInputRuntime.ToolbarRoutingContext(
-            hasLocalTextInputSession: hasLocalTextInputSession,
-            invalidateLocalTextInputSession: { [weak self] in
-                self?.invalidateLocalTextInputSession()
-            },
-            deleteBackward: { [weak self] in
-                self?.imeProxyTextView.deleteBackward()
-            },
-            moveCursorLeft: { [weak self] in
-                self?.moveIMEProxyCursorLeft()
-            },
-            moveCursorRight: { [weak self] in
-                self?.moveIMEProxyCursorRight()
-            },
-            moveCursorToStart: { [weak self] in
-                self?.moveIMEProxyCursorToStart()
-            },
-            moveCursorToEnd: { [weak self] in
-                self?.moveIMEProxyCursorToEnd()
-            },
-            sendGhosttyKey: { [weak self] key, mods, text, unshiftedCodepoint, invalidateLocalSession in
-                self?.sendToolbarRoutedGhosttyKey(
-                    key,
-                    mods: mods,
-                    text: text,
-                    unshiftedCodepoint: unshiftedCodepoint,
-                    invalidateLocalSession: invalidateLocalSession
-                )
-            }
-        )
-    }
-
-    private func toolbarCustomActionContext() -> TerminalIOSInputRuntime.ToolbarCustomActionContext {
-        TerminalIOSInputRuntime.ToolbarCustomActionContext(
-            sendText: { [weak self] text in
-                self?.sendText(text)
-            },
-            sendKeyPress: { [weak self] key in
-                self?.sendKeyPress(key)
-            },
-            sendGhosttyKey: { [weak self] key, mods, text, unshiftedCodepoint, invalidateLocalSession in
-                self?.sendToolbarRoutedGhosttyKey(
-                    key,
-                    mods: mods,
-                    text: text,
-                    unshiftedCodepoint: unshiftedCodepoint,
-                    invalidateLocalSession: invalidateLocalSession
-                )
-            }
-        )
-    }
-
-    private func sendToolbarRoutedGhosttyKey(
-        _ key: Ghostty.Input.Key,
-        mods: Ghostty.Input.Mods,
-        text: String?,
-        unshiftedCodepoint: UInt32?,
-        invalidateLocalSession: Bool
-    ) {
-        let codepoint = unshiftedCodepoint ?? text?.unicodeScalars.first?.value ?? 0
-        sendModifiedKey(
-            key,
-            mods: mods,
-            text: text,
-            unshiftedCodepoint: codepoint,
-            invalidateLocalSession: invalidateLocalSession
-        )
     }
 }
 
