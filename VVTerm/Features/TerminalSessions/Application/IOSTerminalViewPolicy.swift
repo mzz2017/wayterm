@@ -46,6 +46,35 @@ enum IOSTerminalViewPolicy {
             ?? connectingServerId
     }
 
+    static func fileTabServerId(
+        currentServerId: UUID?,
+        selectedServerId: UUID?,
+        connectingServerId: UUID?
+    ) -> UUID? {
+        currentServerId
+            ?? selectedServerId
+            ?? connectingServerId
+    }
+
+    static func canUseZenMode(
+        isConnecting: Bool,
+        hasSelectedServer: Bool,
+        serverSessionCount: Int
+    ) -> Bool {
+        isConnecting || hasSelectedServer || serverSessionCount > 0
+    }
+
+    static func effectiveZenModeEnabled(
+        isZenModeEnabled: Bool,
+        canUseZenMode: Bool
+    ) -> Bool {
+        isZenModeEnabled && canUseZenMode
+    }
+
+    static func shouldShowViewSwitcher(visibleTabCount: Int) -> Bool {
+        visibleTabCount > 1
+    }
+
     static func effectiveSelectedSessionId(
         selectedSessionId: UUID?,
         serverSessionIds: [UUID]

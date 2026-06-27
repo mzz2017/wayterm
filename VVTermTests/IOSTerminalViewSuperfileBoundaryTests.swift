@@ -333,6 +333,41 @@ struct IOSTerminalViewSuperfileBoundaryTests {
         )
     }
 
+    @Test
+    func iosTerminalViewUsesPolicyForDerivedDisplayState() throws {
+        let root = try sourceRoot()
+        let rootSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/iOS/iOSTerminalView.swift")
+        )
+        let policySource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/Application/IOSTerminalViewPolicy.swift")
+        )
+
+        for expression in [
+            "currentServerId ?? selectedServer?.id ?? connectingServer?.id",
+            "isConnecting || selectedServer != nil || !serverSessions.isEmpty",
+            "isZenModeEnabled && canUseZenMode",
+            "viewTabConfig.currentVisibleTabs.count > 1"
+        ] {
+            #expect(
+                !rootSource.contains(expression),
+                "iOSTerminalView.swift should not own derived iOS terminal display policy."
+            )
+        }
+
+        for functionName in [
+            "fileTabServerId",
+            "canUseZenMode",
+            "effectiveZenModeEnabled",
+            "shouldShowViewSwitcher"
+        ] {
+            #expect(
+                policySource.contains("static func \(functionName)"),
+                "IOSTerminalViewPolicy should own \(functionName)."
+            )
+        }
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

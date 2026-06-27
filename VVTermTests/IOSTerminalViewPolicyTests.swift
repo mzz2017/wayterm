@@ -83,6 +83,119 @@ struct IOSTerminalViewPolicyTests {
     }
 
     @Test
+    func fileTabServerIdUsesCurrentSelectedThenConnectingServer() {
+        let currentServerId = UUID()
+        let selectedServerId = UUID()
+        let connectingServerId = UUID()
+
+        // Given the Files tab needs a server scope for file-tab routing.
+        // Then the explicit current server wins over selected and connecting context.
+        #expect(
+            IOSTerminalViewPolicy.fileTabServerId(
+                currentServerId: currentServerId,
+                selectedServerId: selectedServerId,
+                connectingServerId: connectingServerId
+            ) == currentServerId
+        )
+
+        // Given there is no current server yet.
+        // Then selected server context is preferred over a connecting fallback.
+        #expect(
+            IOSTerminalViewPolicy.fileTabServerId(
+                currentServerId: nil,
+                selectedServerId: selectedServerId,
+                connectingServerId: connectingServerId
+            ) == selectedServerId
+        )
+
+        // Given only a connecting server is available.
+        // Then Files can still use that in-progress server context.
+        #expect(
+            IOSTerminalViewPolicy.fileTabServerId(
+                currentServerId: nil,
+                selectedServerId: nil,
+                connectingServerId: connectingServerId
+            ) == connectingServerId
+        )
+    }
+
+    @Test
+    func zenModeAvailabilityRequiresAConnectionContext() {
+        // Given the terminal is connecting, selected, or already has sessions.
+        // Then zen mode can stay available because there is useful content context.
+        #expect(
+            IOSTerminalViewPolicy.canUseZenMode(
+                isConnecting: true,
+                hasSelectedServer: false,
+                serverSessionCount: 0
+            )
+        )
+        #expect(
+            IOSTerminalViewPolicy.canUseZenMode(
+                isConnecting: false,
+                hasSelectedServer: true,
+                serverSessionCount: 0
+            )
+        )
+        #expect(
+            IOSTerminalViewPolicy.canUseZenMode(
+                isConnecting: false,
+                hasSelectedServer: false,
+                serverSessionCount: 1
+            )
+        )
+
+        // Given there is no connection context.
+        // Then zen mode must be disabled by the caller.
+        #expect(
+            !IOSTerminalViewPolicy.canUseZenMode(
+                isConnecting: false,
+                hasSelectedServer: false,
+                serverSessionCount: 0
+            )
+        )
+    }
+
+    @Test
+    func effectiveZenModeRequiresRequestAndAvailableContext() {
+        // Given zen mode is requested and usable.
+        // Then the effective state is enabled.
+        #expect(
+            IOSTerminalViewPolicy.effectiveZenModeEnabled(
+                isZenModeEnabled: true,
+                canUseZenMode: true
+            )
+        )
+
+        // Given either the request or usable context is missing.
+        // Then effective zen mode stays disabled.
+        #expect(
+            !IOSTerminalViewPolicy.effectiveZenModeEnabled(
+                isZenModeEnabled: false,
+                canUseZenMode: true
+            )
+        )
+        #expect(
+            !IOSTerminalViewPolicy.effectiveZenModeEnabled(
+                isZenModeEnabled: true,
+                canUseZenMode: false
+            )
+        )
+    }
+
+    @Test
+    func viewSwitcherShowsOnlyWhenMultipleTabsAreVisible() {
+        // Given one or zero tabs are visible.
+        // Then the switcher would be redundant.
+        #expect(!IOSTerminalViewPolicy.shouldShowViewSwitcher(visibleTabCount: 0))
+        #expect(!IOSTerminalViewPolicy.shouldShowViewSwitcher(visibleTabCount: 1))
+
+        // Given multiple tabs are visible.
+        // Then the switcher has meaningful choices.
+        #expect(IOSTerminalViewPolicy.shouldShowViewSwitcher(visibleTabCount: 2))
+    }
+
+    @Test
     func selectedSessionRecoveryKeepsValidSelection() {
         let currentServerId = UUID()
         let selectedSessionId = UUID()

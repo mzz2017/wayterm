@@ -61,7 +61,7 @@ struct iOSTerminalView: View {
     }
 
     private var fileTabServerId: UUID? {
-        currentServerId ?? selectedServer?.id ?? connectingServer?.id
+        IOSTerminalViewPolicy.fileTabServerId(currentServerId: currentServerId, selectedServerId: selectedServer?.id, connectingServerId: connectingServer?.id)
     }
 
     private var resolvedServerId: UUID? {
@@ -147,15 +147,15 @@ struct iOSTerminalView: View {
     }
 
     private var canUseZenMode: Bool {
-        isConnecting || selectedServer != nil || !serverSessions.isEmpty
+        IOSTerminalViewPolicy.canUseZenMode(isConnecting: isConnecting, hasSelectedServer: selectedServer != nil, serverSessionCount: serverSessions.count)
     }
 
     private var effectiveZenModeEnabled: Bool {
-        isZenModeEnabled && canUseZenMode
+        IOSTerminalViewPolicy.effectiveZenModeEnabled(isZenModeEnabled: isZenModeEnabled, canUseZenMode: canUseZenMode)
     }
 
     private var shouldShowViewSwitcher: Bool {
-        viewTabConfig.currentVisibleTabs.count > 1
+        IOSTerminalViewPolicy.shouldShowViewSwitcher(visibleTabCount: viewTabConfig.currentVisibleTabs.count)
     }
 
     private var zenSelectedViewBinding: Binding<String> {
