@@ -139,6 +139,25 @@ For every feature:
 - prefer view-owned dependencies to be injected from the app/screen boundary instead of created inside leaf views
 - if shared cross-feature primitives are needed, extract them into `Core` instead of creating new app-wide bucket folders
 
+## Directory Structure Rules
+
+Use real filesystem directories as ownership boundaries; do not rely on Xcode-only virtual groups.
+
+Top-level app-owned code belongs in:
+- `App`: app entry, composition roots, app shell, localization, root navigation
+- `Features`: feature-first product code
+- `Core`: shared cross-feature infrastructure and primitives
+- `GhosttyTerminal`: libghostty bridge and terminal runtime integration
+- `Compatibility`, `Generated`, `Resources`: narrow purpose-specific buckets
+
+Feature folders should use `Domain`, `Application`, `Infrastructure`, and `UI`.
+
+When a folder becomes module-like, add internal owner folders instead of growing flat files. For `GhosttyTerminal`, prefer `Bridge`, `Surface`, `Shared`, `iOS/<Owner>`, and `macOS/<Owner>`.
+
+Move files only when clarifying a real owner or extracting one coherent responsibility. Avoid cosmetic reshuffles, catch-all folders like `Helpers`/`Utils`/`Common`, and broad access-control widening just to make a move compile.
+
+Verify new or moved Swift files with a build or focused tests so Xcode file-system-synchronized groups include them in the intended target.
+
 ## Refactoring Rules
 
 When doing architectural refactors:
