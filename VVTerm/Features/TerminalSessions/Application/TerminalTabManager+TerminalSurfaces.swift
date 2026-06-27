@@ -112,4 +112,14 @@ extension TerminalTabManager {
     func detachSurfaceForClosedPane(_ paneId: UUID) {
         unregisterTerminal(for: paneId)
     }
+
+    func handlePaneSurfaceViewDisappeared(_ paneId: UUID) -> TerminalSurfaceViewDisappearanceResolution {
+        guard paneStates[paneId] == nil else {
+            detachSurfaceForPaneViewDisappeared(paneId)
+            return .preservedForReuse
+        }
+
+        detachSurfaceForClosedPane(paneId)
+        return .closedAndCleanedUp
+    }
 }

@@ -17,6 +17,11 @@ enum TerminalSurfaceDetachReason: Equatable, Sendable {
     case sessionClosed
 }
 
+enum TerminalSurfaceViewDisappearanceResolution: Equatable, Sendable {
+    case preservedForReuse
+    case closedAndCleanedUp
+}
+
 struct TerminalSurfaceAttachContext: Equatable, Sendable {
     var isAppActive: Bool
     var isViewActive: Bool

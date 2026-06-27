@@ -3,9 +3,12 @@ import Testing
 @testable import VVTerm
 
 // Test Context:
-// These tests protect terminal UI surface teardown rules. A terminal surface can
-// be detached or cleaned up by SwiftUI/AppKit/UIKit lifecycle, but SSH shell and
-// client teardown must remain owned by application-layer connection managers.
+// These tests protect terminal UI surface teardown rules. UI wrappers report
+// disappeared surfaces; application-layer managers decide whether the surface is
+// preserved for reuse or cleaned up because the entity closed.
+// Target invariant: view disappearance pauses reusable surfaces without native
+// teardown, while closed entities clean up exactly once and root closed-session
+// cleanup remains tracked/awaitable through server teardown tasks.
 // Fakes here record surface cleanup/pause callbacks only; they do not create
 // Ghostty surfaces or open network connections. Update these tests only when the
 // intended boundary between terminal UI surfaces and SSH runtime ownership
@@ -82,6 +85,130 @@ struct TerminalSurfaceTeardownTests {
         // Then the underlying surface cleanup runs exactly once.
         #expect(recorder.cleanupCount == 1)
         #expect(recorder.pauseCount == 0)
+    }
+
+    @MainActor
+    @Test
+    func rootViewDisappearancePreservesLiveSessionSurfaceWithoutCleanup() async {
+        let manager = ConnectionSessionManager.shared
+        await manager.resetForTesting()
+
+        let session = ConnectionSession(
+            serverId: UUID(),
+            title: "Live",
+            connectionState: .connected
+        )
+        let recorder = TerminalSurfaceRegistryRecorder()
+        manager.sessions = [session]
+        manager.terminalSurfaceRegistry.registerForTesting(
+            entityId: .session(session.id),
+            pause: { recorder.pauseCount += 1 },
+            cleanup: { recorder.cleanupCount += 1 }
+        )
+
+        // Given a live root session surface disappears because its view went away.
+        let resolution = manager.handleSurfaceViewDisappeared(
+            sessionId: session.id,
+            serverId: session.serverId,
+            reason: "test live root disappearance"
+        )
+
+        // Then the manager preserves it for reuse and only pauses rendering.
+        #expect(resolution == .preservedForReuse)
+        #expect(recorder.pauseCount == 1)
+        #expect(recorder.cleanupCount == 0)
+        #expect(manager.hasTerminal(for: session.id))
+
+        await manager.resetForTesting()
+    }
+
+    @MainActor
+    @Test
+    func rootViewDisappearanceTracksClosedSessionCleanupUntilAwaited() async {
+        let manager = ConnectionSessionManager.shared
+        await manager.resetForTesting()
+
+        let sessionId = UUID()
+        let serverId = UUID()
+        let recorder = TerminalSurfaceRegistryRecorder()
+        manager.terminalSurfaceRegistry.registerForTesting(
+            entityId: .session(sessionId),
+            pause: { recorder.pauseCount += 1 },
+            cleanup: { recorder.cleanupCount += 1 }
+        )
+
+        // Given a root surface disappears after its session has already closed.
+        let resolution = manager.handleSurfaceViewDisappeared(
+            sessionId: sessionId,
+            serverId: serverId,
+            reason: "test closed root disappearance"
+        )
+
+        // Then cleanup is tracked as teardown work and is complete after awaiting it.
+        #expect(resolution == .closedAndCleanedUp)
+        await manager.waitForServerTeardownTasks(serverId)
+        #expect(recorder.cleanupCount == 1)
+        #expect(recorder.pauseCount == 0)
+        #expect(!manager.hasTerminal(for: sessionId))
+
+        await manager.resetForTesting()
+    }
+
+    @MainActor
+    @Test
+    func splitViewDisappearancePreservesLivePaneSurfaceWithoutCleanup() async {
+        let manager = TerminalTabManager.shared
+        await manager.resetForTesting()
+
+        let paneId = UUID()
+        let tabId = UUID()
+        let recorder = TerminalSurfaceRegistryRecorder()
+        manager.paneStates[paneId] = TerminalPaneState(
+            paneId: paneId,
+            tabId: tabId,
+            serverId: UUID()
+        )
+        manager.terminalSurfaceRegistry.registerForTesting(
+            entityId: .pane(paneId),
+            pause: { recorder.pauseCount += 1 },
+            cleanup: { recorder.cleanupCount += 1 }
+        )
+
+        // Given a live split pane surface disappears because its view went away.
+        let resolution = manager.handlePaneSurfaceViewDisappeared(paneId)
+
+        // Then the manager preserves it for reuse and only pauses rendering.
+        #expect(resolution == .preservedForReuse)
+        #expect(recorder.pauseCount == 1)
+        #expect(recorder.cleanupCount == 0)
+        #expect(manager.terminalSurfaceRegistry.hasSurface(for: .pane(paneId)))
+
+        await manager.resetForTesting()
+    }
+
+    @MainActor
+    @Test
+    func splitViewDisappearanceCleansClosedPaneSurface() async {
+        let manager = TerminalTabManager.shared
+        await manager.resetForTesting()
+
+        let paneId = UUID()
+        let recorder = TerminalSurfaceRegistryRecorder()
+        manager.terminalSurfaceRegistry.registerForTesting(
+            entityId: .pane(paneId),
+            pause: { recorder.pauseCount += 1 },
+            cleanup: { recorder.cleanupCount += 1 }
+        )
+
+        // Given a split pane surface disappears after its pane has already closed.
+        let resolution = manager.handlePaneSurfaceViewDisappeared(paneId)
+
+        // Then cleanup happens through the application manager, not the representable.
+        #expect(resolution == .closedAndCleanedUp)
+        #expect(recorder.cleanupCount == 1)
+        #expect(recorder.pauseCount == 0)
+
+        await manager.resetForTesting()
     }
 }
 

@@ -207,6 +207,24 @@ extension ConnectionSessionManager {
         unregisterTerminal(for: sessionId)
     }
 
+    func handleSurfaceViewDisappeared(
+        sessionId: UUID,
+        serverId: UUID,
+        reason: String
+    ) -> TerminalSurfaceViewDisappearanceResolution {
+        guard sessionWithID(sessionId) == nil else {
+            detachSurfaceForViewDisappeared(from: sessionId)
+            return .preservedForReuse
+        }
+
+        handleClosedSessionSurfaceTeardown(
+            sessionId: sessionId,
+            serverId: serverId,
+            reason: reason
+        )
+        return .closedAndCleanedUp
+    }
+
     func handleClosedSessionSurfaceTeardown(
         sessionId: UUID,
         serverId: UUID,

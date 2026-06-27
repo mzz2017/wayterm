@@ -2,17 +2,16 @@ import Foundation
 import Testing
 
 // Test Context:
-// Protected behavior: split-pane representable static teardown delegates pane
-// liveness, surface detach, and closed-pane surface cleanup to the injected
-// TerminalSessions application owner available through the coordinator.
-// Target invariant: static teardown may pause UI surfaces locally, but it must
-// not resolve TerminalTabManager.shared; it must use coordinator.tabManager.
+// Protected behavior: split-pane representable static teardown reports
+// disappeared terminal surfaces to the injected TerminalSessions application
+// owner available through the coordinator.
+// Target invariant: static teardown must not inspect pane collections or decide
+// whether a surface should be detached or cleaned up.
 // Fake assumptions: this is a source-boundary test because constructing
 // NSViewRepresentable teardown inputs would require platform UI surfaces and
 // Ghostty.
-// Update guidance: update this test only if split static teardown is redesigned
-// to call a different injected application owner or moves out of representable
-// static lifecycle methods entirely.
+// Update guidance: update this test only if disappeared-surface policy moves to
+// another non-UI owner or split static teardown goes away entirely.
 @Suite(.serialized)
 struct TerminalSplitStaticTeardownBoundaryTests {
     @Test
@@ -28,18 +27,16 @@ struct TerminalSplitStaticTeardownBoundaryTests {
         )
 
         // Given split static representable teardown receives a coordinator with the injected manager.
-        for expectedCall in [
-            "coordinator.tabManager.paneStates",
-            "coordinator.tabManager.detachSurfaceForPaneViewDisappeared",
-            "coordinator.tabManager.detachSurfaceForClosedPane"
-        ] {
-            #expect(
-                teardown.contains(expectedCall),
-                "Split static teardown should use injected manager call \(expectedCall)."
-            )
-        }
+        #expect(
+            teardown.contains("coordinator.tabManager.handlePaneSurfaceViewDisappeared"),
+            "Split static teardown should send one disappeared-surface intent to the application manager."
+        )
 
-        // Then teardown must not bypass the coordinator dependency through the singleton.
+        // Then teardown must not read application state or select detach/cleanup branches itself.
+        #expect(!teardown.contains("coordinator.tabManager.paneStates"))
+        #expect(!teardown.contains("coordinator.tabManager.detachSurfaceForPaneViewDisappeared"))
+        #expect(!teardown.contains("coordinator.tabManager.detachSurfaceForClosedPane"))
+        #expect(!teardown.contains("pauseRendering()"))
         #expect(!teardown.contains("TerminalTabManager.shared"))
     }
 

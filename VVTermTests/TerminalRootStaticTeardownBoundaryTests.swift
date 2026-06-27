@@ -2,18 +2,16 @@ import Foundation
 import Testing
 
 // Test Context:
-// Protected behavior: root representable static teardown delegates session
-// liveness, surface detach, and closed-session surface cleanup to the injected
-// TerminalSessions application owner available through the coordinator.
-// Target invariant: static teardown may pause or resign UI surfaces locally, but
-// it must not resolve ConnectionSessionManager.shared; it must use
-// coordinator.sessionManager.
+// Protected behavior: root representable static teardown reports disappeared
+// terminal surfaces to the injected TerminalSessions application owner.
+// Target invariant: static teardown may resign platform focus locally, but it
+// must not inspect session collections or decide whether a surface should be
+// detached or cleaned up.
 // Fake assumptions: these are source-boundary tests because constructing
 // NSViewRepresentable / UIViewRepresentable teardown inputs would require
 // platform UI surfaces and Ghostty.
-// Update guidance: update these tests only if static teardown is redesigned to
-// call a different injected application owner or moves out of representable
-// static lifecycle methods entirely.
+// Update guidance: update these tests only if disappeared-surface policy moves
+// to another non-UI owner or representable static teardown goes away entirely.
 @Suite(.serialized)
 struct TerminalRootStaticTeardownBoundaryTests {
     @Test
@@ -29,18 +27,16 @@ struct TerminalRootStaticTeardownBoundaryTests {
         )
 
         // Given macOS static representable teardown receives a coordinator with the injected manager.
-        for expectedCall in [
-            "coordinator.sessionManager.sessions",
-            "coordinator.sessionManager.detachSurfaceForViewDisappeared",
-            "coordinator.sessionManager.handleClosedSessionSurfaceTeardown"
-        ] {
-            #expect(
-                teardown.contains(expectedCall),
-                "macOS static teardown should use injected manager call \(expectedCall)."
-            )
-        }
+        #expect(
+            teardown.contains("coordinator.sessionManager.handleSurfaceViewDisappeared"),
+            "macOS static teardown should send one disappeared-surface intent to the application manager."
+        )
 
-        // Then teardown must not bypass the coordinator dependency through the singleton.
+        // Then teardown must not read application state or select detach/cleanup branches itself.
+        #expect(!teardown.contains("coordinator.sessionManager.sessions"))
+        #expect(!teardown.contains("coordinator.sessionManager.detachSurfaceForViewDisappeared"))
+        #expect(!teardown.contains("coordinator.sessionManager.handleClosedSessionSurfaceTeardown"))
+        #expect(!teardown.contains("pauseRendering()"))
         #expect(!teardown.contains("ConnectionSessionManager.shared"))
     }
 
@@ -57,18 +53,16 @@ struct TerminalRootStaticTeardownBoundaryTests {
         )
 
         // Given iOS static representable teardown receives a coordinator with the injected manager.
-        for expectedCall in [
-            "coordinator.sessionManager.sessions",
-            "coordinator.sessionManager.detachSurfaceForViewDisappeared",
-            "coordinator.sessionManager.handleClosedSessionSurfaceTeardown"
-        ] {
-            #expect(
-                teardown.contains(expectedCall),
-                "iOS static teardown should use injected manager call \(expectedCall)."
-            )
-        }
+        #expect(
+            teardown.contains("coordinator.sessionManager.handleSurfaceViewDisappeared"),
+            "iOS static teardown should send one disappeared-surface intent to the application manager."
+        )
 
-        // Then teardown must not bypass the coordinator dependency through the singleton.
+        // Then teardown must not read application state or select detach/cleanup branches itself.
+        #expect(!teardown.contains("coordinator.sessionManager.sessions"))
+        #expect(!teardown.contains("coordinator.sessionManager.detachSurfaceForViewDisappeared"))
+        #expect(!teardown.contains("coordinator.sessionManager.handleClosedSessionSurfaceTeardown"))
+        #expect(!teardown.contains("pauseRendering()"))
         #expect(!teardown.contains("ConnectionSessionManager.shared"))
     }
 

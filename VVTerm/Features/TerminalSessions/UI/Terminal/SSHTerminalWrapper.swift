@@ -225,24 +225,18 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         }
     }
 
-    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
-        let sessionStillExists = coordinator.sessionManager.sessions.contains { $0.id == coordinator.sessionId }
-
-        if sessionStillExists {
-            if let scrollView = nsView as? TerminalScrollView {
-                scrollView.surfaceView.pauseRendering()
-            }
-            coordinator.isReusingTerminal = true
-            coordinator.sessionManager.detachSurfaceForViewDisappeared(from: coordinator.sessionId)
-            return
-        }
-
-        coordinator.terminalView = nil
-        coordinator.sessionManager.handleClosedSessionSurfaceTeardown(
+    static func dismantleNSView(_: NSView, coordinator: Coordinator) {
+        let resolution = coordinator.sessionManager.handleSurfaceViewDisappeared(
             sessionId: coordinator.sessionId,
             serverId: coordinator.server.id,
-            reason: "mac dismantle closed session"
+            reason: "mac dismantle"
         )
+        switch resolution {
+        case .preservedForReuse:
+            coordinator.isReusingTerminal = true
+        case .closedAndCleanedUp:
+            coordinator.terminalView = nil
+        }
     }
 
     // MARK: - Coordinator
@@ -576,32 +570,18 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
     static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
         guard let terminalView = terminalView(from: uiView) else { return }
 
-        // Check if session still exists - if it does, user just navigated away
-        // Keep terminal alive for when they come back
-        let sessionStillExists = coordinator.sessionManager.sessions.contains { $0.id == coordinator.sessionId }
-
-        if sessionStillExists {
-            // Session still active - user just navigated away
-            // Pause rendering but keep everything alive
-            terminalView.pauseRendering()
-            _ = terminalView.resignFirstResponder()
-
-            // Mark coordinator so dismantle keeps the surface alive.
-            // IMPORTANT: Do NOT set terminalView = nil here!
-            // The SSH output loop checks terminalView != nil to continue running.
-            // Setting it to nil would break the loop and close the connection.
-            coordinator.preserveSession = true
-            coordinator.sessionManager.detachSurfaceForViewDisappeared(from: coordinator.sessionId)
-            return
-        }
-
-        // Session was closed - full cleanup
-        coordinator.terminalView = nil
-        coordinator.sessionManager.handleClosedSessionSurfaceTeardown(
+        let resolution = coordinator.sessionManager.handleSurfaceViewDisappeared(
             sessionId: coordinator.sessionId,
             serverId: coordinator.server.id,
-            reason: "ios dismantle closed session"
+            reason: "ios dismantle"
         )
+        switch resolution {
+        case .preservedForReuse:
+            _ = terminalView.resignFirstResponder()
+            coordinator.preserveSession = true
+        case .closedAndCleanedUp:
+            coordinator.terminalView = nil
+        }
     }
 
     private func terminalHostView(for terminalView: GhosttyTerminalView) -> UIView {
