@@ -24,6 +24,14 @@ final class TerminalIOSSurfaceOwner {
         surface?.unsafeCValue != nil
     }
 
+    var isMouseCaptured: Bool {
+        surface?.mouseCaptured ?? false
+    }
+
+    var isInAlternateScreen: Bool {
+        surface?.inAlternateScreen ?? false
+    }
+
     func resizeIfNeeded(
         pointSize: CGSize,
         scale: CGFloat,
@@ -152,6 +160,14 @@ final class TerminalIOSSurfaceOwner {
 
     func sendKeyEvent(_ event: Ghostty.Input.KeyEvent) {
         surface?.sendKeyEvent(event)
+    }
+
+    func sendMousePosition(_ position: CGPoint) {
+        surface?.sendMousePos(.init(x: position.x, y: position.y, mods: []))
+    }
+
+    func sendMouseScroll(_ event: Ghostty.Input.MouseScrollEvent) {
+        surface?.sendMouseScroll(event)
     }
 
     func sendDirectHardwareKeyEvent(

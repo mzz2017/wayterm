@@ -17,8 +17,8 @@ extension GhosttyTerminalView {
 
     func currentScrollOwner() -> TerminalScrollOwner {
         TerminalScrollRoutingPolicy.owner(for: TerminalScrollContext(
-            remoteScrollOwnerActive: surface?.mouseCaptured ?? false,
-            remoteAlternateScreenActive: surface?.inAlternateScreen ?? false,
+            remoteScrollOwnerActive: surfaceOwner.isMouseCaptured,
+            remoteAlternateScreenActive: surfaceOwner.isInAlternateScreen,
             hasHostScrollableRows: hasHostScrollableRows,
             isSelecting: isTerminalSelectionActive,
             isPinching: zoomRuntime.isPinchingTerminalZoom
@@ -31,7 +31,7 @@ extension GhosttyTerminalView {
     }
 
     @objc func handlePanGesture(_ recognizer: UIPanGestureRecognizer) {
-        guard surface != nil else { return }
+        guard surfaceOwner.hasLiveSurface else { return }
         if isNativeHostScrollContainerEnabled,
            currentScrollOwner() == .hostScrollback {
             return
@@ -53,13 +53,13 @@ extension GhosttyTerminalView {
                 self?.ghosttyPoint(location) ?? location
             },
             hasSurface: { [weak self] in
-                self?.surface != nil
+                self?.surfaceOwner.hasLiveSurface ?? false
             },
             sendMousePosition: { [weak self] position in
-                self?.surface?.sendMousePos(.init(x: position.x, y: position.y, mods: []))
+                self?.surfaceOwner.sendMousePosition(position)
             },
             sendScrollEvent: { [weak self] event in
-                self?.surface?.sendMouseScroll(event)
+                self?.surfaceOwner.sendMouseScroll(event)
             },
             requestRender: { [weak self] in
                 self?.requestRender()

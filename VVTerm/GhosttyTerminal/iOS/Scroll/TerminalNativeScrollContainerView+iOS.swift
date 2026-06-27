@@ -264,7 +264,7 @@ extension TerminalNativeScrollContainerView: UIScrollViewDelegate {
         let row = geometry.row(forContentOffsetY: Double(scrollView.contentOffset.y))
         guard row != lastSentRow else { return }
         lastSentRow = row
-        _ = terminalView.surface?.perform(action: "scroll_to_row:\(row)")
+        terminalView.surfaceOwner.perform(action: "scroll_to_row:\(row)")
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {

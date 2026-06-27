@@ -20,22 +20,26 @@ struct GhosttyIOSScrollRuntimeBoundaryTests {
         let viewSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/View/GhosttyTerminalView+iOS.swift")
         )
+        let scrollGestureSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Scroll/GhosttyTerminalView+ScrollGesture+iOS.swift")
+        )
         let runtimeSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Scroll/TerminalIOSScrollRuntime.swift")
         )
+        let uiSource = viewSource + "\n" + scrollGestureSource
 
         // Then the view delegates pan handling and stop intent to the runtime.
-        #expect(viewSource.contains("private let scrollRuntime = TerminalIOSScrollRuntime()"))
-        #expect(viewSource.contains("scrollRuntime.handlePanGesture"))
-        #expect(viewSource.contains("scrollRuntime.stopMomentumScrolling"))
+        #expect(viewSource.contains("let scrollRuntime = TerminalIOSScrollRuntime()"))
+        #expect(scrollGestureSource.contains("scrollRuntime.handlePanGesture"))
+        #expect(scrollGestureSource.contains("scrollRuntime.stopMomentumScrolling"))
 
         // And the view no longer owns display-link momentum or the scroll state machine.
-        #expect(!viewSource.contains("private var isScrolling"))
-        #expect(!viewSource.contains("private var momentumDisplayLink"))
-        #expect(!viewSource.contains("private var momentumScrollState"))
-        #expect(!viewSource.contains("private func startMomentumScrolling"))
-        #expect(!viewSource.contains("@objc private func momentumScrollTick"))
-        #expect(!viewSource.contains("private func sendMomentumEnd"))
+        #expect(!uiSource.contains("private var isScrolling"))
+        #expect(!uiSource.contains("private var momentumDisplayLink"))
+        #expect(!uiSource.contains("private var momentumScrollState"))
+        #expect(!uiSource.contains("private func startMomentumScrolling"))
+        #expect(!uiSource.contains("@objc private func momentumScrollTick"))
+        #expect(!uiSource.contains("private func sendMomentumEnd"))
 
         // And the runtime remains the stable owner of extracted scroll state.
         #expect(runtimeSource.contains("final class TerminalIOSScrollRuntime"))

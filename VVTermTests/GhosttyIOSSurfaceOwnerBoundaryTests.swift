@@ -4,9 +4,9 @@ import Testing
 // Test Context:
 // These source-boundary tests protect iOS Ghostty surface ownership. UIView may
 // route UI events and expose transitional computed access for existing
-// extensions, but stored app/surface references and selected display C/FFI
-// operations should live behind TerminalIOSSurfaceOwner. Update only when this
-// ownership intentionally moves again.
+// extensions, but stored app/surface references, direct surface actions, and
+// selected display C/FFI operations should live behind TerminalIOSSurfaceOwner.
+// Update only when this ownership intentionally moves again.
 
 @Suite(.serialized)
 struct GhosttyIOSSurfaceOwnerBoundaryTests {
@@ -21,6 +21,12 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
         )
         let ownerSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/TerminalIOSSurfaceOwner.swift")
+        )
+        let scrollGestureSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Scroll/GhosttyTerminalView+ScrollGesture+iOS.swift")
+        )
+        let nativeScrollSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Scroll/TerminalNativeScrollContainerView+iOS.swift")
         )
 
         #expect(viewSource.contains("let surfaceOwner: TerminalIOSSurfaceOwner"))
@@ -48,6 +54,8 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
         #expect(ownerSource.contains("weak var appWrapper: Ghostty.App?"))
         #expect(ownerSource.contains("var surface: Ghostty.Surface?"))
         #expect(ownerSource.contains("var hasLiveSurface: Bool"))
+        #expect(ownerSource.contains("var isMouseCaptured: Bool"))
+        #expect(ownerSource.contains("var isInAlternateScreen: Bool"))
         #expect(ownerSource.contains("func resizeIfNeeded("))
         #expect(ownerSource.contains("func forceResize("))
         #expect(ownerSource.contains("func redraw("))
@@ -55,6 +63,15 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
         #expect(ownerSource.contains("func updateSurfaceConfig("))
         #expect(ownerSource.contains("func writeOutput("))
         #expect(ownerSource.contains("func externalExited("))
+        #expect(ownerSource.contains("func sendMousePosition("))
+        #expect(ownerSource.contains("func sendMouseScroll("))
+
+        #expect(scrollGestureSource.contains("surfaceOwner.isMouseCaptured"))
+        #expect(scrollGestureSource.contains("surfaceOwner.isInAlternateScreen"))
+        #expect(scrollGestureSource.contains("surfaceOwner.hasLiveSurface"))
+        #expect(scrollGestureSource.contains("surfaceOwner.sendMousePosition(position)"))
+        #expect(scrollGestureSource.contains("surfaceOwner.sendMouseScroll(event)"))
+        #expect(nativeScrollSource.contains("terminalView.surfaceOwner.perform(action: \"scroll_to_row:\\(row)\")"))
 
         #expect(
             !viewSource.contains("surface?.unsafeCValue != nil"),
@@ -83,6 +100,26 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
         #expect(
             !surfaceRuntimeSource.contains("surfaceDisplayRuntime.externalExited("),
             "GhosttyTerminalView+SurfaceRuntime+iOS.swift should route process-exit notifications through the surface owner."
+        )
+        #expect(
+            !scrollGestureSource.contains("surface?.mouseCaptured"),
+            "GhosttyTerminalView+ScrollGesture+iOS.swift should route scroll-owner state through the surface owner."
+        )
+        #expect(
+            !scrollGestureSource.contains("surface?.inAlternateScreen"),
+            "GhosttyTerminalView+ScrollGesture+iOS.swift should route alternate-screen state through the surface owner."
+        )
+        #expect(
+            !scrollGestureSource.contains("surface?.sendMousePos"),
+            "GhosttyTerminalView+ScrollGesture+iOS.swift should route mouse position events through the surface owner."
+        )
+        #expect(
+            !scrollGestureSource.contains("surface?.sendMouseScroll"),
+            "GhosttyTerminalView+ScrollGesture+iOS.swift should route mouse scroll events through the surface owner."
+        )
+        #expect(
+            !nativeScrollSource.contains("terminalView.surface?.perform"),
+            "TerminalNativeScrollContainerView+iOS.swift should route surface actions through the surface owner."
         )
     }
 
