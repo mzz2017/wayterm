@@ -4,13 +4,13 @@ import Testing
 // Test Context:
 // These tests protect Settings UI/Application boundaries for lifecycle-critical
 // persistence, purchase/review mode, sync, SSH key storage, trusted-host cleanup,
-// tab-configuration actions, and model-download lifecycle. Settings views may
-// send user intent, but they must not own destructive cleanup tasks or call
-// lower-level stores directly.
+// tab-configuration actions, symbol-picker persistence/system catalog loading,
+// and model-download lifecycle. Settings views may send user intent, but they
+// must not own destructive cleanup tasks or call lower-level stores directly.
 // The tests inspect source placement only; update them only when the trusted
 // host, reusable SSH key, sync settings, purchase/review mode, transcription
-// download, or custom terminal theme settings owner intentionally moves to
-// another application-layer type.
+// download, SF Symbol picker services, or custom terminal theme settings owner
+// intentionally moves to another application-layer type.
 @Suite
 struct SettingsLifecycleBoundaryTests {
     @Test
@@ -210,6 +210,49 @@ struct SettingsLifecycleBoundaryTests {
         #expect(
             settingsSource.contains("AboutSettingsView(storeManager: storeManager)"),
             "SettingsView should inject StoreManager into AboutSettingsView."
+        )
+    }
+
+    @Test
+    func sfSymbolPickerReceivesCatalogAndRecentStoreFromCaller() throws {
+        // Given the SF Symbol picker leaf view and its current form caller.
+        let root = try sourceRoot()
+        let pickerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/UI/SFSymbolPickerView.swift")
+        )
+        let formSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalPresets/UI/Settings/TerminalPresetFormView.swift")
+        )
+        let servicesSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/Application/SFSymbolSettingsServices.swift")
+        )
+
+        // Then the picker should only render/search injected services, while
+        // UserDefaults persistence and system catalog loading stay in Settings
+        // Application services.
+        #expect(
+            !pickerSource.contains("RecentSymbolsManager.shared"),
+            "SFSymbolPickerView should receive RecentSymbolsManager instead of resolving the live store."
+        )
+        #expect(
+            !pickerSource.contains("SFSymbolsProvider.shared"),
+            "SFSymbolPickerView should receive SFSymbolsProvider instead of resolving the live provider."
+        )
+        #expect(
+            !pickerSource.contains("UserDefaults.standard") && !pickerSource.contains("CoreGlyphs.bundle"),
+            "SFSymbolPickerView should not own persistence or CoreGlyphs catalog loading."
+        )
+        #expect(
+            servicesSource.contains("final class SFSymbolsProvider") && servicesSource.contains("final class RecentSymbolsManager"),
+            "SF Symbol catalog and recent-symbol persistence should live in Settings Application services."
+        )
+        #expect(
+            formSource.contains("provider: symbolsProvider") && formSource.contains("recentManager: recentSymbolsManager"),
+            "TerminalPresetFormView should pass injected symbol services into SFSymbolPickerView."
+        )
+        #expect(
+            !formSource.contains("TerminalPresetManager.shared"),
+            "TerminalPresetFormView should save presets through an injected application manager."
         )
     }
 

@@ -18,15 +18,24 @@ struct TerminalPresetFormView: View {
     let existingPreset: TerminalPreset?
     let onSave: (TerminalPreset) -> Void
     let onCancel: () -> Void
+    private let presetManager: TerminalPresetManager
+    private let symbolsProvider: SFSymbolsProvider
+    @ObservedObject private var recentSymbolsManager: RecentSymbolsManager
 
     init(
         existingPreset: TerminalPreset? = nil,
         onSave: @escaping (TerminalPreset) -> Void,
-        onCancel: @escaping () -> Void
+        onCancel: @escaping () -> Void,
+        presetManager: TerminalPresetManager,
+        symbolsProvider: SFSymbolsProvider,
+        recentSymbolsManager: RecentSymbolsManager
     ) {
         self.existingPreset = existingPreset
         self.onSave = onSave
         self.onCancel = onCancel
+        self.presetManager = presetManager
+        self.symbolsProvider = symbolsProvider
+        _recentSymbolsManager = ObservedObject(wrappedValue: recentSymbolsManager)
 
         if let preset = existingPreset {
             _name = State(initialValue: preset.name)
@@ -113,7 +122,12 @@ struct TerminalPresetFormView: View {
         }
         .frame(width: 450, height: 360)
         .sheet(isPresented: $showingIconPicker) {
-            SFSymbolPickerView(selectedSymbol: $selectedIcon, isPresented: $showingIconPicker)
+            SFSymbolPickerView(
+                selectedSymbol: $selectedIcon,
+                isPresented: $showingIconPicker,
+                provider: symbolsProvider,
+                recentManager: recentSymbolsManager
+            )
         }
     }
 
@@ -123,6 +137,7 @@ struct TerminalPresetFormView: View {
         return !trimmedName.isEmpty && !trimmedCommand.isEmpty
     }
 
+    @MainActor
     private func savePreset() {
         let trimmedName = name.trimmingCharacters(in: .whitespaces)
         let trimmedCommand = command.trimmingCharacters(in: .whitespaces)
@@ -132,10 +147,10 @@ struct TerminalPresetFormView: View {
             updated.name = trimmedName
             updated.command = trimmedCommand
             updated.icon = selectedIcon
-            TerminalPresetManager.shared.updatePreset(updated)
+            presetManager.updatePreset(updated)
             onSave(updated)
         } else {
-            TerminalPresetManager.shared.addPreset(
+            presetManager.addPreset(
                 name: trimmedName,
                 command: trimmedCommand,
                 icon: selectedIcon
