@@ -83,6 +83,9 @@ struct RemoteFileMutationIntentBoundaryTests {
         let previewSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Preview/RemoteFilePreviewViews.swift")
         )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift")
+        )
         let platformSources = try [
             "VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift",
             "VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserIOSScreen.swift"
@@ -111,6 +114,14 @@ struct RemoteFileMutationIntentBoundaryTests {
         #expect(
             !platformSources.contains("await browser.loadPreview"),
             "Platform preview UI should not call the async preview-load implementation directly."
+        )
+        #expect(
+            storeSource.contains("RemoteFilePreviewLoadCoordinator"),
+            "RemoteFileBrowserStore should delegate preview-load request lifecycle to a focused application coordinator."
+        )
+        #expect(
+            !storeSource.contains("previewLoadRequestByTab"),
+            "RemoteFileBrowserStore should not own preview-load request coalescing dictionaries directly."
         )
     }
 

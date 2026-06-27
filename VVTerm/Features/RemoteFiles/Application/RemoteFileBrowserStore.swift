@@ -92,12 +92,6 @@ final class RemoteFileBrowserStore: ObservableObject {
         let filesystemStatus: RemoteFileFilesystemStatus?
     }
 
-    struct PreviewLoadRequest {
-        let entryPath: String
-        let allowLargeDownloads: Bool
-        let task: Task<Void, Never>
-    }
-
     struct NavigationRequest {
         let tabId: UUID
         let serverId: UUID
@@ -120,13 +114,12 @@ final class RemoteFileBrowserStore: ObservableObject {
     let workingDirectoryProvider: WorkingDirectoryProvider
     private let serviceAccessCoordinator: RemoteFileServiceAccessCoordinator
     private let requestLifecycleCoordinator = RemoteFileRequestLifecycleCoordinator()
+    let previewLoadCoordinator = RemoteFilePreviewLoadCoordinator()
     private let moveDestinationLoadCoordinator = RemoteFileMoveDestinationLoadCoordinator()
 
     var persistedStates: [String: RemoteFileBrowserPersistedState] = [:]
     var directoryRequestIDs: [UUID: UUID] = [:]
     var viewerRequestIDs: [UUID: UUID] = [:]
-    var previewLoadRequests: [UUID: PreviewLoadRequest] = [:]
-    var previewLoadRequestByTab: [UUID: UUID] = [:]
     var navigationRequests: [UUID: NavigationRequest] = [:]
     var navigationRequestByTab: [UUID: UUID] = [:]
     static let directoryEntryLimit = 2_000
@@ -144,7 +137,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     var pendingPreviewLoadRequestIDs: Set<UUID> {
-        Set(previewLoadRequestByTab.values)
+        previewLoadCoordinator.pendingRequestIDs
     }
 
     var pendingNavigationRequestIDs: Set<UUID> {
@@ -278,7 +271,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     func waitForPreviewLoadRequest(_ requestID: UUID) async {
-        await previewLoadRequests[requestID]?.task.value
+        await previewLoadCoordinator.waitForRequest(requestID)
     }
 
     func waitForNavigationRequest(_ requestID: UUID) async {
@@ -457,9 +450,8 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     func cancelPreviewLoadRequest(for tabId: UUID) {
-        guard let requestID = previewLoadRequestByTab.removeValue(forKey: tabId) else { return }
         viewerRequestIDs.removeValue(forKey: tabId)
-        previewLoadRequests[requestID]?.task.cancel()
+        previewLoadCoordinator.cancelRequest(for: tabId)
     }
 
     func cancelMutationRequests(for serverId: UUID) {

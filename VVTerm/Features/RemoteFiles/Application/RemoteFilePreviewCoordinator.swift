@@ -10,45 +10,24 @@ extension RemoteFileBrowserStore {
         server: Server,
         allowLargeDownloads: Bool = false
     ) -> UUID? {
-        guard tab.serverId == server.id else { return nil }
-        guard entry.supportsPreview else { return nil }
-
-        if let existingRequestID = previewLoadRequestByTab[tab.id],
-           let existingRequest = previewLoadRequests[existingRequestID] {
-            if existingRequest.entryPath == entry.path,
-               existingRequest.allowLargeDownloads == allowLargeDownloads {
-                return existingRequestID
-            }
-
-            cancelPreviewLoadRequest(for: tab.id)
-        }
-
-        let requestID = UUID()
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                self.previewLoadRequests.removeValue(forKey: requestID)
-                if self.previewLoadRequestByTab[tab.id] == requestID {
-                    self.previewLoadRequestByTab.removeValue(forKey: tab.id)
-                }
-            }
-
-            guard !Task.isCancelled else { return }
-            await self.loadPreview(
-                for: entry,
-                in: tab,
-                server: server,
-                allowLargeDownloads: allowLargeDownloads
-            )
-        }
-
-        previewLoadRequests[requestID] = PreviewLoadRequest(
-            entryPath: entry.path,
+        previewLoadCoordinator.requestLoad(
+            for: entry,
+            in: tab,
+            server: server,
             allowLargeDownloads: allowLargeDownloads,
-            task: task
+            onCancelPrevious: { [weak self] in
+                self?.viewerRequestIDs.removeValue(forKey: tab.id)
+            },
+            loadPreview: { [weak self] in
+                guard let self else { return }
+                await self.loadPreview(
+                    for: entry,
+                    in: tab,
+                    server: server,
+                    allowLargeDownloads: allowLargeDownloads
+                )
+            }
         )
-        previewLoadRequestByTab[tab.id] = requestID
-        return requestID
     }
 
     func loadPreview(
