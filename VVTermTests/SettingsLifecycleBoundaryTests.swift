@@ -189,6 +189,15 @@ struct SettingsLifecycleBoundaryTests {
             "TerminalSettingsView should receive TrustedHostsSettingsStore from SettingsView."
         )
         #expect(
+            !terminalSettingsSource.contains("@AppStorage")
+                && !terminalSettingsSource.contains("UserDefaults.standard"),
+            "TerminalSettingsView should delegate persisted Terminal preference reads and writes to its application store."
+        )
+        #expect(
+            terminalSettingsSource.contains("settingsStore: TerminalSettingsPreferenceStore"),
+            "TerminalSettingsView should receive its Terminal preference store explicitly."
+        )
+        #expect(
             !keychainSettingsSource.contains("SSHKeySettingsStore.shared"),
             "KeychainSettingsView should receive SSHKeySettingsStore from SettingsView."
         )
@@ -198,8 +207,9 @@ struct SettingsLifecycleBoundaryTests {
             "SettingsView should inject GeneralSettingsPreferenceStore and ViewTabConfigurationManager into GeneralSettingsView."
         )
         #expect(
-            settingsSource.contains("trustedHostsStore: trustedHostsStore"),
-            "SettingsView should inject TrustedHostsSettingsStore into TerminalSettingsView."
+            settingsSource.contains("settingsStore: terminalSettings")
+                && settingsSource.contains("trustedHostsStore: trustedHostsStore"),
+            "SettingsView should inject TerminalSettingsPreferenceStore and TrustedHostsSettingsStore into TerminalSettingsView."
         )
         #expect(
             settingsSource.contains("KeychainSettingsView(keyStore: keyStore)"),

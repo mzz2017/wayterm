@@ -136,42 +136,9 @@ private struct TerminalCursorPreview: View {
 // MARK: - Terminal Settings View
 
 struct TerminalSettingsView: View {
-    @Binding var fontName: String
-    @Binding var fontSize: Double
-
-    @AppStorage(CloudKitSyncConstants.terminalThemeNameKey) private var themeName = "Aizen Dark"
-    @AppStorage(CloudKitSyncConstants.terminalThemeNameLightKey) private var themeNameLight = "Aizen Light"
-    @AppStorage(CloudKitSyncConstants.terminalUsePerAppearanceThemeKey) private var usePerAppearanceTheme = true
-    @AppStorage("appearanceMode") private var appearanceMode = "system"
-    @AppStorage("terminalNotificationsEnabled") private var terminalNotificationsEnabled = true
-    @AppStorage("terminalProgressEnabled") private var terminalProgressEnabled = true
-    @AppStorage("terminalAccessoryCustomizationEnabled") private var terminalAccessoryCustomizationEnabled = true
-    @AppStorage("terminalKeyboardDismissButtonEnabled") private var terminalKeyboardDismissButtonEnabled = true
-    @AppStorage("terminalMultiplexerDefault") private var multiplexerDefaultRaw = TerminalMultiplexer.tmux.rawValue
-    @AppStorage("terminalTmuxStartupBehaviorDefault") private var tmuxStartupBehaviorDefaultRaw = TmuxStartupBehavior.askEveryTime.rawValue
-
-    // Copy settings
-    @AppStorage("terminalCopyTrimTrailingWhitespace") private var copyTrimTrailingWhitespace = true
-    @AppStorage("terminalCopyCollapseBlankLines") private var copyCollapseBlankLines = false
-    @AppStorage("terminalCopyStripShellPrompts") private var copyStripShellPrompts = false
-    @AppStorage("terminalCopyFlattenCommands") private var copyFlattenCommands = false
-    @AppStorage("terminalCopyRemoveBoxDrawing") private var copyRemoveBoxDrawing = false
-    @AppStorage("terminalCopyStripAnsiCodes") private var copyStripAnsiCodes = true
-
-    // Image paste settings
-    @AppStorage("terminalImagePasteBehavior") private var imagePasteBehaviorRaw = ImagePasteBehavior.askOnce.rawValue
-
-    // SSH settings
-    @AppStorage("sshKeepAliveEnabled") private var keepAliveEnabled = true
-    @AppStorage("sshKeepAliveInterval") private var keepAliveInterval = 30
-    @AppStorage("sshAutoReconnect") private var autoReconnect = true
-
-    // Cursor settings
-    @AppStorage(TerminalDefaults.cursorStyleKey) private var cursorStyleRaw = TerminalDefaults.defaultCursorStyle.rawValue
-    @AppStorage(TerminalDefaults.cursorBlinkKey) private var cursorBlink = TerminalDefaults.defaultCursorBlink
-
     @EnvironmentObject private var terminalThemeManager: TerminalThemeManager
     @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var settingsStore: TerminalSettingsPreferenceStore
     @ObservedObject private var trustedHostsStore: TrustedHostsSettingsStore
 
     @State private var availableFonts: [String] = []
@@ -181,12 +148,10 @@ struct TerminalSettingsView: View {
     @State private var showingResetKnownHostsConfirmation = false
 
     init(
-        fontName: Binding<String>,
-        fontSize: Binding<Double>,
+        settingsStore: TerminalSettingsPreferenceStore,
         trustedHostsStore: TrustedHostsSettingsStore
     ) {
-        _fontName = fontName
-        _fontSize = fontSize
+        _settingsStore = ObservedObject(wrappedValue: settingsStore)
         _trustedHostsStore = ObservedObject(wrappedValue: trustedHostsStore)
     }
 
@@ -219,42 +184,42 @@ struct TerminalSettingsView: View {
 
     private var tmuxStartupBehaviorDefaultBinding: Binding<TmuxStartupBehavior> {
         Binding(
-            get: { TmuxStartupBehavior(rawValue: tmuxStartupBehaviorDefaultRaw) ?? .askEveryTime },
-            set: { tmuxStartupBehaviorDefaultRaw = $0.rawValue }
+            get: { TmuxStartupBehavior(rawValue: settingsStore.tmuxStartupBehaviorDefaultRaw) ?? .askEveryTime },
+            set: { settingsStore.tmuxStartupBehaviorDefaultRaw = $0.rawValue }
         )
     }
 
     private var imagePasteBehavior: ImagePasteBehavior {
-        ImagePasteBehavior(rawValue: imagePasteBehaviorRaw) ?? .askOnce
+        ImagePasteBehavior(rawValue: settingsStore.imagePasteBehaviorRaw) ?? .askOnce
     }
 
     private var imagePasteBehaviorBinding: Binding<ImagePasteBehavior> {
         Binding(
             get: { imagePasteBehavior },
             set: { behavior in
-                imagePasteBehaviorRaw = behavior.rawValue
+                settingsStore.imagePasteBehaviorRaw = behavior.rawValue
             }
         )
     }
 
     private var tmuxStartupBehaviorDefault: TmuxStartupBehavior {
-        TmuxStartupBehavior(rawValue: tmuxStartupBehaviorDefaultRaw) ?? .askEveryTime
+        TmuxStartupBehavior(rawValue: settingsStore.tmuxStartupBehaviorDefaultRaw) ?? .askEveryTime
     }
 
     private var selectedCursorStyle: TerminalCursorStyle {
-        TerminalCursorStyle(rawValue: cursorStyleRaw) ?? TerminalDefaults.defaultCursorStyle
+        TerminalCursorStyle(rawValue: settingsStore.cursorStyleRaw) ?? TerminalDefaults.defaultCursorStyle
     }
 
     private var cursorPreviewThemeName: String {
-        guard usePerAppearanceTheme else { return themeName }
+        guard settingsStore.usePerAppearanceTheme else { return settingsStore.themeName }
 
-        switch appearanceMode {
+        switch settingsStore.appearanceMode {
         case "light":
-            return themeNameLight
+            return settingsStore.themeNameLight
         case "dark":
-            return themeName
+            return settingsStore.themeName
         default:
-            return colorScheme == .dark ? themeName : themeNameLight
+            return colorScheme == .dark ? settingsStore.themeName : settingsStore.themeNameLight
         }
     }
 
@@ -294,7 +259,7 @@ struct TerminalSettingsView: View {
 
     private var fontSection: some View {
         Section("Font") {
-            Picker("Font Family", selection: $fontName) {
+            Picker("Font Family", selection: $settingsStore.fontName) {
                 ForEach(availableFonts, id: \.self) { font in
                     Text(font).tag(font)
                 }
@@ -302,13 +267,13 @@ struct TerminalSettingsView: View {
             .disabled(availableFonts.isEmpty)
 
             HStack {
-                Text(String(format: String(localized: "Size: %lldpt"), Int64(fontSize)))
+                Text(String(format: String(localized: "Size: %lldpt"), Int64(settingsStore.fontSize)))
                     .frame(width: 80, alignment: .leading)
                 Slider(value: Binding(
-                    get: { fontSize },
-                    set: { fontSize = $0.rounded() }
+                    get: { settingsStore.fontSize },
+                    set: { settingsStore.fontSize = $0.rounded() }
                 ), in: 4...32, step: 1)
-                Stepper("", value: $fontSize, in: 4...32, step: 1)
+                Stepper("", value: $settingsStore.fontSize, in: 4...32, step: 1)
                     .labelsHidden()
             }
         }
@@ -322,13 +287,13 @@ struct TerminalSettingsView: View {
                         CursorStyleOptionView(
                             style: style,
                             isSelected: selectedCursorStyle == style,
-                            blinks: cursorBlink,
+                            blinks: settingsStore.cursorBlink,
                             palette: cursorPreviewPalette
                         )
                         .frame(maxWidth: .infinity)
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            cursorStyleRaw = style.rawValue
+                            settingsStore.cursorStyleRaw = style.rawValue
                         }
                         .accessibilityLabel(style.displayName)
                     }
@@ -339,7 +304,7 @@ struct TerminalSettingsView: View {
                 HStack {
                     Text("Blink")
                     Spacer()
-                    Toggle("Blink", isOn: $cursorBlink)
+                    Toggle("Blink", isOn: $settingsStore.cursorBlink)
                         .labelsHidden()
                 }
             }
@@ -348,20 +313,20 @@ struct TerminalSettingsView: View {
 
     private var themeSection: some View {
         Section("Theme") {
-            Toggle("Use different themes for Light/Dark mode", isOn: $usePerAppearanceTheme)
+            Toggle("Use different themes for Light/Dark mode", isOn: $settingsStore.usePerAppearanceTheme)
 
-            if usePerAppearanceTheme {
-                Picker("Dark Mode Theme", selection: $themeName) {
+            if settingsStore.usePerAppearanceTheme {
+                Picker("Dark Mode Theme", selection: $settingsStore.themeName) {
                     themePickerRows
                 }
                 .disabled(allThemeNames.isEmpty)
 
-                Picker("Light Mode Theme", selection: $themeNameLight) {
+                Picker("Light Mode Theme", selection: $settingsStore.themeNameLight) {
                     themePickerRows
                 }
                 .disabled(allThemeNames.isEmpty)
             } else {
-                Picker("Theme", selection: $themeName) {
+                Picker("Theme", selection: $settingsStore.themeName) {
                     themePickerRows
                 }
                 .disabled(allThemeNames.isEmpty)
@@ -388,17 +353,17 @@ struct TerminalSettingsView: View {
 
     private var terminalBehaviorSection: some View {
         Section("Terminal Behavior") {
-            Toggle("Enable terminal notifications", isOn: $terminalNotificationsEnabled)
-            Toggle("Show progress overlays", isOn: $terminalProgressEnabled)
+            Toggle("Enable terminal notifications", isOn: $settingsStore.terminalNotificationsEnabled)
+            Toggle("Show progress overlays", isOn: $settingsStore.terminalProgressEnabled)
         }
     }
 
     @ViewBuilder
     private var keyboardAccessorySection: some View {
         #if os(iOS)
-        if terminalAccessoryCustomizationEnabled {
+        if settingsStore.terminalAccessoryCustomizationEnabled {
             Section {
-                Toggle("Show keyboard dismiss button", isOn: $terminalKeyboardDismissButtonEnabled)
+                Toggle("Show keyboard dismiss button", isOn: $settingsStore.terminalKeyboardDismissButtonEnabled)
 
                 NavigationLink {
                     TerminalAccessoryCustomizationView()
@@ -425,15 +390,15 @@ struct TerminalSettingsView: View {
     private var sessionPersistenceSection: some View {
         Section {
             Picker("Session persistence", selection: Binding(
-                get: { TerminalMultiplexer(rawValue: multiplexerDefaultRaw) ?? .tmux },
-                set: { multiplexerDefaultRaw = $0.rawValue }
+                get: { TerminalMultiplexer(rawValue: settingsStore.multiplexerDefaultRaw) ?? .tmux },
+                set: { settingsStore.multiplexerDefaultRaw = $0.rawValue }
             )) {
                 ForEach(TerminalMultiplexer.allCases) { mux in
                     Text(mux.displayName).tag(mux)
                 }
             }
 
-            if (TerminalMultiplexer(rawValue: multiplexerDefaultRaw) ?? .tmux).isEnabled {
+            if (TerminalMultiplexer(rawValue: settingsStore.multiplexerDefaultRaw) ?? .tmux).isEnabled {
                 Picker("On connect", selection: tmuxStartupBehaviorDefaultBinding) {
                     ForEach(TmuxStartupBehavior.configCases) { behavior in
                         Text(behavior.displayName).tag(behavior)
@@ -455,12 +420,12 @@ struct TerminalSettingsView: View {
 
     private var copyProcessingSection: some View {
         Section {
-            Toggle("Trim trailing whitespace", isOn: $copyTrimTrailingWhitespace)
-            Toggle("Collapse multiple blank lines", isOn: $copyCollapseBlankLines)
-            Toggle("Strip shell prompts ($ #)", isOn: $copyStripShellPrompts)
-            Toggle("Flatten multi-line commands", isOn: $copyFlattenCommands)
-            Toggle("Remove box-drawing characters", isOn: $copyRemoveBoxDrawing)
-            Toggle("Strip ANSI escape codes", isOn: $copyStripAnsiCodes)
+            Toggle("Trim trailing whitespace", isOn: $settingsStore.copyTrimTrailingWhitespace)
+            Toggle("Collapse multiple blank lines", isOn: $settingsStore.copyCollapseBlankLines)
+            Toggle("Strip shell prompts ($ #)", isOn: $settingsStore.copyStripShellPrompts)
+            Toggle("Flatten multi-line commands", isOn: $settingsStore.copyFlattenCommands)
+            Toggle("Remove box-drawing characters", isOn: $settingsStore.copyRemoveBoxDrawing)
+            Toggle("Strip ANSI escape codes", isOn: $settingsStore.copyStripAnsiCodes)
         } header: {
             Text("Copy Text Processing")
         } footer: {
@@ -503,11 +468,11 @@ struct TerminalSettingsView: View {
 
     private var sshConnectionSection: some View {
         Section("SSH Connection") {
-            Toggle("Auto-reconnect on disconnect", isOn: $autoReconnect)
-            Toggle("Send keep-alive packets", isOn: $keepAliveEnabled)
+            Toggle("Auto-reconnect on disconnect", isOn: $settingsStore.autoReconnect)
+            Toggle("Send keep-alive packets", isOn: $settingsStore.keepAliveEnabled)
 
-            if keepAliveEnabled {
-                Stepper("Interval: \(keepAliveInterval)s", value: $keepAliveInterval, in: 10...120, step: 10)
+            if settingsStore.keepAliveEnabled {
+                Stepper("Interval: \(settingsStore.keepAliveInterval)s", value: $settingsStore.keepAliveInterval, in: 10...120, step: 10)
             }
         }
     }
@@ -556,9 +521,9 @@ struct TerminalSettingsView: View {
         .sheet(isPresented: $showingCustomThemeManager) {
             ManageCustomThemesSheet(
                 customThemes: customThemes,
-                darkThemeName: $themeName,
-                lightThemeName: $themeNameLight,
-                usePerAppearanceTheme: usePerAppearanceTheme,
+                darkThemeName: $settingsStore.themeName,
+                lightThemeName: $settingsStore.themeNameLight,
+                usePerAppearanceTheme: settingsStore.usePerAppearanceTheme,
                 onSuggestThemeName: { source in
                     terminalThemeManager.suggestThemeName(from: source)
                 },
@@ -592,13 +557,13 @@ struct TerminalSettingsView: View {
         } message: {
             Text("VVTerm will forget all saved SSH host fingerprints on this device. The next connection to each host will trust the key it presents.")
         }
-        .onChange(of: themeName) { _ in
+        .onChange(of: settingsStore.themeName) { _ in
             ensureThemeSelectionIsValid()
         }
-        .onChange(of: themeNameLight) { _ in
+        .onChange(of: settingsStore.themeNameLight) { _ in
             ensureThemeSelectionIsValid()
         }
-        .onChange(of: usePerAppearanceTheme) { _ in
+        .onChange(of: settingsStore.usePerAppearanceTheme) { _ in
             ensureThemeSelectionIsValid()
         }
         .onChange(of: terminalThemeManager.customThemes) { _ in
@@ -608,7 +573,7 @@ struct TerminalSettingsView: View {
             if availableFonts.isEmpty {
                 availableFonts = Self.fontListEnsuringCurrentFont(
                     systemFonts: loadSystemFonts(),
-                    currentFontName: fontName
+                    currentFontName: settingsStore.fontName
                 )
             }
             if builtInThemeNames.isEmpty {
@@ -666,11 +631,11 @@ struct TerminalSettingsView: View {
 
     private func ensureThemeSelectionIsValid() {
         let available = Set(allThemeNames)
-        if !available.contains(themeName) {
-            themeName = "Aizen Dark"
+        if !available.contains(settingsStore.themeName) {
+            settingsStore.themeName = "Aizen Dark"
         }
-        if !available.contains(themeNameLight) {
-            themeNameLight = "Aizen Light"
+        if !available.contains(settingsStore.themeNameLight) {
+            settingsStore.themeNameLight = "Aizen Light"
         }
     }
 
@@ -681,19 +646,19 @@ struct TerminalSettingsView: View {
     }
 
     private func applyThemeSelection(themeName: String, applyTarget: CustomThemeApplyTarget) {
-        guard usePerAppearanceTheme else {
-            self.themeName = themeName
+        guard settingsStore.usePerAppearanceTheme else {
+            settingsStore.themeName = themeName
             return
         }
 
         switch applyTarget {
         case .dark:
-            self.themeName = themeName
+            settingsStore.themeName = themeName
         case .light:
-            self.themeNameLight = themeName
+            settingsStore.themeNameLight = themeName
         case .both:
-            self.themeName = themeName
-            self.themeNameLight = themeName
+            settingsStore.themeName = themeName
+            settingsStore.themeNameLight = themeName
         }
     }
 }

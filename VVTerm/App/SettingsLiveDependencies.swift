@@ -6,10 +6,22 @@ private let liveGeneralSettingsPreferenceStore = GeneralSettingsPreferenceStore(
     applyLanguageSelection: { AppLanguage.applySelection($0) }
 )
 
+@MainActor
+private let liveTerminalSettingsPreferenceStore = TerminalSettingsPreferenceStore(
+    persistence: UserDefaultsTerminalSettingsPersistence()
+)
+
 extension GeneralSettingsPreferenceStore {
     @MainActor
     static var live: GeneralSettingsPreferenceStore {
         liveGeneralSettingsPreferenceStore
+    }
+}
+
+extension TerminalSettingsPreferenceStore {
+    @MainActor
+    static var live: TerminalSettingsPreferenceStore {
+        liveTerminalSettingsPreferenceStore
     }
 }
 
@@ -20,6 +32,7 @@ extension SettingsViewDependencies {
             storeManager: .shared,
             serverManager: .shared,
             generalSettings: .live,
+            terminalSettings: .live,
             syncStore: .shared,
             voiceSettings: .live,
             voiceModelDownloads: .shared,

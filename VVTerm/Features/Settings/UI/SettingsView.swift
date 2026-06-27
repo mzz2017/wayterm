@@ -35,6 +35,7 @@ struct SettingsViewDependencies {
     let storeManager: StoreManager
     let serverManager: ServerManager
     let generalSettings: GeneralSettingsPreferenceStore
+    let terminalSettings: TerminalSettingsPreferenceStore
     let syncStore: SyncSettingsStore
     let voiceSettings: TranscriptionSettingsPreferenceStore
     let voiceModelDownloads: VoiceModelDownloadStore
@@ -46,13 +47,11 @@ struct SettingsViewDependencies {
 // MARK: - Settings View
 
 struct SettingsView: View {
-    @AppStorage(TerminalDefaults.fontNameKey) private var terminalFontName = TerminalDefaults.defaultFontName
-    @AppStorage(TerminalDefaults.fontSizeKey) private var terminalFontSize = TerminalDefaults.defaultFontSize
-
     @State private var selection: SettingsSelection? = .pro
     @ObservedObject private var storeManager: StoreManager
     @ObservedObject private var serverManager: ServerManager
     @ObservedObject private var generalSettings: GeneralSettingsPreferenceStore
+    @ObservedObject private var terminalSettings: TerminalSettingsPreferenceStore
     @ObservedObject private var syncStore: SyncSettingsStore
     @ObservedObject private var voiceSettings: TranscriptionSettingsPreferenceStore
     @ObservedObject private var voiceModelDownloads: VoiceModelDownloadStore
@@ -68,6 +67,7 @@ struct SettingsView: View {
         _storeManager = ObservedObject(wrappedValue: dependencies.storeManager)
         _serverManager = ObservedObject(wrappedValue: dependencies.serverManager)
         _generalSettings = ObservedObject(wrappedValue: dependencies.generalSettings)
+        _terminalSettings = ObservedObject(wrappedValue: dependencies.terminalSettings)
         _syncStore = ObservedObject(wrappedValue: dependencies.syncStore)
         _voiceSettings = ObservedObject(wrappedValue: dependencies.voiceSettings)
         _voiceModelDownloads = ObservedObject(wrappedValue: dependencies.voiceModelDownloads)
@@ -178,8 +178,7 @@ struct SettingsView: View {
 
                     NavigationLink {
                         TerminalSettingsView(
-                            fontName: $terminalFontName,
-                            fontSize: $terminalFontSize,
+                            settingsStore: terminalSettings,
                             trustedHostsStore: trustedHostsStore
                         )
                             .navigationTitle("Terminal")
@@ -262,8 +261,7 @@ struct SettingsView: View {
                                 .navigationSubtitle(String(localized: "Appearance and preferences"))
         case .terminal:
                             TerminalSettingsView(
-                                fontName: $terminalFontName,
-                                fontSize: $terminalFontSize,
+                                settingsStore: terminalSettings,
                                 trustedHostsStore: trustedHostsStore
                             )
                                 .navigationTitle("Terminal")
