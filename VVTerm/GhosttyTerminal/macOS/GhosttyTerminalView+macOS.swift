@@ -73,6 +73,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     // MARK: - Display Link Rendering (event-driven for SSH)
 
     private let displayLinkRuntime = TerminalMacOSDisplayLinkRuntime()
+    private let surfaceLifecycleRuntime = TerminalMacOSSurfaceLifecycleRuntime()
     private var accumulatedMagnification: CGFloat = 0
     private let zoomIndicatorView = TerminalZoomIndicatorView()
     private var zoomIndicatorHideWorkItem: DispatchWorkItem?
@@ -106,18 +107,28 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     /// Call this when closing a session to ensure proper cleanup.
     func cleanup() {
         isShuttingDown = true
-        zoomIndicatorHideWorkItem?.cancel()
-        zoomIndicatorHideWorkItem = nil
+        surface = surfaceLifecycleRuntime.cleanup(
+            surface: surface,
+            surfaceRegistration: surfaceRegistration,
+            stopDisplayLink: { [displayLinkRuntime] in
+                displayLinkRuntime.stop()
+            },
+            cancelPendingZoomIndicatorHide: { [weak self] in
+                self?.zoomIndicatorHideWorkItem?.cancel()
+                self?.zoomIndicatorHideWorkItem = nil
+            },
+            removeConfigReloadObserver: { [weak self] in
+                guard let self, let observer = self.configReloadObserver else { return }
+                NotificationCenter.default.removeObserver(observer)
+                self.configReloadObserver = nil
+            },
+            clearCallbacks: { [weak self] in
+                self?.clearCallbacks()
+            }
+        )
+    }
 
-        displayLinkRuntime.stop()
-
-        // Remove config reload observer
-        if let observer = configReloadObserver {
-            NotificationCenter.default.removeObserver(observer)
-            configReloadObserver = nil
-        }
-
-        // Clear all callbacks to break retain cycles
+    private func clearCallbacks() {
         onReady = nil
         onProcessExit = nil
         onTitleChange = nil
@@ -126,19 +137,6 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
         onResize = nil
         richPasteInterceptor = nil
         writeCallback = nil
-
-        surface?.invalidateCallbackContext()
-
-        // Stop rendering/input callbacks
-        if let cSurface = surface?.unsafeCValue {
-            ghostty_surface_set_focus(cSurface, false)
-        }
-
-        surfaceRegistration.unregister()
-
-        // Detach immediately, then release native resources off the UI thread.
-        surface?.free()
-        surface = nil
     }
 
     // MARK: - Initialization
@@ -300,16 +298,16 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
 
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
-        if result, let surface = surface?.unsafeCValue {
-            ghostty_surface_set_focus(surface, true)
+        if result {
+            surfaceLifecycleRuntime.setFocus(true, surface: surface)
         }
         return result
     }
 
     override func resignFirstResponder() -> Bool {
         let result = super.resignFirstResponder()
-        if result, let surface = surface?.unsafeCValue {
-            ghostty_surface_set_focus(surface, false)
+        if result {
+            surfaceLifecycleRuntime.setFocus(false, surface: surface)
         }
         return result
     }
@@ -608,8 +606,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
 
     /// Check if the terminal process has exited
     var processExited: Bool {
-        guard let surface = surface?.unsafeCValue else { return true }
-        return ghostty_surface_process_exited(surface)
+        surfaceLifecycleRuntime.processExited(surface: surface)
     }
 
     /// Check if closing this terminal needs confirmation
