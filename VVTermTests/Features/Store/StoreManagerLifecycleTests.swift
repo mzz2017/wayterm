@@ -334,6 +334,29 @@ struct StoreManagerLifecycleTests {
             "A superseded review-mode refresh task must not run entitlement work after cancellation."
         )
     }
+
+    @Test
+    func storeTelemetryIsInjectedForPaywallReviewAndLaunchEvents() async {
+        let telemetry = StoreTelemetrySpy()
+        let manager = StoreManager.makeForTesting(telemetry: telemetry)
+
+        manager.notePaywallPresented(source: .postFirstConnection)
+        manager.requestReviewAfterPurchase()
+        await manager.checkEntitlements()
+
+        #expect(
+            telemetry.paywallSources == [.postFirstConnection],
+            "StoreManager should record paywall presentation through its injected telemetry service."
+        )
+        #expect(
+            telemetry.reviewAfterPurchaseRequestCount == 1,
+            "Post-purchase review requests should go through injected Store telemetry instead of UI-owned engagement singletons."
+        )
+        #expect(
+            telemetry.launchedProStates == [false],
+            "Entitlement refresh should record launch/pro state through injected Store telemetry."
+        )
+    }
 }
 
 private actor StoreRequestGate {
@@ -384,5 +407,29 @@ private actor StoreRefreshRecorder {
 
     func refreshCount() -> Int {
         count
+    }
+}
+
+@MainActor
+private final class StoreTelemetrySpy: StoreTelemetry {
+    private(set) var paywallSources: [PaywallSource] = []
+    private(set) var purchasedProducts: [(source: PaywallSource, productId: String)] = []
+    private(set) var launchedProStates: [Bool] = []
+    private(set) var reviewAfterPurchaseRequestCount = 0
+
+    func notePaywallPresented(source: PaywallSource) {
+        paywallSources.append(source)
+    }
+
+    func trackPurchase(source: PaywallSource, productId: String) {
+        purchasedProducts.append((source: source, productId: productId))
+    }
+
+    func trackAppLaunched(isPro: Bool) {
+        launchedProStates.append(isPro)
+    }
+
+    func requestReviewAfterPurchase() {
+        reviewAfterPurchaseRequestCount += 1
     }
 }

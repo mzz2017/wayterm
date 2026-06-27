@@ -45,6 +45,7 @@ final class StoreManager: ObservableObject {
     private var reviewModeExpiresAt: Date?
     private let loadProductsAction: StoreLifecycleAction
     private let checkEntitlementsAction: StoreLifecycleAction
+    private let telemetry: any StoreTelemetry
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Store")
     private let reviewModeDuration: TimeInterval = 60 * 60 * 5
 
@@ -67,7 +68,8 @@ final class StoreManager: ObservableObject {
     private init(
         startBackgroundTasks: Bool = true,
         loadProductsAction: StoreLifecycleAction? = nil,
-        checkEntitlementsAction: StoreLifecycleAction? = nil
+        checkEntitlementsAction: StoreLifecycleAction? = nil,
+        telemetry: (any StoreTelemetry)? = nil
     ) {
         self.loadProductsAction = loadProductsAction ?? { manager in
             await manager.loadProducts()
@@ -75,6 +77,7 @@ final class StoreManager: ObservableObject {
         self.checkEntitlementsAction = checkEntitlementsAction ?? { manager in
             await manager.checkEntitlements()
         }
+        self.telemetry = telemetry ?? LiveStoreTelemetry.shared
 
         if startBackgroundTasks {
             updateListenerTask = listenForTransactions()
@@ -199,11 +202,7 @@ final class StoreManager: ObservableObject {
     func notePaywallPresented(source: PaywallSource) {
         activePaywallSource = source
         hasPresentedPaywallThisLaunch = true
-        EngagementTracker.shared.notePaywallPresented()
-        if source == .postFirstConnection {
-            EngagementTracker.shared.markProIntroShown()
-        }
-        AnalyticsTracker.shared.trackPaywallViewed(source: source.rawValue)
+        telemetry.notePaywallPresented(source: source)
     }
 
     // MARK: - Purchase
@@ -436,6 +435,10 @@ final class StoreManager: ObservableObject {
         }
     }
 
+    func requestReviewAfterPurchase() {
+        telemetry.requestReviewAfterPurchase()
+    }
+
     private func scheduleReviewModeExpiry() {
         reviewModeExpiryTask?.cancel()
         guard let expiresAt = reviewModeExpiresAt else { return }
@@ -458,10 +461,7 @@ final class StoreManager: ObservableObject {
     private func applySuccessfulPurchase(of product: Product) {
         lastPurchasedProductId = product.id
         purchaseState = .purchased
-        AnalyticsTracker.shared.trackPurchase(
-            source: activePaywallSource.rawValue,
-            productId: product.id
-        )
+        telemetry.trackPurchase(source: activePaywallSource, productId: product.id)
         logger.info("Purchase successful: \(product.id)")
     }
 
@@ -504,7 +504,7 @@ final class StoreManager: ObservableObject {
         isPro = hasAccess || isReviewModeEnabled
         isLifetime = hasLifetime
         subscriptionStatus = status
-        AnalyticsTracker.shared.trackAppLaunched(isPro: isPro)
+        telemetry.trackAppLaunched(isPro: isPro)
         logger.info("Entitlements checked: isPro=\(hasAccess), isLifetime=\(hasLifetime), reviewMode=\(self.isReviewModeEnabled)")
     }
 }
@@ -514,12 +514,14 @@ extension StoreManager {
     static func makeForTesting(
         startBackgroundTasks: Bool = false,
         loadProductsAction: (@MainActor (StoreManager) async -> Void)? = nil,
-        checkEntitlementsAction: (@MainActor (StoreManager) async -> Void)? = nil
+        checkEntitlementsAction: (@MainActor (StoreManager) async -> Void)? = nil,
+        telemetry: (any StoreTelemetry)? = nil
     ) -> StoreManager {
         StoreManager(
             startBackgroundTasks: startBackgroundTasks,
             loadProductsAction: loadProductsAction,
-            checkEntitlementsAction: checkEntitlementsAction
+            checkEntitlementsAction: checkEntitlementsAction,
+            telemetry: telemetry ?? NoopStoreTelemetry()
         )
     }
 
