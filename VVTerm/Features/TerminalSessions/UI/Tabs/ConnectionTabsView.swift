@@ -288,6 +288,7 @@ struct ConnectionTerminalContainer: View {
                     tab: tab,
                     server: server,
                     tabManager: tabManager,
+                    storeManager: storeManager,
                     isSelected: isVisible
                 )
                 .padding(macOSZenTerminalContentInsets)

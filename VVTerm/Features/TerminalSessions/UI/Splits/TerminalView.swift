@@ -18,6 +18,7 @@ struct TerminalTabView: View {
     let tab: TerminalTab
     let server: Server
     @ObservedObject var tabManager: TerminalTabManager
+    @ObservedObject var storeManager: StoreManager
     let isSelected: Bool
 
     @State private var layoutVersion: Int = 0
@@ -216,7 +217,7 @@ struct TerminalTabView: View {
     // MARK: - Split Actions
 
     func splitHorizontal() {
-        guard StoreManager.shared.isPro else {
+        guard storeManager.isPro else {
             showingSplitPaneUpgradeAlert = true
             return
         }
@@ -225,7 +226,7 @@ struct TerminalTabView: View {
     }
 
     func splitVertical() {
-        guard StoreManager.shared.isPro else {
+        guard storeManager.isPro else {
             showingSplitPaneUpgradeAlert = true
             return
         }

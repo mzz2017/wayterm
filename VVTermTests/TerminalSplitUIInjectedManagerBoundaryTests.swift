@@ -3,9 +3,9 @@ import Testing
 
 // Test Context:
 // Protected behavior: split terminal UI may send user intent, but it must send
-// that intent through the injected TerminalSessions application owner.
+// that intent through injected application owners and entitlement dependencies.
 // Target invariant: TerminalTabView and TerminalPaneView must use their
-// injected tabManager; they must not resolve TerminalTabManager.shared.
+// injected managers; they must not resolve shared singletons.
 // Fake assumptions: these are source-boundary tests because the protected
 // behavior is dependency ownership at the SwiftUI/application boundary.
 // Update guidance: update these tests only if split terminal UI ownership
@@ -93,6 +93,40 @@ struct TerminalSplitUIInjectedManagerBoundaryTests {
         // Then split terminal UI files should not resolve the tab manager singleton.
         #expect(!terminalViewSource.contains("TerminalTabManager.shared"))
         #expect(!paneSource.contains("TerminalTabManager.shared"))
+    }
+
+    @Test
+    func terminalTabViewUsesInjectedStoreManagerForSplitEntitlement() throws {
+        let root = try sourceRoot()
+        let terminalViewSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift")
+        )
+        let tabsSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift")
+        )
+        let tabView = try slice(
+            startingAt: "struct TerminalTabView",
+            endingBefore: "#endif",
+            in: terminalViewSource
+        )
+
+        // Given split-pane creation is a Pro entitlement boundary.
+        #expect(
+            tabView.contains("@ObservedObject var storeManager: StoreManager"),
+            "TerminalTabView should receive StoreManager from its server terminal composition boundary."
+        )
+        #expect(
+            tabView.contains("guard storeManager.isPro else"),
+            "Split-pane entitlement checks should use the injected StoreManager."
+        )
+        #expect(
+            !tabView.contains("StoreManager.shared"),
+            "TerminalTabView should not resolve StoreManager.shared from split UI."
+        )
+        #expect(
+            tabsSource.contains("storeManager: storeManager"),
+            "ConnectionTabsView should pass its injected StoreManager into TerminalTabView."
+        )
     }
 
     private func slice(startingAt marker: String, endingBefore endMarker: String, in source: String) throws -> String {
