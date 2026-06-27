@@ -172,13 +172,23 @@ struct TerminalSettingsView: View {
 
     @EnvironmentObject private var terminalThemeManager: TerminalThemeManager
     @Environment(\.colorScheme) private var colorScheme
-    @ObservedObject private var trustedHostsStore = TrustedHostsSettingsStore.shared
+    @ObservedObject private var trustedHostsStore: TrustedHostsSettingsStore
 
     @State private var availableFonts: [String] = []
     @State private var builtInThemeNames: [String] = []
     @State private var customThemeErrorMessage: String?
     @State private var showingCustomThemeManager = false
     @State private var showingResetKnownHostsConfirmation = false
+
+    init(
+        fontName: Binding<String>,
+        fontSize: Binding<Double>,
+        trustedHostsStore: TrustedHostsSettingsStore
+    ) {
+        _fontName = fontName
+        _fontSize = fontSize
+        _trustedHostsStore = ObservedObject(wrappedValue: trustedHostsStore)
+    }
 
     private var builtInThemeOptions: [String] {
         Set(builtInThemeNames)

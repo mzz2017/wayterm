@@ -3,8 +3,9 @@ import Testing
 
 // Test Context:
 // These tests protect Settings UI/Application boundaries for lifecycle-critical
-// persistence, purchase, sync, and cleanup actions. Settings views may send user
-// intent, but they must not own destructive cleanup tasks or call lower-level stores directly.
+// persistence, purchase, sync, SSH key storage, trusted-host cleanup, and
+// tab-configuration actions. Settings views may send user intent, but they must
+// not own destructive cleanup tasks or call lower-level stores directly.
 // The tests inspect source placement only; update them only when the trusted
 // host, reusable SSH key, sync settings, or custom terminal theme settings owner
 // intentionally moves to another application-layer type.
@@ -139,6 +140,51 @@ struct SettingsLifecycleBoundaryTests {
         #expect(
             settingsSource.contains("init(dependencies: SettingsViewDependencies)"),
             "SettingsView should expose an explicit dependency initializer."
+        )
+    }
+
+    @Test
+    func generalTerminalAndKeychainSettingsReceiveBusinessStoresFromSettingsRoot() throws {
+        // Given the General, Terminal, Keychain, and Settings root SwiftUI source.
+        let root = try sourceRoot()
+        let generalSettingsSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/UI/GeneralSettingsView.swift")
+        )
+        let terminalSettingsSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/UI/TerminalSettingsView.swift")
+        )
+        let keychainSettingsSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/UI/KeychainSettingsView.swift")
+        )
+        let settingsSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/UI/SettingsView.swift")
+        )
+
+        // Then these leaf views must receive application stores from SettingsView
+        // rather than resolving business singletons by themselves.
+        #expect(
+            !generalSettingsSource.contains("ViewTabConfigurationManager.shared"),
+            "GeneralSettingsView should receive ViewTabConfigurationManager from SettingsView."
+        )
+        #expect(
+            !terminalSettingsSource.contains("TrustedHostsSettingsStore.shared"),
+            "TerminalSettingsView should receive TrustedHostsSettingsStore from SettingsView."
+        )
+        #expect(
+            !keychainSettingsSource.contains("SSHKeySettingsStore.shared"),
+            "KeychainSettingsView should receive SSHKeySettingsStore from SettingsView."
+        )
+        #expect(
+            settingsSource.contains("GeneralSettingsView(viewTabConfig: viewTabConfig)"),
+            "SettingsView should inject ViewTabConfigurationManager into GeneralSettingsView."
+        )
+        #expect(
+            settingsSource.contains("trustedHostsStore: trustedHostsStore"),
+            "SettingsView should inject TrustedHostsSettingsStore into TerminalSettingsView."
+        )
+        #expect(
+            settingsSource.contains("KeychainSettingsView(keyStore: keyStore)"),
+            "SettingsView should inject SSHKeySettingsStore into KeychainSettingsView."
         )
     }
 

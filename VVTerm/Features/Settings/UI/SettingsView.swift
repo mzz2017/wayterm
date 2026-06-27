@@ -36,6 +36,9 @@ struct SettingsViewDependencies {
     let serverManager: ServerManager
     let syncStore: SyncSettingsStore
     let voiceModelDownloads: VoiceModelDownloadStore
+    let viewTabConfig: ViewTabConfigurationManager
+    let keyStore: SSHKeySettingsStore
+    let trustedHostsStore: TrustedHostsSettingsStore
 }
 
 // MARK: - Settings View
@@ -49,6 +52,9 @@ struct SettingsView: View {
     @ObservedObject private var serverManager: ServerManager
     @ObservedObject private var syncStore: SyncSettingsStore
     @ObservedObject private var voiceModelDownloads: VoiceModelDownloadStore
+    @ObservedObject private var viewTabConfig: ViewTabConfigurationManager
+    @ObservedObject private var keyStore: SSHKeySettingsStore
+    @ObservedObject private var trustedHostsStore: TrustedHostsSettingsStore
 
     #if os(iOS)
     @Environment(\.dismiss) private var dismiss
@@ -59,6 +65,9 @@ struct SettingsView: View {
         _serverManager = ObservedObject(wrappedValue: dependencies.serverManager)
         _syncStore = ObservedObject(wrappedValue: dependencies.syncStore)
         _voiceModelDownloads = ObservedObject(wrappedValue: dependencies.voiceModelDownloads)
+        _viewTabConfig = ObservedObject(wrappedValue: dependencies.viewTabConfig)
+        _keyStore = ObservedObject(wrappedValue: dependencies.keyStore)
+        _trustedHostsStore = ObservedObject(wrappedValue: dependencies.trustedHostsStore)
     }
 
     var body: some View {
@@ -151,7 +160,7 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink {
-                        GeneralSettingsView()
+                        GeneralSettingsView(viewTabConfig: viewTabConfig)
                             .navigationTitle("General")
                             .navigationBarTitleDisplayMode(.inline)
                     } label: {
@@ -159,7 +168,11 @@ struct SettingsView: View {
                     }
 
                     NavigationLink {
-                        TerminalSettingsView(fontName: $terminalFontName, fontSize: $terminalFontSize)
+                        TerminalSettingsView(
+                            fontName: $terminalFontName,
+                            fontSize: $terminalFontSize,
+                            trustedHostsStore: trustedHostsStore
+                        )
                             .navigationTitle("Terminal")
                             .navigationBarTitleDisplayMode(.inline)
                     } label: {
@@ -175,7 +188,7 @@ struct SettingsView: View {
                     }
 
                     NavigationLink {
-                        KeychainSettingsView()
+                        KeychainSettingsView(keyStore: keyStore)
                             .navigationTitle("SSH Keys")
                             .navigationBarTitleDisplayMode(.inline)
                     } label: {
@@ -229,11 +242,15 @@ struct SettingsView: View {
                                     : String(localized: "Upgrade for unlimited features")
                                 )
         case .general:
-                            GeneralSettingsView()
+                            GeneralSettingsView(viewTabConfig: viewTabConfig)
                                 .navigationTitle("General")
                                 .navigationSubtitle(String(localized: "Appearance and preferences"))
         case .terminal:
-                            TerminalSettingsView(fontName: $terminalFontName, fontSize: $terminalFontSize)
+                            TerminalSettingsView(
+                                fontName: $terminalFontName,
+                                fontSize: $terminalFontSize,
+                                trustedHostsStore: trustedHostsStore
+                            )
                                 .navigationTitle("Terminal")
                                 .navigationSubtitle(String(localized: "Font, theme, and connection settings"))
         case .transcription:
@@ -241,7 +258,7 @@ struct SettingsView: View {
                                 .navigationTitle("Transcription")
                                 .navigationSubtitle(String(localized: "Speech-to-text engine and models"))
         case .keychain:
-                            KeychainSettingsView()
+                            KeychainSettingsView(keyStore: keyStore)
                                 .navigationTitle("SSH Keys")
                                 .navigationSubtitle(String(localized: "Manage stored SSH keys"))
         case .sync:

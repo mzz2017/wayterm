@@ -9,12 +9,16 @@ import AppKit
 // MARK: - Keychain Settings View
 
 struct KeychainSettingsView: View {
-    @ObservedObject private var keyStore = SSHKeySettingsStore.shared
+    @ObservedObject private var keyStore: SSHKeySettingsStore
     @State private var showingAddKey = false
     @State private var showingGenerateKey = false
     @State private var showingDeleteConfirmation = false
     @State private var keyToDelete: SSHKeyEntry?
     @State private var keyToShowDetails: SSHKeyEntry?
+
+    init(keyStore: SSHKeySettingsStore) {
+        _keyStore = ObservedObject(wrappedValue: keyStore)
+    }
 
     var body: some View {
         Group {
@@ -678,7 +682,3 @@ struct PublicKeyDisplaySheet: View {
 }
 
 // MARK: - Preview
-
-#Preview {
-    KeychainSettingsView()
-}

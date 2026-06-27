@@ -7,7 +7,10 @@ extension SettingsViewDependencies {
             storeManager: .shared,
             serverManager: .shared,
             syncStore: .shared,
-            voiceModelDownloads: .shared
+            voiceModelDownloads: .shared,
+            viewTabConfig: .shared,
+            keyStore: .shared,
+            trustedHostsStore: .shared
         )
     }
 }

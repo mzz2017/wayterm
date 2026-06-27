@@ -270,9 +270,13 @@ struct GeneralSettingsView: View {
     @AppStorage(PrivacyModeSettings.enabledKey) private var privacyModeEnabled = false
     @AppStorage(AnalyticsTracker.enabledKey) private var analyticsEnabled = true
     @EnvironmentObject private var appLockManager: AppLockManager
-    @StateObject private var viewTabConfig = ViewTabConfigurationManager.shared
+    @ObservedObject private var viewTabConfig: ViewTabConfigurationManager
 
     private let authGraceOptions = [0, 15, 30, 60, 120, 300]
+
+    init(viewTabConfig: ViewTabConfigurationManager) {
+        _viewTabConfig = ObservedObject(wrappedValue: viewTabConfig)
+    }
 
     var body: some View {
         Form {
@@ -419,9 +423,4 @@ struct GeneralSettingsView: View {
             AppLanguage.applySelection(newValue)
         }
     }
-}
-
-#Preview {
-    GeneralSettingsView()
-        .frame(width: 500, height: 400)
 }
