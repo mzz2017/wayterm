@@ -57,7 +57,8 @@ enum CloudKitPendingMutationLiveSync {
             break
         case (.terminalAccessoryProfile, .upsert):
             if let profile = try mutation.decodedPayload(as: TerminalAccessoryProfile.self) {
-                let resolvedProfile = try await CloudKitManager.shared.syncTerminalAccessoryProfile(profile)
+                let profileSync = TerminalAccessoryCloudKitProfileSyncService(cloudKit: CloudKitManager.shared)
+                let resolvedProfile = try await profileSync.syncTerminalAccessoryProfile(profile)
                 NotificationCenter.default.post(
                     name: TerminalAccessoryCloudResolutionNotification.didResolve,
                     object: CloudKitSyncCoordinator.shared,

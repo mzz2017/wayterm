@@ -1,29 +1,36 @@
 import CloudKit
 import Foundation
 
-extension CloudKitManager: TerminalAccessoryCloudProfileSyncing {
+@MainActor
+final class TerminalAccessoryCloudKitProfileSyncService: TerminalAccessoryCloudProfileSyncing {
     private enum TerminalAccessoryCloudKitRecord {
         static let recordType = "UserPreference"
     }
 
-    func syncTerminalAccessoryProfile(_ localProfile: TerminalAccessoryProfile) async throws -> TerminalAccessoryProfile {
-        syncStatus = .syncing
-        defer { syncStatus = .idle }
+    private let cloudKit: CloudKitManager
 
-        let recordID = CKRecord.ID(recordName: TerminalAccessoryProfile.recordName, zoneID: recordZoneID)
+    init(cloudKit: CloudKitManager) {
+        self.cloudKit = cloudKit
+    }
+
+    func syncTerminalAccessoryProfile(_ localProfile: TerminalAccessoryProfile) async throws -> TerminalAccessoryProfile {
+        cloudKit.syncStatus = .syncing
+        defer { cloudKit.syncStatus = .idle }
+
+        let recordID = CKRecord.ID(recordName: TerminalAccessoryProfile.recordName, zoneID: cloudKit.recordZoneID)
         let normalizedLocal = localProfile.normalized()
 
         var baseRecord: CKRecord?
         var mergedProfile = normalizedLocal
 
         do {
-            if let remoteRecord = try await fetchRecord(named: TerminalAccessoryProfile.recordName) {
+            if let remoteRecord = try await cloudKit.fetchRecord(named: TerminalAccessoryProfile.recordName) {
                 baseRecord = remoteRecord
                 if let remoteProfile = decodeTerminalAccessoryProfile(from: remoteRecord) {
                     let normalizedRemote = remoteProfile.normalized()
                     mergedProfile = TerminalAccessoryProfile.merged(local: normalizedLocal, remote: normalizedRemote).normalized()
                     if mergedProfile == normalizedRemote {
-                        lastSyncDate = Date()
+                        cloudKit.lastSyncDate = Date()
                         return normalizedRemote
                     }
                 }
@@ -44,7 +51,7 @@ extension CloudKitManager: TerminalAccessoryCloudProfileSyncing {
             )
 
             do {
-                try await saveCloudKitRecord(
+                try await cloudKit.saveCloudKitRecord(
                     candidateRecord,
                     successLog: "Saved terminal accessory profile to CloudKit",
                     failureLog: "Failed to save terminal accessory profile",
@@ -52,13 +59,13 @@ extension CloudKitManager: TerminalAccessoryCloudProfileSyncing {
                 )
                 return mergedProfile
             } catch {
-                if let serverRecord = extractServerRecord(from: error),
+                if let serverRecord = cloudKit.extractServerRecord(from: error),
                    let serverProfile = decodeTerminalAccessoryProfile(from: serverRecord) {
                     let normalizedRemote = serverProfile.normalized()
                     let conflictResolved = TerminalAccessoryProfile.merged(local: mergedProfile, remote: normalizedRemote).normalized()
 
                     if conflictResolved == normalizedRemote {
-                        lastSyncDate = Date()
+                        cloudKit.lastSyncDate = Date()
                         return normalizedRemote
                     }
 
@@ -67,7 +74,7 @@ extension CloudKitManager: TerminalAccessoryCloudProfileSyncing {
                     continue
                 }
 
-                if isUnknownItemError(error) {
+                if cloudKit.isUnknownItemError(error) {
                     baseRecord = nil
                     continue
                 }

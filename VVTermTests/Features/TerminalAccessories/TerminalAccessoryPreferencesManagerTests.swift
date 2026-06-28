@@ -251,6 +251,16 @@ final class TerminalAccessoryPreferencesManagerTests: XCTestCase {
                 "VVTerm/App/TerminalAccessoryPreferencesLiveDependencies.swift"
             )
         )
+        let cloudSyncSource = try source(
+            at: root.appendingPathComponent(
+                "VVTerm/Features/TerminalAccessories/Infrastructure/TerminalAccessoryPreferencesCloudSync.swift"
+            )
+        )
+        let pendingLiveSyncSource = try source(
+            at: root.appendingPathComponent(
+                "VVTerm/App/CloudKitPendingMutationLiveSync.swift"
+            )
+        )
 
         // Then live CloudKit singletons should be wired at the App boundary, not
         // hidden inside the feature manager constructor.
@@ -263,12 +273,28 @@ final class TerminalAccessoryPreferencesManagerTests: XCTestCase {
             "TerminalAccessoryPreferencesManager should receive pending sync coordination through injected dependencies."
         )
         XCTAssertTrue(
-            liveDependencySource.contains("cloudProfileSync: CloudKitManager.shared"),
-            "App live wiring should provide CloudKit profile sync for terminal accessories."
+            liveDependencySource.contains("cloudProfileSync: TerminalAccessoryCloudKitProfileSyncService("),
+            "App live wiring should provide a feature-owned CloudKit profile sync adapter for terminal accessories."
         )
         XCTAssertTrue(
             liveDependencySource.contains("syncCoordinator: CloudKitSyncCoordinator.shared"),
             "App live wiring should provide CloudKit pending sync coordination for terminal accessories."
+        )
+        XCTAssertTrue(
+            cloudSyncSource.contains("final class TerminalAccessoryCloudKitProfileSyncService"),
+            "Terminal accessory CloudKit merge policy should live in a feature-owned adapter."
+        )
+        XCTAssertFalse(
+            cloudSyncSource.contains("extension CloudKitManager: TerminalAccessoryCloudProfileSyncing"),
+            "Terminal accessory sync policy should not be attached to the Core CloudKitManager type."
+        )
+        XCTAssertTrue(
+            pendingLiveSyncSource.contains("TerminalAccessoryCloudKitProfileSyncService("),
+            "Pending terminal accessory mutations should use the feature-owned CloudKit adapter."
+        )
+        XCTAssertFalse(
+            pendingLiveSyncSource.contains("CloudKitManager.shared.syncTerminalAccessoryProfile"),
+            "Pending terminal accessory mutations should not call feature sync policy on the Core manager."
         )
     }
 

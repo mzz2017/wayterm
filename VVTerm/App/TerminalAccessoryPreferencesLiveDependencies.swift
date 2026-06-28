@@ -8,7 +8,7 @@ extension TerminalAccessoryPreferencesDependencies {
             trackCustomActionCreated: { kind in
                 AnalyticsTracker.shared.trackCustomActionCreated(kind: kind.rawValue)
             },
-            cloudProfileSync: CloudKitManager.shared,
+            cloudProfileSync: TerminalAccessoryCloudKitProfileSyncService(cloudKit: CloudKitManager.shared),
             syncCoordinator: CloudKitSyncCoordinator.shared
         )
     }
