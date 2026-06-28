@@ -183,8 +183,11 @@ final class TerminalIOSSurfaceOwner {
         layout: TerminalTouchSelectionLayout,
         using selectionRuntime: TerminalIOSSelectionRuntime
     ) -> TerminalGridSelection? {
-        surface?.sendMousePos(.init(x: point.x, y: point.y, mods: []))
-        return selectionRuntime.quickLookWordSelection(surface: surface?.unsafeCValue, layout: layout)
+        selectionRuntime.quickLookWordSelection(
+            at: point,
+            surface: surface?.unsafeCValue,
+            layout: layout
+        )
     }
 
     func touchSelectionText(

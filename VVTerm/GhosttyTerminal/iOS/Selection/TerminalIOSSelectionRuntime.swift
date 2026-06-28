@@ -26,6 +26,16 @@ final class TerminalIOSSelectionRuntime {
     }
 
     func quickLookWordSelection(
+        at point: CGPoint,
+        surface: ghostty_surface_t?,
+        layout: TerminalTouchSelectionLayout
+    ) -> TerminalGridSelection? {
+        guard let surface else { return nil }
+        ghostty_surface_mouse_pos(surface, point.x, point.y, Ghostty.Input.Mods().cMods)
+        return quickLookWordSelection(surface: surface, layout: layout)
+    }
+
+    func quickLookWordSelection(
         surface: ghostty_surface_t?,
         layout: TerminalTouchSelectionLayout
     ) -> TerminalGridSelection? {

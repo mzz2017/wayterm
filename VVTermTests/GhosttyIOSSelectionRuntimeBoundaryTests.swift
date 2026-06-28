@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Testing
 
@@ -8,9 +9,9 @@ import Testing
 // Test Context:
 // These source-boundary tests protect iOS Ghostty selection ownership. Selection
 // UI may collect gestures, layout, and menu intent, but raw Ghostty surface
-// handles and selection text reader FFI should remain behind
-// TerminalIOSSurfaceOwner and TerminalIOSSelectionRuntime. Update these tests
-// only if selection FFI intentionally moves to another non-view owner.
+// handles, selection mouse priming, and selection text reader FFI should remain
+// behind TerminalIOSSurfaceOwner and TerminalIOSSelectionRuntime. Update these
+// tests only if selection FFI intentionally moves to another non-view owner.
 
 @Suite(.serialized)
 struct GhosttyIOSSelectionRuntimeBoundaryTests {
@@ -56,6 +57,7 @@ struct GhosttyIOSSelectionRuntimeBoundaryTests {
         #expect(runtimeSource.contains("func quickLookWordSelection"))
         #expect(runtimeSource.contains("func touchSelectionText"))
         #expect(runtimeSource.contains("func ghosttySelectionText"))
+        #expect(runtimeSource.contains("ghostty_surface_mouse_pos"))
         #expect(runtimeSource.contains("ghostty_surface_has_selection"))
         #expect(runtimeSource.contains("GhosttyTerminalTextReader.readViewportLine"))
         #expect(runtimeSource.contains("GhosttyTerminalTextReader.quickLookWordSelection"))
@@ -69,6 +71,7 @@ struct GhosttyIOSSelectionRuntimeBoundaryTests {
         #expect(ownerSource.contains("func ghosttySelectionText("))
         #expect(ownerSource.contains("func sendMousePosition("))
         #expect(ownerSource.contains("func sendMouseButton("))
+        #expect(!ownerSource.contains("surface?.sendMousePos"))
     }
 
     private func source(at url: URL) throws -> String {
@@ -109,6 +112,28 @@ struct GhosttyIOSSelectionRuntimeBehaviorTests {
 
         // Then the runtime returns a safe false value instead of crossing the FFI boundary.
         #expect(!hasSelection, "A missing Ghostty surface should never report an active selection.")
+    }
+
+    @Test
+    func nilSurfaceCannotQuickLookWordSelection() {
+        let runtime = TerminalIOSSelectionRuntime()
+
+        // Given quick-look word selection is queried after the native surface was cleared.
+        let selection = runtime.quickLookWordSelection(
+            at: CGPoint(x: 4, y: 8),
+            surface: nil,
+            layout: TerminalTouchSelectionLayout(
+                metrics: TerminalSelectionGridMetrics(
+                    cols: 10,
+                    rows: 4,
+                    cellSize: CGSize(width: 8, height: 10)
+                ),
+                bounds: CGRect(x: 0, y: 0, width: 80, height: 40)
+            )
+        )
+
+        // Then no native mouse priming or selection read can cross the FFI boundary.
+        #expect(selection == nil, "A missing Ghostty surface should not produce a quick-look selection.")
     }
 }
 #endif
