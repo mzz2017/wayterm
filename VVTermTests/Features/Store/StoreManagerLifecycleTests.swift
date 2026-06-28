@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import VVTerm
 
@@ -393,6 +394,35 @@ struct StoreManagerLifecycleTests {
     }
 
     @Test
+    func deinitCancelsReviewModeExpiryTaskWithOtherStoreLifecycleTasks() throws {
+        let root = try sourceRoot()
+        let source = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Store/Application/StoreManager.swift")
+        )
+        let deinitSource = try slice(
+            startingAt: "    deinit {",
+            endingBefore: "    private func startStartupRefresh",
+            in: source
+        )
+
+        // Given StoreManager owns StoreKit listeners, request tasks, startup
+        // refresh, and the review-mode expiry timer.
+        #expect(deinitSource.contains("updateListenerTask?.cancel()"))
+        #expect(deinitSource.contains("startupRefreshTask?.cancel()"))
+        #expect(deinitSource.contains("reviewModeRefreshTask?.cancel()"))
+        #expect(deinitSource.contains("productLoadRequestTask?.cancel()"))
+        #expect(deinitSource.contains("purchaseRequestTasks.values.forEach { $0.cancel() }"))
+        #expect(deinitSource.contains("restoreRequestTasks.values.forEach { $0.cancel() }"))
+
+        // Then review-mode expiry must be canceled by the same owner cleanup
+        // path instead of outliving the StoreManager instance.
+        #expect(
+            deinitSource.contains("reviewModeExpiryTask?.cancel()"),
+            "StoreManager deinit must cancel the review-mode expiry task it owns."
+        )
+    }
+
+    @Test
     func storeTelemetryIsInjectedForPaywallReviewAndLaunchEvents() async {
         let telemetry = StoreTelemetrySpy()
         let manager = StoreManager.makeForTesting(telemetry: telemetry)
@@ -414,6 +444,35 @@ struct StoreManagerLifecycleTests {
             "Entitlement refresh should record launch/pro state through injected Store telemetry."
         )
     }
+}
+
+private func slice(startingAt marker: String, endingBefore endMarker: String, in source: String) throws -> String {
+    guard let start = source.range(of: marker),
+          let end = source.range(of: endMarker, range: start.lowerBound..<source.endIndex)
+    else {
+        throw StoreSourceSliceError.notFound
+    }
+    return String(source[start.lowerBound..<end.lowerBound])
+}
+
+private func source(at url: URL) throws -> String {
+    try String(contentsOf: url, encoding: .utf8)
+}
+
+private func sourceRoot() throws -> URL {
+    var url = URL(fileURLWithPath: #filePath)
+    while url.lastPathComponent != "VVTermTests" {
+        let next = url.deletingLastPathComponent()
+        if next.path == url.path {
+            throw StoreSourceSliceError.notFound
+        }
+        url = next
+    }
+    return url.deletingLastPathComponent()
+}
+
+private enum StoreSourceSliceError: Error {
+    case notFound
 }
 
 private actor StoreRequestGate {

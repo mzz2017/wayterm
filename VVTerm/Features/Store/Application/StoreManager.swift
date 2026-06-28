@@ -96,6 +96,7 @@ final class StoreManager: ObservableObject {
         updateListenerTask?.cancel()
         startupRefreshTask?.cancel()
         reviewModeRefreshTask?.cancel()
+        reviewModeExpiryTask?.cancel()
         productLoadRequestTask?.cancel()
         purchaseRequestTasks.values.forEach { $0.cancel() }
         restoreRequestTasks.values.forEach { $0.cancel() }
