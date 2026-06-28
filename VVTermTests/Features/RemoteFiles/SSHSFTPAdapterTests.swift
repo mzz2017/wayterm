@@ -263,15 +263,15 @@ private actor RecordingSFTPClient: SFTPRemoteFileClient {
         .xterm256Color
     }
 
-    func listDirectory(at path: String, maxEntries: Int?) async throws -> [RemoteFileEntry] {
+    func listDirectory(at path: String, maxEntries: Int?) async throws -> [SSHFileTransferEntry] {
         []
     }
 
-    func stat(at path: String) async throws -> RemoteFileEntry {
+    func stat(at path: String) async throws -> SSHFileTransferEntry {
         makeEntry(path: path)
     }
 
-    func lstat(at path: String) async throws -> RemoteFileEntry {
+    func lstat(at path: String) async throws -> SSHFileTransferEntry {
         makeEntry(path: path)
     }
 
@@ -302,8 +302,8 @@ private actor RecordingSFTPClient: SFTPRemoteFileClient {
         homeDirectory
     }
 
-    func fileSystemStatus(at path: String) async throws -> RemoteFileFilesystemStatus {
-        RemoteFileFilesystemStatus(
+    func fileSystemStatus(at path: String) async throws -> SSHFileTransferFilesystemStatus {
+        SSHFileTransferFilesystemStatus(
             blockSize: 1,
             totalBlocks: 0,
             freeBlocks: 0,
@@ -311,8 +311,8 @@ private actor RecordingSFTPClient: SFTPRemoteFileClient {
         )
     }
 
-    private func makeEntry(path: String) -> RemoteFileEntry {
-        RemoteFileEntry(
+    private func makeEntry(path: String) -> SSHFileTransferEntry {
+        SSHFileTransferEntry(
             name: URL(fileURLWithPath: path).lastPathComponent,
             path: path,
             type: .file,

@@ -5,11 +5,11 @@ import Testing
 // Test Context:
 // These tests protect libssh2 SFTP status-code mapping after it moved out of
 // SSHClient.swift. They use constants only and no SSH/SFTP session; update only
-// when the RemoteFiles user-facing error contract intentionally changes.
+// when the Core SSH file-transfer error contract intentionally changes.
 
 struct SSHRemoteFileErrorMapperTests {
     @Test
-    func knownSFTPStatusCodesMapToRemoteFileErrors() {
+    func knownSFTPStatusCodesMapToSSHFileTransferErrors() {
         // Given libssh2 SFTP status codes.
         let permission = SSHRemoteFileErrorMapper.remoteFileError(
             lastError: UInt(LIBSSH2_FX_PERMISSION_DENIED),
@@ -27,7 +27,7 @@ struct SSHRemoteFileErrorMapperTests {
             path: "/srv/app"
         )
 
-        // Then common status codes map to stable RemoteFiles domain errors.
+        // Then common status codes map to stable Core SSH transfer errors.
         #expect(permission == .permissionDenied)
         #expect(missing == .pathNotFound)
         #expect(disconnected == .disconnected)
@@ -42,7 +42,7 @@ struct SSHRemoteFileErrorMapperTests {
             path: "/srv/archive.tar"
         )
 
-        // Then the fallback error remains actionable for the requested path.
-        #expect(error == .failed("Failed to download file (/srv/archive.tar)."))
+        // Then the fallback error preserves the requested operation and path.
+        #expect(error == .failed(operation: "download file", path: "/srv/archive.tar"))
     }
 }

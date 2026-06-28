@@ -10,6 +10,30 @@ import Testing
 
 struct RemoteFileServiceAccessBoundaryTests {
     @Test
+    func coreSSHDoesNotExposeRemoteFilesDomainTypes() throws {
+        let root = try sourceRoot()
+        let sshDirectory = root.appendingPathComponent("VVTerm/Core/SSH")
+        let forbiddenFeatureDomainNames = [
+            "RemoteFileBrowserError",
+            "RemoteFileEntry",
+            "RemoteFileFilesystemStatus",
+            "RemoteFilePath",
+            "RemoteFilePermissions",
+            "RemoteFileType"
+        ]
+
+        for swiftFile in try swiftFiles(in: sshDirectory) {
+            let source = try source(at: swiftFile)
+            for forbiddenName in forbiddenFeatureDomainNames {
+                #expect(
+                    !source.contains(forbiddenName),
+                    "Core/SSH should expose SSH/SFTP transport types, not RemoteFiles domain type \(forbiddenName), in \(swiftFile.lastPathComponent)."
+                )
+            }
+        }
+    }
+
+    @Test
     func browserStoreDoesNotOwnPendingDisconnectGate() throws {
         let root = try sourceRoot()
         let storeSource = try source(
@@ -124,6 +148,14 @@ struct RemoteFileServiceAccessBoundaryTests {
 
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func swiftFiles(in directory: URL) throws -> [URL] {
+        try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        )
+        .filter { $0.pathExtension == "swift" }
     }
 
     private func sourceRoot() throws -> URL {

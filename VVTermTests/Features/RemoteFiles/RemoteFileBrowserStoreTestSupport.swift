@@ -185,13 +185,13 @@ actor BlockingDisconnectRemoteFileClient: SFTPRemoteFileClient {
 
     func remoteTerminalType(forceRefresh: Bool) async -> RemoteTerminalType { .xterm256Color }
 
-    func listDirectory(at path: String, maxEntries: Int?) async throws -> [RemoteFileEntry] { [] }
+    func listDirectory(at path: String, maxEntries: Int?) async throws -> [SSHFileTransferEntry] { [] }
 
-    func stat(at path: String) async throws -> RemoteFileEntry {
+    func stat(at path: String) async throws -> SSHFileTransferEntry {
         makeEntry(path: path)
     }
 
-    func lstat(at path: String) async throws -> RemoteFileEntry {
+    func lstat(at path: String) async throws -> SSHFileTransferEntry {
         makeEntry(path: path)
     }
 
@@ -218,8 +218,8 @@ actor BlockingDisconnectRemoteFileClient: SFTPRemoteFileClient {
 
     func resolveHomeDirectory() async throws -> String { "/home/test" }
 
-    func fileSystemStatus(at path: String) async throws -> RemoteFileFilesystemStatus {
-        RemoteFileFilesystemStatus(
+    func fileSystemStatus(at path: String) async throws -> SSHFileTransferFilesystemStatus {
+        SSHFileTransferFilesystemStatus(
             blockSize: 1,
             totalBlocks: 0,
             freeBlocks: 0,
@@ -227,8 +227,8 @@ actor BlockingDisconnectRemoteFileClient: SFTPRemoteFileClient {
         )
     }
 
-    private func makeEntry(path: String) -> RemoteFileEntry {
-        RemoteFileEntry(
+    private func makeEntry(path: String) -> SSHFileTransferEntry {
+        SSHFileTransferEntry(
             name: URL(fileURLWithPath: path).lastPathComponent,
             path: path,
             type: .file,
@@ -361,7 +361,7 @@ actor BlockingNavigationRemoteFileClient: SFTPRemoteFileClient {
 
     func remoteTerminalType(forceRefresh: Bool) async -> RemoteTerminalType { .xterm256Color }
 
-    func listDirectory(at path: String, maxEntries: Int?) async throws -> [RemoteFileEntry] {
+    func listDirectory(at path: String, maxEntries: Int?) async throws -> [SSHFileTransferEntry] {
         let normalizedPath = Self.normalizePath(path)
         listStartedPaths.insert(normalizedPath)
         listCounts[normalizedPath, default: 0] += 1
@@ -388,10 +388,10 @@ actor BlockingNavigationRemoteFileClient: SFTPRemoteFileClient {
             }
         }
 
-        return listResponses[normalizedPath] ?? []
+        return (listResponses[normalizedPath] ?? []).map(SSHFileTransferEntry.init(remoteFileEntry:))
     }
 
-    func stat(at path: String) async throws -> RemoteFileEntry {
+    func stat(at path: String) async throws -> SSHFileTransferEntry {
         let normalizedPath = Self.normalizePath(path)
         statStartedPaths.insert(normalizedPath)
         for waiter in statStartedWaiters.removeValue(forKey: normalizedPath) ?? [] {
@@ -404,10 +404,11 @@ actor BlockingNavigationRemoteFileClient: SFTPRemoteFileClient {
             }
         }
 
-        return stats[normalizedPath] ?? makeEntry(path: path, type: .file)
+        return stats[normalizedPath].map(SSHFileTransferEntry.init(remoteFileEntry:))
+            ?? makeEntry(path: path, type: .file)
     }
 
-    func lstat(at path: String) async throws -> RemoteFileEntry {
+    func lstat(at path: String) async throws -> SSHFileTransferEntry {
         makeEntry(path: path, type: .file)
     }
 
@@ -434,8 +435,8 @@ actor BlockingNavigationRemoteFileClient: SFTPRemoteFileClient {
 
     func resolveHomeDirectory() async throws -> String { "/home/test" }
 
-    func fileSystemStatus(at path: String) async throws -> RemoteFileFilesystemStatus {
-        RemoteFileFilesystemStatus(
+    func fileSystemStatus(at path: String) async throws -> SSHFileTransferFilesystemStatus {
+        SSHFileTransferFilesystemStatus(
             blockSize: 1,
             totalBlocks: 0,
             freeBlocks: 0,
@@ -443,8 +444,8 @@ actor BlockingNavigationRemoteFileClient: SFTPRemoteFileClient {
         )
     }
 
-    private func makeEntry(path: String, type: RemoteFileType) -> RemoteFileEntry {
-        RemoteFileEntry(
+    private func makeEntry(path: String, type: SSHFileTransferEntryType) -> SSHFileTransferEntry {
+        SSHFileTransferEntry(
             name: URL(fileURLWithPath: path).lastPathComponent,
             path: path,
             type: type,

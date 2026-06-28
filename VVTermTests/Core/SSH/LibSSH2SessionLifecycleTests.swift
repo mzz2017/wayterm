@@ -854,15 +854,15 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         )
         let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
 
-        // When directory listing maps the failed readdir to a RemoteFiles error.
+        // When directory listing maps the failed readdir to a Core SSH transfer error.
         try await session.connect()
         do {
             _ = try await session.listDirectory(at: "/var/log")
             XCTFail("Expected SFTP read directory failure")
-        } catch RemoteFileBrowserError.disconnected {
-            // Then the SFTP error remains distinguishable for RemoteFiles.
+        } catch SSHFileTransferError.disconnected {
+            // Then the SFTP error remains distinguishable for RemoteFiles adapters.
         } catch {
-            XCTFail("Expected RemoteFileBrowserError.disconnected, got \(error)")
+            XCTFail("Expected SSHFileTransferError.disconnected, got \(error)")
         }
 
         // And the opened SFTP directory handle is closed exactly once.

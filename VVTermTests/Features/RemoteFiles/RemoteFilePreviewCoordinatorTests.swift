@@ -564,10 +564,10 @@ private actor BlockingPreviewLoadClient: SFTPRemoteFileClient {
 
     func remoteTerminalType(forceRefresh: Bool) async -> RemoteTerminalType { .xterm256Color }
 
-    func listDirectory(at path: String, maxEntries: Int?) async throws -> [RemoteFileEntry] { [] }
+    func listDirectory(at path: String, maxEntries: Int?) async throws -> [SSHFileTransferEntry] { [] }
 
-    func stat(at path: String) async throws -> RemoteFileEntry {
-        RemoteFileEntry(
+    func stat(at path: String) async throws -> SSHFileTransferEntry {
+        SSHFileTransferEntry(
             name: URL(fileURLWithPath: path).lastPathComponent,
             path: path,
             type: .file,
@@ -578,7 +578,7 @@ private actor BlockingPreviewLoadClient: SFTPRemoteFileClient {
         )
     }
 
-    func lstat(at path: String) async throws -> RemoteFileEntry {
+    func lstat(at path: String) async throws -> SSHFileTransferEntry {
         try await stat(at: path)
     }
 
@@ -617,8 +617,8 @@ private actor BlockingPreviewLoadClient: SFTPRemoteFileClient {
 
     func resolveHomeDirectory() async throws -> String { "/home/test" }
 
-    func fileSystemStatus(at path: String) async throws -> RemoteFileFilesystemStatus {
-        RemoteFileFilesystemStatus(
+    func fileSystemStatus(at path: String) async throws -> SSHFileTransferFilesystemStatus {
+        SSHFileTransferFilesystemStatus(
             blockSize: 1,
             totalBlocks: 0,
             freeBlocks: 0,
@@ -681,11 +681,15 @@ private actor BlockingPreviewSaveClient: SFTPRemoteFileClient {
 
     func remoteTerminalType(forceRefresh: Bool) async -> RemoteTerminalType { .xterm256Color }
 
-    func listDirectory(at path: String, maxEntries: Int?) async throws -> [RemoteFileEntry] { [] }
+    func listDirectory(at path: String, maxEntries: Int?) async throws -> [SSHFileTransferEntry] { [] }
 
-    func stat(at path: String) async throws -> RemoteFileEntry { updatedEntry }
+    func stat(at path: String) async throws -> SSHFileTransferEntry {
+        SSHFileTransferEntry(remoteFileEntry: updatedEntry)
+    }
 
-    func lstat(at path: String) async throws -> RemoteFileEntry { updatedEntry }
+    func lstat(at path: String) async throws -> SSHFileTransferEntry {
+        SSHFileTransferEntry(remoteFileEntry: updatedEntry)
+    }
 
     func readFile(at path: String, maxBytes: Int) async throws -> Data { Data() }
 
@@ -721,8 +725,8 @@ private actor BlockingPreviewSaveClient: SFTPRemoteFileClient {
 
     func resolveHomeDirectory() async throws -> String { "/home/test" }
 
-    func fileSystemStatus(at path: String) async throws -> RemoteFileFilesystemStatus {
-        RemoteFileFilesystemStatus(
+    func fileSystemStatus(at path: String) async throws -> SSHFileTransferFilesystemStatus {
+        SSHFileTransferFilesystemStatus(
             blockSize: 1,
             totalBlocks: 0,
             freeBlocks: 0,

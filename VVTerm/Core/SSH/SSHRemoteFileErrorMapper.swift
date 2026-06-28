@@ -12,7 +12,7 @@ enum SSHRemoteFileErrorMapper {
         lastError: UInt,
         operation: String,
         path: String?
-    ) -> RemoteFileBrowserError {
+    ) -> SSHFileTransferError {
         switch lastError {
         case UInt(LIBSSH2_FX_PERMISSION_DENIED):
             return .permissionDenied
@@ -21,12 +21,11 @@ enum SSHRemoteFileErrorMapper {
         case UInt(LIBSSH2_FX_NO_CONNECTION), UInt(LIBSSH2_FX_CONNECTION_LOST):
             return .disconnected
         case UInt(LIBSSH2_FX_NOT_A_DIRECTORY):
-            return .failed(String(localized: "The remote path is not a directory."))
+            return .notDirectory
         case UInt(LIBSSH2_FX_LINK_LOOP):
-            return .failed(String(localized: "The remote path contains a symbolic link loop."))
+            return .linkLoop
         default:
-            let location = path.map { " (\($0))" } ?? ""
-            return .failed(String(localized: "Failed to \(operation)\(location)."))
+            return .failed(operation: operation, path: path)
         }
     }
 }

@@ -11,14 +11,14 @@ import os
 extension SSHSession {
     // MARK: - Remote Files
 
-    func listDirectory(at path: String, maxEntries: Int? = nil) async throws -> [RemoteFileEntry] {
+    func listDirectory(at path: String, maxEntries: Int? = nil) async throws -> [SSHFileTransferEntry] {
         let sftp = try await ensureSFTPSession()
-        let normalizedPath = RemoteFilePath.normalize(path)
+        let normalizedPath = Self.normalizeRemotePath(path)
         let handle = try await openDirectoryHandle(at: normalizedPath, sftp: sftp)
         defer { closeSFTPHandle(handle, after: "list directory") }
 
         let limit = maxEntries ?? .max
-        var entries: [RemoteFileEntry] = []
+        var entries: [SSHFileTransferEntry] = []
         var nameBuffer = [CChar](repeating: 0, count: 4096)
 
         while entries.count < limit {
@@ -35,15 +35,15 @@ extension SSHSession {
                 let name = Self.string(from: nameBuffer, length: bytesRead)
                 guard name != "." && name != ".." else { continue }
 
-                let entryPath = RemoteFilePath.appending(name, to: normalizedPath)
-                let baseEntry = RemoteFileEntry.from(
+                let entryPath = Self.appendRemotePathComponent(name, to: normalizedPath)
+                let baseEntry = SSHFileTransferEntry.from(
                     name: name,
                     path: entryPath,
                     attributes: attributes
                 )
                 let symlinkTarget = baseEntry.type == .symlink ? (try? await readlink(at: entryPath)) : nil
                 entries.append(
-                    RemoteFileEntry.from(
+                    SSHFileTransferEntry.from(
                         name: name,
                         path: entryPath,
                         attributes: attributes,
@@ -68,11 +68,11 @@ extension SSHSession {
         return entries
     }
 
-    func stat(at path: String) async throws -> RemoteFileEntry {
+    func stat(at path: String) async throws -> SSHFileTransferEntry {
         try await stat(at: path, statType: Int32(LIBSSH2_SFTP_STAT))
     }
 
-    func lstat(at path: String) async throws -> RemoteFileEntry {
+    func lstat(at path: String) async throws -> SSHFileTransferEntry {
         try await stat(at: path, statType: Int32(LIBSSH2_SFTP_LSTAT))
     }
 
@@ -85,7 +85,7 @@ extension SSHSession {
         guard maxBytes > 0 else { return Data() }
 
         let sftp = try await ensureSFTPSession()
-        let normalizedPath = RemoteFilePath.normalize(path)
+        let normalizedPath = Self.normalizeRemotePath(path)
         let handle = try await openFileHandle(
             at: normalizedPath,
             sftp: sftp,
@@ -134,7 +134,7 @@ extension SSHSession {
 
     func downloadFile(at path: String, to localURL: URL) async throws {
         let sftp = try await ensureSFTPSession()
-        let normalizedPath = RemoteFilePath.normalize(path)
+        let normalizedPath = Self.normalizeRemotePath(path)
         let handle = try await openFileHandle(
             at: normalizedPath,
             sftp: sftp,
@@ -150,7 +150,7 @@ extension SSHSession {
             try fileManager.removeItem(at: localURL)
         }
         guard fileManager.createFile(atPath: localURL.path, contents: nil) else {
-            throw RemoteFileBrowserError.failed(String(localized: "Unable to create the local download file."))
+            throw SSHFileTransferError.failed(operation: "create local download file", path: localURL.path)
         }
 
         let localFileHandle = try FileHandle(forWritingTo: localURL)
@@ -188,7 +188,7 @@ extension SSHSession {
 
     func writeFile(_ data: Data, to path: String, permissions: Int32 = 0o644) async throws {
         let sftp = try await ensureSFTPSession()
-        let normalizedPath = RemoteFilePath.normalize(path)
+        let normalizedPath = Self.normalizeRemotePath(path)
         let handle = try await openFileHandle(
             at: normalizedPath,
             sftp: sftp,
@@ -249,9 +249,9 @@ extension SSHSession {
         return path.isEmpty ? "/" : path
     }
 
-    func fileSystemStatus(at path: String) async throws -> RemoteFileFilesystemStatus {
+    func fileSystemStatus(at path: String) async throws -> SSHFileTransferFilesystemStatus {
         let sftp = try await ensureSFTPSession()
-        let normalizedPath = RemoteFilePath.normalize(path)
+        let normalizedPath = Self.normalizeRemotePath(path)
         var status = LIBSSH2_SFTP_STATVFS()
 
         while true {
@@ -262,7 +262,7 @@ extension SSHSession {
             if result == 0 {
                 let fragmentSize = UInt64(status.f_frsize)
                 let blockSize = fragmentSize > 0 ? fragmentSize : UInt64(status.f_bsize)
-                return RemoteFileFilesystemStatus(
+                return SSHFileTransferFilesystemStatus(
                     blockSize: blockSize,
                     totalBlocks: UInt64(status.f_blocks),
                     freeBlocks: UInt64(status.f_bfree),
@@ -281,7 +281,7 @@ extension SSHSession {
 
     func createDirectory(at path: String, permissions: Int32 = 0o755) async throws {
         let sftp = try await ensureSFTPSession()
-        let normalizedPath = RemoteFilePath.normalize(path)
+        let normalizedPath = Self.normalizeRemotePath(path)
         try await performSFTPMutation(
             at: normalizedPath,
             sftp: sftp,
@@ -293,7 +293,7 @@ extension SSHSession {
 
     func setPermissions(at path: String, permissions: UInt32) async throws {
         let sftp = try await ensureSFTPSession()
-        let normalizedPath = RemoteFilePath.normalize(path)
+        let normalizedPath = Self.normalizeRemotePath(path)
         var attributes = LIBSSH2_SFTP_ATTRIBUTES()
         attributes.flags = UInt(LIBSSH2_SFTP_ATTR_PERMISSIONS)
         attributes.permissions = UInt(permissions)
@@ -323,8 +323,8 @@ extension SSHSession {
 
     func renameItem(at sourcePath: String, to destinationPath: String) async throws {
         let sftp = try await ensureSFTPSession()
-        let normalizedSource = RemoteFilePath.normalize(sourcePath)
-        let normalizedDestination = RemoteFilePath.normalize(destinationPath)
+        let normalizedSource = Self.normalizeRemotePath(sourcePath)
+        let normalizedDestination = Self.normalizeRemotePath(destinationPath)
         let renameFlagCandidates: [Int] = [
             Int(LIBSSH2_SFTP_RENAME_OVERWRITE) |
                 Int(LIBSSH2_SFTP_RENAME_ATOMIC) |
@@ -357,12 +357,12 @@ extension SSHSession {
             }
         }
 
-        throw lastError ?? RemoteFileBrowserError.failed(String(localized: "Failed to rename item."))
+        throw lastError ?? SSHFileTransferError.failed(operation: "rename", path: normalizedSource)
     }
 
     func deleteFile(at path: String) async throws {
         let sftp = try await ensureSFTPSession()
-        let normalizedPath = RemoteFilePath.normalize(path)
+        let normalizedPath = Self.normalizeRemotePath(path)
         try await performSFTPMutation(
             at: normalizedPath,
             sftp: sftp,
@@ -374,7 +374,7 @@ extension SSHSession {
 
     func deleteDirectory(at path: String) async throws {
         let sftp = try await ensureSFTPSession()
-        let normalizedPath = RemoteFilePath.normalize(path)
+        let normalizedPath = Self.normalizeRemotePath(path)
         try await performSFTPMutation(
             at: normalizedPath,
             sftp: sftp,
@@ -391,7 +391,7 @@ extension SSHSession {
         }
 
         guard let session = libssh2Session else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
 
         while true {
@@ -449,7 +449,7 @@ extension SSHSession {
         operation: String
     ) async throws -> OpaquePointer {
         guard let session = libssh2Session else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
 
         while true {
@@ -482,7 +482,7 @@ extension SSHSession {
         mutation: (OpaquePointer, String) -> Int
     ) async throws {
         guard libssh2Session != nil else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
 
         while true {
@@ -503,9 +503,9 @@ extension SSHSession {
         }
     }
 
-    private func stat(at path: String, statType: Int32) async throws -> RemoteFileEntry {
+    private func stat(at path: String, statType: Int32) async throws -> SSHFileTransferEntry {
         let sftp = try await ensureSFTPSession()
-        let normalizedPath = RemoteFilePath.normalize(path)
+        let normalizedPath = Self.normalizeRemotePath(path)
         var attributes = LIBSSH2_SFTP_ATTRIBUTES()
 
         while true {
@@ -521,11 +521,11 @@ extension SSHSession {
             if result == 0 {
                 let entryName = Self.fileName(for: normalizedPath)
                 var symlinkTarget: String?
-                let entry = RemoteFileEntry.from(name: entryName, path: normalizedPath, attributes: attributes)
+                let entry = SSHFileTransferEntry.from(name: entryName, path: normalizedPath, attributes: attributes)
                 if statType == Int32(LIBSSH2_SFTP_LSTAT), entry.type == .symlink {
                     symlinkTarget = try? await readlink(at: normalizedPath)
                 }
-                return RemoteFileEntry.from(
+                return SSHFileTransferEntry.from(
                     name: entryName,
                     path: normalizedPath,
                     attributes: attributes,
@@ -552,7 +552,7 @@ extension SSHSession {
         sftp: OpaquePointer
     ) async throws -> String {
         guard let session = libssh2Session else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
 
         let requestPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -608,9 +608,47 @@ extension SSHSession {
     }
 
     private static func fileName(for path: String) -> String {
-        let normalized = RemoteFilePath.normalize(path)
+        let normalized = normalizeRemotePath(path)
         guard normalized != "/" else { return "/" }
         return normalized.split(separator: "/").last.map(String.init) ?? normalized
+    }
+
+    private static func normalizeRemotePath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "/" }
+
+        let hasLeadingSlash = trimmed.hasPrefix("/")
+        let components = trimmed
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .reduce(into: [String]()) { result, component in
+                switch component {
+                case ".":
+                    break
+                case "..":
+                    if !result.isEmpty {
+                        result.removeLast()
+                    }
+                default:
+                    result.append(String(component))
+                }
+            }
+
+        let joined = components.joined(separator: "/")
+        if hasLeadingSlash {
+            return joined.isEmpty ? "/" : "/\(joined)"
+        }
+        return joined.isEmpty ? "." : joined
+    }
+
+    private static func appendRemotePathComponent(_ component: String, to basePath: String) -> String {
+        let normalizedBase = normalizeRemotePath(basePath)
+        if normalizedBase == "/" {
+            return "/\(component)"
+        }
+        if normalizedBase == "." {
+            return component
+        }
+        return "\(normalizedBase)/\(component)"
     }
 
     private static func string(from buffer: [CChar], length: Int) -> String {
@@ -622,7 +660,7 @@ extension SSHSession {
         from sftp: OpaquePointer?,
         operation: String,
         path: String?
-    ) -> RemoteFileBrowserError {
+    ) -> SSHFileTransferError {
         let code = sftp.map { driver.lastSFTPError($0) } ?? 0
         return SSHRemoteFileErrorMapper.remoteFileError(
             lastError: code,

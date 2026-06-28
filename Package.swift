@@ -70,6 +70,7 @@ let package = Package(
                 "SSHClientAbortState.swift",
                 "SSHConnectionOperationService.swift",
                 "SSHError.swift",
+                "SSHFileTransferTypes.swift",
                 "SSHKeyboardInteractiveAuth.swift",
                 "SSHKeyGenerator.swift",
                 "SSHMoshTeardownTaskRegistry.swift",

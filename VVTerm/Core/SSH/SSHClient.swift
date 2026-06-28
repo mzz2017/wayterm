@@ -312,51 +312,51 @@ nonisolated actor SSHClient {
 
     // MARK: - Remote Files
 
-    func listDirectory(at path: String, maxEntries: Int? = nil) async throws -> [RemoteFileEntry] {
+    func listDirectory(at path: String, maxEntries: Int? = nil) async throws -> [SSHFileTransferEntry] {
         guard !abortState.isAborted, let session = session else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
         return try await session.listDirectory(at: path, maxEntries: maxEntries)
     }
 
-    func stat(at path: String) async throws -> RemoteFileEntry {
+    func stat(at path: String) async throws -> SSHFileTransferEntry {
         guard !abortState.isAborted, let session = session else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
         return try await session.stat(at: path)
     }
 
-    func lstat(at path: String) async throws -> RemoteFileEntry {
+    func lstat(at path: String) async throws -> SSHFileTransferEntry {
         guard !abortState.isAborted, let session = session else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
         return try await session.lstat(at: path)
     }
 
     func readlink(at path: String) async throws -> String {
         guard !abortState.isAborted, let session = session else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
         return try await session.readlink(at: path)
     }
 
     func readFile(at path: String, maxBytes: Int, offset: UInt64 = 0) async throws -> Data {
         guard !abortState.isAborted, let session = session else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
         return try await session.readFile(at: path, maxBytes: maxBytes, offset: offset)
     }
 
-    func fileSystemStatus(at path: String) async throws -> RemoteFileFilesystemStatus {
+    func fileSystemStatus(at path: String) async throws -> SSHFileTransferFilesystemStatus {
         guard !abortState.isAborted, let session = session else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
         return try await session.fileSystemStatus(at: path)
     }
 
     func downloadFile(at path: String, to localURL: URL) async throws {
         guard !abortState.isAborted, let session = session else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
 
         logger.info(
@@ -370,42 +370,42 @@ nonisolated actor SSHClient {
 
     func resolveHomeDirectory() async throws -> String {
         guard !abortState.isAborted, let session = session else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
         return try await session.resolveHomeDirectory()
     }
 
     func createDirectory(at path: String, permissions: Int32 = 0o755) async throws {
         guard !abortState.isAborted, let session = session else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
         try await session.createDirectory(at: path, permissions: permissions)
     }
 
     func setPermissions(at path: String, permissions: UInt32) async throws {
         guard !abortState.isAborted, let session = session else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
         try await session.setPermissions(at: path, permissions: permissions)
     }
 
     func renameItem(at sourcePath: String, to destinationPath: String) async throws {
         guard !abortState.isAborted, let session = session else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
         try await session.renameItem(at: sourcePath, to: destinationPath)
     }
 
     func deleteFile(at path: String) async throws {
         guard !abortState.isAborted, let session = session else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
         try await session.deleteFile(at: path)
     }
 
     func deleteDirectory(at path: String) async throws {
         guard !abortState.isAborted, let session = session else {
-            throw RemoteFileBrowserError.disconnected
+            throw SSHFileTransferError.disconnected
         }
         try await session.deleteDirectory(at: path)
     }

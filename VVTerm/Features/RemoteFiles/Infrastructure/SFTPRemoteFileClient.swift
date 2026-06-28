@@ -2,9 +2,9 @@ import Foundation
 
 protocol SFTPRemoteFileClient: RemoteConnectionLeaseClient {
     func connectForRemoteFileLease(to server: Server, credentials: ServerCredentials) async throws
-    func listDirectory(at path: String, maxEntries: Int?) async throws -> [RemoteFileEntry]
-    func stat(at path: String) async throws -> RemoteFileEntry
-    func lstat(at path: String) async throws -> RemoteFileEntry
+    func listDirectory(at path: String, maxEntries: Int?) async throws -> [SSHFileTransferEntry]
+    func stat(at path: String) async throws -> SSHFileTransferEntry
+    func lstat(at path: String) async throws -> SSHFileTransferEntry
     func readFile(at path: String, maxBytes: Int) async throws -> Data
     func downloadFile(at path: String, to localURL: URL) async throws
     func createDirectory(at path: String, permissions: Int32) async throws
@@ -13,7 +13,7 @@ protocol SFTPRemoteFileClient: RemoteConnectionLeaseClient {
     func deleteDirectory(at path: String) async throws
     func setPermissions(at path: String, permissions: UInt32) async throws
     func resolveHomeDirectory() async throws -> String
-    func fileSystemStatus(at path: String) async throws -> RemoteFileFilesystemStatus
+    func fileSystemStatus(at path: String) async throws -> SSHFileTransferFilesystemStatus
 }
 
 extension SSHClient: SFTPRemoteFileClient {
