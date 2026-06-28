@@ -2,19 +2,26 @@ import SwiftUI
 
 // MARK: - Server Row
 
+struct ServerRowDisplayModel: Identifiable {
+    let id: UUID
+    let name: String
+    let host: String
+    let environmentColor: Color
+    let environmentShortName: String
+}
+
 struct ServerRow: View {
-    let server: Server
+    let model: ServerRowDisplayModel
     let isSelected: Bool
     let isLocked: Bool
     let tabCount: Int
     let onSelect: () -> Void
-    let onEdit: (Server) -> Void
-    var onMove: ((Server) -> Void)? = nil
-    let onConnect: (Server) -> Void
-    let onDelete: (Server) -> Void
+    let onEdit: () -> Void
+    var onMove: (() -> Void)? = nil
+    let onConnect: () -> Void
+    let onDelete: () -> Void
     var onLockedTap: (() -> Void)? = nil
 
-    @Environment(\.privacyModeEnabled) private var privacyModeEnabled
     #if os(macOS)
     @Environment(\.controlActiveState) private var controlActiveState
     #endif
@@ -61,35 +68,35 @@ struct ServerRow: View {
                         Label("Unlock with Pro", systemImage: "lock.open.fill")
                     }
                     if let onMove {
-                        Button { onMove(server) } label: {
+                        Button { onMove() } label: {
                             Label("Move to Workspace", systemImage: "arrow.turn.right.up")
                         }
                     }
-                    Button { onEdit(server) } label: {
+                    Button { onEdit() } label: {
                         Label("Server Settings", systemImage: "slider.horizontal.3")
                     }
                     Button(role: .destructive) {
-                        onDelete(server)
+                        onDelete()
                     } label: {
                         Label("Delete Server", systemImage: "trash")
                     }
                 } else {
                     Button {
-                        onConnect(server)
+                        onConnect()
                     } label: {
                         Label("Open Connection", systemImage: "point.forward.to.point.capsulepath.fill")
                     }
                     if let onMove {
-                        Button { onMove(server) } label: {
+                        Button { onMove() } label: {
                             Label("Move to Workspace", systemImage: "arrow.turn.right.up")
                         }
                     }
-                    Button { onEdit(server) } label: {
+                    Button { onEdit() } label: {
                         Label("Server Settings", systemImage: "slider.horizontal.3")
                     }
                     Divider()
                     Button(role: .destructive) {
-                        onDelete(server)
+                        onDelete()
                     } label: {
                         Label("Delete Server", systemImage: "trash")
                     }
@@ -112,25 +119,25 @@ struct ServerRow: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(server.name)
+                Text(model.name)
                     .font(.body)
                     .foregroundStyle(isSelected ? selectedForegroundColor : Color.primary)
                     .lineLimit(1)
 
                 HStack(spacing: 5) {
-                    Text(server.visibleHost(privacyModeEnabled: privacyModeEnabled))
+                    Text(model.host)
                         .font(.caption2)
                         .foregroundStyle(Color.secondary.opacity(0.7))
                         .lineLimit(1)
                         .truncationMode(.tail)
 
                     Circle()
-                        .fill(server.environment.color)
+                        .fill(model.environmentColor)
                         .frame(width: 6, height: 6)
 
-                    Text(server.environment.displayShortName)
+                    Text(model.environmentShortName)
                         .font(.caption2)
-                        .foregroundStyle(server.environment.color)
+                        .foregroundStyle(model.environmentColor)
                         .lineLimit(1)
                 }
             }

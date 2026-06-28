@@ -105,8 +105,16 @@ struct ServerDeletionIntentBoundaryTests {
             "Core ServerRow should receive tab count as view data from the TerminalSessions feature boundary."
         )
         #expect(
-            rowSource.contains("let onDelete: (Server) -> Void"),
-            "Core ServerRow should route destructive actions through an injected intent closure."
+            !rowSource.contains("let server: Server"),
+            "Core ServerRow should not store Servers feature domain models."
+        )
+        #expect(
+            !rowSource.contains("(Server) -> Void"),
+            "Core ServerRow intent closures should not expose Servers feature domain models."
+        )
+        #expect(
+            rowSource.contains("struct ServerRowDisplayModel"),
+            "Core ServerRow should render a neutral display model adapted by the Servers feature boundary."
         )
         #expect(
             sidebarSource.contains("isLocked: serverManager.isServerLocked(server)"),
@@ -117,7 +125,11 @@ struct ServerDeletionIntentBoundaryTests {
             "ServerSidebarView should adapt TerminalTabManager tab state before composing Core ServerRow."
         )
         #expect(
-            sidebarSource.contains("onDelete: { serverManager.requestServerDeletion($0) }"),
+            sidebarSource.contains("model: ServerRowDisplayModel("),
+            "ServerSidebarView should adapt Server domain data into Core ServerRow display data."
+        )
+        #expect(
+            sidebarSource.contains("onDelete: { serverManager.requestServerDeletion(server) }"),
             "ServerSidebarView should keep server deletion intent at the Servers feature boundary."
         )
     }

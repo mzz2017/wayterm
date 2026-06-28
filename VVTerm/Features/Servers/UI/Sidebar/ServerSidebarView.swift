@@ -12,6 +12,7 @@ struct ServerSidebarView: View {
     let backgroundColor: Color
     @Binding var selectedWorkspace: Workspace?
     @Binding var selectedServer: Server?
+    @Environment(\.privacyModeEnabled) private var privacyModeEnabled
 
     @State private var showingWorkspaceSwitcher = false
     @State private var showingAddServer = false
@@ -153,15 +154,21 @@ struct ServerSidebarView: View {
                     LazyVStack(spacing: 4) {
                         ForEach(filteredServers) { server in
                             ServerRow(
-                                server: server,
+                                model: ServerRowDisplayModel(
+                                    id: server.id,
+                                    name: server.name,
+                                    host: server.visibleHost(privacyModeEnabled: privacyModeEnabled),
+                                    environmentColor: server.environment.color,
+                                    environmentShortName: server.environment.displayShortName
+                                ),
                                 isSelected: selectedServer?.id == server.id,
                                 isLocked: serverManager.isServerLocked(server),
                                 tabCount: tabManager.tabs(for: server.id).count,
                                 onSelect: { selectServer(server) },
-                                onEdit: { serverToEdit = $0 },
-                                onMove: { serverToMove = $0 },
-                                onConnect: { connectToServer($0) },
-                                onDelete: { serverManager.requestServerDeletion($0) },
+                                onEdit: { serverToEdit = server },
+                                onMove: { serverToMove = server },
+                                onConnect: { connectToServer(server) },
+                                onDelete: { serverManager.requestServerDeletion(server) },
                                 onLockedTap: { lockedServerAlert = server }
                             )
                             .frame(maxWidth: .infinity, alignment: .leading)
