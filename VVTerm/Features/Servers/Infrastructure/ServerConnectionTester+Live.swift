@@ -1,10 +1,10 @@
 import Foundation
 
 extension SSHConnectionOperationService: ServerConnectionOperationServing {
-    func withTemporaryConnection<T>(
+    func withTemporaryConnection<T: Sendable>(
         server: Server,
         credentials: ServerCredentials,
-        operation: @escaping (SSHClient) async throws -> T
+        operation: @Sendable @escaping (SSHClient) async throws -> T
     ) async throws -> T {
         try await withTemporaryConnection(
             target: server.sshConnectionTarget,

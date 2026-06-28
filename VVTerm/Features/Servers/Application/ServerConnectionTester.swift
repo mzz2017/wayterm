@@ -6,14 +6,14 @@ protocol ServerConnectionTesting: AnyObject {
 }
 
 protocol ServerConnectionOperationServing: AnyObject {
-    func withTemporaryConnection<T>(
+    func withTemporaryConnection<T: Sendable>(
         server: Server,
         credentials: ServerCredentials,
-        operation: @escaping (SSHClient) async throws -> T
+        operation: @Sendable @escaping (SSHClient) async throws -> T
     ) async throws -> T
 }
 
-protocol ServerConnectionMoshBootstrapping: AnyObject {
+protocol ServerConnectionMoshBootstrapping: AnyObject, Sendable {
     func bootstrapConnectInfo(
         using executor: any RemoteCommandExecuting,
         startCommand: String?,

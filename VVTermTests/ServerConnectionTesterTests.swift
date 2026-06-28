@@ -322,29 +322,42 @@ private final class FakeServerConnectionOperationService: ServerConnectionOperat
 
     private(set) var requests: [Request] = []
 
-    func withTemporaryConnection<T>(
+    func withTemporaryConnection<T: Sendable>(
         server: Server,
         credentials: ServerCredentials,
-        operation: @escaping (SSHClient) async throws -> T
+        operation: @Sendable @escaping (SSHClient) async throws -> T
     ) async throws -> T {
         requests.append(Request(server: server, credentials: credentials))
         return try await operation(SSHClient())
     }
 }
 
-private final class FakeServerConnectionMoshBootstrapper: ServerConnectionMoshBootstrapping {
-    struct Request {
+private final class FakeServerConnectionMoshBootstrapper: ServerConnectionMoshBootstrapping, @unchecked Sendable {
+    struct Request: Sendable {
         let startCommand: String?
         let portRange: ClosedRange<Int>
     }
 
-    private(set) var requests: [Request] = []
+    private let lock = NSLock()
+    private var requestStorage: [Request] = []
+
+    var requests: [Request] {
+        lock.lock()
+        defer { lock.unlock() }
+        return requestStorage
+    }
 
     func bootstrapConnectInfo(
         using executor: any RemoteCommandExecuting,
         startCommand: String?,
         portRange: ClosedRange<Int>
     ) async throws {
-        requests.append(Request(startCommand: startCommand, portRange: portRange))
+        record(Request(startCommand: startCommand, portRange: portRange))
+    }
+
+    private func record(_ request: Request) {
+        lock.lock()
+        requestStorage.append(request)
+        lock.unlock()
     }
 }
