@@ -70,13 +70,18 @@ final class AppSyncCoordinator {
     }
     #endif
 
-    func startChangeSubscription() {
-        guard subscriptionTask == nil else { return }
+    @discardableResult
+    func startChangeSubscription() -> Task<Void, Never> {
+        if let subscriptionTask {
+            return subscriptionTask
+        }
 
-        subscriptionTask = Task { [subscribeToChanges] in
+        let task = Task { [subscribeToChanges] in
             await subscribeToChanges()
             subscriptionTask = nil
         }
+        subscriptionTask = task
+        return task
     }
 
     @discardableResult

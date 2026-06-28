@@ -14,6 +14,35 @@ import Testing
 @MainActor
 struct AppSyncCoordinatorTests {
     @Test
+    func changeSubscriptionLaunchReturnsTrackedSharedTask() async {
+        // Given app launch asks the sync coordinator to subscribe to CloudKit changes.
+        let probe = AppSyncProbe()
+        let releaseSubscription = AsyncGate()
+        let coordinator = AppSyncCoordinator.makeForTesting(
+            subscribeToChanges: {
+                await probe.record("subscribe-start")
+                await releaseSubscription.wait()
+                await probe.record("subscribe-end")
+            }
+        )
+
+        // When the launch subscription intent is repeated before completion.
+        let first = coordinator.startChangeSubscription()
+        let second = coordinator.startChangeSubscription()
+        await probe.waitForCount(1)
+
+        // Then both callers can track the same underlying subscription task.
+        #expect(await probe.events() == ["subscribe-start"])
+        await releaseSubscription.open()
+        await first.value
+        await second.value
+        #expect(
+            await probe.events() == ["subscribe-start", "subscribe-end"],
+            "Launch subscription intent should expose one tracked task and share duplicate requests."
+        )
+    }
+
+    @Test
     func concurrentServerRefreshRequestsShareOneTrackedRefreshTask() async {
         // Given app lifecycle events request server refresh while the first
         // refresh is still running.

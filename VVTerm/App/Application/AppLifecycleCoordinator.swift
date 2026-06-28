@@ -4,7 +4,7 @@ import Foundation
 final class AppLifecycleCoordinator {
     typealias TerminalLifecycleAction = @MainActor @Sendable () async -> Void
     typealias AppLockLifecycleAction = @MainActor @Sendable () async -> Void
-    typealias LaunchAction = @MainActor @Sendable () -> Void
+    typealias LaunchAction = @MainActor @Sendable () -> Task<Void, Never>
     typealias ServerRefreshAction = @MainActor @Sendable (AppSyncCoordinator.ServerRefreshReason) -> Task<Void, Never>
     typealias RemoteNotificationRefreshAction = @MainActor @Sendable () async -> Bool
     typealias RemoteNotificationCompletionAction = @MainActor @Sendable (Bool) async -> Void
@@ -122,7 +122,7 @@ final class AppLifecycleCoordinator {
         disconnectTerminalTabsBeforeExit: @escaping TerminalLifecycleAction = {},
         suspendTerminalSessionsForBackground: @escaping TerminalLifecycleAction = {},
         lockAppIfNeededForBackground: @escaping AppLockLifecycleAction = {},
-        startChangeSubscription: @escaping LaunchAction = {},
+        startChangeSubscription: @escaping LaunchAction = { Task {} },
         refreshServerData: @escaping ServerRefreshAction = { _ in Task {} },
         refreshServerDataAfterRemoteNotification: @escaping RemoteNotificationRefreshAction = { true },
         isSyncEnabled: @escaping SyncEnabledProvider = { true },
@@ -152,7 +152,8 @@ final class AppLifecycleCoordinator {
     }
     #endif
 
-    func requestLaunch() {
+    @discardableResult
+    func requestLaunch() -> Task<Void, Never> {
         startChangeSubscription()
     }
 

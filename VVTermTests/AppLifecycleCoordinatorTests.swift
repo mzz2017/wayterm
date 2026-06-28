@@ -15,6 +15,35 @@ import Testing
 @MainActor
 struct AppLifecycleCoordinatorTests {
     @Test
+    func launchRequestReturnsTrackedSubscriptionTask() async {
+        // Given app launch delegates subscription setup to the lifecycle coordinator.
+        let probe = AppLifecycleProbe()
+        let releaseSubscription = AsyncLifecycleGate()
+        let coordinator = AppLifecycleCoordinator.makeForTesting(
+            startChangeSubscription: {
+                Task {
+                    await probe.record("subscription-start")
+                    await releaseSubscription.wait()
+                    await probe.record("subscription-end")
+                }
+            }
+        )
+
+        // When launch is requested.
+        let task = coordinator.requestLaunch()
+        await probe.waitForCount(1)
+
+        // Then the caller can wait for subscription setup to finish.
+        #expect(await probe.events() == ["subscription-start"])
+        await releaseSubscription.open()
+        await task.value
+        #expect(
+            await probe.events() == ["subscription-start", "subscription-end"],
+            "Launch lifecycle intent should return the tracked sync subscription task."
+        )
+    }
+
+    @Test
     func backgroundLockRequestTracksLockUntilCompletion() async {
         // Given app background lock work is asynchronous at the application
         // lifecycle boundary.
