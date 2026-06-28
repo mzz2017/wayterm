@@ -161,12 +161,8 @@ extension RemoteFileBrowserScreen {
     ) {
         let cancellationTarget = RemoteFileTransferCancellationTarget()
         progress.cancellationHandler = { [browser, cancellationTarget] in
-            RemoteFileTransferCancellationTaskRegistry.shared.track {
-                guard let transferRequestID = cancellationTarget.requestID else { return }
-                if let task = browser.cancelTransferRequest(transferRequestID) {
-                    await task.value
-                }
-            }
+            guard let transferRequestID = cancellationTarget.requestID else { return }
+            browser.cancelTransferRequestFromSynchronousCallback(transferRequestID)
         }
 
         let transferRequestID = browser.requestTransfer(
@@ -194,11 +190,7 @@ extension RemoteFileBrowserScreen {
         )
         cancellationTarget.setRequestID(transferRequestID)
         if progress.isCancelled {
-            RemoteFileTransferCancellationTaskRegistry.shared.track {
-                if let task = browser.cancelTransferRequest(transferRequestID) {
-                    await task.value
-                }
-            }
+            browser.cancelTransferRequestFromSynchronousCallback(transferRequestID)
         }
     }
 
@@ -236,56 +228,6 @@ private final class RemoteFileTransferCancellationTarget: @unchecked Sendable {
     func setRequestID(_ requestID: UUID) {
         lock.lock()
         storedRequestID = requestID
-        lock.unlock()
-    }
-}
-
-private final class RemoteFileTransferCancellationTaskRegistry: @unchecked Sendable {
-    static let shared = RemoteFileTransferCancellationTaskRegistry()
-
-    private final class Record {
-        var task: Task<Void, Never>?
-    }
-
-    private let lock = NSLock()
-    private var records: [UUID: Record] = [:]
-
-    @discardableResult
-    func track(_ operation: @escaping @MainActor @Sendable () async -> Void) -> UUID {
-        let requestID = UUID()
-        let record = Record()
-
-        lock.lock()
-        records[requestID] = record
-        let task = Task { @MainActor [self] in
-            await operation()
-            remove(requestID)
-        }
-        record.task = task
-        lock.unlock()
-
-        return requestID
-    }
-
-    func waitForAll() async {
-        while true {
-            let tasks = tasks()
-            guard !tasks.isEmpty else { return }
-            for task in tasks {
-                await task.value
-            }
-        }
-    }
-
-    private func tasks() -> [Task<Void, Never>] {
-        lock.lock()
-        defer { lock.unlock() }
-        return records.values.compactMap(\.task)
-    }
-
-    private func remove(_ requestID: UUID) {
-        lock.lock()
-        records.removeValue(forKey: requestID)
         lock.unlock()
     }
 }

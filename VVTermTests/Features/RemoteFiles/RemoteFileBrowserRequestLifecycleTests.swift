@@ -405,6 +405,46 @@ struct RemoteFileBrowserRequestLifecycleTests {
     }
 
     @Test
+    func synchronousTransferCancellationCallbackTracksWaitTaskUntilOperationExits() async throws {
+        let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
+        let gate = RemoteFileMutationGate()
+        let cancellationWaitProbe = RemoteFileWaitProbe()
+
+        let requestID = store.requestTransfer(
+            operation: { _ in
+                await gate.wait()
+                return "exported"
+            },
+            onSuccess: { _ in
+                Issue.record("Canceled transfer should not publish success after explicit cancellation.")
+            }
+        )
+        try await Task.sleep(for: .milliseconds(20))
+
+        // When the UI sends a cancellation intent from a synchronous Progress
+        // callback, the application owner should track the wait for the
+        // underlying transfer task instead of making UI own a detached task.
+        store.cancelTransferRequestFromSynchronousCallback(requestID)
+        await store.waitForSynchronousTransferCancellationCallbacks()
+        let waitTask = Task {
+            await store.waitForTransferCancellationTasks()
+            await cancellationWaitProbe.markReturned()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(!store.pendingTransferRequestIDs.contains(requestID))
+        #expect(
+            await !cancellationWaitProbe.didReturn,
+            "Transfer cancellation wait task should remain pending while the canceled operation is still blocked."
+        )
+
+        await gate.release()
+        await waitTask.value
+
+        #expect(await cancellationWaitProbe.didReturn)
+    }
+
+    @Test
     func disconnectWaitsForCanceledTransferToExitBeforeDisconnectingService() async throws {
         let defaults = makeRemoteFileBrowserDefaults()
         let server = makeRemoteFileBrowserServer()

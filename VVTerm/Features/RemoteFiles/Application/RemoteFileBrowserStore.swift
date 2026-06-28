@@ -4,6 +4,8 @@ import os.log
 
 @MainActor
 final class RemoteFileBrowserStore: ObservableObject {
+    private nonisolated let transferCancellationIntentCoordinator = RemoteFileTransferCancellationIntentCoordinator()
+
     typealias ServerProvider = @MainActor (UUID) -> Server?
     typealias WorkingDirectoryProvider = @MainActor (UUID) -> String?
 
@@ -260,6 +262,25 @@ final class RemoteFileBrowserStore: ObservableObject {
     @discardableResult
     func cancelTransferRequest(_ requestID: UUID) -> Task<Void, Never>? {
         requestLifecycleCoordinator.cancelTransferRequest(requestID)
+    }
+
+    @discardableResult
+    func cancelTransferRequestAndTrackCompletion(_ requestID: UUID) -> Task<Void, Never>? {
+        requestLifecycleCoordinator.cancelTransferRequestAndTrackCompletion(requestID)
+    }
+
+    func waitForTransferCancellationTasks() async {
+        await requestLifecycleCoordinator.waitForTransferCancellationTasks()
+    }
+
+    nonisolated func cancelTransferRequestFromSynchronousCallback(_ requestID: UUID) {
+        transferCancellationIntentCoordinator.track { @MainActor [self] in
+            _ = cancelTransferRequestAndTrackCompletion(requestID)
+        }
+    }
+
+    nonisolated func waitForSynchronousTransferCancellationCallbacks() async {
+        await transferCancellationIntentCoordinator.waitForAll()
     }
 
     func waitForPreviewLoadRequest(_ requestID: UUID) async {

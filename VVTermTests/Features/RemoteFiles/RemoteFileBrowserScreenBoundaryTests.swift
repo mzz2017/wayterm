@@ -277,12 +277,12 @@ struct RemoteFileBrowserScreenBoundaryTests {
             "Progress cancellation should use a stable request-ID holder when cancellation can arrive before request creation."
         )
         #expect(
-            transferSource.contains("RemoteFileTransferCancellationTaskRegistry.shared.track"),
-            "Progress cancellation should publish cancellation work instead of dropping a bare Task."
+            transferSource.contains("browser.cancelTransferRequestFromSynchronousCallback"),
+            "Progress cancellation should send an intent to the browser store instead of owning cancellation task tracking in UI."
         )
         #expect(
-            transferSource.contains("await task.value"),
-            "Progress cancellation should await the transfer cancellation task returned by the browser store."
+            !transferSource.contains("RemoteFileTransferCancellationTaskRegistry"),
+            "RemoteFileBrowserScreen+FileTransfers.swift should not own a long-lived cancellation task registry."
         )
         #expect(
             !transferSource.contains("Task { @MainActor in\n                guard let transferRequestID"),
