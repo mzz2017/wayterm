@@ -153,6 +153,59 @@ struct VoiceModelDownloadStoreTests {
     }
 
     @Test
+    func cancelAllAndWaitWaitsForTrackedDownloadCancellation() async {
+        let probe = VoiceModelDownloadProbe()
+        let releaseCancellation = VoiceModelDownloadGate()
+        let neverFinishDownload = VoiceModelDownloadGate()
+        let store = VoiceModelDownloadStore.makeForTesting(
+            downloadAction: { kind in
+                await probe.record("download-start:\(kind.rawValue)")
+                await withTaskCancellationHandler {
+                    await neverFinishDownload.wait()
+                } onCancel: {
+                    Task {
+                        await probe.record("download-cancel:\(kind.rawValue)")
+                        await releaseCancellation.wait()
+                        await probe.record("download-cancel-finished:\(kind.rawValue)")
+                        await neverFinishDownload.open()
+                    }
+                }
+            }
+        )
+
+        // Given a tracked model download is running.
+        let downloadTask = store.downloadModel(for: .whisper)
+        await probe.waitForCount(1)
+
+        // When app-level cleanup asks the owner to cancel everything and wait.
+        let cleanupTask = Task {
+            await store.cancelAllAndWait()
+            await probe.record("cleanup-return")
+        }
+        await probe.waitForCount(2)
+
+        // Then cleanup must not report completion until cancellation handlers exit.
+        #expect(
+            !(await probe.events()).contains("cleanup-return"),
+            "Voice model cleanup must wait for tracked download cancellation to finish."
+        )
+
+        await releaseCancellation.open()
+        await cleanupTask.value
+        await downloadTask.value
+
+        #expect(
+            await probe.events() == [
+                "download-start:whisper",
+                "download-cancel:whisper",
+                "download-cancel-finished:whisper",
+                "cleanup-return"
+            ],
+            "App-level voice model cleanup should be awaitable across tracked download cancellation."
+        )
+    }
+
+    @Test
     func modelManagerCleanupCancelsSessionAndBackgroundWork() throws {
         // Given MLXModelManager owns URLSession delegate downloads plus
         // background storage and repo-size tasks.

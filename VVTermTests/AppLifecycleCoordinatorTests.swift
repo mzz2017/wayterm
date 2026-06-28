@@ -250,6 +250,45 @@ struct AppLifecycleCoordinatorTests {
     }
 
     @Test
+    func terminationTeardownRequestCancelsVoiceModelDownloadsBeforeResourceTeardown() async {
+        // Given Sync, VoiceInput model downloads, RemoteFiles, Stats, and
+        // terminal teardown dependencies are injected into the app lifecycle
+        // owner.
+        let probe = AppLifecycleProbe()
+        let coordinator = AppLifecycleCoordinator.makeForTesting(
+            disconnectConnectionSessionsBeforeExit: {
+                await probe.record("sessions")
+            },
+            disconnectTerminalTabsBeforeExit: {
+                await probe.record("tabs")
+            },
+            disconnectRemoteFilesBeforeExit: {
+                await probe.record("remote-files")
+            },
+            disconnectStatsBeforeExit: {
+                await probe.record("stats")
+            },
+            cancelSyncBeforeExit: {
+                await probe.record("sync")
+            },
+            cancelVoiceModelDownloadsBeforeExit: {
+                await probe.record("voice-models")
+            }
+        )
+
+        // When the platform delegate sends termination intent.
+        let requestID = coordinator.requestTerminationTeardown()
+        await coordinator.waitForTerminationTeardownRequest(requestID)
+
+        // Then model downloads are canceled before resource owners start
+        // closing shared leases and terminal resources.
+        #expect(
+            await probe.events() == ["sync", "voice-models", "remote-files", "stats", "sessions", "tabs"],
+            "Termination should cancel VoiceInput model downloads before closing resource owners."
+        )
+    }
+
+    @Test
     func terminationTeardownRequestCancelsAuthBeforeSyncAndResourceTeardown() async {
         // Given Auth, Sync, RemoteFiles, Stats, and terminal teardown
         // dependencies are injected into the app lifecycle owner.
@@ -272,6 +311,9 @@ struct AppLifecycleCoordinatorTests {
             },
             cancelSyncBeforeExit: {
                 await probe.record("sync")
+            },
+            cancelVoiceModelDownloadsBeforeExit: {
+                await probe.record("voice-models")
             }
         )
 
@@ -282,8 +324,8 @@ struct AppLifecycleCoordinatorTests {
         // Then auth prompts are canceled before sync callbacks and resource
         // owners start teardown.
         #expect(
-            await probe.events() == ["auth", "sync", "remote-files", "stats", "sessions", "tabs"],
-            "Termination should cancel auth prompts before sync callbacks and resource owners start teardown."
+            await probe.events() == ["auth", "sync", "voice-models", "remote-files", "stats", "sessions", "tabs"],
+            "Termination should cancel auth prompts before sync, VoiceInput downloads, and resource owners start teardown."
         )
     }
 

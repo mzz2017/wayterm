@@ -107,6 +107,21 @@ final class VoiceModelDownloadStore: ObservableObject {
         manager(for: kind).cancelDownload()
     }
 
+    func cancelAllAndWait() async {
+        let tasks = downloadTasks.values.map(\.task)
+        downloadTasks.removeAll()
+
+        for kind in MLXModelKind.allCases {
+            manager(for: kind).cancelDownload()
+        }
+        for task in tasks {
+            task.cancel()
+        }
+        for task in tasks {
+            await task.value
+        }
+    }
+
     func removeModel(for kind: MLXModelKind) {
         cancelDownload(for: kind)
         manager(for: kind).removeModel()
