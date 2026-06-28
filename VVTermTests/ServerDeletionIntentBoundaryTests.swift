@@ -74,6 +74,32 @@ struct ServerDeletionIntentBoundaryTests {
         )
     }
 
+    @Test
+    func appConfiguresDeletionTeardownThroughServerConnectionLifecycleOwner() throws {
+        // Given the app root composes application-layer deletion dependencies.
+        let root = try sourceRoot()
+        let appSource = try source(at: root.appendingPathComponent("VVTerm/App/VVTermApp.swift"))
+
+        // Then the app should configure deletion teardown through the server
+        // lifecycle owner instead of implementing ad hoc terminal cleanup.
+        #expect(
+            appSource.contains("ServerConnectionLifecycleCoordinator.shared.disconnectServerBeforeDeletion"),
+            "VVTermApp should configure ServerManager deletion teardown through the App/Application lifecycle owner."
+        )
+        #expect(
+            !appSource.contains("static func disconnectServerBeforeDeletion"),
+            "VVTermApp should not own the server deletion teardown implementation."
+        )
+        #expect(
+            !appSource.contains("ConnectionSessionManager.shared.disconnectServerAndWait(server.id)"),
+            "VVTermApp should not directly disconnect connection sessions before server deletion."
+        )
+        #expect(
+            !appSource.contains("TerminalTabManager.shared.disconnectServerAndWait(server.id)"),
+            "VVTermApp should not directly disconnect terminal tabs before server deletion."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

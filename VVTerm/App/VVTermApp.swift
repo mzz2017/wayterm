@@ -12,7 +12,9 @@ import AppKit
 struct VVTermApp: App {
     init() {
         TerminalDefaults.applyIfNeeded()
-        ServerManager.shared.configureDeletionTeardown(Self.disconnectServerBeforeDeletion)
+        ServerManager.shared.configureDeletionTeardown { server in
+            await ServerConnectionLifecycleCoordinator.shared.disconnectServerBeforeDeletion(server: server)
+        }
     }
 
     #if os(macOS)
@@ -162,12 +164,6 @@ struct VVTermApp: App {
 }
 
 private extension VVTermApp {
-    @MainActor
-    static func disconnectServerBeforeDeletion(_ server: Server) async {
-        await ConnectionSessionManager.shared.disconnectServerAndWait(server.id)
-        await TerminalTabManager.shared.disconnectServerAndWait(server.id)
-    }
-
     static func makeRemoteFileBrowserStore() -> RemoteFileBrowserStore {
         let adapter = SSHSFTPAdapter(
             remoteConnectionLeaseProvider: RemoteConnectionLeaseProvider { serverId in

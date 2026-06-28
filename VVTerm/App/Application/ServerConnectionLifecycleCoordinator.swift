@@ -6,6 +6,7 @@ final class ServerConnectionLifecycleCoordinator {
     typealias StatsDisconnectAction = @MainActor (UUID) async -> Void
     typealias FileTabsDisconnectAction = @MainActor (UUID) -> Void
     typealias TerminalDisconnectAction = @MainActor (UUID) async -> Void
+    typealias DeletionTerminalDisconnectAction = @MainActor @Sendable (UUID) async -> Void
 
     static let shared = ServerConnectionLifecycleCoordinator()
 
@@ -69,6 +70,32 @@ final class ServerConnectionLifecycleCoordinator {
 
     func waitForDisconnectRequest(_ requestID: UUID) async {
         await disconnectRequests[requestID]?.task.value
+    }
+
+    func disconnectServerBeforeDeletion(
+        server: Server,
+        disconnectRemoteFiles: @escaping RemoteFilesDisconnectAction = { _ in Task {} },
+        disconnectStats: @escaping StatsDisconnectAction = { _ in },
+        disconnectFileTabs: FileTabsDisconnectAction? = nil,
+        disconnectConnectionSessions: @escaping DeletionTerminalDisconnectAction = { serverId in
+            await ConnectionSessionManager.shared.disconnectServerAndWait(serverId)
+        },
+        disconnectTerminalTabs: @escaping DeletionTerminalDisconnectAction = { serverId in
+            await TerminalTabManager.shared.disconnectServerAndWait(serverId)
+        }
+    ) async {
+        let requestID = requestServerDisconnect(
+            serverId: server.id,
+            disconnectRemoteFiles: disconnectRemoteFiles,
+            disconnectStats: disconnectStats,
+            disconnectFileTabs: disconnectFileTabs,
+            disconnectTerminals: { serverId in
+                await disconnectConnectionSessions(serverId)
+                guard !Task.isCancelled else { return }
+                await disconnectTerminalTabs(serverId)
+            }
+        )
+        await waitForDisconnectRequest(requestID)
     }
 
     private func deliverCompletionCallbacks(for requestID: UUID) {
