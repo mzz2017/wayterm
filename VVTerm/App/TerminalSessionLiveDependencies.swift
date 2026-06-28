@@ -11,6 +11,7 @@ extension ConnectionReliabilityManager {
 }
 
 extension ConnectionSessionManager.Dependencies {
+    @MainActor
     static var live: Self {
         Self(
             serverProvider: { serverId in
@@ -65,6 +66,7 @@ extension ConnectionSessionManager.Dependencies {
 }
 
 extension TerminalTabManager.Dependencies {
+    @MainActor
     static var live: Self {
         Self(
             isProProvider: {
