@@ -377,7 +377,7 @@ final class LocalSSHDiscoveryService: NSObject {
 
 // MARK: - NetServiceBrowserDelegate
 
-extension LocalSSHDiscoveryService: NetServiceBrowserDelegate {
+extension LocalSSHDiscoveryService: @preconcurrency NetServiceBrowserDelegate {
     func netServiceBrowserWillSearch(_ browser: NetServiceBrowser) {}
 
     func netServiceBrowser(_ browser: NetServiceBrowser, didNotSearch errorDict: [String: NSNumber]) {
@@ -409,7 +409,7 @@ extension LocalSSHDiscoveryService: NetServiceBrowserDelegate {
 
 // MARK: - NetServiceDelegate
 
-extension LocalSSHDiscoveryService: NetServiceDelegate {
+extension LocalSSHDiscoveryService: @preconcurrency NetServiceDelegate {
     func netServiceDidResolveAddress(_ sender: NetService) {
         let scanID = serviceScanIDs[ObjectIdentifier(sender)]
         guard isCurrentScan(scanID) else { return }
