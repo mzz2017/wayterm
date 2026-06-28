@@ -54,6 +54,29 @@ struct ServerFormCredentialBoundaryTests {
         #expect(infrastructureSource.contains("ServerFormCredentialProvider(library: KeychainManager.shared)"))
     }
 
+    @Test
+    func coreSecurityDoesNotDependOnServerDomainTypes() throws {
+        // Given Core/Security owns reusable keychain lookup primitives.
+        let root = try sourceRoot()
+        let keychainSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/Security/KeychainManager.swift")
+        )
+
+        // Then Servers feature domain adaptation should stay outside Core.
+        #expect(
+            !keychainSource.contains("for server: Server"),
+            "Core KeychainManager should not accept Servers feature domain models."
+        )
+        #expect(
+            !keychainSource.contains("server.connectionMode"),
+            "Core KeychainManager should not read Servers feature connection policy directly."
+        )
+        #expect(
+            keychainSource.contains("KeychainCredentialLookupRequest"),
+            "Core KeychainManager should expose a neutral credential lookup request."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

@@ -4,6 +4,25 @@ import os.log
 
 // MARK: - Keychain Manager
 
+nonisolated struct KeychainCredentialLookupRequest: Sendable {
+    let serverId: UUID
+    let authMethod: AuthMethod
+    let connectionMode: SSHConnectionMode
+    let cloudflareAccessMode: CloudflareAccessMode?
+
+    init(
+        serverId: UUID,
+        authMethod: AuthMethod,
+        connectionMode: SSHConnectionMode,
+        cloudflareAccessMode: CloudflareAccessMode?
+    ) {
+        self.serverId = serverId
+        self.authMethod = authMethod
+        self.connectionMode = connectionMode
+        self.cloudflareAccessMode = cloudflareAccessMode
+    }
+}
+
 @MainActor
 final class KeychainManager {
     static let shared = KeychainManager()
@@ -87,35 +106,35 @@ final class KeychainManager {
 
     // MARK: - Full Credentials
 
-    func getCredentials(for server: Server) throws -> ServerCredentials {
-        var credentials = ServerCredentials(serverId: server.id)
+    func getCredentials(for request: KeychainCredentialLookupRequest) throws -> ServerCredentials {
+        var credentials = ServerCredentials(serverId: request.serverId)
 
-        logger.info("Getting credentials for server \(server.id.uuidString), authMethod: \(String(describing: server.authMethod))")
+        logger.info("Getting credentials for server \(request.serverId.uuidString), authMethod: \(String(describing: request.authMethod))")
 
-        if server.connectionMode == .tailscale {
-            logger.info("Server \(server.id.uuidString) uses tailscale mode; skipping keychain credential lookup")
+        if request.connectionMode == .tailscale {
+            logger.info("Server \(request.serverId.uuidString) uses tailscale mode; skipping keychain credential lookup")
             return credentials
         }
 
-        switch server.authMethod {
+        switch request.authMethod {
         case .password:
-            credentials.password = try getPassword(for: server.id)
+            credentials.password = try getPassword(for: request.serverId)
             logger.info("Password retrieved: \(credentials.password != nil)")
         case .sshKey:
-            if let sshData = try getSSHKey(for: server.id) {
+            if let sshData = try getSSHKey(for: request.serverId) {
                 credentials.privateKey = sshData.key
                 credentials.publicKey = sshData.publicKey
             }
         case .sshKeyWithPassphrase:
-            if let sshData = try getSSHKey(for: server.id) {
+            if let sshData = try getSSHKey(for: request.serverId) {
                 credentials.privateKey = sshData.key
                 credentials.passphrase = sshData.passphrase
                 credentials.publicKey = sshData.publicKey
             }
         }
 
-        if server.connectionMode == .cloudflare, server.cloudflareAccessMode == .serviceToken,
-           let cloudflareToken = try getCloudflareServiceToken(for: server.id) {
+        if request.connectionMode == .cloudflare, request.cloudflareAccessMode == .serviceToken,
+           let cloudflareToken = try getCloudflareServiceToken(for: request.serverId) {
             credentials.cloudflareClientID = cloudflareToken.clientID
             credentials.cloudflareClientSecret = cloudflareToken.clientSecret
         }

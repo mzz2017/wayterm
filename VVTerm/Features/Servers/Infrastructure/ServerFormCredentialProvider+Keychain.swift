@@ -6,7 +6,20 @@ extension KeychainManager: ServerFormCredentialLibrary {
     }
 
     func credentials(for server: Server) throws -> ServerCredentials {
-        try getCredentials(for: server)
+        try getCredentials(for: credentialLookupRequest(for: server))
+    }
+
+    func getCredentials(for server: Server) throws -> ServerCredentials {
+        try getCredentials(for: credentialLookupRequest(for: server))
+    }
+
+    private func credentialLookupRequest(for server: Server) -> KeychainCredentialLookupRequest {
+        KeychainCredentialLookupRequest(
+            serverId: server.id,
+            authMethod: server.authMethod,
+            connectionMode: server.connectionMode,
+            cloudflareAccessMode: server.cloudflareAccessMode
+        )
     }
 }
 
