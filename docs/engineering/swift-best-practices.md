@@ -33,6 +33,11 @@ Applies to all Swift, SwiftUI, and Apple-platform code. Unless the user explicit
   - Disconnect, close, save, delete, sync, authentication, and cleanup tasks must be tracked or awaited.
   - If a task cannot be awaited at the call site, return/store a `Task` and make later operations wait on it.
 
+- Escaping callbacks that perform lifecycle-critical work must be owned, tracked, or explicitly invalidated.
+  - Do not rely on `[weak self]` to silently skip close, disconnect, cancel, auth completion, save, delete, sync, or cleanup.
+  - If the receiver may disappear before the callback fires, move the callback state into a stable owner, registry, actor, or cancellation token.
+  - Late callbacks should either complete cleanup through a retained lifecycle owner, observe an explicit invalidated state, or report cancellation.
+
 - Use actors for mutable shared state.
   - Shared mutable state accessed across concurrency domains should live in an `actor` or be isolated to `@MainActor`.
   - Do not rely on `DispatchQueue` or locks when actor isolation is a natural fit.
@@ -151,6 +156,11 @@ Applies to all Swift, SwiftUI, and Apple-platform code. Unless the user explicit
   - Do not let `withUnsafeBytes` pointers escape.
   - Document ownership rules for C resources.
 
+- Document callback and pointer ownership contracts at FFI boundaries.
+  - For `Unmanaged.passUnretained`, state which Swift owner keeps the object alive until callbacks are impossible.
+  - For `const char *`, raw buffers, and userdata pointers, state whether the callee copies synchronously or may retain the pointer.
+  - Prefer invalidation tokens or context objects over passing raw view/controller pointers as callback userdata.
+
 - Serialize C library calls when thread-safety is uncertain.
   - Especially auth callbacks, cryptographic signing, global library init/exit, and session teardown.
 
@@ -228,6 +238,8 @@ Before finishing Swift changes, verify:
 - Is there exactly one owner for each long-lived resource?
 - Can every close/disconnect path be awaited or tracked?
 - Are there any untracked `Task` / `Task.detached` calls doing critical work?
+- Can every escaping callback that touches lifecycle-critical work still run safely if delivered late?
+- Are `[weak self]`, `Unmanaged.passUnretained`, and temporary C string/buffer pointers backed by an explicit ownership or invalidation contract?
 - Does SwiftUI lifecycle only manage UI surfaces, not business resources?
 - Is mutable shared state actor-isolated or `@MainActor`?
 - Are external C/FFI calls protected by explicit lifetime and concurrency rules?
