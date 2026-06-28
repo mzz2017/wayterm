@@ -55,9 +55,12 @@ jobs:
           focused_args=(
             "-only-testing:VVTermTests/AppSyncCoordinatorTests"
             "-only-testing:VVTermTests/CloudKitSyncCoordinatorLifecycleTests"
+            "-only-testing:VVTermTests/CloudflareTransportManagerLifecycleTests"
+            "-only-testing:VVTermTests/LibSSH2SessionLifecycleTests"
             "-only-testing:VVTermTests/RemoteFileBrowserRequestLifecycleTests"
             "-only-testing:VVTermTests/ServerStatsCollectorLifecycleTests"
             "-only-testing:VVTermTests/StoreManagerLifecycleTests"
+            "-only-testing:VVTermTests/TerminalConnectionRunnerTests"
             "-only-testing:VVTermTests/TerminalVoiceInputStoreTests"
           )
 
