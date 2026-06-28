@@ -1,0 +1,4 @@
+interface:
+  display_name: "VVTerm Commit Message"
+  short_description: "Write informative VVTerm commit messages"
+  default_prompt: "Use $vvterm-commit-message to draft a concise, reviewable commit message for the staged VVTerm changes."
