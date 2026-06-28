@@ -13,11 +13,20 @@ lock_dir="${IOS_TEST_LOCK_DIR:-${TMPDIR:-/tmp}/vvterm-ios-test.lock}"
 lock_timeout="${IOS_TEST_LOCK_TIMEOUT:-600}"
 derived_data_path="${IOS_TEST_DERIVED_DATA_PATH:-}"
 keep_derived_data="${IOS_TEST_KEEP_DERIVED_DATA:-0}"
+no_output_timeout="${IOS_TEST_NO_OUTPUT_TIMEOUT:-300}"
 lock_acquired=0
 created_derived_data=0
 log_file=""
+tail_pid=""
+watchdog_pid=""
 
 cleanup() {
+    if [[ -n "$tail_pid" ]]; then
+        kill "$tail_pid" >/dev/null 2>&1 || true
+    fi
+    if [[ -n "$watchdog_pid" ]]; then
+        kill "$watchdog_pid" >/dev/null 2>&1 || true
+    fi
     if [[ -n "$log_file" ]]; then
         rm -f "$log_file"
     fi
@@ -125,6 +134,83 @@ is_preflight_failure() {
         "$log_file"
 }
 
+run_xcodebuild_test() {
+    local status_file
+    local timeout_file
+    local xcode_pid
+    local last_output_at
+    local now
+
+    status_file="$(mktemp -t vvterm-ios-test-status.XXXXXX)"
+    timeout_file="$(mktemp -t vvterm-ios-test-timeout.XXXXXX)"
+    rm -f "$timeout_file"
+    : > "$log_file"
+
+    xcodebuild test -quiet \
+        -project "$project" \
+        -scheme "$scheme" \
+        -destination "platform=iOS Simulator,id=${udid}" \
+        -derivedDataPath "$derived_data_path" \
+        -parallel-testing-enabled NO \
+        "$@" \
+        ENABLE_DEBUG_DYLIB=NO >"$log_file" 2>&1 &
+    xcode_pid="$!"
+
+    tail -n +1 -f "$log_file" &
+    tail_pid="$!"
+
+    if [[ "$no_output_timeout" != "0" ]]; then
+        (
+            last_output_at="$(date +%s)"
+            while kill -0 "$xcode_pid" 2>/dev/null; do
+                if [[ -s "$log_file" ]]; then
+                    last_output_at="$(stat -f %m "$log_file")"
+                fi
+
+                now="$(date +%s)"
+                if (( now - last_output_at >= no_output_timeout )); then
+                    {
+                        echo "xcodebuild produced no output for ${no_output_timeout}s; terminating stalled iOS test run."
+                        echo "xcodebuild PID: ${xcode_pid}"
+                        ps -o pid,ppid,etime,pcpu,pmem,state,command -p "$xcode_pid" || true
+                    } >&2
+                    touch "$timeout_file"
+                    kill -TERM "$xcode_pid" >/dev/null 2>&1 || true
+                    sleep 5
+                    kill -KILL "$xcode_pid" >/dev/null 2>&1 || true
+                    exit 0
+                fi
+
+                sleep 5
+            done
+        ) &
+        watchdog_pid="$!"
+    fi
+
+    wait "$xcode_pid"
+    printf '%s\n' "$?" > "$status_file"
+
+    if [[ -n "$watchdog_pid" ]]; then
+        kill "$watchdog_pid" >/dev/null 2>&1 || true
+        wait "$watchdog_pid" >/dev/null 2>&1 || true
+        watchdog_pid=""
+    fi
+    if [[ -n "$tail_pid" ]]; then
+        kill "$tail_pid" >/dev/null 2>&1 || true
+        wait "$tail_pid" >/dev/null 2>&1 || true
+        tail_pid=""
+    fi
+
+    if [[ -f "$timeout_file" ]]; then
+        rm -f "$status_file" "$timeout_file"
+        return 124
+    fi
+
+    last_status="$(cat "$status_file")"
+    rm -f "$status_file" "$timeout_file"
+    return "$last_status"
+}
+
 acquire_global_lock
 prepare_derived_data
 
@@ -145,15 +231,8 @@ while (( attempt <= total_attempts )); do
 
     log_file="$(mktemp -t vvterm-ios-test.XXXXXX)"
     set +e
-    xcodebuild test -quiet \
-        -project "$project" \
-        -scheme "$scheme" \
-        -destination "platform=iOS Simulator,id=${udid}" \
-        -derivedDataPath "$derived_data_path" \
-        -parallel-testing-enabled NO \
-        "$@" \
-        ENABLE_DEBUG_DYLIB=NO 2>&1 | tee "$log_file"
-    last_status="${PIPESTATUS[0]}"
+    run_xcodebuild_test "$@"
+    last_status="$?"
     set -e
 
     if [[ "$last_status" -eq 0 ]]; then
