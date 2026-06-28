@@ -113,9 +113,12 @@ final class AppSyncCoordinator {
         let refreshTask = refreshServerData(reason: .remoteNotification)
         let completionID = UUID()
         let completionTask = Task {
+            defer {
+                remoteNotificationCompletionTasks[completionID] = nil
+            }
             await refreshTask.value
+            guard !Task.isCancelled else { return }
             await onComplete()
-            remoteNotificationCompletionTasks[completionID] = nil
         }
         remoteNotificationCompletionTasks[completionID] = completionTask
     }
@@ -157,6 +160,29 @@ final class AppSyncCoordinator {
         }
         cloudKitStatusRefreshTask = (taskID, task)
         return task
+    }
+
+    func cancelAllAndWait() async {
+        let tasks =
+            [subscriptionTask, serverRefreshTask?.task, settingsSyncTask?.task, cloudKitStatusRefreshTask?.task]
+                .compactMap { $0 }
+            + Array(remoteNotificationCompletionTasks.values)
+
+        subscriptionTask?.cancel()
+        serverRefreshTask?.task.cancel()
+        settingsSyncTask?.task.cancel()
+        cloudKitStatusRefreshTask?.task.cancel()
+        remoteNotificationCompletionTasks.values.forEach { $0.cancel() }
+
+        subscriptionTask = nil
+        serverRefreshTask = nil
+        settingsSyncTask = nil
+        cloudKitStatusRefreshTask = nil
+        remoteNotificationCompletionTasks.removeAll()
+
+        for task in tasks {
+            await task.value
+        }
     }
 
     private func clearSettingsSyncTask(id: UUID) {

@@ -259,6 +259,111 @@ struct AppSyncCoordinatorTests {
             "Canceled enable intent must not run server/accessory refresh after disable intent wins."
         )
     }
+
+    @Test
+    func cancelAllAndWaitCancelsRemoteNotificationCompletionButWaitsForRefreshExit() async throws {
+        // Given remote notification sync is waiting on a tracked server refresh.
+        let probe = AppSyncProbe()
+        let releaseRefresh = AsyncGate()
+        let coordinator = AppSyncCoordinator.makeForTesting(
+            reloadServerData: {
+                await probe.record("reload-start")
+                await releaseRefresh.wait()
+                await probe.record("reload-end")
+            }
+        )
+
+        coordinator.refreshServerDataAfterRemoteNotification {
+            await probe.record("completion")
+        }
+        await probe.waitForCount(1)
+
+        // When app-level teardown cancels sync while refresh work is still
+        // blocked inside the Application owner.
+        let cleanupTask = Task {
+            await coordinator.cancelAllAndWait()
+            await probe.record("cleanup-end")
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then cleanup remains awaitable until the underlying refresh exits.
+        #expect(await probe.events() == ["reload-start"])
+
+        await releaseRefresh.open()
+        await cleanupTask.value
+
+        #expect(
+            await probe.events() == ["reload-start", "reload-end", "cleanup-end"],
+            "Sync cleanup should wait for refresh exit and suppress canceled remote-notification completion."
+        )
+    }
+
+    @Test
+    func cancelAllAndWaitAwaitsEveryTrackedSyncTask() async throws {
+        let probe = AppSyncProbe()
+        let releaseSubscription = AsyncGate()
+        let releaseSettings = AsyncGate()
+        let releaseStatus = AsyncGate()
+        let coordinator = AppSyncCoordinator.makeForTesting(
+            applySyncToggle: { enabled in
+                await probe.record("settings-start:\(enabled)")
+                await releaseSettings.wait()
+                await probe.record("settings-end:\(enabled)")
+            },
+            subscribeToChanges: {
+                await probe.record("subscription-start")
+                await releaseSubscription.wait()
+                await probe.record("subscription-end")
+            },
+            refreshCloudKitStatus: {
+                await probe.record("status-start")
+                await releaseStatus.wait()
+                await probe.record("status-end")
+            }
+        )
+
+        // Given several app-owned sync tasks are in flight.
+        _ = coordinator.startChangeSubscription()
+        _ = coordinator.handleSyncSettingsChanged(false)
+        _ = coordinator.refreshCloudKitStatusFromSettings()
+        await probe.waitForCount(3)
+
+        // When app-level teardown requests sync cleanup.
+        let cleanupTask = Task {
+            await coordinator.cancelAllAndWait()
+            await probe.record("cleanup-end")
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then cleanup remains pending until all tracked sync tasks exit.
+        #expect(
+            await probe.events() == ["subscription-start", "settings-start:false", "status-start"]
+        )
+
+        await releaseSubscription.open()
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(!(await probe.events()).contains("cleanup-end"))
+
+        await releaseSettings.open()
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(!(await probe.events()).contains("cleanup-end"))
+
+        await releaseStatus.open()
+        await cleanupTask.value
+
+        #expect(
+            await probe.events() == [
+                "subscription-start",
+                "settings-start:false",
+                "status-start",
+                "subscription-end",
+                "settings-end:false",
+                "status-end",
+                "cleanup-end"
+            ],
+            "Sync cleanup should wait for every tracked sync task before reporting completion."
+        )
+    }
 }
 
 private actor AppSyncProbe {

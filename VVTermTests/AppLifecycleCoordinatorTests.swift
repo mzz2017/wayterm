@@ -216,6 +216,40 @@ struct AppLifecycleCoordinatorTests {
     }
 
     @Test
+    func terminationTeardownRequestCancelsSyncBeforeResourceTeardown() async {
+        // Given Sync, RemoteFiles, Stats, and terminal teardown dependencies are
+        // injected into the app lifecycle owner.
+        let probe = AppLifecycleProbe()
+        let coordinator = AppLifecycleCoordinator.makeForTesting(
+            disconnectConnectionSessionsBeforeExit: {
+                await probe.record("sessions")
+            },
+            disconnectTerminalTabsBeforeExit: {
+                await probe.record("tabs")
+            },
+            disconnectRemoteFilesBeforeExit: {
+                await probe.record("remote-files")
+            },
+            disconnectStatsBeforeExit: {
+                await probe.record("stats")
+            },
+            cancelSyncBeforeExit: {
+                await probe.record("sync")
+            }
+        )
+
+        // When the platform delegate sends termination intent.
+        let requestID = coordinator.requestTerminationTeardown()
+        await coordinator.waitForTerminationTeardownRequest(requestID)
+
+        // Then sync tasks are canceled before resource owners start closing.
+        #expect(
+            await probe.events() == ["sync", "remote-files", "stats", "sessions", "tabs"],
+            "Termination should cancel app sync before closing resource owners that sync callbacks may refresh."
+        )
+    }
+
+    @Test
     func terminationTeardownRequestCompletesAfterTimeoutWhenDisconnectDoesNotFinish() async {
         // Given terminal teardown starts but the first terminal manager does
         // not finish before the app termination timeout.
