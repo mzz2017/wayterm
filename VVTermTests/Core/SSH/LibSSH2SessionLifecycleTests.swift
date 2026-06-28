@@ -822,6 +822,87 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         }
     }
 
+    func testExecUploadStdoutDrainFailurePreservesRawLibSSH2Error() async throws {
+        // Given exec-preferred upload writes all data, but draining remote
+        // stdout fails with a raw libssh2 read diagnostic.
+        let payload = Data("payload".utf8)
+        let rawReadError = LibSSH2RawError(
+            operation: .channelRead,
+            code: LIBSSH2_ERROR_SOCKET_RECV,
+            message: "socket recv failed while draining upload stdout"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x44),
+            rawErrors: [rawReadError],
+            channelReadResults: [
+                .error(Int(rawReadError.code))
+            ],
+            channelWriteResults: [
+                payload.count
+            ]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When upload drains remote stdout during channel teardown.
+        try await session.connect()
+        do {
+            try await session.upload(payload, to: "/tmp/vvterm-upload", strategy: SSHUploadStrategy.execPreferred)
+            XCTFail("Expected raw libssh2 exec upload stdout drain failure")
+        } catch SSHError.libssh2(let rawError) {
+            // Then read diagnostics keep their raw operation and message instead
+            // of collapsing to a formatted socket string.
+            XCTAssertEqual(rawError.operation, .channelRead)
+            XCTAssertEqual(rawError.code, LIBSSH2_ERROR_SOCKET_RECV)
+            XCTAssertEqual(rawError.message, "socket recv failed while draining upload stdout")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+    }
+
+    func testExecUploadStderrDrainFailurePreservesRawLibSSH2Error() async throws {
+        // Given exec-preferred upload drains stdout successfully, but draining
+        // remote stderr fails with a raw libssh2 read diagnostic.
+        let payload = Data("payload".utf8)
+        let rawReadError = LibSSH2RawError(
+            operation: .channelRead,
+            code: LIBSSH2_ERROR_SOCKET_RECV,
+            message: "socket recv failed while draining upload stderr"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x44),
+            rawErrors: [rawReadError],
+            channelReadResults: [
+                .eagain,
+                .error(Int(rawReadError.code))
+            ],
+            channelWriteResults: [
+                payload.count
+            ]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When upload drains remote stderr during channel teardown.
+        try await session.connect()
+        do {
+            try await session.upload(payload, to: "/tmp/vvterm-upload", strategy: SSHUploadStrategy.execPreferred)
+            XCTFail("Expected raw libssh2 exec upload stderr drain failure")
+        } catch SSHError.libssh2(let rawError) {
+            // Then read diagnostics keep their raw operation and message instead
+            // of collapsing to a formatted socket string.
+            XCTAssertEqual(rawError.operation, .channelRead)
+            XCTAssertEqual(rawError.code, LIBSSH2_ERROR_SOCKET_RECV)
+            XCTAssertEqual(rawError.message, "socket recv failed while draining upload stderr")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+    }
+
     func testExecUploadSendEOFFailurePreservesRawLibSSH2Error() async throws {
         // Given exec-preferred upload writes all data, but sending channel EOF
         // fails with a raw libssh2 teardown diagnostic.

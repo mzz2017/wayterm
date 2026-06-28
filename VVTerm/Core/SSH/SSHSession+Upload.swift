@@ -318,6 +318,13 @@ extension SSHSession {
             if stdoutRead == Int(LIBSSH2_ERROR_EAGAIN) || stdoutRead == 0 {
                 break
             }
+            if let session = libssh2Session {
+                throw libSSH2Error(
+                    session: session,
+                    operation: .channelRead,
+                    fallbackCode: Int32(stdoutRead)
+                )
+            }
             throw SSHError.socketError("Exec upload stdout drain failed: \(stdoutRead)")
         }
 
@@ -329,6 +336,13 @@ extension SSHSession {
             }
             if stderrRead == Int(LIBSSH2_ERROR_EAGAIN) || stderrRead == 0 {
                 break
+            }
+            if let session = libssh2Session {
+                throw libSSH2Error(
+                    session: session,
+                    operation: .channelRead,
+                    fallbackCode: Int32(stderrRead)
+                )
             }
             throw SSHError.socketError("Exec upload stderr drain failed: \(stderrRead)")
         }
