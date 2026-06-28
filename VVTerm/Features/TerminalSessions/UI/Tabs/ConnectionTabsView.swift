@@ -22,6 +22,7 @@ struct ConnectionTerminalContainer: View {
     let onShowSettings: () -> Void
     let serverManager: ServerManager
     let fileBrowser: RemoteFileBrowserStore
+    let statsRegistry: ServerStatsCollectionRegistry
     let server: Server
     @Binding var isZenModeEnabled: Bool
     let isSidebarVisible: Bool
@@ -257,7 +258,7 @@ struct ConnectionTerminalContainer: View {
                 isVisible: selectedView == "stats",
                 backgroundColor: liveTerminalBackgroundColor,
                 borrowedLeaseProvider: { tabManager.sharedStatsLease(for: server.id) },
-                statsCollector: ServerStatsCollector(connectionProvider: StatsSSHConnectionProvider.makeProvider())
+                statsCollector: statsRegistry.collector(for: server.id)
             )
                 .opacity(selectedView == "stats" ? 1 : 0)
                 .allowsHitTesting(selectedView == "stats")
@@ -626,6 +627,7 @@ struct ConnectionTerminalContainer: View {
             disconnectRemoteFiles: { serverId in
                 fileBrowser.disconnect(serverId: serverId)
             },
+            disconnectStats: statsRegistry.disconnect,
             disconnectFileTabs: { serverId in
                 fileTabManager.disconnect(serverId: serverId)
             },

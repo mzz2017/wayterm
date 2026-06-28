@@ -169,6 +169,47 @@ struct ServerConnectionLifecycleCoordinatorTests {
         )
         #expect(coordinator.pendingDisconnectRequestIDs.isEmpty)
     }
+
+    @Test
+    func serverDisconnectAwaitsStatsCleanupBeforeTabsAndTerminal() async {
+        let serverId = UUID()
+        let recorder = ServerDisconnectRecorder()
+        let statsGate = ServerDisconnectGate()
+        let coordinator = ServerConnectionLifecycleCoordinator()
+
+        let requestID = coordinator.requestServerDisconnect(
+            serverId: serverId,
+            disconnectRemoteFiles: { _ in
+                Task { @MainActor in
+                    recorder.record("remote")
+                }
+            },
+            disconnectStats: { requestedServerId in
+                #expect(requestedServerId == serverId)
+                recorder.record("stats-start")
+                await statsGate.wait()
+                recorder.record("stats-end")
+            },
+            disconnectFileTabs: { _ in recorder.record("file-tabs") },
+            disconnectTerminals: { _ in recorder.record("terminal") },
+            onCompleted: { recorder.record("complete") }
+        )
+
+        await recorder.waitForCount(2)
+        #expect(recorder.events == ["remote", "stats-start"])
+        #expect(
+            coordinator.pendingDisconnectRequestIDs == [requestID],
+            "Server disconnect should remain tracked while Stats cleanup is in flight."
+        )
+
+        await statsGate.open()
+        await coordinator.waitForDisconnectRequest(requestID)
+
+        #expect(
+            recorder.events == ["remote", "stats-start", "stats-end", "file-tabs", "terminal", "complete"],
+            "Server disconnect must await Stats cleanup before clearing tabs, disconnecting terminals, and notifying UI."
+        )
+    }
 }
 
 @MainActor

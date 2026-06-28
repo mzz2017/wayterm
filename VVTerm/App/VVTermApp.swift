@@ -32,6 +32,7 @@ struct VVTermApp: App {
         isProProvider: { StoreManager.shared.isPro }
     )
     @StateObject private var remoteFileBrowserStore = VVTermApp.makeRemoteFileBrowserStore()
+    @StateObject private var statsRegistry = ServerStatsCollectionRegistry()
     @StateObject private var terminalThemeManager = TerminalThemeManager.shared
     @StateObject private var terminalAccessoryPreferencesManager = TerminalAccessoryPreferencesManager.shared
     @StateObject private var terminalRuntimePreferences = TerminalRuntimePreferencesStore(
@@ -86,6 +87,7 @@ struct VVTermApp: App {
                         iOSContentView(
                             fileTabs: remoteFileTabManager,
                             fileBrowser: remoteFileBrowserStore,
+                            statsRegistry: statsRegistry,
                             appLockManager: appLockManager,
                             disconnectCoordinator: serverConnectionLifecycleCoordinator,
                             connectionTester: serverConnectionTester
@@ -109,6 +111,7 @@ struct VVTermApp: App {
                         ContentView(
                             fileTabs: remoteFileTabManager,
                             fileBrowser: remoteFileBrowserStore,
+                            statsRegistry: statsRegistry,
                             appLockManager: appLockManager,
                             disconnectCoordinator: serverConnectionLifecycleCoordinator,
                             connectionTester: serverConnectionTester,

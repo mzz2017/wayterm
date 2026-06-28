@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 final class ServerConnectionLifecycleCoordinator {
     typealias RemoteFilesDisconnectAction = @MainActor (UUID) -> Task<Void, Never>
+    typealias StatsDisconnectAction = @MainActor (UUID) async -> Void
     typealias FileTabsDisconnectAction = @MainActor (UUID) -> Void
     typealias TerminalDisconnectAction = @MainActor (UUID) async -> Void
 
@@ -25,6 +26,7 @@ final class ServerConnectionLifecycleCoordinator {
     func requestServerDisconnect(
         serverId: UUID,
         disconnectRemoteFiles: @escaping RemoteFilesDisconnectAction,
+        disconnectStats: @escaping StatsDisconnectAction = { _ in },
         disconnectFileTabs: FileTabsDisconnectAction? = nil,
         disconnectTerminals: @escaping TerminalDisconnectAction,
         onCompleted: @escaping @MainActor () -> Void = {}
@@ -47,6 +49,8 @@ final class ServerConnectionLifecycleCoordinator {
             let remoteFilesDisconnectTask = disconnectRemoteFiles(serverId)
             await remoteFilesDisconnectTask.value
 
+            guard !Task.isCancelled else { return }
+            await disconnectStats(serverId)
             guard !Task.isCancelled else { return }
             disconnectFileTabs?(serverId)
             await disconnectTerminals(serverId)

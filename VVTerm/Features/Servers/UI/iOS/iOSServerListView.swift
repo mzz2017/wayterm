@@ -9,6 +9,7 @@ struct iOSServerListView: View {
     @ObservedObject var appLockManager: AppLockManager
     let disconnectCoordinator: ServerConnectionLifecycleCoordinator
     let fileBrowser: RemoteFileBrowserStore
+    let statsRegistry: ServerStatsCollectionRegistry
     let connectionTester: ServerConnectionTester
     @Binding var selectedWorkspace: Workspace?
     @Binding var selectedEnvironment: ServerEnvironment?
@@ -474,6 +475,7 @@ struct iOSServerListView: View {
             disconnectRemoteFiles: { serverId in
                 fileBrowser.disconnect(serverId: serverId)
             },
+            disconnectStats: statsRegistry.disconnect,
             disconnectTerminals: sessionManager.disconnectServerAndWait
         )
     }

@@ -12,6 +12,7 @@ import AppKit
 struct ContentView: View {
     let fileTabs: RemoteFileTabManager
     let fileBrowser: RemoteFileBrowserStore
+    let statsRegistry: ServerStatsCollectionRegistry
     let appLockManager: AppLockManager
     let disconnectCoordinator: ServerConnectionLifecycleCoordinator
     let connectionTester: ServerConnectionTester
@@ -106,6 +107,7 @@ struct ContentView: View {
                     onShowSettings: onShowSettings,
                     serverManager: serverManager,
                     fileBrowser: fileBrowser,
+                    statsRegistry: statsRegistry,
                     server: server,
                     isZenModeEnabled: $isZenModeEnabled,
                     isSidebarVisible: isSidebarVisible,
@@ -266,6 +268,7 @@ struct ContentView: View {
     ContentView(
         fileTabs: RemoteFileTabManager(isProProvider: { false }),
         fileBrowser: RemoteFileBrowserStore(serverProvider: { _ in nil }),
+        statsRegistry: ServerStatsCollectionRegistry(),
         appLockManager: AppLockManager(),
         disconnectCoordinator: ServerConnectionLifecycleCoordinator(),
         connectionTester: ServerConnectionTester(),

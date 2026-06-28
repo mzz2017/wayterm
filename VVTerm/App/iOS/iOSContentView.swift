@@ -10,6 +10,7 @@ import StoreKit
 struct iOSContentView: View {
     let fileTabs: RemoteFileTabManager
     let fileBrowser: RemoteFileBrowserStore
+    let statsRegistry: ServerStatsCollectionRegistry
     let appLockManager: AppLockManager
     let disconnectCoordinator: ServerConnectionLifecycleCoordinator
     let connectionTester: ServerConnectionTester
@@ -54,6 +55,7 @@ struct iOSContentView: View {
                 appLockManager: appLockManager,
                 disconnectCoordinator: disconnectCoordinator,
                 fileBrowser: fileBrowser,
+                statsRegistry: statsRegistry,
                 connectionTester: connectionTester,
                 selectedWorkspace: $selectedWorkspace,
                 selectedEnvironment: $selectedEnvironment,
@@ -102,6 +104,7 @@ struct iOSContentView: View {
                     viewTabConfig: viewTabConfig,
                     disconnectCoordinator: disconnectCoordinator,
                     fileBrowser: fileBrowser,
+                    statsRegistry: statsRegistry,
                     connectionTester: connectionTester,
                     connectingServer: connectingServer,
                     isConnecting: isConnecting,

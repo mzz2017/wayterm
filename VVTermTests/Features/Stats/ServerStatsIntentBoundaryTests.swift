@@ -44,6 +44,68 @@ struct ServerStatsIntentBoundaryTests {
         )
     }
 
+    @Test
+    func serverStatsCollectorLifecycleIsOwnedOutsideUI() throws {
+        // Given the Stats UI and terminal composition sources.
+        let root = try sourceRoot()
+        let statsViewSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Stats/UI/ServerStatsView.swift")
+        )
+        let sharedTabSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift")
+        )
+        let iosLayerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalSessions/UI/iOS/IOSTerminalContentLayer.swift")
+        )
+
+        // Then UI may observe and send intent, but it must not directly own or
+        // construct the remote Stats collection lifecycle.
+        #expect(
+            statsViewSource.contains("@ObservedObject private var statsCollector: ServerStatsCollector"),
+            "ServerStatsView should observe a collector owned by the Application layer."
+        )
+        #expect(
+            !statsViewSource.contains("@StateObject private var statsCollector"),
+            "ServerStatsView must not be the lifetime owner of remote Stats collection."
+        )
+        #expect(
+            !containsRegex(#"StateObject\s*\(\s*wrappedValue:\s*statsCollector\s*\)"#, in: statsViewSource),
+            "ServerStatsView must not wrap the injected collector in StateObject."
+        )
+        #expect(
+            !sharedTabSource.contains("ServerStatsCollector(connectionProvider:"),
+            "Shared terminal UI should not construct Stats collectors directly."
+        )
+        #expect(
+            !iosLayerSource.contains("ServerStatsCollector(connectionProvider:"),
+            "iOS terminal UI should not construct Stats collectors directly."
+        )
+    }
+
+    @Test
+    func appRootsInjectStatsRegistryIntoTerminalComposition() throws {
+        // Given app composition sources.
+        let root = try sourceRoot()
+        let appSource = try source(at: root.appendingPathComponent("VVTerm/App/VVTermApp.swift"))
+        let macRootSource = try source(at: root.appendingPathComponent("VVTerm/App/ContentView.swift"))
+        let iosRootSource = try source(at: root.appendingPathComponent("VVTerm/App/iOS/iOSContentView.swift"))
+
+        // Then the app root creates the non-UI Stats lifecycle owner and passes
+        // it down as a dependency instead of letting leaf UI construct it.
+        #expect(
+            appSource.contains("ServerStatsCollectionRegistry"),
+            "VVTermApp should create the Application owner for Stats collection lifetimes."
+        )
+        #expect(
+            macRootSource.contains("statsRegistry: statsRegistry"),
+            "ContentView should inject the Stats registry into macOS terminal composition."
+        )
+        #expect(
+            iosRootSource.contains("statsRegistry: statsRegistry"),
+            "iOSContentView should inject the Stats registry into iOS terminal composition."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }

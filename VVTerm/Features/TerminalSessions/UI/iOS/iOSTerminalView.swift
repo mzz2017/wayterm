@@ -10,6 +10,7 @@ struct iOSTerminalView: View {
     @ObservedObject var viewTabConfig: ViewTabConfigurationManager
     let disconnectCoordinator: ServerConnectionLifecycleCoordinator
     let fileBrowser: RemoteFileBrowserStore
+    let statsRegistry: ServerStatsCollectionRegistry
     let connectionTester: ServerConnectionTester
     let connectingServer: Server?
     let isConnecting: Bool
@@ -420,6 +421,7 @@ struct iOSTerminalView: View {
             selectedFileTab: selectedFileTab,
             fileTabServerId: fileTabServerId,
             fileBrowser: fileBrowser,
+            statsRegistry: statsRegistry,
             fileTabs: fileTabs,
             terminalBackgroundColor: terminalBackgroundColor,
             statsLeaseProvider: { serverId in sessionManager.sharedStatsLease(for: serverId) },
@@ -688,6 +690,7 @@ struct iOSTerminalView: View {
             disconnectRemoteFiles: { serverId in
                 fileBrowser.disconnect(serverId: serverId)
             },
+            disconnectStats: statsRegistry.disconnect,
             disconnectFileTabs: { serverId in
                 fileTabs.disconnect(serverId: serverId)
             },

@@ -50,7 +50,7 @@ struct ServerStatsView: View {
     let backgroundColor: Color
     var borrowedLeaseProvider: () -> RemoteConnectionLease? = { nil }
 
-    @StateObject private var statsCollector: ServerStatsCollector
+    @ObservedObject private var statsCollector: ServerStatsCollector
 
     init(
         server: Server,
@@ -63,7 +63,7 @@ struct ServerStatsView: View {
         self.isVisible = isVisible
         self.backgroundColor = backgroundColor
         self.borrowedLeaseProvider = borrowedLeaseProvider
-        _statsCollector = StateObject(wrappedValue: statsCollector)
+        self.statsCollector = statsCollector
     }
 
     var body: some View {

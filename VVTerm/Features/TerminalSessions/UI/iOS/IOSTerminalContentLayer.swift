@@ -19,6 +19,7 @@ struct IOSTerminalContentLayer: View {
     let selectedFileTab: RemoteFileTab?
     let fileTabServerId: UUID?
     let fileBrowser: RemoteFileBrowserStore
+    let statsRegistry: ServerStatsCollectionRegistry
     @ObservedObject var fileTabs: RemoteFileTabManager
     let terminalBackgroundColor: Color
     let statsLeaseProvider: (UUID) -> RemoteConnectionLease?
@@ -174,7 +175,7 @@ struct IOSTerminalContentLayer: View {
             isVisible: true,
             backgroundColor: Color(UIColor.systemGroupedBackground),
             borrowedLeaseProvider: { statsLeaseProvider(server.id) },
-            statsCollector: ServerStatsCollector(connectionProvider: StatsSSHConnectionProvider.makeProvider())
+            statsCollector: statsRegistry.collector(for: server.id)
         )
     }
 
