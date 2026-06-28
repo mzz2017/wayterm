@@ -1,5 +1,9 @@
 import XCTest
-@testable import VVTermIOSApplicationLogic
+@testable import VVTermConnectionViewsApplicationLogic
+
+// Test Context: protects iOS connection-view selection rules now owned by
+// ConnectionViews/Application. Update these tests when visible tab selection
+// semantics change, not when UI layout changes.
 
 final class IOSConnectionViewSelectionPolicyTests: XCTestCase {
     func testPreferredConnectViewUsesTerminalWhenVisible() {

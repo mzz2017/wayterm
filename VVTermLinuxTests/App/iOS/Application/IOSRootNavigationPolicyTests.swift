@@ -1,6 +1,10 @@
 import XCTest
 @testable import VVTermIOSApplicationLogic
 
+// Test Context: protects iOS root navigation decisions owned by App/iOS.
+// Update these tests when terminal presentation state semantics change, not
+// when feature internals move.
+
 final class IOSRootNavigationPolicyTests: XCTestCase {
     func testTerminalNavigationHasContextWhenConnecting() {
         let state = IOSRootNavigationState(

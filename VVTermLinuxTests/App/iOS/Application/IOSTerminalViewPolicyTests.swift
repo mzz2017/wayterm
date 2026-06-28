@@ -1,5 +1,9 @@
 import XCTest
-@testable import VVTermIOSApplicationLogic
+@testable import VVTermTerminalSessionsApplicationLogic
+
+// Test Context: protects pure iOS terminal presentation policy owned by
+// TerminalSessions/Application. Update these tests when terminal foreground,
+// reconnect, or recovered-state semantics change.
 
 final class IOSTerminalViewPolicyTests: XCTestCase {
     func testEffectiveSelectedSessionUsesSelectedSessionWhenItBelongsToCurrentServer() {
@@ -44,7 +48,8 @@ final class IOSTerminalViewPolicyTests: XCTestCase {
 
         let result = IOSTerminalViewPolicy.foregroundReconnectAction(
             selectedViewId: "terminal",
-            selectedSession: IOSTerminalSessionSnapshot(id: sessionId, serverId: UUID(), connectionState: .disconnected),
+            selectedSession: IOSTerminalSessionSnapshot(id: sessionId, serverId: UUID()),
+            selectedSessionHasLiveRuntime: false,
             refreshTerminal: true,
             autoReconnectEnabled: true,
             isSuspendingForBackground: false

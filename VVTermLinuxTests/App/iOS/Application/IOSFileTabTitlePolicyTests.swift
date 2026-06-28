@@ -1,11 +1,15 @@
 import XCTest
-@testable import VVTermIOSApplicationLogic
+@testable import VVTermRemoteFilesApplicationLogic
 
-final class IOSFileTabTitlePolicyTests: XCTestCase {
+// Test Context: protects remote-file tab title derivation used by iOS and
+// shared connection tabs. Update these tests when tab title semantics change,
+// not when the surrounding terminal UI moves.
+
+final class RemoteFileTabTitlePolicyTests: XCTestCase {
     private let serverId = UUID()
 
     func testBaseTitleUsesLastVisitedPathBeforeTabPaths() {
-        let tab = IOSFileTabTitleInput(
+        let tab = RemoteFileTabTitleInput(
             id: UUID(),
             serverId: serverId,
             seedPath: "/home/app",
@@ -13,11 +17,11 @@ final class IOSFileTabTitlePolicyTests: XCTestCase {
             lastVisitedPath: "/opt/project"
         )
 
-        XCTAssertEqual(IOSFileTabTitlePolicy.baseTitle(for: tab, serverName: "Prod"), "project")
+        XCTAssertEqual(RemoteFileTabTitlePolicy.baseTitle(for: tab, serverName: "Prod"), "project")
     }
 
     func testBaseTitleUsesServerNameForRootPath() {
-        let tab = IOSFileTabTitleInput(
+        let tab = RemoteFileTabTitleInput(
             id: UUID(),
             serverId: serverId,
             seedPath: "/",
@@ -25,25 +29,25 @@ final class IOSFileTabTitlePolicyTests: XCTestCase {
             lastVisitedPath: nil
         )
 
-        XCTAssertEqual(IOSFileTabTitlePolicy.baseTitle(for: tab, serverName: "Prod"), "Prod")
+        XCTAssertEqual(RemoteFileTabTitlePolicy.baseTitle(for: tab, serverName: "Prod"), "Prod")
     }
 
     func testDisplayedTitlesNumberDuplicateBaseTitlesInTabOrder() {
-        let first = IOSFileTabTitleInput(
+        let first = RemoteFileTabTitleInput(
             id: UUID(),
             serverId: serverId,
             seedPath: "/srv/app",
             lastKnownPath: nil,
             lastVisitedPath: nil
         )
-        let second = IOSFileTabTitleInput(
+        let second = RemoteFileTabTitleInput(
             id: UUID(),
             serverId: serverId,
             seedPath: "/opt/app",
             lastKnownPath: nil,
             lastVisitedPath: nil
         )
-        let third = IOSFileTabTitleInput(
+        let third = RemoteFileTabTitleInput(
             id: UUID(),
             serverId: serverId,
             seedPath: "/var/log",
@@ -51,7 +55,7 @@ final class IOSFileTabTitlePolicyTests: XCTestCase {
             lastVisitedPath: nil
         )
 
-        let result = IOSFileTabTitlePolicy.displayedTitles(
+        let result = RemoteFileTabTitlePolicy.displayedTitles(
             for: [first, second, third],
             serverName: "Prod"
         )

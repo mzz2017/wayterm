@@ -1,5 +1,9 @@
 import XCTest
-@testable import VVTermIOSApplicationLogic
+@testable import VVTermServersApplicationLogic
+
+// Test Context: protects pure iOS server-list filtering, active connection
+// grouping, and environment counts owned by Servers/Application. Update these
+// tests when list policy semantics change, not when SwiftUI list views move.
 
 final class IOSServerListPolicyTests: XCTestCase {
     private let workspaceA = UUID()

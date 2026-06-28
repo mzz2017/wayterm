@@ -1,5 +1,9 @@
 import XCTest
-@testable import VVTermIOSApplicationLogic
+@testable import VVTermServersApplicationLogic
+
+// Test Context: protects workspace deletion warning copy generated outside
+// SwiftUI. Update these tests when deletion warning product copy intentionally
+// changes.
 
 final class IOSWorkspaceDeletionPolicyTests: XCTestCase {
     func testWarningWithoutWorkspaceUsesGenericText() {
