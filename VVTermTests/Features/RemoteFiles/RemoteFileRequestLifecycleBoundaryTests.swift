@@ -33,8 +33,8 @@ struct RemoteFileRequestLifecycleBoundaryTests {
         #expect(coordinatorSource.contains("private var transferRequests"))
         #expect(coordinatorSource.contains("func requestMutation"))
         #expect(coordinatorSource.contains("func requestTransfer"))
-        #expect(coordinatorSource.contains("func cancelMutationRequests"))
-        #expect(coordinatorSource.contains("func cancelTransferRequests"))
+        #expect(coordinatorSource.contains("func cancelMutationRequests(for serverId: UUID) -> [Task<Void, Never>]"))
+        #expect(coordinatorSource.contains("func cancelTransferRequests(for serverId: UUID) -> [Task<Void, Never>]"))
     }
 
     private func source(at url: URL) throws -> String {

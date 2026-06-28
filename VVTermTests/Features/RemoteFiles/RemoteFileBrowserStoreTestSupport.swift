@@ -128,6 +128,10 @@ actor BlockingDisconnectRemoteFileClient: SFTPRemoteFileClient {
         }
     }
 
+    func hasStartedDisconnect() -> Bool {
+        disconnectStarted
+    }
+
     func releaseDisconnect() {
         if let releaseContinuation {
             releaseContinuation.resume()

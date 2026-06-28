@@ -19,13 +19,19 @@ final class RemoteFileServiceAccessCoordinator {
     }
 
     @discardableResult
-    func disconnect(serverId: UUID) -> Task<Void, Never> {
+    func disconnect(
+        serverId: UUID,
+        waitingFor prerequisiteTasks: [Task<Void, Never>] = []
+    ) -> Task<Void, Never> {
         if let pending = pendingDisconnects[serverId] {
             return pending.task
         }
 
         let disconnectID = UUID()
-        let task = Task { @MainActor [weak self, remoteFileServiceAccess] in
+        let task = Task { @MainActor [weak self, remoteFileServiceAccess, prerequisiteTasks] in
+            for prerequisiteTask in prerequisiteTasks {
+                await prerequisiteTask.value
+            }
             await remoteFileServiceAccess.disconnect(serverId: serverId)
             if self?.pendingDisconnects[serverId]?.id == disconnectID {
                 self?.pendingDisconnects.removeValue(forKey: serverId)

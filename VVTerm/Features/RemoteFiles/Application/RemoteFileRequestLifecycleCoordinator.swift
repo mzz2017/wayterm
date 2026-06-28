@@ -63,13 +63,17 @@ final class RemoteFileRequestLifecycleCoordinator {
         await mutationRequests[requestID]?.task.value
     }
 
-    func cancelMutationRequests(for serverId: UUID) {
+    @discardableResult
+    func cancelMutationRequests(for serverId: UUID) -> [Task<Void, Never>] {
+        var canceledTasks: [Task<Void, Never>] = []
         for (requestID, request) in mutationRequests where request.serverId == serverId {
             var canceledRequest = request
             canceledRequest.isCancelled = true
             mutationRequests[requestID] = canceledRequest
             request.task.cancel()
+            canceledTasks.append(request.task)
         }
+        return canceledTasks
     }
 
     @discardableResult
@@ -110,13 +114,17 @@ final class RemoteFileRequestLifecycleCoordinator {
         await transferRequests[requestID]?.task.value
     }
 
-    func cancelTransferRequests(for serverId: UUID) {
+    @discardableResult
+    func cancelTransferRequests(for serverId: UUID) -> [Task<Void, Never>] {
+        var canceledTasks: [Task<Void, Never>] = []
         for (requestID, request) in transferRequests where request.serverId == serverId {
             var canceledRequest = request
             canceledRequest.isCancelled = true
             transferRequests[requestID] = canceledRequest
             request.task.cancel()
+            canceledTasks.append(request.task)
         }
+        return canceledTasks
     }
 
     private func isMutationRequestCancelled(_ requestID: UUID) -> Bool {

@@ -42,7 +42,8 @@ struct RemoteFileServiceAccessBoundaryTests {
         #expect(coordinatorSource.contains("private let remoteFileServiceAccess: any RemoteFileServiceAccessing"))
         #expect(coordinatorSource.contains("private var pendingDisconnects"))
         #expect(coordinatorSource.contains("func withRemoteFileService"))
-        #expect(coordinatorSource.contains("func disconnect(serverId"))
+        #expect(coordinatorSource.contains("func disconnect("))
+        #expect(coordinatorSource.contains("waitingFor prerequisiteTasks: [Task<Void, Never>]"))
         #expect(!coordinatorSource.contains("SSHSFTPAdapter"))
         #expect(adapterSource.contains("extension SSHSFTPAdapter: RemoteFileServiceAccessing"))
     }

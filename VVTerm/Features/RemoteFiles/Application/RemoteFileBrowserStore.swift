@@ -414,8 +414,9 @@ final class RemoteFileBrowserStore: ObservableObject {
 
     @discardableResult
     func disconnect(serverId: UUID) -> Task<Void, Never> {
-        cancelMutationRequests(for: serverId)
-        cancelTransferRequests(for: serverId)
+        let canceledRequestTasks =
+            cancelMutationRequests(for: serverId)
+            + cancelTransferRequests(for: serverId)
         cancelMoveDestinationLoadRequests(for: serverId)
 
         var affectedTabIDs = Set(
@@ -431,7 +432,10 @@ final class RemoteFileBrowserStore: ObservableObject {
             removeRuntimeState(for: tabId)
         }
 
-        return serviceAccessCoordinator.disconnect(serverId: serverId)
+        return serviceAccessCoordinator.disconnect(
+            serverId: serverId,
+            waitingFor: canceledRequestTasks
+        )
     }
 
     func cancelPreviewLoadRequest(for tabId: UUID) {
@@ -439,11 +443,13 @@ final class RemoteFileBrowserStore: ObservableObject {
         previewLoadCoordinator.cancelRequest(for: tabId)
     }
 
-    func cancelMutationRequests(for serverId: UUID) {
+    @discardableResult
+    func cancelMutationRequests(for serverId: UUID) -> [Task<Void, Never>] {
         requestLifecycleCoordinator.cancelMutationRequests(for: serverId)
     }
 
-    func cancelTransferRequests(for serverId: UUID) {
+    @discardableResult
+    func cancelTransferRequests(for serverId: UUID) -> [Task<Void, Never>] {
         requestLifecycleCoordinator.cancelTransferRequests(for: serverId)
     }
 

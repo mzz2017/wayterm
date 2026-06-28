@@ -343,6 +343,64 @@ struct RemoteFileBrowserRequestLifecycleTests {
     }
 
     @Test
+    func disconnectWaitsForCanceledTransferToExitBeforeDisconnectingService() async throws {
+        let defaults = makeRemoteFileBrowserDefaults()
+        let server = makeRemoteFileBrowserServer()
+        let client = BlockingDisconnectRemoteFileClient()
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: makeRemoteFileBrowserPersistedStateStore(defaults: defaults),
+            remoteFileServiceAccess: SSHSFTPAdapter(
+                credentialsProvider: { server in makeRemoteFileBrowserCredentials(serverId: server.id) },
+                ownedClientFactory: {
+                    client
+                }
+            ),
+            serverProvider: { _ in nil }
+        )
+        let gate = RemoteFileMutationGate()
+        let disconnectWaitProbe = RemoteFileWaitProbe()
+
+        _ = try await store.withRemoteFileService(for: server) { service in
+            try await service.resolveHomeDirectory()
+        }
+        let transferID = store.requestTransfer(
+            serverId: server.id,
+            operation: { _ in
+                await gate.wait()
+                return "uploaded"
+            },
+            onSuccess: { _ in
+                Issue.record("Canceled transfer should not publish success after disconnect.")
+            }
+        )
+        try await Task.sleep(for: .milliseconds(20))
+
+        let disconnectTask = store.disconnect(serverId: server.id)
+        let disconnectWaitTask = Task {
+            await disconnectTask.value
+            await disconnectWaitProbe.markReturned()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(!store.pendingTransferRequestIDs.contains(transferID))
+        #expect(
+            await !client.hasStartedDisconnect(),
+            "RemoteFiles disconnect should wait for canceled transfer work to exit before disconnecting the SFTP service."
+        )
+        #expect(
+            await !disconnectWaitProbe.didReturn,
+            "RemoteFiles disconnect task should not complete while canceled transfer work is still blocked."
+        )
+
+        await gate.release()
+        await client.waitUntilDisconnectStarted()
+        await client.releaseDisconnect()
+        await disconnectWaitTask.value
+
+        #expect(await disconnectWaitProbe.didReturn)
+    }
+
+    @Test
     func disconnectLeavesOtherServerMutationAndTransferRequestsPending() async throws {
         let disconnectingServer = makeRemoteFileBrowserServer()
         let otherServer = makeRemoteFileBrowserServer()
