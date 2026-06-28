@@ -405,7 +405,9 @@ final class RemoteFileBrowserStore: ObservableObject {
         if let navigationTask = cancelNavigationRequest(for: tabId) {
             canceledTasks.append(navigationTask)
         }
-        cancelPreviewLoadRequest(for: tabId)
+        if let previewTask = cancelPreviewLoadRequest(for: tabId) {
+            canceledTasks.append(previewTask)
+        }
         directoryRequestIDs.removeValue(forKey: tabId)
         viewerRequestIDs.removeValue(forKey: tabId)
         temporaryStorage.removePreviewArtifact(for: states[tabId]?.viewerPayload)
@@ -443,9 +445,10 @@ final class RemoteFileBrowserStore: ObservableObject {
         )
     }
 
-    func cancelPreviewLoadRequest(for tabId: UUID) {
+    @discardableResult
+    func cancelPreviewLoadRequest(for tabId: UUID) -> Task<Void, Never>? {
         viewerRequestIDs.removeValue(forKey: tabId)
-        previewLoadCoordinator.cancelRequest(for: tabId)
+        return previewLoadCoordinator.cancelRequest(for: tabId)
     }
 
     @discardableResult

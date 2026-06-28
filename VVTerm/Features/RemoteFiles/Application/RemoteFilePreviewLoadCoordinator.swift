@@ -36,7 +36,7 @@ final class RemoteFilePreviewLoadCoordinator {
                 return existingRequestID
             }
 
-            cancelRequest(for: tab.id)
+            _ = cancelRequest(for: tab.id)
             onCancelPrevious()
         }
 
@@ -67,8 +67,12 @@ final class RemoteFilePreviewLoadCoordinator {
         await requests[requestID]?.task.value
     }
 
-    func cancelRequest(for tabId: UUID) {
-        guard let requestID = requestByTab.removeValue(forKey: tabId) else { return }
-        requests[requestID]?.task.cancel()
+    func cancelRequest(for tabId: UUID) -> Task<Void, Never>? {
+        guard let requestID = requestByTab.removeValue(forKey: tabId),
+              let task = requests[requestID]?.task else {
+            return nil
+        }
+        task.cancel()
+        return task
     }
 }

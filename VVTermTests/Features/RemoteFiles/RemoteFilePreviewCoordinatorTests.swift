@@ -248,6 +248,56 @@ struct RemoteFilePreviewCoordinatorTests {
     }
 
     @Test
+    func disconnectWaitsForCanceledPreviewLoadBeforeRemoteDisconnect() async throws {
+        let server = makeServer()
+        let tab = RemoteFileTab(serverId: server.id, seedPath: "/tmp")
+        let entry = makeEntry(name: "notes.txt", path: "/tmp/notes.txt", size: 5)
+        let client = BlockingPreviewLoadClient(data: Data("hello".utf8), blocksDisconnect: true)
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            remoteFileServiceAccess: NonSerializingRemoteFileServiceAccess(client: client),
+            serverProvider: { _ in nil }
+        )
+        let waitProbe = PreviewLoadWaitProbe()
+
+        _ = try await store.withRemoteFileService(for: server) { service in
+            try await service.resolveHomeDirectory()
+        }
+
+        // Given preview loading is blocked inside remote read IO.
+        let requestID = try #require(store.requestPreviewLoad(for: entry, in: tab, server: server))
+        await client.waitUntilReadStarted()
+
+        // When the same server disconnects.
+        let disconnectTask = store.disconnect(serverId: server.id)
+        let disconnectWaitTask = Task { @MainActor in
+            await disconnectTask.value
+            await waitProbe.markFinished()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then service disconnect waits for preview cleanup to exit.
+        #expect(store.pendingPreviewLoadRequestIDs.isEmpty)
+        #expect(
+            await !client.hasStartedDisconnect(),
+            "RemoteFiles disconnect should wait for canceled preview read to exit before disconnecting the SFTP service."
+        )
+        #expect(
+            await !waitProbe.didFinish(),
+            "RemoteFiles disconnect task should not complete while canceled preview read is still blocked."
+        )
+
+        await client.releaseRead()
+        await client.waitUntilDisconnectStarted()
+        await client.releaseDisconnect()
+        await disconnectWaitTask.value
+
+        #expect(await waitProbe.didFinish())
+        #expect(store.states[tab.id] == nil)
+        #expect(!store.pendingPreviewLoadRequestIDs.contains(requestID))
+    }
+
+    @Test
     func clearViewerRemovesPreviewArtifactAndResetsState() throws {
         let rootDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -438,14 +488,20 @@ struct RemoteFilePreviewCoordinatorTests {
 
 private actor BlockingPreviewLoadClient: SFTPRemoteFileClient {
     private let data: Data
+    private let blocksDisconnect: Bool
     private var reads = 0
     private var readStarted = false
     private var readStartedWaiters: [CheckedContinuation<Void, Never>] = []
     private var releaseContinuation: CheckedContinuation<Void, Never>?
     private var releaseRequested = false
+    private var disconnectStarted = false
+    private var disconnectWaiters: [CheckedContinuation<Void, Never>] = []
+    private var disconnectReleaseContinuation: CheckedContinuation<Void, Never>?
+    private var disconnectReleaseRequested = false
 
-    init(data: Data) {
+    init(data: Data, blocksDisconnect: Bool = false) {
         self.data = data
+        self.blocksDisconnect = blocksDisconnect
     }
 
     func waitUntilReadStarted() async {
@@ -468,9 +524,39 @@ private actor BlockingPreviewLoadClient: SFTPRemoteFileClient {
         reads
     }
 
+    func waitUntilDisconnectStarted() async {
+        if disconnectStarted { return }
+        await withCheckedContinuation { continuation in
+            disconnectWaiters.append(continuation)
+        }
+    }
+
+    func hasStartedDisconnect() -> Bool {
+        disconnectStarted
+    }
+
+    func releaseDisconnect() {
+        if let disconnectReleaseContinuation {
+            disconnectReleaseContinuation.resume()
+            self.disconnectReleaseContinuation = nil
+        } else {
+            disconnectReleaseRequested = true
+        }
+    }
+
     func connectForRemoteFileLease(to server: Server, credentials: ServerCredentials) async throws {}
 
-    func disconnect() async {}
+    func disconnect() async {
+        disconnectStarted = true
+        for waiter in disconnectWaiters {
+            waiter.resume()
+        }
+        disconnectWaiters.removeAll()
+        guard blocksDisconnect, !disconnectReleaseRequested else { return }
+        await withCheckedContinuation { continuation in
+            disconnectReleaseContinuation = continuation
+        }
+    }
 
     func execute(_ command: String, timeout: Duration?) async throws -> String { "" }
 
