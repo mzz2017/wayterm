@@ -34,6 +34,7 @@ extension TranscriptionSettingsReader {
 }
 
 extension AudioServiceDependencies {
+    @MainActor
     static var live: AudioServiceDependencies {
         let audioCaptureSession: any AudioCaptureSessionManaging
         #if os(iOS)
