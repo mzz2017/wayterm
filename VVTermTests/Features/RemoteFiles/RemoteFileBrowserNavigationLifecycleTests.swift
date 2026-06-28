@@ -13,7 +13,7 @@ struct RemoteFileBrowserNavigationLifecycleTests {
     @Test
     func moveDestinationLoadRequestTracksDirectoryListingUntilCompletion() async throws {
         let server = makeRemoteFileBrowserServer()
-        let client = BlockingNavigationRemoteFileClient(
+        let client = await BlockingNavigationRemoteFileClient(
             listResponses: [
                 "/srv": [
                     makeRemoteFileBrowserEntry(name: "zeta.log", path: "/srv/zeta.log", type: .file),
@@ -48,7 +48,7 @@ struct RemoteFileBrowserNavigationLifecycleTests {
     @Test
     func duplicateMoveDestinationLoadRequestsCoalesceUntilCompletion() async throws {
         let server = makeRemoteFileBrowserServer()
-        let client = BlockingNavigationRemoteFileClient(
+        let client = await BlockingNavigationRemoteFileClient(
             listResponses: [
                 "/srv": [
                     makeRemoteFileBrowserEntry(name: "alpha", path: "/srv/alpha", type: .directory)
@@ -89,7 +89,7 @@ struct RemoteFileBrowserNavigationLifecycleTests {
     @Test
     func moveDestinationLoadCancellationRemainsAwaitableUntilListingExits() async throws {
         let server = makeRemoteFileBrowserServer()
-        let client = BlockingNavigationRemoteFileClient(
+        let client = await BlockingNavigationRemoteFileClient(
             listResponses: [
                 "/srv": [
                     makeRemoteFileBrowserEntry(name: "alpha", path: "/srv/alpha", type: .directory)
@@ -133,7 +133,7 @@ struct RemoteFileBrowserNavigationLifecycleTests {
     @Test
     func replacementMoveDestinationLoadAfterCancellationRemainsCurrent() async throws {
         let server = makeRemoteFileBrowserServer()
-        let client = BlockingNavigationRemoteFileClient(
+        let client = await BlockingNavigationRemoteFileClient(
             listResponses: [
                 "/srv": [
                     makeRemoteFileBrowserEntry(name: "alpha", path: "/srv/alpha", type: .directory)
@@ -176,7 +176,7 @@ struct RemoteFileBrowserNavigationLifecycleTests {
     @Test
     func disconnectCancelsVisibleMoveDestinationLoadRequestsForServer() async throws {
         let server = makeRemoteFileBrowserServer()
-        let client = BlockingNavigationRemoteFileClient(
+        let client = await BlockingNavigationRemoteFileClient(
             listResponses: [
                 "/srv": [
                     makeRemoteFileBrowserEntry(name: "alpha", path: "/srv/alpha", type: .directory)
@@ -210,7 +210,7 @@ struct RemoteFileBrowserNavigationLifecycleTests {
     @Test
     func disconnectWaitsForCanceledMoveDestinationLoadBeforeRemoteDisconnect() async throws {
         let server = makeRemoteFileBrowserServer()
-        let client = BlockingNavigationRemoteFileClient(
+        let client = await BlockingNavigationRemoteFileClient(
             listResponses: [
                 "/srv": [
                     makeRemoteFileBrowserEntry(name: "alpha", path: "/srv/alpha", type: .directory)
@@ -271,7 +271,7 @@ struct RemoteFileBrowserNavigationLifecycleTests {
     func navigationRequestTracksInitialDirectoryLoadUntilSnapshotCompletes() async throws {
         let server = makeRemoteFileBrowserServer()
         let tab = RemoteFileTab(serverId: server.id, seedPath: "/srv")
-        let client = BlockingNavigationRemoteFileClient(
+        let client = await BlockingNavigationRemoteFileClient(
             listResponses: [
                 "/srv": [makeRemoteFileBrowserEntry(name: "app", path: "/srv/app", type: .directory)]
             ],
@@ -310,7 +310,7 @@ struct RemoteFileBrowserNavigationLifecycleTests {
         let tab = RemoteFileTab(serverId: server.id)
         let slowEntry = makeRemoteFileBrowserEntry(name: "slow", path: "/slow", type: .directory)
         let fileEntry = makeRemoteFileBrowserEntry(name: "current.txt", path: "/current.txt", type: .file)
-        let client = BlockingNavigationRemoteFileClient(
+        let client = await BlockingNavigationRemoteFileClient(
             listResponses: [
                 "/slow": [makeRemoteFileBrowserEntry(name: "stale.txt", path: "/slow/stale.txt", type: .file)]
             ],
@@ -346,7 +346,7 @@ struct RemoteFileBrowserNavigationLifecycleTests {
         let server = makeRemoteFileBrowserServer()
         let tab = RemoteFileTab(serverId: server.id)
         let entry = makeRemoteFileBrowserEntry(name: "logs", path: "/logs", type: .directory)
-        let client = BlockingNavigationRemoteFileClient(
+        let client = await BlockingNavigationRemoteFileClient(
             listResponses: [
                 "/logs": [makeRemoteFileBrowserEntry(name: "app.log", path: "/logs/app.log", type: .file)]
             ],
@@ -376,7 +376,7 @@ struct RemoteFileBrowserNavigationLifecycleTests {
         let server = makeRemoteFileBrowserServer()
         let tab = RemoteFileTab(serverId: server.id)
         let entry = makeRemoteFileBrowserEntry(name: "tmp", path: "/tmp", type: .directory)
-        let client = BlockingNavigationRemoteFileClient(
+        let client = await BlockingNavigationRemoteFileClient(
             listResponses: [
                 "/tmp": [makeRemoteFileBrowserEntry(name: "file.txt", path: "/tmp/file.txt", type: .file)]
             ],
@@ -406,7 +406,7 @@ struct RemoteFileBrowserNavigationLifecycleTests {
         let server = makeRemoteFileBrowserServer()
         let tab = RemoteFileTab(serverId: server.id)
         let entry = makeRemoteFileBrowserEntry(name: "tmp", path: "/tmp", type: .directory)
-        let client = BlockingNavigationRemoteFileClient(
+        let client = await BlockingNavigationRemoteFileClient(
             listResponses: [
                 "/tmp": [makeRemoteFileBrowserEntry(name: "file.txt", path: "/tmp/file.txt", type: .file)]
             ],
@@ -460,7 +460,7 @@ struct RemoteFileBrowserNavigationLifecycleTests {
     func disconnectCancelsQueuedNavigationBeforeRuntimeStateExists() async throws {
         let server = makeRemoteFileBrowserServer()
         let tab = RemoteFileTab(serverId: server.id, seedPath: "/srv")
-        let client = BlockingNavigationRemoteFileClient(
+        let client = await BlockingNavigationRemoteFileClient(
             listResponses: [
                 "/srv": [makeRemoteFileBrowserEntry(name: "app", path: "/srv/app", type: .directory)]
             ]
@@ -506,7 +506,7 @@ struct RemoteFileBrowserNavigationLifecycleTests {
         )
         let tab = RemoteFileTab(serverId: server.id)
         let entry = makeRemoteFileBrowserEntry(name: "logs", path: "/logs", type: .directory)
-        let client = BlockingNavigationRemoteFileClient(
+        let client = await BlockingNavigationRemoteFileClient(
             listResponses: [
                 "/logs": [makeRemoteFileBrowserEntry(name: "app.log", path: "/logs/app.log", type: .file)]
             ],
@@ -546,7 +546,7 @@ struct RemoteFileBrowserNavigationLifecycleTests {
         let tab = RemoteFileTab(serverId: server.id)
         let symlink = makeRemoteFileBrowserEntry(name: "latest.log", path: "/latest.log", type: .symlink)
         let resolved = makeRemoteFileBrowserEntry(name: "latest.log", path: "/latest.log", type: .file)
-        let client = BlockingNavigationRemoteFileClient(stats: ["/latest.log": resolved])
+        let client = await BlockingNavigationRemoteFileClient(stats: ["/latest.log": resolved])
         let store = makeRemoteFileBrowserStore(server: server, client: client)
         var results: [RemoteFileNavigationResult] = []
 
@@ -569,7 +569,7 @@ struct RemoteFileBrowserNavigationLifecycleTests {
         let symlink = makeRemoteFileBrowserEntry(name: "latest.log", path: "/latest.log", type: .symlink)
         let staleResolvedFile = makeRemoteFileBrowserEntry(name: "latest.log", path: "/latest.log", type: .file)
         let currentFile = makeRemoteFileBrowserEntry(name: "current.log", path: "/current.log", type: .file)
-        let client = BlockingNavigationRemoteFileClient(
+        let client = await BlockingNavigationRemoteFileClient(
             stats: ["/latest.log": staleResolvedFile],
             blockedStatPaths: ["/latest.log"]
         )

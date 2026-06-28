@@ -16,8 +16,8 @@ struct RemoteFileBrowserRequestLifecycleTests {
     func sameServerOperationWaitsForDroppedDisconnectTask() async throws {
         let defaults = makeRemoteFileBrowserDefaults()
         let server = makeRemoteFileBrowserServer()
-        let disconnectingClient = BlockingDisconnectRemoteFileClient()
-        let nextClient = BlockingDisconnectRemoteFileClient()
+        let disconnectingClient = await BlockingDisconnectRemoteFileClient()
+        let nextClient = await BlockingDisconnectRemoteFileClient()
         var clients: [BlockingDisconnectRemoteFileClient] = [disconnectingClient, nextClient]
         let operationProbe = RemoteFileBrowserOperationProbe()
         let store = RemoteFileBrowserStore(
@@ -65,9 +65,9 @@ struct RemoteFileBrowserRequestLifecycleTests {
     func sameServerOperationWaitsForDisconnectRegisteredAfterFirstWait() async throws {
         let defaults = makeRemoteFileBrowserDefaults()
         let server = makeRemoteFileBrowserServer()
-        let firstClient = BlockingDisconnectRemoteFileClient()
-        let secondClient = BlockingDisconnectRemoteFileClient()
-        let thirdClient = BlockingDisconnectRemoteFileClient()
+        let firstClient = await BlockingDisconnectRemoteFileClient()
+        let secondClient = await BlockingDisconnectRemoteFileClient()
+        let thirdClient = await BlockingDisconnectRemoteFileClient()
         var clients: [BlockingDisconnectRemoteFileClient] = [firstClient, secondClient, thirdClient]
         let operationProbe = RemoteFileBrowserOperationProbe()
         let store = RemoteFileBrowserStore(
@@ -408,7 +408,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
     func disconnectWaitsForCanceledTransferToExitBeforeDisconnectingService() async throws {
         let defaults = makeRemoteFileBrowserDefaults()
         let server = makeRemoteFileBrowserServer()
-        let client = BlockingDisconnectRemoteFileClient()
+        let client = await BlockingDisconnectRemoteFileClient()
         let store = RemoteFileBrowserStore(
             persistedStateStore: makeRemoteFileBrowserPersistedStateStore(defaults: defaults),
             remoteFileServiceAccess: SSHSFTPAdapter(
@@ -467,8 +467,8 @@ struct RemoteFileBrowserRequestLifecycleTests {
         let defaults = makeRemoteFileBrowserDefaults()
         let firstServer = makeRemoteFileBrowserServer()
         let secondServer = makeRemoteFileBrowserServer()
-        let firstClient = BlockingDisconnectRemoteFileClient()
-        let secondClient = BlockingDisconnectRemoteFileClient()
+        let firstClient = await BlockingDisconnectRemoteFileClient()
+        let secondClient = await BlockingDisconnectRemoteFileClient()
         var clients: [BlockingDisconnectRemoteFileClient] = [firstClient, secondClient]
         let store = RemoteFileBrowserStore(
             persistedStateStore: makeRemoteFileBrowserPersistedStateStore(defaults: defaults),

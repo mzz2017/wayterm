@@ -145,6 +145,8 @@ actor BlockingDisconnectRemoteFileClient: SFTPRemoteFileClient {
     private var releaseContinuation: CheckedContinuation<Void, Never>?
     private var releaseRequested = false
 
+    init() async {}
+
     func waitUntilDisconnectStarted() async {
         if disconnectStarted { return }
         await withCheckedContinuation { continuation in
@@ -267,7 +269,7 @@ actor BlockingNavigationRemoteFileClient: SFTPRemoteFileClient {
         blockedListPaths: Set<String> = [],
         blockedStatPaths: Set<String> = [],
         blocksDisconnect: Bool = false
-    ) {
+    ) async {
         self.listResponses = listResponses
         self.stats = stats
         self.blockedListPaths = blockedListPaths
