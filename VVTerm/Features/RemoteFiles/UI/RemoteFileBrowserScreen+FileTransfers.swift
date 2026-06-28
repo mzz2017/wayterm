@@ -215,7 +215,7 @@ extension RemoteFileBrowserScreen {
     }
 }
 
-private final class RemoteFileTransferCancellationTarget: @unchecked Sendable {
+nonisolated private final class RemoteFileTransferCancellationTarget: @unchecked Sendable {
     private let lock = NSLock()
     private var storedRequestID: UUID?
 
