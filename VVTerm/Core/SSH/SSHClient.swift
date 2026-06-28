@@ -50,6 +50,11 @@ nonisolated actor SSHClient {
     private let downloadTimeout: Duration = .seconds(120)
     private let uploadTimeout: Duration = .seconds(60)
     private let abortState = SSHClientAbortState()
+    private let sessionFactory: @Sendable (SSHSessionConfig) -> SSHSession
+
+    init(sessionFactory: @escaping @Sendable (SSHSessionConfig) -> SSHSession = { SSHSession(config: $0) }) {
+        self.sessionFactory = sessionFactory
+    }
 
     /// Immediately abort the connection by closing the socket (non-blocking, can be called from any thread)
     nonisolated func abort() {
@@ -112,7 +117,7 @@ nonisolated actor SSHClient {
             credentials: credentials
         )
 
-        let pendingSession = SSHSession(config: config)
+        let pendingSession = sessionFactory(config)
         pendingConnectSession = pendingSession
         abortState.setSessionForAbort(pendingSession)
 
@@ -142,6 +147,11 @@ nonisolated actor SSHClient {
 
         do {
             let session = try await task.value
+            guard isCurrentPendingConnectSession(pendingSession) else {
+                session.abort()
+                await session.disconnect()
+                throw CancellationError()
+            }
             pendingConnectSession = nil
             if abortState.isAborted || Task.isCancelled || task.isCancelled {
                 session.abort()
@@ -164,15 +174,17 @@ nonisolated actor SSHClient {
             logger.info("Connected to \(target.host)")
             return session
         } catch {
-            pendingConnectSession = nil
-            connectTask = nil
-            connectionKey = nil
-            self.session = nil
-            abortState.setSessionForAbort(nil)
-            self.connectedTarget = nil
-            self.resolvedRemoteEnvironment = nil
-            self.resolvedRemoteTerminalType = nil
-            await disconnectCloudflareTransport(reason: "connect failure")
+            if isCurrentPendingConnectSession(pendingSession) {
+                pendingConnectSession = nil
+                connectTask = nil
+                connectionKey = nil
+                self.session = nil
+                abortState.setSessionForAbort(nil)
+                self.connectedTarget = nil
+                self.resolvedRemoteEnvironment = nil
+                self.resolvedRemoteTerminalType = nil
+                await disconnectCloudflareTransport(reason: "connect failure")
+            }
             if target.connectionMode == .cloudflare,
                case SSHError.libssh2(let rawError) = error,
                rawError.operation == .handshake,
@@ -202,10 +214,11 @@ nonisolated actor SSHClient {
 
         keepAliveTask?.cancel()
         keepAliveTask = nil
-        connectTask?.cancel()
+
+        let pendingConnectTask = connectTask
+        let pendingConnectSession = pendingConnectSession
         connectTask = nil
-        pendingConnectSession?.abort()
-        pendingConnectSession = nil
+        self.pendingConnectSession = nil
         connectionKey = nil
 
         let activeSession = session
@@ -214,6 +227,11 @@ nonisolated actor SSHClient {
         connectedTarget = nil
         resolvedRemoteEnvironment = nil
         resolvedRemoteTerminalType = nil
+
+        pendingConnectTask?.cancel()
+        pendingConnectSession?.abort()
+        _ = await pendingConnectTask?.result
+
         await disconnectSSHSession(activeSession)
         await disconnectCloudflareTransport(reason: "client disconnect")
 
@@ -567,6 +585,11 @@ nonisolated actor SSHClient {
                 await session?.sendKeepAlive()
             }
         }
+    }
+
+    private func isCurrentPendingConnectSession(_ pendingSession: SSHSession) -> Bool {
+        guard let currentPendingSession = pendingConnectSession else { return false }
+        return ObjectIdentifier(currentPendingSession) == ObjectIdentifier(pendingSession)
     }
 
     private func disconnectSSHSession(_ activeSession: SSHSession?) async {

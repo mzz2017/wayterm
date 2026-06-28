@@ -170,10 +170,13 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
     private let sftpLastErrorResult: UInt
     private let sessionBlockDirectionsResult: Int32
     private let channelWriteDelayMicroseconds: useconds_t
+    private let shouldBlockDisconnect: Bool
     private let rawErrors: [LibSSH2RawError]
     private let lock = NSLock()
     private var closedSocketDescriptors: [Int32] = []
     private var observedSocketAbort = false
+    private var disconnectInvocationCount = 0
+    private let disconnectReleaseSemaphore = DispatchSemaphore(value: 0)
     private var channelEventLog: [ChannelEvent] = []
     private var sftpEventLog: [SFTPEvent] = []
     private var execStartResultQueue: [Int32]
@@ -209,6 +212,7 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
         sftpLastErrorResult: UInt = 0,
         sessionBlockDirectionsResult: Int32 = 0,
         channelWriteDelayMicroseconds: useconds_t = 0,
+        shouldBlockDisconnect: Bool = false,
         rawErrors: [LibSSH2RawError] = [],
         execStartResults: [Int32] = [],
         channelReadResults: [ChannelReadResult] = [],
@@ -235,6 +239,7 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
         self.sftpLastErrorResult = sftpLastErrorResult
         self.sessionBlockDirectionsResult = sessionBlockDirectionsResult
         self.channelWriteDelayMicroseconds = channelWriteDelayMicroseconds
+        self.shouldBlockDisconnect = shouldBlockDisconnect
         self.rawErrors = rawErrors
         self.execStartResultQueue = execStartResults
         self.channelReadResultQueue = channelReadResults
@@ -279,6 +284,16 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
         lock.lock()
         defer { lock.unlock() }
         return keepAliveInvocationCount
+    }
+
+    func disconnectCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return disconnectInvocationCount
+    }
+
+    func releaseDisconnect() {
+        disconnectReleaseSemaphore.signal()
     }
 
     func sessionAbstractWasProvided() -> Bool {
@@ -754,7 +769,13 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
         description: String,
         language: String
     ) -> Int32 {
-        0
+        lock.lock()
+        disconnectInvocationCount += 1
+        lock.unlock()
+        if shouldBlockDisconnect {
+            _ = disconnectReleaseSemaphore.wait(timeout: .now() + 5)
+        }
+        return 0
     }
 
     nonisolated func free(session: OpaquePointer) -> Int32 {
