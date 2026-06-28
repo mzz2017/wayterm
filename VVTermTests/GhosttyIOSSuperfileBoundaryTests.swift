@@ -416,7 +416,10 @@ struct GhosttyIOSSuperfileBoundaryTests {
         // Then UIKit interaction delegate routing has a dedicated extension file.
         #expect(interactionDelegateSource.contains("extension GhosttyTerminalView: UITextInteractionDelegate"))
         #expect(interactionDelegateSource.contains("extension GhosttyTerminalView: UIFindInteractionDelegate"))
-        #expect(interactionDelegateSource.contains("extension GhosttyTerminalView: UITextSearching"))
+        #expect(
+            interactionDelegateSource.contains("extension GhosttyTerminalView: @preconcurrency UITextSearching"),
+            "UIKit UITextSearching conformance should defer legacy nonisolated protocol checks instead of weakening GhosttyTerminalView main-actor isolation."
+        )
         #expect(interactionDelegateSource.contains("extension GhosttyTerminalView: UIGestureRecognizerDelegate"))
         #expect(interactionDelegateSource.contains("extension GhosttyTerminalView: UIEditMenuInteractionDelegate"))
     }

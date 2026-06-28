@@ -96,7 +96,7 @@ extension GhosttyTerminalView: UIFindInteractionDelegate {
 }
 
 @available(iOS 16.0, *)
-extension GhosttyTerminalView: UITextSearching {
+extension GhosttyTerminalView: @preconcurrency UITextSearching {
     typealias DocumentIdentifier = String
 
     func compare(_ foundRange: UITextRange, toRange: UITextRange, document: String?) -> ComparisonResult {
