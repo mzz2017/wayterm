@@ -37,7 +37,7 @@ nonisolated struct RemoteConnectionLease: Sendable {
         await state.close(client: client, ownership: ownership)
     }
 
-    func withExclusiveClient<T>(
+    func withExclusiveClient<T: Sendable>(
         _ operation: @Sendable (any RemoteConnectionLeaseClient) async throws -> T
     ) async throws -> T {
         try await state.withExclusiveClient(client: client, operation)
@@ -79,7 +79,7 @@ private actor RemoteConnectionLeaseState {
     private var closeWaiters: [CheckedContinuation<Void, Never>] = []
     private var closeCompletionWaiters: [CheckedContinuation<Void, Never>] = []
 
-    func withExclusiveClient<T>(
+    func withExclusiveClient<T: Sendable>(
         client: any RemoteConnectionLeaseClient,
         _ operation: @Sendable (any RemoteConnectionLeaseClient) async throws -> T
     ) async throws -> T {
