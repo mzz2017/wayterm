@@ -13,6 +13,27 @@ import Testing
 @MainActor
 struct LocalSSHDiscoveryServiceLifecycleTests {
     @Test
+    func reachabilityCompletionPublishesOnlyTheFirstCallback() {
+        let recorder = LocalDiscoveryReachabilityCompletionRecorder()
+        let completion = LocalSSHDiscoveryReachabilityCompletion { isReachable in
+            recorder.record(isReachable)
+        }
+
+        // Given Network and timeout callbacks may race to finish the same
+        // reachability probe from different queues.
+        DispatchQueue.concurrentPerform(iterations: 32) { index in
+            completion.complete(index == 0)
+        }
+
+        // Then only the first callback publishes completion, preventing a
+        // double continuation resume at the NWConnection/timeout boundary.
+        #expect(
+            recorder.recordedCount == 1,
+            "LocalDiscovery reachability completion must be idempotent across racing Network callbacks."
+        )
+    }
+
+    @Test
     func stoppedScanProbeResultsDoNotPublishIntoNextScan() async throws {
         let candidates = LocalDiscoveryCandidateBatches([["192.0.2.10"], []])
         let probe = LocalDiscoveryProbeGate()
@@ -118,6 +139,23 @@ private actor LocalDiscoveryEventCollector {
 
     func events() -> [LocalSSHDiscoveryEvent] {
         recordedEvents
+    }
+}
+
+private final class LocalDiscoveryReachabilityCompletionRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedValues: [Bool] = []
+
+    var recordedCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedValues.count
+    }
+
+    func record(_ value: Bool) {
+        lock.lock()
+        recordedValues.append(value)
+        lock.unlock()
     }
 }
 

@@ -23,6 +23,28 @@ struct LocalSSHDiscoveryProbeResult: Sendable {
     let latencyMs: Int
 }
 
+nonisolated final class LocalSSHDiscoveryReachabilityCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private let onComplete: @Sendable (Bool) -> Void
+    private var didComplete = false
+
+    init(onComplete: @escaping @Sendable (Bool) -> Void) {
+        self.onComplete = onComplete
+    }
+
+    func complete(_ isReachable: Bool) {
+        lock.lock()
+        guard !didComplete else {
+            lock.unlock()
+            return
+        }
+        didComplete = true
+        lock.unlock()
+
+        onComplete(isReachable)
+    }
+}
+
 struct LocalSSHDiscoveryServiceDependencies: Sendable {
     let bonjourTypes: [String]
     let scanDuration: TimeInterval
@@ -237,28 +259,25 @@ final class LocalSSHDiscoveryService: NSObject {
             let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: nwPort)
             let connection = NWConnection(to: endpoint, using: .tcp)
             let queue = DispatchQueue(label: "com.vivy.vvterm.discovery.probe.\(host)")
-            var completed = false
 
-            let complete: (Bool) -> Void = { ready in
-                guard !completed else { return }
-                completed = true
-                continuation.resume(returning: ready)
+            let completion = LocalSSHDiscoveryReachabilityCompletion { isReachable in
+                continuation.resume(returning: isReachable)
                 connection.cancel()
             }
 
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready:
-                    complete(true)
+                    completion.complete(true)
                 case .failed, .cancelled:
-                    complete(false)
+                    completion.complete(false)
                 default:
                     break
                 }
             }
 
             queue.asyncAfter(deadline: .now() + timeout) {
-                complete(false)
+                completion.complete(false)
             }
 
             connection.start(queue: queue)
