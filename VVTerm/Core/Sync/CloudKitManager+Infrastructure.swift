@@ -75,70 +75,76 @@ extension CloudKitManager {
         previousToken: CKServerChangeToken?
     ) async throws -> ZoneChangeBatch {
         let logger = logger
-        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ZoneChangeBatch, Error>) in
-            let configuration = CKFetchRecordZoneChangesOperation.ZoneConfiguration(
-                previousServerChangeToken: previousToken,
-                resultsLimit: nil,
-                desiredKeys: nil
-            )
-            let operation = CKFetchRecordZoneChangesOperation(
-                recordZoneIDs: [zoneID],
-                configurationsByRecordZoneID: [zoneID: configuration]
-            )
-            operation.qualityOfService = .userInitiated
+        let cancellation = CloudKitOperationCancellationHandle()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ZoneChangeBatch, Error>) in
+                let configuration = CKFetchRecordZoneChangesOperation.ZoneConfiguration(
+                    previousServerChangeToken: previousToken,
+                    resultsLimit: nil,
+                    desiredKeys: nil
+                )
+                let operation = CKFetchRecordZoneChangesOperation(
+                    recordZoneIDs: [zoneID],
+                    configurationsByRecordZoneID: [zoneID: configuration]
+                )
+                operation.qualityOfService = .userInitiated
 
-            var records: [CKRecord] = []
-            var deletions: [Deletion] = []
-            var serverChangeToken: CKServerChangeToken?
-            var moreComing = false
-            var zoneError: Error?
+                var records: [CKRecord] = []
+                var deletions: [Deletion] = []
+                var serverChangeToken: CKServerChangeToken?
+                var moreComing = false
+                var zoneError: Error?
 
-            operation.recordWasChangedBlock = { recordID, recordResult in
-                switch recordResult {
-                case .success(let record):
-                    records.append(record)
-                case .failure(let error):
-                    logger.error(
-                        "Failed to fetch record \(recordID.recordName): \(error.localizedDescription)"
-                    )
-                }
-            }
-
-            operation.recordWithIDWasDeletedBlock = { recordID, recordType in
-                deletions.append(Deletion(recordID: recordID, recordType: recordType))
-            }
-
-            operation.recordZoneFetchResultBlock = { _, result in
-                switch result {
-                case .success(let info):
-                    serverChangeToken = info.serverChangeToken
-                    moreComing = info.moreComing
-                case .failure(let error):
-                    zoneError = error
-                }
-            }
-
-            operation.fetchRecordZoneChangesResultBlock = { result in
-                switch result {
-                case .success:
-                    if let zoneError = zoneError {
-                        continuation.resume(throwing: zoneError)
-                    } else {
-                        continuation.resume(
-                            returning: ZoneChangeBatch(
-                                records: records,
-                                deletions: deletions,
-                                serverChangeToken: serverChangeToken,
-                                moreComing: moreComing
-                            )
+                operation.recordWasChangedBlock = { recordID, recordResult in
+                    switch recordResult {
+                    case .success(let record):
+                        records.append(record)
+                    case .failure(let error):
+                        logger.error(
+                            "Failed to fetch record \(recordID.recordName): \(error.localizedDescription)"
                         )
                     }
-                case .failure(let error):
-                    continuation.resume(throwing: error)
                 }
-            }
 
-            self.database.add(operation)
+                operation.recordWithIDWasDeletedBlock = { recordID, recordType in
+                    deletions.append(Deletion(recordID: recordID, recordType: recordType))
+                }
+
+                operation.recordZoneFetchResultBlock = { _, result in
+                    switch result {
+                    case .success(let info):
+                        serverChangeToken = info.serverChangeToken
+                        moreComing = info.moreComing
+                    case .failure(let error):
+                        zoneError = error
+                    }
+                }
+
+                operation.fetchRecordZoneChangesResultBlock = { result in
+                    switch result {
+                    case .success:
+                        if let zoneError = zoneError {
+                            continuation.resume(throwing: zoneError)
+                        } else {
+                            continuation.resume(
+                                returning: ZoneChangeBatch(
+                                    records: records,
+                                    deletions: deletions,
+                                    serverChangeToken: serverChangeToken,
+                                    moreComing: moreComing
+                                )
+                            )
+                        }
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
+                }
+
+                cancellation.setOperation(operation)
+                self.database.add(operation)
+            }
+        } onCancel: {
+            cancellation.cancel()
         }
     }
 
@@ -154,21 +160,27 @@ extension CloudKitManager {
         _ record: CKRecord,
         savePolicy: CKModifyRecordsOperation.RecordSavePolicy
     ) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let operation = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
-            operation.savePolicy = savePolicy
-            operation.qualityOfService = .userInitiated
+        let cancellation = CloudKitOperationCancellationHandle()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let operation = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: nil)
+                operation.savePolicy = savePolicy
+                operation.qualityOfService = .userInitiated
 
-            operation.modifyRecordsResultBlock = { result in
-                switch result {
-                case .success:
-                    continuation.resume()
-                case .failure(let error):
-                    continuation.resume(throwing: error)
+                operation.modifyRecordsResultBlock = { result in
+                    switch result {
+                    case .success:
+                        continuation.resume()
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
                 }
-            }
 
-            database.add(operation)
+                cancellation.setOperation(operation)
+                database.add(operation)
+            }
+        } onCancel: {
+            cancellation.cancel()
         }
     }
 

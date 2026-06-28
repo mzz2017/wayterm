@@ -680,20 +680,26 @@ final class CloudKitManager: ObservableObject {
 
         // Batch delete
         if !recordIDs.isEmpty {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                let operation = CKModifyRecordsOperation(recordsToSave: nil, recordIDsToDelete: recordIDs)
-                operation.qualityOfService = .userInitiated
+            let cancellation = CloudKitOperationCancellationHandle()
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    let operation = CKModifyRecordsOperation(recordsToSave: nil, recordIDsToDelete: recordIDs)
+                    operation.qualityOfService = .userInitiated
 
-                operation.modifyRecordsResultBlock = { result in
-                    switch result {
-                    case .success:
-                        continuation.resume()
-                    case .failure(let error):
-                        continuation.resume(throwing: error)
+                    operation.modifyRecordsResultBlock = { result in
+                        switch result {
+                        case .success:
+                            continuation.resume()
+                        case .failure(let error):
+                            continuation.resume(throwing: error)
+                        }
                     }
-                }
 
-                self.database.add(operation)
+                    cancellation.setOperation(operation)
+                    self.database.add(operation)
+                }
+            } onCancel: {
+                cancellation.cancel()
             }
         }
 
