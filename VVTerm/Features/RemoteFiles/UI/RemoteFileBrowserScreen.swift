@@ -441,8 +441,8 @@ struct RemoteFileBrowserScreen: View {
     }
 
     func performOperation(
-        onFailure: (@MainActor (Error) -> Void)? = nil,
-        operation: @escaping @MainActor () async throws -> Void
+        onFailure: (@MainActor @Sendable (Error) -> Void)? = nil,
+        operation: @escaping @MainActor @Sendable () async throws -> Void
     ) {
         browser.requestMutation(
             serverId: server.id,
@@ -458,9 +458,9 @@ struct RemoteFileBrowserScreen: View {
     }
 
     func performOperation<Result>(
-        operation: @escaping @MainActor () async throws -> Result,
-        onSuccess: @escaping @MainActor (Result) -> Void,
-        onFailure: (@MainActor (Error) -> Void)? = nil
+        operation: @escaping @MainActor @Sendable () async throws -> Result,
+        onSuccess: @escaping @MainActor @Sendable (Result) -> Void,
+        onFailure: (@MainActor @Sendable (Error) -> Void)? = nil
     ) {
         browser.requestMutation(
             serverId: server.id,

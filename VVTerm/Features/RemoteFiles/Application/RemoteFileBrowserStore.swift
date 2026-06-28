@@ -200,9 +200,9 @@ final class RemoteFileBrowserStore: ObservableObject {
     @discardableResult
     func requestMutation(
         serverId: UUID? = nil,
-        operation: @escaping @MainActor () async throws -> Void,
-        onSuccess: @escaping @MainActor () -> Void = {},
-        onFailure: @escaping @MainActor (Error) -> Void = { _ in }
+        operation: @escaping @MainActor @Sendable () async throws -> Void,
+        onSuccess: @escaping @MainActor @Sendable () -> Void = {},
+        onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in }
     ) -> UUID {
         requestMutation(
             serverId: serverId,
@@ -220,9 +220,9 @@ final class RemoteFileBrowserStore: ObservableObject {
     @discardableResult
     func requestMutation<Result>(
         serverId: UUID? = nil,
-        operation: @escaping @MainActor () async throws -> Result,
-        onSuccess: @escaping @MainActor (Result) -> Void,
-        onFailure: @escaping @MainActor (Error) -> Void = { _ in }
+        operation: @escaping @MainActor @Sendable () async throws -> Result,
+        onSuccess: @escaping @MainActor @Sendable (Result) -> Void,
+        onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in }
     ) -> UUID {
         requestLifecycleCoordinator.requestMutation(
             serverId: serverId,

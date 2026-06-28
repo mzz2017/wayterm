@@ -51,7 +51,7 @@ struct RemoteFileInspectorView: View {
     let onEditPermissions: ((RemoteFileEntry) -> Void)?
     let onDelete: ((RemoteFileEntry) -> Void)?
     let onClose: (() -> Void)?
-    let onSaveText: ((RemoteFileTextSaveRequest) -> Void)?
+    let onSaveText: (@MainActor @Sendable (RemoteFileTextSaveRequest) -> Void)?
 
     @State private var selectedTab: InspectorTab = .metadata
     @State private var editableText = ""

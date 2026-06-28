@@ -246,8 +246,8 @@ extension RemoteFileBrowserStore {
         for entry: RemoteFileEntry,
         in tab: RemoteFileTab,
         server: Server,
-        onSaved: @escaping @MainActor () -> Void = {},
-        onFailure: @escaping @MainActor (Error) -> Void = { _ in }
+        onSaved: @escaping @MainActor @Sendable () -> Void = {},
+        onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in }
     ) -> UUID {
         requestMutation(
             operation: {

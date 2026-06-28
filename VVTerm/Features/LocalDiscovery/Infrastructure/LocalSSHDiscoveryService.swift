@@ -61,7 +61,12 @@ final class LocalSSHDiscoveryService: NSObject {
     private var probeTask: Task<Void, Never>?
     private var timeoutTask: Task<Void, Never>?
 
-    init(dependencies: LocalSSHDiscoveryServiceDependencies = .live) {
+    override init() {
+        self.dependencies = .live
+        super.init()
+    }
+
+    init(dependencies: LocalSSHDiscoveryServiceDependencies) {
         self.dependencies = dependencies
         super.init()
     }

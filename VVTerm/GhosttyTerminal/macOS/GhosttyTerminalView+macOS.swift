@@ -54,7 +54,7 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     var onResize: ((Int, Int) -> Void)?
 
     /// Callback invoked when a magnification gesture requests terminal pane zoom.
-    var onZoomAction: ((TerminalZoomAction) -> TerminalZoomResult?)?
+    var onZoomAction: (@MainActor @Sendable (TerminalZoomAction) -> TerminalZoomResult?)?
 
     /// Per-surface presentation overrides used to preserve pane zoom across global config reloads.
     private(set) var surfacePresentationOverrides: TerminalPresentationOverrides = .empty

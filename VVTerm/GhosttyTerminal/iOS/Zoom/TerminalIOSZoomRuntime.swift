@@ -3,10 +3,10 @@ import UIKit
 
 @MainActor
 final class TerminalIOSZoomRuntime {
-    typealias CurrentFontSize = @MainActor () -> Double
-    typealias PerformZoomAction = @MainActor (TerminalZoomAction) -> TerminalZoomResult?
-    typealias StopMomentumScrolling = @MainActor () -> Void
-    typealias RequestIndicatorLayout = @MainActor () -> Void
+    typealias CurrentFontSize = @MainActor @Sendable () -> Double
+    typealias PerformZoomAction = @MainActor @Sendable (TerminalZoomAction) -> TerminalZoomResult?
+    typealias StopMomentumScrolling = @MainActor @Sendable () -> Void
+    typealias RequestIndicatorLayout = @MainActor @Sendable () -> Void
 
     private var isPinching = false
     private var pinchReferenceScale: CGFloat = 1
