@@ -6,6 +6,12 @@ import os.log
 final class CloudKitSyncCoordinator {
     typealias PendingMutationSyncAction = @MainActor (PendingCloudKitMutation) async throws -> Void
 
+    enum DrainState: Equatable {
+        case idle
+        case draining
+        case drainAgainRequested
+    }
+
     static let shared = CloudKitSyncCoordinator()
 
     private let logger = Logger(
@@ -15,7 +21,7 @@ final class CloudKitSyncCoordinator {
     private let queue: PendingCloudKitSyncQueue
     private var syncPendingMutation: PendingMutationSyncAction
     private var drainTask: Task<Void, Never>?
-    private var shouldDrainAgain = false
+    private(set) var drainState: DrainState = .idle
 
     private init(
         queue: PendingCloudKitSyncQueue? = nil,
@@ -65,11 +71,12 @@ final class CloudKitSyncCoordinator {
         guard SyncSettings.isEnabled else { return }
 
         if let drainTask {
-            shouldDrainAgain = true
+            drainState = .drainAgainRequested
             await drainTask.value
             return
         }
 
+        drainState = .draining
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             await self.runPendingMutationDrain()
@@ -81,12 +88,12 @@ final class CloudKitSyncCoordinator {
     private func runPendingMutationDrain() async {
         defer {
             drainTask = nil
-            shouldDrainAgain = false
+            drainState = .idle
         }
 
         while true {
-            let drainRequestedDuringIteration = shouldDrainAgain
-            shouldDrainAgain = false
+            let drainRequestedDuringIteration = drainState == .drainAgainRequested
+            drainState = .draining
             let snapshot = queue.snapshot()
             guard !snapshot.isEmpty else { return }
 
@@ -121,7 +128,7 @@ final class CloudKitSyncCoordinator {
             }
 
             if !didProgress {
-                if shouldDrainAgain || drainRequestedDuringIteration {
+                if drainState == .drainAgainRequested || drainRequestedDuringIteration {
                     continue
                 }
                 return

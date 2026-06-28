@@ -136,6 +136,58 @@ struct CloudKitSyncCoordinatorLifecycleTests {
             "Both pending-drain callers should resume after the active CloudKit drain exits."
         )
     }
+
+    @Test
+    func duplicateDrainRequestIsRepresentedByExplicitStateUntilActiveDrainCompletes() async throws {
+        let syncSettingsRestore = SyncSettingsRestore()
+        syncSettingsRestore.setEnabled(true)
+        defer { syncSettingsRestore.restore() }
+
+        let probe = CloudKitDrainProbe()
+        let releaseDrain = CloudKitDrainGate()
+        let coordinator = CloudKitSyncCoordinator.makeForTesting(
+            storageKey: "CloudKitSyncCoordinatorLifecycleTests.\(UUID().uuidString)",
+            syncPendingMutation: { mutation in
+                await probe.record("sync-start:\(mutation.entityKey)")
+                await releaseDrain.wait()
+            }
+        )
+        let server = Server(
+            workspaceId: UUID(),
+            name: "Explicit Drain State",
+            host: "example.test",
+            username: "user"
+        )
+
+        coordinator.enqueueServerUpsert(server)
+        let firstDrain = Task {
+            await coordinator.drainPendingMutations()
+        }
+        await probe.waitForCount(1)
+        #expect(
+            coordinator.drainState == .draining,
+            "The active CloudKit pending drain should expose an explicit draining state."
+        )
+
+        let secondDrain = Task {
+            await coordinator.drainPendingMutations()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(
+            coordinator.drainState == .drainAgainRequested,
+            "A duplicate CloudKit pending-drain intent should be visible as an explicit requested-again state."
+        )
+
+        await releaseDrain.open()
+        await firstDrain.value
+        await secondDrain.value
+
+        #expect(
+            coordinator.drainState == .idle,
+            "CloudKit pending-drain state should return to idle only after all waiting callers complete."
+        )
+    }
 }
 
 private struct LegacyPendingServerMutation: Encodable {
