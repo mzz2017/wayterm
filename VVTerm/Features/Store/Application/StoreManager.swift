@@ -102,6 +102,36 @@ final class StoreManager: ObservableObject {
         restoreRequestTasks.values.forEach { $0.cancel() }
     }
 
+    func cancelAllAndWait() async {
+        let trackedTasks = [
+            updateListenerTask,
+            startupRefreshTask,
+            reviewModeRefreshTask,
+            reviewModeExpiryTask,
+            productLoadRequestTask
+        ].compactMap { $0 }
+            + purchaseRequestTasks.values
+            + restoreRequestTasks.values
+
+        trackedTasks.forEach { $0.cancel() }
+        for task in trackedTasks {
+            await task.value
+        }
+
+        updateListenerTask = nil
+        updateListenerTaskID = nil
+        startupRefreshTask = nil
+        startupRefreshTaskID = nil
+        reviewModeRefreshTask = nil
+        reviewModeRefreshTaskID = nil
+        reviewModeExpiryTask = nil
+        productLoadRequestTask = nil
+        productLoadRequestID = nil
+        productLoadCompletionCallbacks = []
+        purchaseRequestTasks.removeAll()
+        restoreRequestTasks.removeAll()
+    }
+
     private func startStartupRefresh() {
         startupRefreshTask?.cancel()
         let taskID = UUID()

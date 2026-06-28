@@ -337,6 +337,109 @@ struct StoreManagerLifecycleTests {
     }
 
     @Test
+    func cancelAllAndWaitCancelsAndAwaitsTrackedStoreTasks() async {
+        let purchaseGate = StoreRequestGate()
+        let restoreGate = StoreRequestGate()
+        let productGate = StoreRequestGate()
+        let startupLoadGate = StoreRequestGate()
+        let startupEntitlementsGate = StoreRequestGate()
+        let listenerGate = StoreRequestGate()
+        let recorder = StoreCancellationRecorder()
+        let manager = StoreManager.makeForTesting(
+            startBackgroundTasks: true,
+            loadProductsAction: { _ in
+                let isStartupLoadAlreadyRunning = await startupLoadGate.hasStartedForTesting()
+                let gate = isStartupLoadAlreadyRunning ? productGate : startupLoadGate
+                let event = isStartupLoadAlreadyRunning ? "product-load-cancel" : "startup-load-cancel"
+                await withTaskCancellationHandler {
+                    await gate.waitForRelease()
+                } onCancel: {
+                    Task {
+                        await recorder.record(event)
+                        await gate.release()
+                    }
+                }
+            },
+            checkEntitlementsAction: { _ in
+                await withTaskCancellationHandler {
+                    await startupEntitlementsGate.waitForRelease()
+                } onCancel: {
+                    Task {
+                        await recorder.record("entitlements-cancel")
+                        await startupEntitlementsGate.release()
+                    }
+                }
+            },
+            transactionListenerAction: { _ in
+                await withTaskCancellationHandler {
+                    await listenerGate.waitForRelease()
+                } onCancel: {
+                    Task {
+                        await recorder.record("listener-cancel")
+                        await listenerGate.release()
+                    }
+                }
+            }
+        )
+
+        // Given StoreManager owns startup refresh and transaction listener work.
+        await startupLoadGate.waitForOperationStart()
+        await listenerGate.waitForOperationStart()
+
+        // And user-facing StoreKit requests are also running under the same owner.
+        let productLoadID = manager.requestProductLoad()
+        let purchaseID = manager.requestPurchaseForTesting {
+            await withTaskCancellationHandler {
+                await purchaseGate.waitForRelease()
+            } onCancel: {
+                Task {
+                    await recorder.record("purchase-cancel")
+                    await purchaseGate.release()
+                }
+            }
+        }
+        let restoreID = manager.requestRestorePurchasesForTesting {
+            await withTaskCancellationHandler {
+                await restoreGate.waitForRelease()
+            } onCancel: {
+                Task {
+                    await recorder.record("restore-cancel")
+                    await restoreGate.release()
+                }
+            }
+        }
+
+        await productGate.waitForOperationStart()
+        await purchaseGate.waitForOperationStart()
+        await restoreGate.waitForOperationStart()
+        #expect(manager.pendingProductLoadRequestIDs.contains(productLoadID))
+        #expect(manager.pendingPurchaseRequestIDs.contains(purchaseID))
+        #expect(manager.pendingRestoreRequestIDs.contains(restoreID))
+        #expect(manager.hasPendingStartupRefreshForTesting)
+        #expect(manager.hasPendingTransactionListenerForTesting)
+
+        // When app-level cleanup cancels Store lifecycle work.
+        await manager.cancelAllAndWait()
+
+        // Then every tracked StoreKit task has exited before cleanup returns.
+        #expect(manager.pendingProductLoadRequestIDs.isEmpty)
+        #expect(manager.pendingPurchaseRequestIDs.isEmpty)
+        #expect(manager.pendingRestoreRequestIDs.isEmpty)
+        #expect(!manager.hasPendingStartupRefreshForTesting)
+        #expect(!manager.hasPendingTransactionListenerForTesting)
+        #expect(
+            Set(await recorder.events()) == [
+                "startup-load-cancel",
+                "product-load-cancel",
+                "listener-cancel",
+                "purchase-cancel",
+                "restore-cancel"
+            ],
+            "Store cleanup should await tracked StoreKit request and listener cancellation."
+        )
+    }
+
+    @Test
     func disablingReviewModeTracksEntitlementRefreshUntilCompletion() async {
         let entitlementGate = StoreRequestGate()
         var entitlementRefreshCount = 0
@@ -495,6 +598,10 @@ private actor StoreRequestGate {
         startContinuation = nil
     }
 
+    func hasStartedForTesting() -> Bool {
+        hasStarted
+    }
+
     func waitForRelease() async {
         markOperationStarted()
         guard !isReleased else { return }
@@ -507,6 +614,18 @@ private actor StoreRequestGate {
         isReleased = true
         releaseContinuation?.resume()
         releaseContinuation = nil
+    }
+}
+
+private actor StoreCancellationRecorder {
+    private var recordedEvents: [String] = []
+
+    func record(_ event: String) {
+        recordedEvents.append(event)
+    }
+
+    func events() -> [String] {
+        recordedEvents
     }
 }
 

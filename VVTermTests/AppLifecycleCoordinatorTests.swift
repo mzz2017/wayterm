@@ -271,6 +271,9 @@ struct AppLifecycleCoordinatorTests {
             cancelSyncBeforeExit: {
                 await probe.record("sync")
             },
+            cancelStoreBeforeExit: {
+                await probe.record("store")
+            },
             cancelVoiceModelDownloadsBeforeExit: {
                 await probe.record("voice-models")
             }
@@ -283,8 +286,50 @@ struct AppLifecycleCoordinatorTests {
         // Then model downloads are canceled before resource owners start
         // closing shared leases and terminal resources.
         #expect(
-            await probe.events() == ["sync", "voice-models", "remote-files", "stats", "sessions", "tabs"],
+            await probe.events() == ["sync", "store", "voice-models", "remote-files", "stats", "sessions", "tabs"],
             "Termination should cancel VoiceInput model downloads before closing resource owners."
+        )
+    }
+
+    @Test
+    func terminationTeardownRequestCancelsStoreBeforeVoiceAndResourceTeardown() async {
+        // Given Sync, StoreKit, VoiceInput model downloads, RemoteFiles, Stats,
+        // and terminal teardown dependencies are injected into the app
+        // lifecycle owner.
+        let probe = AppLifecycleProbe()
+        let coordinator = AppLifecycleCoordinator.makeForTesting(
+            disconnectConnectionSessionsBeforeExit: {
+                await probe.record("sessions")
+            },
+            disconnectTerminalTabsBeforeExit: {
+                await probe.record("tabs")
+            },
+            disconnectRemoteFilesBeforeExit: {
+                await probe.record("remote-files")
+            },
+            disconnectStatsBeforeExit: {
+                await probe.record("stats")
+            },
+            cancelSyncBeforeExit: {
+                await probe.record("sync")
+            },
+            cancelStoreBeforeExit: {
+                await probe.record("store")
+            },
+            cancelVoiceModelDownloadsBeforeExit: {
+                await probe.record("voice-models")
+            }
+        )
+
+        // When the platform delegate sends termination intent.
+        let requestID = coordinator.requestTerminationTeardown()
+        await coordinator.waitForTerminationTeardownRequest(requestID)
+
+        // Then StoreKit cleanup exits before other application resource owners
+        // start closing.
+        #expect(
+            await probe.events() == ["sync", "store", "voice-models", "remote-files", "stats", "sessions", "tabs"],
+            "Termination should await StoreKit cleanup before VoiceInput and resource owners start teardown."
         )
     }
 
@@ -312,6 +357,9 @@ struct AppLifecycleCoordinatorTests {
             cancelSyncBeforeExit: {
                 await probe.record("sync")
             },
+            cancelStoreBeforeExit: {
+                await probe.record("store")
+            },
             cancelVoiceModelDownloadsBeforeExit: {
                 await probe.record("voice-models")
             }
@@ -324,8 +372,8 @@ struct AppLifecycleCoordinatorTests {
         // Then auth prompts are canceled before sync callbacks and resource
         // owners start teardown.
         #expect(
-            await probe.events() == ["auth", "sync", "voice-models", "remote-files", "stats", "sessions", "tabs"],
-            "Termination should cancel auth prompts before sync, VoiceInput downloads, and resource owners start teardown."
+            await probe.events() == ["auth", "sync", "store", "voice-models", "remote-files", "stats", "sessions", "tabs"],
+            "Termination should cancel auth prompts before sync, StoreKit, VoiceInput downloads, and resource owners start teardown."
         )
     }
 
