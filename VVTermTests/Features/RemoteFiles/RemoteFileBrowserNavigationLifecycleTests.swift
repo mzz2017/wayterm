@@ -208,6 +208,66 @@ struct RemoteFileBrowserNavigationLifecycleTests {
     }
 
     @Test
+    func disconnectWaitsForCanceledMoveDestinationLoadBeforeRemoteDisconnect() async throws {
+        let server = makeRemoteFileBrowserServer()
+        let client = BlockingNavigationRemoteFileClient(
+            listResponses: [
+                "/srv": [
+                    makeRemoteFileBrowserEntry(name: "alpha", path: "/srv/alpha", type: .directory)
+                ]
+            ],
+            blockedListPaths: ["/srv"],
+            blocksDisconnect: true
+        )
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: makeRemoteFileBrowserPersistedStateStore(),
+            remoteFileServiceAccess: NonSerializingRemoteFileServiceAccess(client: client),
+            serverProvider: { _ in nil }
+        )
+        let waitProbe = RemoteFileWaitProbe()
+        var results: [Result<[RemoteFileEntry], Error>] = []
+
+        _ = try await store.withRemoteFileService(for: server) { service in
+            try await service.resolveHomeDirectory()
+        }
+
+        // Given a move destination folder load is blocked inside remote
+        // directory IO for a server that is about to disconnect.
+        let requestID = store.requestMoveDestinationLoad(path: "/srv", server: server) { result in
+            results.append(result)
+        }
+        await client.waitUntilListStarted(path: "/srv")
+
+        // When the same server disconnects.
+        let disconnectTask = store.disconnect(serverId: server.id)
+        let disconnectWaitTask = Task {
+            await disconnectTask.value
+            await waitProbe.markReturned()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then service disconnect waits for the canceled listing to exit so
+        // SFTP cleanup cannot race request cleanup.
+        #expect(!store.pendingMoveDestinationLoadRequestIDs.contains(requestID))
+        #expect(
+            await !client.hasStartedDisconnect(),
+            "RemoteFiles disconnect should wait for canceled move destination listing to exit before disconnecting the SFTP service."
+        )
+        #expect(
+            await !waitProbe.didReturn,
+            "RemoteFiles disconnect task should not complete while canceled move destination listing is still blocked."
+        )
+
+        await client.releaseList(path: "/srv")
+        await client.waitUntilDisconnectStarted()
+        await client.releaseDisconnect()
+        await disconnectWaitTask.value
+
+        #expect(await waitProbe.didReturn)
+        #expect(results.isEmpty)
+    }
+
+    @Test
     func navigationRequestTracksInitialDirectoryLoadUntilSnapshotCompletes() async throws {
         let server = makeRemoteFileBrowserServer()
         let tab = RemoteFileTab(serverId: server.id, seedPath: "/srv")

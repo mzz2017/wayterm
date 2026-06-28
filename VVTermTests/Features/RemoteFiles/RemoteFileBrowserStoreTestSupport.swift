@@ -115,6 +115,26 @@ actor RemoteFileWaitProbe {
     }
 }
 
+@MainActor
+final class NonSerializingRemoteFileServiceAccess: RemoteFileServiceAccessing {
+    private let client: any SFTPRemoteFileClient
+
+    init(client: any SFTPRemoteFileClient) {
+        self.client = client
+    }
+
+    func withService<T>(
+        for server: Server,
+        operation: @escaping (any RemoteFileService) async throws -> T
+    ) async throws -> T {
+        try await operation(SFTPRemoteFileService(client: client))
+    }
+
+    func disconnect(serverId: UUID) async {
+        await client.disconnect()
+    }
+}
+
 actor BlockingDisconnectRemoteFileClient: SFTPRemoteFileClient {
     private var disconnectStarted = false
     private var disconnectWaiters: [CheckedContinuation<Void, Never>] = []
@@ -231,17 +251,24 @@ actor BlockingNavigationRemoteFileClient: SFTPRemoteFileClient {
     private var statStartedPaths: Set<String> = []
     private var statStartedWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
     private var statReleaseWaiters: [String: CheckedContinuation<Void, Never>] = [:]
+    private let blocksDisconnect: Bool
+    private var disconnectStarted = false
+    private var disconnectWaiters: [CheckedContinuation<Void, Never>] = []
+    private var disconnectReleaseContinuation: CheckedContinuation<Void, Never>?
+    private var disconnectReleaseRequested = false
 
     init(
         listResponses: [String: [RemoteFileEntry]] = [:],
         stats: [String: RemoteFileEntry] = [:],
         blockedListPaths: Set<String> = [],
-        blockedStatPaths: Set<String> = []
+        blockedStatPaths: Set<String> = [],
+        blocksDisconnect: Bool = false
     ) {
         self.listResponses = listResponses
         self.stats = stats
         self.blockedListPaths = blockedListPaths
         self.blockedStatPaths = blockedStatPaths
+        self.blocksDisconnect = blocksDisconnect
     }
 
     func waitUntilListStarted(path: String) async {
@@ -290,9 +317,39 @@ actor BlockingNavigationRemoteFileClient: SFTPRemoteFileClient {
         statReleaseWaiters.removeValue(forKey: normalizedPath)?.resume()
     }
 
+    func waitUntilDisconnectStarted() async {
+        if disconnectStarted { return }
+        await withCheckedContinuation { continuation in
+            disconnectWaiters.append(continuation)
+        }
+    }
+
+    func hasStartedDisconnect() -> Bool {
+        disconnectStarted
+    }
+
+    func releaseDisconnect() {
+        if let disconnectReleaseContinuation {
+            disconnectReleaseContinuation.resume()
+            self.disconnectReleaseContinuation = nil
+        } else {
+            disconnectReleaseRequested = true
+        }
+    }
+
     func connectForRemoteFileLease(to server: Server, credentials: ServerCredentials) async throws {}
 
-    func disconnect() async {}
+    func disconnect() async {
+        disconnectStarted = true
+        for waiter in disconnectWaiters {
+            waiter.resume()
+        }
+        disconnectWaiters.removeAll()
+        guard blocksDisconnect, !disconnectReleaseRequested else { return }
+        await withCheckedContinuation { continuation in
+            disconnectReleaseContinuation = continuation
+        }
+    }
 
     func execute(_ command: String, timeout: Duration?) async throws -> String { "" }
 

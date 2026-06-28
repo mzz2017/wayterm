@@ -81,17 +81,24 @@ final class RemoteFileMoveDestinationLoadCoordinator {
         await requests[requestID]?.task?.value
     }
 
-    func cancelRequests(for serverId: UUID) {
+    @discardableResult
+    func cancelRequests(for serverId: UUID) -> [Task<Void, Never>] {
+        var canceledTasks: [Task<Void, Never>] = []
         for (requestID, request) in requests where request.key.serverId == serverId {
-            cancelRequest(requestID)
+            if let canceledTask = cancelRequest(requestID) {
+                canceledTasks.append(canceledTask)
+            }
         }
+        return canceledTasks
     }
 
-    func cancelRequest(_ requestID: UUID) {
-        guard let request = requests[requestID] else { return }
+    @discardableResult
+    func cancelRequest(_ requestID: UUID) -> Task<Void, Never>? {
+        guard let request = requests[requestID] else { return nil }
         if requestByKey[request.key] == requestID {
             requestByKey.removeValue(forKey: request.key)
         }
         requests[requestID]?.task?.cancel()
+        return requests[requestID]?.task
     }
 }

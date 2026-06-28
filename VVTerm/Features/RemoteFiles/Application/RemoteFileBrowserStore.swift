@@ -417,7 +417,7 @@ final class RemoteFileBrowserStore: ObservableObject {
         let canceledRequestTasks =
             cancelMutationRequests(for: serverId)
             + cancelTransferRequests(for: serverId)
-        cancelMoveDestinationLoadRequests(for: serverId)
+            + cancelMoveDestinationLoadRequests(for: serverId)
 
         var affectedTabIDs = Set(
             states.compactMap { tabId, state in
@@ -453,7 +453,7 @@ final class RemoteFileBrowserStore: ObservableObject {
         requestLifecycleCoordinator.cancelTransferRequests(for: serverId)
     }
 
-    private func cancelMoveDestinationLoadRequests(for serverId: UUID) {
+    private func cancelMoveDestinationLoadRequests(for serverId: UUID) -> [Task<Void, Never>] {
         moveDestinationLoadCoordinator.cancelRequests(for: serverId)
     }
 
