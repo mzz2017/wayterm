@@ -1,14 +1,25 @@
 import CloudKit
 import Foundation
 
-extension CloudKitManager: ServerCloudSyncing {
+@MainActor
+final class ServerCloudKitSyncService: ServerCloudSyncing {
     private enum ServerRecordType {
         static let server = "Server"
         static let workspace = "Workspace"
     }
 
+    private let cloudKit: CloudKitManager
+
+    init(cloudKit: CloudKitManager) {
+        self.cloudKit = cloudKit
+    }
+
+    var isAvailable: Bool {
+        cloudKit.isAvailable
+    }
+
     func fetchChanges(forceFullFetch: Bool) async throws -> CloudKitChanges {
-        let changes = try await fetchRecordChanges(forceFullFetch: forceFullFetch)
+        let changes = try await cloudKit.fetchRecordChanges(forceFullFetch: forceFullFetch)
         var servers: [Server] = []
         var workspaces: [Workspace] = []
         var deletedServerIDs: [UUID] = []
@@ -54,23 +65,23 @@ extension CloudKitManager: ServerCloudSyncing {
     }
 
     func saveServer(_ server: Server) async throws {
-        try await saveCloudKitRecord(
-            server.toRecord(in: recordZoneID),
+        try await cloudKit.saveCloudKitRecord(
+            server.toRecord(in: cloudKit.recordZoneID),
             successLog: "Saved server \(server.name) to CloudKit",
             failureLog: "Failed to save server"
         )
     }
 
     func saveWorkspace(_ workspace: Workspace) async throws {
-        try await saveCloudKitRecord(
-            workspace.toRecord(in: recordZoneID),
+        try await cloudKit.saveCloudKitRecord(
+            workspace.toRecord(in: cloudKit.recordZoneID),
             successLog: "Saved workspace \(workspace.name) to CloudKit",
             failureLog: "Failed to save workspace"
         )
     }
 
     func isSchemaError(_ error: Error) -> Bool {
-        Self.isSchemaError(error)
+        CloudKitManager.isSchemaError(error)
     }
 }
 
@@ -101,7 +112,7 @@ extension ServerManager {
 
     convenience init() {
         self.init(
-            cloudKit: CloudKitManager.shared,
+            cloudKit: ServerCloudKitSyncService(cloudKit: CloudKitManager.shared),
             syncCoordinator: CloudKitSyncCoordinator.shared,
             localDataStore: UserDefaultsServerLocalDataStore(),
             isProProvider: { StoreManager.shared.isPro }

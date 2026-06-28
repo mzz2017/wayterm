@@ -155,10 +155,17 @@ struct ServerManagerSuperfileBoundaryTests {
         #expect(dependencySource.contains("func clearPendingMutations(for entities: Set<PendingCloudKitEntity>)"))
         #expect(managerSource.contains("let cloudKit: any ServerCloudSyncing"))
         #expect(managerSource.contains("let syncCoordinator: any ServerPendingCloudSyncCoordinating"))
-        #expect(liveSyncSource.contains("extension CloudKitManager: ServerCloudSyncing"))
+        #expect(
+            liveSyncSource.contains("final class ServerCloudKitSyncService"),
+            "Server CloudKit record policy should live in a feature-owned adapter."
+        )
+        #expect(
+            !liveSyncSource.contains("extension CloudKitManager: ServerCloudSyncing"),
+            "Servers should not attach feature sync policy to the Core CloudKitManager type."
+        )
         #expect(liveSyncSource.contains("extension CloudKitSyncCoordinator: ServerPendingCloudSyncCoordinating"))
         #expect(liveSyncSource.contains("static let shared = ServerManager()"))
-        #expect(liveSyncSource.contains("CloudKitManager.shared"))
+        #expect(liveSyncSource.contains("ServerCloudKitSyncService(cloudKit: CloudKitManager.shared)"))
         #expect(liveSyncSource.contains("CloudKitSyncCoordinator.shared"))
         #expect(liveSyncSource.contains("StoreManager.shared.isPro"))
         #expect(syncStateServiceSource.contains("struct ServerSyncStateService"))
