@@ -624,13 +624,6 @@ struct ConnectionTerminalContainer: View {
     private func disconnectFromServer() {
         disconnectCoordinator.requestServerDisconnect(
             serverId: server.id,
-            disconnectRemoteFiles: { serverId in
-                fileBrowser.disconnect(serverId: serverId)
-            },
-            disconnectStats: statsRegistry.disconnect,
-            disconnectFileTabs: { serverId in
-                fileTabManager.disconnect(serverId: serverId)
-            },
             disconnectTerminals: tabManager.disconnectServerAndWait
         )
     }

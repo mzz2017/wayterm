@@ -38,6 +38,10 @@ struct ServerDisconnectIntentBoundaryTests {
         // Then SwiftUI must not own the async teardown sequence.
         #expect(!helper.containsRegex(#"Task\s*\{"#))
         #expect(!helper.contains("await sessionManager.disconnectServerAndWait"))
+        #expect(!helper.contains("fileBrowser.disconnect"))
+        #expect(!helper.contains("statsRegistry.disconnect"))
+        #expect(!helper.contains("disconnectRemoteFiles"))
+        #expect(!helper.contains("disconnectStats"))
     }
 
     @Test
@@ -68,6 +72,12 @@ struct ServerDisconnectIntentBoundaryTests {
         // disconnect, and navigation completion itself.
         #expect(!helper.containsRegex(#"Task\s*\{"#))
         #expect(!helper.contains("await sessionManager.disconnectServerAndWait"))
+        #expect(!helper.contains("fileBrowser.disconnect"))
+        #expect(!helper.contains("statsRegistry.disconnect"))
+        #expect(!helper.contains("fileTabs.disconnect"))
+        #expect(!helper.contains("disconnectRemoteFiles"))
+        #expect(!helper.contains("disconnectStats"))
+        #expect(!helper.contains("disconnectFileTabs"))
     }
 
     @Test
@@ -99,6 +109,12 @@ struct ServerDisconnectIntentBoundaryTests {
         // Then SwiftUI must not own the multi-feature teardown ordering.
         #expect(!helper.containsRegex(#"Task\s*\{"#))
         #expect(!helper.contains("await tabManager.disconnectServerAndWait"))
+        #expect(!helper.contains("fileBrowser.disconnect"))
+        #expect(!helper.contains("statsRegistry.disconnect"))
+        #expect(!helper.contains("fileTabManager.disconnect"))
+        #expect(!helper.contains("disconnectRemoteFiles"))
+        #expect(!helper.contains("disconnectStats"))
+        #expect(!helper.contains("disconnectFileTabs"))
     }
 
     @Test

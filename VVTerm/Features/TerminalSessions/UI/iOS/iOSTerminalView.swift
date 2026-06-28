@@ -687,13 +687,6 @@ struct iOSTerminalView: View {
         }
         disconnectCoordinator.requestServerDisconnect(
             serverId: serverId,
-            disconnectRemoteFiles: { serverId in
-                fileBrowser.disconnect(serverId: serverId)
-            },
-            disconnectStats: statsRegistry.disconnect,
-            disconnectFileTabs: { serverId in
-                fileTabs.disconnect(serverId: serverId)
-            },
             disconnectTerminals: sessionManager.disconnectServerAndWait,
             onCompleted: {
                 onBack()

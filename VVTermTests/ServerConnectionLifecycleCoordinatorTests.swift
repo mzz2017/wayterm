@@ -171,6 +171,59 @@ struct ServerConnectionLifecycleCoordinatorTests {
     }
 
     @Test
+    func serverDisconnectRequestUsesConfiguredResourceTeardownWhenCallerOnlySendsTerminalIntent() async {
+        let serverId = UUID()
+        let recorder = ServerDisconnectRecorder()
+        let remoteGate = ServerDisconnectGate()
+        let coordinator = ServerConnectionLifecycleCoordinator()
+
+        coordinator.configureResourceDisconnects(
+            disconnectRemoteFiles: { requestedServerId in
+                #expect(requestedServerId == serverId)
+                return Task { @MainActor in
+                    recorder.record("remote-start")
+                    await remoteGate.wait()
+                    recorder.record("remote-end")
+                }
+            },
+            disconnectStats: { requestedServerId in
+                #expect(requestedServerId == serverId)
+                recorder.record("stats")
+            },
+            disconnectFileTabs: { requestedServerId in
+                #expect(requestedServerId == serverId)
+                recorder.record("file-tabs")
+            }
+        )
+
+        // Given UI only sends a server disconnect intent and the terminal owner action.
+        let requestID = coordinator.requestServerDisconnect(
+            serverId: serverId,
+            disconnectTerminals: { requestedServerId in
+                #expect(requestedServerId == serverId)
+                recorder.record("terminal")
+            },
+            onCompleted: {
+                recorder.record("complete")
+            }
+        )
+        await recorder.waitForCount(1)
+
+        // Then configured resource teardown is owned and awaited by the coordinator.
+        #expect(recorder.events == ["remote-start"])
+        #expect(coordinator.pendingDisconnectRequestIDs == [requestID])
+
+        await remoteGate.open()
+        await coordinator.waitForDisconnectRequest(requestID)
+
+        #expect(
+            recorder.events == ["remote-start", "remote-end", "stats", "file-tabs", "terminal", "complete"],
+            "Server disconnect should use configured resource teardown before terminal cleanup when UI sends only intent."
+        )
+        #expect(coordinator.pendingDisconnectRequestIDs.isEmpty)
+    }
+
+    @Test
     func serverDisconnectAwaitsStatsCleanupBeforeTabsAndTerminal() async {
         let serverId = UUID()
         let recorder = ServerDisconnectRecorder()

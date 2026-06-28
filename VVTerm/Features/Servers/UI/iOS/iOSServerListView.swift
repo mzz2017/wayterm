@@ -472,10 +472,6 @@ struct iOSServerListView: View {
     private func disconnectActiveConnection(_ connection: ActiveConnection) {
         disconnectCoordinator.requestServerDisconnect(
             serverId: connection.id,
-            disconnectRemoteFiles: { serverId in
-                fileBrowser.disconnect(serverId: serverId)
-            },
-            disconnectStats: statsRegistry.disconnect,
             disconnectTerminals: sessionManager.disconnectServerAndWait
         )
     }

@@ -45,8 +45,8 @@ final class ServerConnectionLifecycleCoordinator {
     @discardableResult
     func requestServerDisconnect(
         serverId: UUID,
-        disconnectRemoteFiles: @escaping RemoteFilesDisconnectAction,
-        disconnectStats: @escaping StatsDisconnectAction = { _ in },
+        disconnectRemoteFiles: RemoteFilesDisconnectAction? = nil,
+        disconnectStats: StatsDisconnectAction? = nil,
         disconnectFileTabs: FileTabsDisconnectAction? = nil,
         disconnectTerminals: @escaping TerminalDisconnectAction,
         onCompleted: @escaping @MainActor () -> Void = {}
@@ -57,6 +57,7 @@ final class ServerConnectionLifecycleCoordinator {
         }
 
         let requestID = UUID()
+        let resourceDisconnects = self.resourceDisconnects
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
@@ -66,13 +67,13 @@ final class ServerConnectionLifecycleCoordinator {
                 }
             }
 
-            let remoteFilesDisconnectTask = disconnectRemoteFiles(serverId)
+            let remoteFilesDisconnectTask = (disconnectRemoteFiles ?? resourceDisconnects.disconnectRemoteFiles)(serverId)
             await remoteFilesDisconnectTask.value
 
             guard !Task.isCancelled else { return }
-            await disconnectStats(serverId)
+            await (disconnectStats ?? resourceDisconnects.disconnectStats)(serverId)
             guard !Task.isCancelled else { return }
-            disconnectFileTabs?(serverId)
+            (disconnectFileTabs ?? resourceDisconnects.disconnectFileTabs)?(serverId)
             await disconnectTerminals(serverId)
 
             self.deliverCompletionCallbacks(for: requestID)
