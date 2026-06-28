@@ -6,8 +6,6 @@ import MoshBootstrap
 // MARK: - SSH Client using libssh2
 
 nonisolated actor SSHClient {
-    nonisolated deinit {}
-
     private final class MoshShellRuntime: @unchecked Sendable {
         let session: MoshClientSession
         private let lock = NSLock()

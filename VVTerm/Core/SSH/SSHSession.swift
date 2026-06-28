@@ -11,8 +11,6 @@ import os.log
 // MARK: - SSH Session using libssh2
 
 nonisolated actor SSHSession {
-    nonisolated deinit {}
-
     let config: SSHSessionConfig
     let driver: any LibSSH2SessionDriving
     var libssh2Session: OpaquePointer?

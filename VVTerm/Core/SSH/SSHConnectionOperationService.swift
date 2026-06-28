@@ -11,7 +11,6 @@ actor SSHConnectionOperationService {
     static let shared = SSHConnectionOperationService()
 
     private init() {}
-    nonisolated deinit {}
 
     func runWithConnection<T>(
         using client: SSHClient,
