@@ -242,10 +242,10 @@ Output: `Vendor/libssh2/{macos,ios,ios-simulator}/`
 
 ```bash
 ./scripts/test-ios.sh \
-  -skip-testing:VVTermUITests \
   -only-testing:VVTermTests/<TestClass>
 ```
 
+- The wrapper defaults to the shared `VVTermUnitTests` scheme, which contains `VVTermTests` but not `VVTermUITests`. Set `IOS_TEST_SCHEME=VVTerm` when intentionally exercising the full shared scheme or UI test target.
 - The default destination is `iPhone 17`. Override with `IOS_TEST_DEVICE_NAME` or `IOS_TEST_DESTINATION_ID` when needed.
 
 ### iOS simulator tests
@@ -255,15 +255,14 @@ Output: `Vendor/libssh2/{macos,ios,ios-simulator}/`
 ```bash
 xcodebuild test \
   -project VVTerm.xcodeproj \
-  -scheme VVTerm \
+  -scheme VVTermUnitTests \
   -destination 'platform=iOS Simulator,name=iPhone 17' \
   -parallel-testing-enabled NO \
-  -skip-testing:VVTermUITests \
   -only-testing:VVTermTests/<TestClass> \
   ENABLE_DEBUG_DYLIB=NO
 ```
 
-- The shared `VVTerm` scheme includes both `VVTermTests` and `VVTermUITests`; `-skip-testing:VVTermUITests` prevents running UI tests but Xcode may still prepare/build the UI test target. Prefer a unit-test-only scheme or test plan if this becomes disruptive.
+- The shared `VVTerm` scheme includes both `VVTermTests` and `VVTermUITests`; `-skip-testing:VVTermUITests` prevents running UI tests but Xcode may still prepare/build the UI test target. Use `VVTermUnitTests` for unit gates unless the UI test runner is intentionally part of the run.
 
 ## Swift Lifecycle Rules
 

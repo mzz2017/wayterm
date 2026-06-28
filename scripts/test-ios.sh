@@ -2,7 +2,7 @@
 set -euo pipefail
 
 project="${IOS_TEST_PROJECT:-VVTerm.xcodeproj}"
-scheme="${IOS_TEST_SCHEME:-VVTerm}"
+scheme="${IOS_TEST_SCHEME:-VVTermUnitTests}"
 device_name="${IOS_TEST_DEVICE_NAME:-iPhone 17}"
 device_name_candidates="${IOS_TEST_DEVICE_NAME_CANDIDATES:-$device_name}"
 destination_id="${IOS_TEST_DESTINATION_ID:-}"
@@ -14,6 +14,7 @@ lock_timeout="${IOS_TEST_LOCK_TIMEOUT:-600}"
 derived_data_path="${IOS_TEST_DERIVED_DATA_PATH:-}"
 keep_derived_data="${IOS_TEST_KEEP_DERIVED_DATA:-0}"
 no_output_timeout="${IOS_TEST_NO_OUTPUT_TIMEOUT:-300}"
+xcodebuild_quiet="${IOS_TEST_XCODEBUILD_QUIET:-0}"
 lock_acquired=0
 created_derived_data=0
 log_file=""
@@ -138,6 +139,7 @@ run_xcodebuild_test() {
     local status_file
     local timeout_file
     local xcode_pid
+    local -a xcodebuild_args
     local last_output_at
     local now
 
@@ -146,7 +148,12 @@ run_xcodebuild_test() {
     rm -f "$timeout_file"
     : > "$log_file"
 
-    xcodebuild test -quiet \
+    xcodebuild_args=(test)
+    if [[ "$xcodebuild_quiet" == "1" ]]; then
+        xcodebuild_args+=(-quiet)
+    fi
+
+    xcodebuild "${xcodebuild_args[@]}" \
         -project "$project" \
         -scheme "$scheme" \
         -destination "platform=iOS Simulator,id=${udid}" \
