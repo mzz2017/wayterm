@@ -174,6 +174,19 @@ final class AppLockManager: ObservableObject {
         await appLockRequestTasks[requestID]?.value
     }
 
+    func cancelAllAndWait() async {
+        let tasks = Array(appLockRequestTasks.values)
+
+        appLockRequestTasks.values.forEach { $0.cancel() }
+        serverUnlockRequestsByServerID.values.compactMap(\.task).forEach { $0.cancel() }
+        appLockRequestTasks.removeAll()
+        serverUnlockRequestsByServerID.removeAll()
+
+        for task in tasks {
+            await task.value
+        }
+    }
+
     func requestSetFullAppLockEnabled(_ enabled: Bool) async {
         lastErrorMessage = nil
 
@@ -192,6 +205,7 @@ final class AppLockManager: ObservableObject {
 
         let reason = String(format: String(localized: "Enable %@ for VVTerm"), biometryDisplayName)
         guard await authenticate(reason: reason) else { return }
+        guard !Task.isCancelled else { return }
 
         fullAppLockEnabled = true
         isAppLocked = false

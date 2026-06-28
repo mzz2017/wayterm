@@ -24,6 +24,7 @@ final class AppLifecycleCoordinator {
     private let disconnectTerminalTabsBeforeExit: TerminalLifecycleAction
     private var disconnectRemoteFilesBeforeExit: TerminalLifecycleAction
     private var disconnectStatsBeforeExit: TerminalLifecycleAction
+    private let cancelAuthBeforeExit: TerminalLifecycleAction
     private let cancelSyncBeforeExit: TerminalLifecycleAction
     private let suspendTerminalSessionsForBackground: TerminalLifecycleAction
     private let lockAppIfNeededForBackground: AppLockLifecycleAction
@@ -68,6 +69,9 @@ final class AppLifecycleCoordinator {
         },
         disconnectRemoteFilesBeforeExit: @escaping TerminalLifecycleAction = {},
         disconnectStatsBeforeExit: @escaping TerminalLifecycleAction = {},
+        cancelAuthBeforeExit: @escaping TerminalLifecycleAction = {
+            await AppLockManager.shared.cancelAllAndWait()
+        },
         cancelSyncBeforeExit: @escaping TerminalLifecycleAction = {
             await AppSyncCoordinator.shared.cancelAllAndWait()
         },
@@ -113,6 +117,7 @@ final class AppLifecycleCoordinator {
         self.disconnectTerminalTabsBeforeExit = disconnectTerminalTabsBeforeExit
         self.disconnectRemoteFilesBeforeExit = disconnectRemoteFilesBeforeExit
         self.disconnectStatsBeforeExit = disconnectStatsBeforeExit
+        self.cancelAuthBeforeExit = cancelAuthBeforeExit
         self.cancelSyncBeforeExit = cancelSyncBeforeExit
         self.suspendTerminalSessionsForBackground = suspendTerminalSessionsForBackground
         self.lockAppIfNeededForBackground = lockAppIfNeededForBackground
@@ -133,6 +138,7 @@ final class AppLifecycleCoordinator {
         disconnectTerminalTabsBeforeExit: @escaping TerminalLifecycleAction = {},
         disconnectRemoteFilesBeforeExit: @escaping TerminalLifecycleAction = {},
         disconnectStatsBeforeExit: @escaping TerminalLifecycleAction = {},
+        cancelAuthBeforeExit: @escaping TerminalLifecycleAction = {},
         cancelSyncBeforeExit: @escaping TerminalLifecycleAction = {},
         suspendTerminalSessionsForBackground: @escaping TerminalLifecycleAction = {},
         lockAppIfNeededForBackground: @escaping AppLockLifecycleAction = {},
@@ -153,6 +159,7 @@ final class AppLifecycleCoordinator {
             disconnectTerminalTabsBeforeExit: disconnectTerminalTabsBeforeExit,
             disconnectRemoteFilesBeforeExit: disconnectRemoteFilesBeforeExit,
             disconnectStatsBeforeExit: disconnectStatsBeforeExit,
+            cancelAuthBeforeExit: cancelAuthBeforeExit,
             cancelSyncBeforeExit: cancelSyncBeforeExit,
             suspendTerminalSessionsForBackground: suspendTerminalSessionsForBackground,
             lockAppIfNeededForBackground: lockAppIfNeededForBackground,
@@ -282,6 +289,7 @@ final class AppLifecycleCoordinator {
     }
 
     private func runTerminationTeardownOrTimeout() async {
+        let cancelAuthBeforeExit = cancelAuthBeforeExit
         let cancelSyncBeforeExit = cancelSyncBeforeExit
         let disconnectRemoteFilesBeforeExit = disconnectRemoteFilesBeforeExit
         let disconnectStatsBeforeExit = disconnectStatsBeforeExit
@@ -290,6 +298,8 @@ final class AppLifecycleCoordinator {
         let sleepForTerminationTimeout = sleepForTerminationTimeout
         let terminationTeardownTimeout = terminationTeardownTimeout
         let teardownTask = Task { @MainActor in
+            await cancelAuthBeforeExit()
+            guard !Task.isCancelled else { return }
             await cancelSyncBeforeExit()
             guard !Task.isCancelled else { return }
             await disconnectRemoteFilesBeforeExit()

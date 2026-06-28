@@ -439,4 +439,107 @@ final class AppLockManagerTests: XCTestCase {
             "Cancellation during nested app unlock should not surface a user-facing auth error."
         )
     }
+
+    func testCancelAllAndWaitCancelsFullLockEnableWithoutApplyingLateAuthSuccess() async {
+        // Given full-lock enablement is blocked in biometric authentication.
+        let defaults = makeDefaults()
+        let authService = StubBiometricAuthService(
+            availabilityResult: .available(.faceID)
+        )
+        authService.delayAuthentication = true
+        let manager = AppLockManager(defaults: defaults, authService: authService)
+
+        let requestID = manager.requestFullAppLockChange(true)
+        await authService.waitUntilAuthenticationStarted()
+
+        // When app-level teardown cancels all auth work.
+        let cleanupTask = Task {
+            await manager.cancelAllAndWait()
+        }
+        try? await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertTrue(
+            manager.pendingAppLockRequestIDs.isEmpty,
+            "Auth cleanup should clear visible pending app-lock requests immediately."
+        )
+
+        authService.finishAuthentication()
+        await cleanupTask.value
+        await manager.waitForAppLockRequest(requestID)
+
+        // Then a late auth success from the canceled request must not enable
+        // full app lock.
+        XCTAssertFalse(
+            manager.fullAppLockEnabled,
+            "Canceled full-lock enablement must not apply a late successful authentication result."
+        )
+        XCTAssertFalse(
+            manager.isAppLocked,
+            "Canceled full-lock enablement should not change app lock state."
+        )
+    }
+
+    func testCancelAllAndWaitCancelsServerUnlockCallbacksAndWaitsForAuthExit() async {
+        // Given a server-unlock request is blocked in biometric authentication.
+        let defaults = makeDefaults()
+        let authService = StubBiometricAuthService(
+            availabilityResult: .available(.faceID)
+        )
+        authService.delayAuthentication = true
+        let manager = AppLockManager(defaults: defaults, authService: authService)
+        let server = makeLockedServer()
+        var didUnlock = false
+        var didDeny = false
+
+        let requestID = manager.requestServerUnlock(
+            server,
+            onUnlocked: { didUnlock = true },
+            onDenied: { didDeny = true }
+        )
+        await authService.waitUntilAuthenticationStarted()
+
+        // When app-level teardown cancels all auth work.
+        let cleanupCompleted = AuthCleanupProbe()
+        let cleanupTask = Task {
+            await manager.cancelAllAndWait()
+            await cleanupCompleted.mark()
+        }
+        try? await Task.sleep(for: .milliseconds(20))
+
+        // Then cleanup remains awaitable until the in-flight auth request
+        // exits, while visible pending state is cleared immediately.
+        let cleanupDidCompleteBeforeAuthExit = await cleanupCompleted.isMarked()
+        XCTAssertFalse(
+            cleanupDidCompleteBeforeAuthExit,
+            "Auth cleanup must remain awaitable until the in-flight authentication exits."
+        )
+        XCTAssertFalse(
+            manager.pendingServerUnlockRequestIDs.contains(requestID),
+            "Auth cleanup should clear visible server-unlock requests immediately."
+        )
+
+        authService.finishAuthentication()
+        await cleanupTask.value
+
+        let cleanupDidCompleteAfterAuthExit = await cleanupCompleted.isMarked()
+        XCTAssertTrue(cleanupDidCompleteAfterAuthExit)
+        XCTAssertFalse(didUnlock, "Canceled server unlock cleanup must not run unlocked callbacks.")
+        XCTAssertFalse(didDeny, "Canceled server unlock cleanup must not run denied callbacks.")
+        XCTAssertFalse(
+            manager.canAccessServerWithoutPrompt(server),
+            "Canceled server unlock cleanup must not leave a server access grant."
+        )
+    }
+}
+
+private actor AuthCleanupProbe {
+    private var marked = false
+
+    func mark() {
+        marked = true
+    }
+
+    func isMarked() -> Bool {
+        marked
+    }
 }
