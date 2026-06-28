@@ -32,7 +32,7 @@ final class RemoteFileNavigationRequestCoordinator {
             return requestID
         }
 
-        if cancelRequest(for: tab.id) {
+        if cancelRequest(for: tab.id) != nil {
             onCancelPrevious(tab.id)
         }
 
@@ -62,10 +62,13 @@ final class RemoteFileNavigationRequestCoordinator {
     }
 
     @discardableResult
-    func cancelRequest(for tabId: UUID) -> Bool {
-        guard let requestID = requestByTab.removeValue(forKey: tabId) else { return false }
-        requests[requestID]?.task.cancel()
-        return true
+    func cancelRequest(for tabId: UUID) -> Task<Void, Never>? {
+        guard let requestID = requestByTab.removeValue(forKey: tabId),
+              let task = requests[requestID]?.task else {
+            return nil
+        }
+        task.cancel()
+        return task
     }
 
     func affectedTabIDs(for serverId: UUID) -> Set<UUID> {

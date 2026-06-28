@@ -402,6 +402,61 @@ struct RemoteFileBrowserNavigationLifecycleTests {
     }
 
     @Test
+    func disconnectWaitsForCanceledNavigationBeforeRemoteDisconnect() async throws {
+        let server = makeRemoteFileBrowserServer()
+        let tab = RemoteFileTab(serverId: server.id)
+        let entry = makeRemoteFileBrowserEntry(name: "tmp", path: "/tmp", type: .directory)
+        let client = BlockingNavigationRemoteFileClient(
+            listResponses: [
+                "/tmp": [makeRemoteFileBrowserEntry(name: "file.txt", path: "/tmp/file.txt", type: .file)]
+            ],
+            blockedListPaths: ["/tmp"],
+            blocksDisconnect: true
+        )
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: makeRemoteFileBrowserPersistedStateStore(),
+            remoteFileServiceAccess: NonSerializingRemoteFileServiceAccess(client: client),
+            serverProvider: { _ in nil }
+        )
+        let waitProbe = RemoteFileWaitProbe()
+
+        _ = try await store.withRemoteFileService(for: server) { service in
+            try await service.resolveHomeDirectory()
+        }
+
+        // Given a navigation request is blocked inside remote directory IO.
+        let requestID = store.requestNavigation(.openDirectory(entry), in: tab, server: server)
+        await client.waitUntilListStarted(path: "/tmp")
+
+        // When the same server disconnects.
+        let disconnectTask = store.disconnect(serverId: server.id)
+        let disconnectWaitTask = Task {
+            await disconnectTask.value
+            await waitProbe.markReturned()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then service disconnect waits for navigation cleanup to exit.
+        #expect(!store.pendingNavigationRequestIDs.contains(requestID))
+        #expect(
+            await !client.hasStartedDisconnect(),
+            "RemoteFiles disconnect should wait for canceled navigation listing to exit before disconnecting the SFTP service."
+        )
+        #expect(
+            await !waitProbe.didReturn,
+            "RemoteFiles disconnect task should not complete while canceled navigation listing is still blocked."
+        )
+
+        await client.releaseList(path: "/tmp")
+        await client.waitUntilDisconnectStarted()
+        await client.releaseDisconnect()
+        await disconnectWaitTask.value
+
+        #expect(await waitProbe.didReturn)
+        #expect(store.currentPathValue(for: tab) == nil)
+    }
+
+    @Test
     func disconnectCancelsQueuedNavigationBeforeRuntimeStateExists() async throws {
         let server = makeRemoteFileBrowserServer()
         let tab = RemoteFileTab(serverId: server.id, seedPath: "/srv")

@@ -399,8 +399,12 @@ final class RemoteFileBrowserStore: ObservableObject {
         persistStates()
     }
 
-    func removeRuntimeState(for tabId: UUID) {
-        cancelNavigationRequest(for: tabId)
+    @discardableResult
+    func removeRuntimeState(for tabId: UUID) -> [Task<Void, Never>] {
+        var canceledTasks: [Task<Void, Never>] = []
+        if let navigationTask = cancelNavigationRequest(for: tabId) {
+            canceledTasks.append(navigationTask)
+        }
         cancelPreviewLoadRequest(for: tabId)
         directoryRequestIDs.removeValue(forKey: tabId)
         viewerRequestIDs.removeValue(forKey: tabId)
@@ -410,11 +414,12 @@ final class RemoteFileBrowserStore: ObservableObject {
         if pendingToolbarCommand?.tabId == tabId {
             pendingToolbarCommand = nil
         }
+        return canceledTasks
     }
 
     @discardableResult
     func disconnect(serverId: UUID) -> Task<Void, Never> {
-        let canceledRequestTasks =
+        var canceledRequestTasks =
             cancelMutationRequests(for: serverId)
             + cancelTransferRequests(for: serverId)
             + cancelMoveDestinationLoadRequests(for: serverId)
@@ -429,7 +434,7 @@ final class RemoteFileBrowserStore: ObservableObject {
         )
 
         for tabId in affectedTabIDs {
-            removeRuntimeState(for: tabId)
+            canceledRequestTasks += removeRuntimeState(for: tabId)
         }
 
         return serviceAccessCoordinator.disconnect(

@@ -160,6 +160,7 @@ extension RemoteFileBrowserStore {
         let entries = try await withRemoteFileService(for: server) { service in
             try await service.listDirectory(at: normalizedPath, maxEntries: Self.directoryEntryLimit)
         }
+        try Task.checkCancellation()
         let filesystemStatus = try? await withRemoteFileService(for: server) { service in
             try await service.fileSystemStatus(at: normalizedPath)
         }

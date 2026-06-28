@@ -42,9 +42,11 @@ extension RemoteFileBrowserStore {
         )
     }
 
-    func cancelNavigationRequest(for tabId: UUID) {
-        guard navigationRequestCoordinator.cancelRequest(for: tabId) else { return }
+    @discardableResult
+    func cancelNavigationRequest(for tabId: UUID) -> Task<Void, Never>? {
+        guard let task = navigationRequestCoordinator.cancelRequest(for: tabId) else { return nil }
         resetCancelledNavigationState(for: tabId)
+        return task
     }
 
     private func resetCancelledNavigationState(for tabId: UUID) {
