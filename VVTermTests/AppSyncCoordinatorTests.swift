@@ -105,6 +105,46 @@ struct AppSyncCoordinatorTests {
     }
 
     @Test
+    func cloudKitStatusRefreshFromSettingsReusesTrackedTaskUntilCompletion() async {
+        // Given settings starts a CloudKit status refresh that has not
+        // completed yet.
+        let probe = AppSyncProbe()
+        let releaseRefresh = AsyncGate()
+        let coordinator = AppSyncCoordinator.makeForTesting(
+            refreshCloudKitStatus: {
+                await probe.record("status-start")
+                await releaseRefresh.wait()
+                await probe.record("status-end")
+            }
+        )
+
+        // When the settings screen asks for status refresh twice.
+        let first = coordinator.refreshCloudKitStatusFromSettings()
+        let second = coordinator.refreshCloudKitStatusFromSettings()
+        await probe.waitForCount(1)
+
+        // Then both callers share the same tracked CloudKit refresh task.
+        #expect(
+            coordinator.hasPendingCloudKitStatusRefreshForTesting,
+            "Settings CloudKit status refresh must stay tracked while CloudKit status work is pending."
+        )
+        #expect(await probe.events() == ["status-start"])
+
+        await releaseRefresh.open()
+        await first.value
+        await second.value
+
+        #expect(
+            await probe.events() == ["status-start", "status-end"],
+            "Duplicate settings status refresh intent should share one tracked CloudKit refresh task."
+        )
+        #expect(
+            !coordinator.hasPendingCloudKitStatusRefreshForTesting,
+            "AppSyncCoordinator should clear CloudKit status refresh tracking after completion."
+        )
+    }
+
+    @Test
     func syncSettingsEnableRunsToggleRefreshAndAccessoryRefreshAsTrackedTask() async {
         // Given the settings UI enables iCloud sync.
         let probe = AppSyncProbe()

@@ -25,7 +25,7 @@ final class AppSyncCoordinator {
     private var subscriptionTask: Task<Void, Never>?
     private var serverRefreshTask: (id: UUID, task: Task<Void, Never>)?
     private var settingsSyncTask: (id: UUID, task: Task<Void, Never>)?
-    private var cloudKitStatusRefreshTask: Task<Void, Never>?
+    private var cloudKitStatusRefreshTask: (id: UUID, task: Task<Void, Never>)?
     private var remoteNotificationCompletionTasks: [UUID: Task<Void, Never>] = [:]
 
     private init(
@@ -67,6 +67,10 @@ final class AppSyncCoordinator {
             refreshTerminalAccessories: refreshTerminalAccessories,
             refreshCloudKitStatus: refreshCloudKitStatus
         )
+    }
+
+    var hasPendingCloudKitStatusRefreshForTesting: Bool {
+        cloudKitStatusRefreshTask != nil
     }
     #endif
 
@@ -143,14 +147,15 @@ final class AppSyncCoordinator {
     @discardableResult
     func refreshCloudKitStatusFromSettings() -> Task<Void, Never> {
         if let cloudKitStatusRefreshTask {
-            return cloudKitStatusRefreshTask
+            return cloudKitStatusRefreshTask.task
         }
 
+        let taskID = UUID()
         let task = Task { [refreshCloudKitStatus] in
             await refreshCloudKitStatus()
-            cloudKitStatusRefreshTask = nil
+            clearCloudKitStatusRefreshTask(id: taskID)
         }
-        cloudKitStatusRefreshTask = task
+        cloudKitStatusRefreshTask = (taskID, task)
         return task
     }
 
@@ -162,5 +167,10 @@ final class AppSyncCoordinator {
     private func clearServerRefreshTask(id: UUID) {
         guard serverRefreshTask?.id == id else { return }
         serverRefreshTask = nil
+    }
+
+    private func clearCloudKitStatusRefreshTask(id: UUID) {
+        guard cloudKitStatusRefreshTask?.id == id else { return }
+        cloudKitStatusRefreshTask = nil
     }
 }
