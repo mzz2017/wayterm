@@ -176,6 +176,54 @@ struct TerminalVoiceInputStoreTests {
         #expect(store.activeTarget == nil)
         #expect(store.isRecording == false)
     }
+
+    @Test
+    func cancelTaskWaitsForCanceledStopRequestBeforeCompletion() async throws {
+        let audio = FakeTerminalVoiceAudioService()
+        audio.stopText = "shutdown now"
+        let store = TerminalVoiceInputStore(audioService: audio)
+        let target = TerminalVoiceInputTarget.session(UUID())
+        var didCancel = false
+        let waitProbe = TerminalVoiceInputWaitProbe()
+
+        let startID = store.requestStart(for: target)
+        await audio.waitForStartCallCount(1)
+        await audio.releaseStart()
+        await store.waitForVoiceRequest(startID)
+
+        // Given transcription stop work is in flight for a target that is closing.
+        let stopID = store.requestStopAndSend(for: target)
+        await audio.waitForStopCallCount(1)
+
+        // When close asks for a cancellable voice cleanup task.
+        let cancelTask = store.requestCancelTask(
+            for: target,
+            onCancelled: { didCancel = true }
+        )
+        let waitTask = Task { @MainActor in
+            await cancelTask.value
+            await waitProbe.markFinished()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then cancel remains awaitable until the canceled transcription task exits.
+        #expect(
+            await !waitProbe.didFinish(),
+            "Voice cancel cleanup should wait for a canceled stop/transcription task to exit before close returns."
+        )
+        #expect(store.pendingVoiceRequestIDs.contains(stopID))
+
+        await audio.releaseStop()
+        await waitTask.value
+        await store.waitForVoiceRequest(stopID)
+
+        #expect(didCancel == true)
+        #expect(await waitProbe.didFinish())
+        #expect(store.pendingVoiceRequestIDs.isEmpty)
+        #expect(store.activeTarget == nil)
+        #expect(store.isProcessing == false)
+        #expect(store.isRecording == false)
+    }
 }
 
 @MainActor
@@ -270,5 +318,17 @@ private actor TerminalVoiceInputGate {
         await withCheckedContinuation { continuation in
             openContinuations.append(continuation)
         }
+    }
+}
+
+private actor TerminalVoiceInputWaitProbe {
+    private var finished = false
+
+    func markFinished() {
+        finished = true
+    }
+
+    func didFinish() -> Bool {
+        finished
     }
 }

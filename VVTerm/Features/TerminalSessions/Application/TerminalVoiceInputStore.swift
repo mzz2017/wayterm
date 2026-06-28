@@ -93,6 +93,7 @@ final class TerminalVoiceInputStore: ObservableObject {
             target: target,
             kind: .start,
             task: task,
+            tracksRequestKey: true,
             onStarted: [onStarted],
             onFailed: [onFailed]
         )
@@ -122,6 +123,7 @@ final class TerminalVoiceInputStore: ObservableObject {
             target: target,
             kind: .stop,
             task: task,
+            tracksRequestKey: true,
             onCompleted: [onCompleted]
         )
         requestByKey[key] = requestID
@@ -135,28 +137,12 @@ final class TerminalVoiceInputStore: ObservableObject {
         for target: TerminalVoiceInputTarget,
         onCancelled: @escaping () -> Void = {}
     ) -> UUID {
-        cancelPendingLifecycleRequests(for: target)
-        lastFailureMessage = nil
-
-        let key = VoiceInputRequestKey(target: target, kind: .cancel)
-        if let existingID = requestByKey[key] {
-            voiceRequests[existingID]?.onCancelled.append(onCancelled)
-            return existingID
-        }
-
-        let requestID = UUID()
-        let task = Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.runCancelRequest(requestID, target: target)
-        }
-        voiceRequests[requestID] = VoiceInputRequest(
-            target: target,
-            kind: .cancel,
-            task: task,
-            onCancelled: [onCancelled]
+        enqueueCancelRequest(
+            for: target,
+            waitsForPendingLifecycleRequests: false,
+            coalescesByKey: true,
+            onCancelled: onCancelled
         )
-        requestByKey[key] = requestID
-        return requestID
     }
 
     @discardableResult
@@ -164,7 +150,12 @@ final class TerminalVoiceInputStore: ObservableObject {
         for target: TerminalVoiceInputTarget,
         onCancelled: @escaping () -> Void = {}
     ) -> Task<Void, Never> {
-        let requestID = requestCancel(for: target, onCancelled: onCancelled)
+        let requestID = enqueueCancelRequest(
+            for: target,
+            waitsForPendingLifecycleRequests: true,
+            coalescesByKey: false,
+            onCancelled: onCancelled
+        )
         return voiceRequests[requestID]?.task ?? Task {}
     }
 
@@ -219,29 +210,75 @@ final class TerminalVoiceInputStore: ObservableObject {
         objectWillChange.send()
     }
 
-    private func runCancelRequest(_ requestID: UUID, target: TerminalVoiceInputTarget) {
+    private func runCancelRequest(
+        _ requestID: UUID,
+        target: TerminalVoiceInputTarget,
+        waitingFor canceledTasks: [Task<Void, Never>]
+    ) async {
         audioService.cancelRecording()
         if activeTarget == target {
             activeTarget = nil
         }
         isProcessing = false
+        for task in canceledTasks {
+            await task.value
+        }
         guard let request = finishRequest(requestID) else { return }
         request.onCancelled.forEach { $0() }
         objectWillChange.send()
+    }
+
+    private func enqueueCancelRequest(
+        for target: TerminalVoiceInputTarget,
+        waitsForPendingLifecycleRequests: Bool,
+        coalescesByKey: Bool,
+        onCancelled: @escaping () -> Void
+    ) -> UUID {
+        let canceledTasks = cancelPendingLifecycleRequests(for: target)
+        lastFailureMessage = nil
+
+        let key = VoiceInputRequestKey(target: target, kind: .cancel)
+        if coalescesByKey, let existingID = requestByKey[key] {
+            voiceRequests[existingID]?.onCancelled.append(onCancelled)
+            return existingID
+        }
+
+        let requestID = UUID()
+        let tasksToWaitFor = waitsForPendingLifecycleRequests ? canceledTasks : []
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.runCancelRequest(requestID, target: target, waitingFor: tasksToWaitFor)
+        }
+        voiceRequests[requestID] = VoiceInputRequest(
+            target: target,
+            kind: .cancel,
+            task: task,
+            tracksRequestKey: coalescesByKey,
+            onCancelled: [onCancelled]
+        )
+        if coalescesByKey {
+            requestByKey[key] = requestID
+        }
+        return requestID
     }
 
     private func finishRequest(_ requestID: UUID) -> VoiceInputRequest? {
         guard let request = voiceRequests.removeValue(forKey: requestID) else {
             return nil
         }
-        requestByKey[VoiceInputRequestKey(target: request.target, kind: request.kind)] = nil
+        if request.tracksRequestKey {
+            requestByKey[VoiceInputRequestKey(target: request.target, kind: request.kind)] = nil
+        }
         return request
     }
 
-    private func cancelPendingLifecycleRequests(for target: TerminalVoiceInputTarget) {
+    private func cancelPendingLifecycleRequests(for target: TerminalVoiceInputTarget) -> [Task<Void, Never>] {
+        var canceledTasks: [Task<Void, Never>] = []
         for request in voiceRequests.values where request.target == target && request.kind != .cancel {
             request.task.cancel()
+            canceledTasks.append(request.task)
         }
+        return canceledTasks
     }
 
     private func failureMessage(for error: Error) -> String {
@@ -269,6 +306,7 @@ private struct VoiceInputRequest {
     let target: TerminalVoiceInputTarget
     let kind: VoiceInputRequestKind
     let task: Task<Void, Never>
+    let tracksRequestKey: Bool
     var onStarted: [() -> Void] = []
     var onFailed: [(String) -> Void] = []
     var onCompleted: [(String) -> Void] = []
