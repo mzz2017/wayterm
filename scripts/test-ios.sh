@@ -88,6 +88,32 @@ prepare_cloned_source_packages() {
     mkdir -p "$cloned_source_packages_path"
 }
 
+resolve_packages() {
+    xcodebuild -resolvePackageDependencies \
+        -project "$project" \
+        -scheme "$scheme" \
+        -clonedSourcePackagesDirPath "$cloned_source_packages_path"
+}
+
+patch_mlx_swift_metal_warnings() {
+    local attention_header
+
+    attention_header="${cloned_source_packages_path}/checkouts/mlx-swift/Source/Cmlx/mlx-generated/metal/steel/attn/kernels/steel_attention.h"
+    if [[ ! -f "$attention_header" ]]; then
+        return
+    fi
+
+    perl -0pi -e '
+        s/if constexpr \(is_bool\)/if (is_bool)/g;
+        s/if constexpr \(BD == 128\)/if (BD == 128)/g;
+    ' "$attention_header"
+
+    if grep -Eq 'if constexpr \((is_bool|BD == 128)\)' "$attention_header"; then
+        echo "Unable to patch mlx-swift Metal C++17 extension warnings in ${attention_header}." >&2
+        exit 4
+    fi
+}
+
 resolve_destination_id() {
     if [[ -n "$destination_id" ]]; then
         printf '%s\n' "$destination_id"
@@ -227,6 +253,8 @@ run_xcodebuild_test() {
 acquire_global_lock
 prepare_derived_data
 prepare_cloned_source_packages
+resolve_packages
+patch_mlx_swift_metal_warnings
 
 udid="$(resolve_destination_id)"
 if [[ -z "$udid" ]]; then
