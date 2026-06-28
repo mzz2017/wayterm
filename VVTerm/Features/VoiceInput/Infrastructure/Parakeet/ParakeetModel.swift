@@ -95,9 +95,9 @@ nonisolated public struct DecodingConfig {
         self.numExtraOutputs = config.joint.numExtraOutputs > 0 ? config.joint.numExtraOutputs : config.decoding.durations.count
         self.blankTokenId = vocabSize
 
-        self.encoder = Conformer(config: config.encoder)
+        self.encoder = try Conformer(config: config.encoder)
         self.decoder = PredictNetwork(config: config.decoder)
-        self.joint = JointNetwork(config: config.joint)
+        self.joint = try JointNetwork(config: config.joint)
 
         super.init()
     }
@@ -126,6 +126,9 @@ nonisolated public struct DecodingConfig {
         }
         guard config.posEmbMaxLen > 0 else {
             throw ParakeetError.modelLoadingError("Encoder pos_emb_max_len must be positive.")
+        }
+        guard (config.convKernelSize - 1).isMultiple(of: 2) else {
+            throw ParakeetError.modelLoadingError("Encoder conv_kernel_size must be odd.")
         }
         guard config.subsamplingFactor > 0,
               config.subsamplingFactor & (config.subsamplingFactor - 1) == 0 else {
@@ -268,7 +271,7 @@ nonisolated public struct DecodingConfig {
     public func generate(mel: MLXArray) throws -> [AlignedResult] {
         let inputMel = mel.ndim == 2 ? mel.expandedDimensions(axis: 0) : mel
 
-        let (features, lengths) = encoder(inputMel)
+        let (features, lengths) = try encoder(inputMel)
 
         let (results, _) = try decode(
             features: features,
@@ -533,8 +536,8 @@ nonisolated public struct DecodingConfig {
         return nil
     }
 
-    public func encode(_ input: MLXArray, cache: [ConformerCache?]? = nil) -> (MLXArray, MLXArray) {
-        return encoder(input, cache: cache)
+    public func encode(_ input: MLXArray, cache: [ConformerCache?]? = nil) throws -> (MLXArray, MLXArray) {
+        return try encoder(input, cache: cache)
     }
 
 }
@@ -648,7 +651,7 @@ nonisolated public class StreamingParakeet {
 
         let mel = try getLogMel(audioBuffer, config: model.preprocessConfig)
 
-        let (features, lengths) = model.encode(mel, cache: cache)
+        let (features, lengths) = try model.encode(mel, cache: cache)
         let length = Int(lengths[0].item(Int32.self))
 
         let samplesToKeep =

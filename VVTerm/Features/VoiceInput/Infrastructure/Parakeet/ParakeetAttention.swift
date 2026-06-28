@@ -37,7 +37,7 @@ import MLX
         posEmb: MLXArray? = nil,
         mask: MLXArray? = nil,
         cache: ConformerCache? = nil
-    ) -> MLXArray {
+    ) throws -> MLXArray {
         let q = linearQ(q)
         let k = linearK(k)
         let v = linearV(v)
@@ -124,9 +124,11 @@ import MLX
         posEmb: MLXArray? = nil,
         mask: MLXArray? = nil,
         cache: ConformerCache? = nil
-    ) -> MLXArray {
+    ) throws -> MLXArray {
         guard let posEmb = posEmb else {
-            fatalError("pos_emb is necessary for RelPositionMultiHeadAttention!")
+            throw ParakeetError.audioProcessingError(
+                "Relative position attention requires positional embeddings."
+            )
         }
 
         let q = linearQ(q)
@@ -157,7 +159,7 @@ import MLX
         // Add bounds checking to prevent crash
         let matrixBDLastDim = matrixBDShifted.shape[3]
         guard kSeqLen <= matrixBDLastDim else {
-            fatalError(
+            throw ParakeetError.audioProcessingError(
                 "kSeqLen (\(kSeqLen)) > matrixBDLastDim (\(matrixBDLastDim)). Shapes: matrixBDShifted=\(matrixBDShifted.shape), kReshaped=\(kReshaped.shape)"
             )
         }
@@ -196,7 +198,13 @@ import MLX
         posBiasU: MLXArray? = nil,
         posBiasV: MLXArray? = nil,
         contextSize: (Int, Int) = (256, 256)
-    ) {
+    ) throws {
+        guard min(contextSize.0, contextSize.1) > 0 else {
+            throw ParakeetError.modelLoadingError(
+                "Local attention context sizes must be positive."
+            )
+        }
+
         // Initialize contextSize before calling super.init()
         self.contextSize = contextSize
 
@@ -207,10 +215,6 @@ import MLX
             posBiasU: posBiasU,
             posBiasV: posBiasV
         )
-
-        if min(contextSize.0, contextSize.1) <= 0 {
-            fatalError("Context size for RelPositionMultiHeadLocalAttention must be > 0.")
-        }
     }
 
     public override func callAsFunction(
@@ -220,9 +224,11 @@ import MLX
         posEmb: MLXArray? = nil,
         mask: MLXArray? = nil,
         cache: ConformerCache? = nil
-    ) -> MLXArray {
+    ) throws -> MLXArray {
         guard let posEmb = posEmb else {
-            fatalError("pos_emb is necessary for RelPositionMultiHeadLocalAttention!")
+            throw ParakeetError.audioProcessingError(
+                "Local relative position attention requires positional embeddings."
+            )
         }
 
         let originalQSeq = q.shape[1]

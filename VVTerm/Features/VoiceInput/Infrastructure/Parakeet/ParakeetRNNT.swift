@@ -75,7 +75,7 @@ import MLX
     let activation: Module
     let jointLinear: Linear
 
-    public init(config: JointConfig) {
+    public init(config: JointConfig) throws {
         self.config = config
         self.numClasses = config.numClasses + 1 + config.numExtraOutputs
 
@@ -91,8 +91,9 @@ import MLX
         case "tanh":
             self.activation = Tanh()
         default:
-            fatalError(
-                "Unsupported activation for joint step - please pass one of [relu, sigmoid, tanh]")
+            throw ParakeetError.modelLoadingError(
+                "Unsupported joint activation: \(config.jointnet.activation)."
+            )
         }
 
         self.jointLinear = Linear(config.jointnet.jointHidden, numClasses)

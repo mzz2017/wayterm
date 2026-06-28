@@ -32,8 +32,12 @@ import MLX
     let pointwiseConv2: Conv1d
     let activation: SiLU
 
-    public init(config: ConformerConfig) {
-        assert((config.convKernelSize - 1) % 2 == 0)
+    public init(config: ConformerConfig) throws {
+        guard (config.convKernelSize - 1).isMultiple(of: 2) else {
+            throw ParakeetError.modelLoadingError(
+                "Encoder conv_kernel_size must be odd."
+            )
+        }
 
         self.padding = (config.convKernelSize - 1) / 2
 
@@ -99,7 +103,7 @@ import MLX
     let feedForward2: FeedForward
     let normOut: LayerNorm
 
-    public init(config: ConformerConfig) {
+    public init(config: ConformerConfig) throws {
         self.config = config
         let ffHiddenDim = config.dModel * config.ffExpansionFactor
 
@@ -122,9 +126,11 @@ import MLX
         case "rel_pos_local_attn":
             let contextSize = config.attContextSize ?? [-1, -1]
             guard contextSize.count >= 2 else {
-                fatalError("Invalid Context Size config")
+                throw ParakeetError.modelLoadingError(
+                    "Local attention requires two att_context_size values."
+                )
             }
-            self.selfAttn = RelPositionMultiHeadLocalAttention(
+            self.selfAttn = try RelPositionMultiHeadLocalAttention(
                 nHeads: config.nHeads,
                 nFeat: config.dModel,
                 bias: config.useBias,
@@ -141,7 +147,7 @@ import MLX
         }
 
         self.normConv = LayerNorm(dimensions: config.dModel)
-        self.conv = ConformerConvolution(config: config)
+        self.conv = try ConformerConvolution(config: config)
 
         self.normFeedForward2 = LayerNorm(dimensions: config.dModel)
         self.feedForward2 = FeedForward(
@@ -157,7 +163,7 @@ import MLX
         posEmb: MLXArray? = nil,
         mask: MLXArray? = nil,
         cache: ConformerCache? = nil
-    ) -> MLXArray {
+    ) throws -> MLXArray {
 
         var x = x
 
@@ -168,8 +174,8 @@ import MLX
         let xNorm = normSelfAtt(x)
         let attentionOut: MLXArray
 
-        if let relAttn = selfAttn as? RelPositionMultiHeadAttention {
-            attentionOut = relAttn(
+        if let localAttn = selfAttn as? RelPositionMultiHeadLocalAttention {
+            attentionOut = try localAttn(
                 xNorm,
                 xNorm,
                 xNorm,
@@ -177,8 +183,8 @@ import MLX
                 mask: mask,
                 cache: cache
             )
-        } else if let localAttn = selfAttn as? RelPositionMultiHeadLocalAttention {
-            attentionOut = localAttn(
+        } else if let relAttn = selfAttn as? RelPositionMultiHeadAttention {
+            attentionOut = try relAttn(
                 xNorm,
                 xNorm,
                 xNorm,
@@ -187,9 +193,9 @@ import MLX
                 cache: cache
             )
         } else if let standardAttn = selfAttn as? MultiHeadAttention {
-            attentionOut = standardAttn(xNorm, xNorm, xNorm, mask: mask)
+            attentionOut = try standardAttn(xNorm, xNorm, xNorm, mask: mask)
         } else {
-            fatalError("Unknown attention type")
+            throw ParakeetError.audioProcessingError("Unknown Conformer attention type.")
         }
 
         x = x + attentionOut
@@ -210,7 +216,7 @@ import MLX
     public func setAttentionModel(
         _ name: String,
         contextSize: (Int, Int)? = (256, 256)
-    ) {
+    ) throws {
         let newAttn: Module
 
         switch name {
@@ -223,7 +229,7 @@ import MLX
                 posBiasV: self.config.posBiasVArray()
             )
         case "rel_pos_local_attn":
-            newAttn = RelPositionMultiHeadLocalAttention(
+            newAttn = try RelPositionMultiHeadLocalAttention(
                 nHeads: self.config.nHeads,
                 nFeat: self.config.dModel,
                 bias: self.config.useBias,
@@ -238,7 +244,7 @@ import MLX
                 bias: true
             )
         default:
-            fatalError("Unknown attention model: \(name)")
+            throw ParakeetError.modelLoadingError("Unknown attention model: \(name).")
         }
 
         // In MLX Swift, use update(parameters:) instead of load_weights()
@@ -261,10 +267,13 @@ import MLX
     let out: Linear
     let finalFreqDim: Int
 
-    public init(config: ConformerConfig) {
-        assert(
-            config.subsamplingFactor > 0
-                && (config.subsamplingFactor & (config.subsamplingFactor - 1)) == 0)
+    public init(config: ConformerConfig) throws {
+        guard config.subsamplingFactor > 0,
+              config.subsamplingFactor & (config.subsamplingFactor - 1) == 0 else {
+            throw ParakeetError.modelLoadingError(
+                "Encoder subsampling_factor must be a positive power of two."
+            )
+        }
 
         self.subsamplingConvChunkingFactor = config.subsamplingConvChunkingFactor
         self.convChannels = config.subsamplingConvChannels
@@ -280,7 +289,9 @@ import MLX
             finalFreqDim =
                 Int(floor(Double(finalFreqDim + 2 * padding - kernelSize) / Double(stride))) + 1
             if finalFreqDim < 1 {
-                fatalError("Non-positive final frequency dimension!")
+                throw ParakeetError.modelLoadingError(
+                    "Encoder subsampling produces a non-positive frequency dimension."
+                )
             }
         }
 
@@ -333,7 +344,7 @@ import MLX
         super.init()
     }
 
-    private func convForward(_ x: MLXArray) -> MLXArray {
+    private func convForward(_ x: MLXArray) throws -> MLXArray {
         // Input is [batch, channels, time, features] after expandedDimensions
         // Conv2d expects NHWC: [batch, height, width, channels]
         // So transpose from [batch, channels, time, features] to [batch, time, features, channels]
@@ -348,7 +359,9 @@ import MLX
 
             let afterMax = x.max().item(Float.self)
             if afterMax.isInfinite || afterMax.isNaN {
-                fatalError("DwStridingSubsampling layer \(i) produced -inf values")
+                throw ParakeetError.audioProcessingError(
+                    "DwStridingSubsampling layer \(i) produced non-finite values."
+                )
             }
         }
 
@@ -358,7 +371,7 @@ import MLX
         return x
     }
 
-    public func callAsFunction(_ x: MLXArray, lengths: MLXArray) -> (MLXArray, MLXArray) {
+    public func callAsFunction(_ x: MLXArray, lengths: MLXArray) throws -> (MLXArray, MLXArray) {
 
         var lengths = lengths
 
@@ -370,7 +383,7 @@ import MLX
 
         var x = x.expandedDimensions(axis: 1)  // Add channel dimension: [batch, 1, time, features]
 
-        x = convForward(x)
+        x = try convForward(x)
 
         // Match Python exactly: x = x.swapaxes(1, 2).reshape(x.shape[0], x.shape[2], -1)
         // After convForward: x is [batch, channels, time, features]
@@ -396,8 +409,12 @@ import MLX
     let scaleInput: Bool
     var posEmb: MLXArray
 
-    public init(dModel: Int, maxLen: Int, scaleInput: Bool = false) {
-        assert(dModel % 2 == 0 && maxLen > 0, "dModel must be even and maxLen must be positive")
+    public init(dModel: Int, maxLen: Int, scaleInput: Bool = false) throws {
+        guard dModel > 0, dModel.isMultiple(of: 2), maxLen > 0 else {
+            throw ParakeetError.modelLoadingError(
+                "Encoder d_model must be positive and even, and pos_emb_max_len must be positive."
+            )
+        }
 
         self.dModel = dModel
         self.maxLen = maxLen
@@ -442,7 +459,7 @@ import MLX
         MLX.eval(self.posEmb)
     }
 
-    public func callAsFunction(_ x: MLXArray, offset: Int = 0) -> (MLXArray, MLXArray) {
+    public func callAsFunction(_ x: MLXArray, offset: Int = 0) throws -> (MLXArray, MLXArray) {
         var x = x
         let inputLen = x.shape[1] + offset
 
@@ -464,7 +481,7 @@ import MLX
 
         // Ensure we don't go out of bounds
         guard startIdx < bufferLen && endIdx <= bufferLen && startIdx < endIdx else {
-            fatalError(
+            throw ParakeetError.audioProcessingError(
                 "Positional encoding index out of bounds: startIdx=\(startIdx), endIdx=\(endIdx), bufferLen=\(bufferLen), inputLen=\(inputLen)"
             )
         }
@@ -481,10 +498,10 @@ import MLX
 
     public init(
         dModel: Int, maxLen: Int, scaleInput: Bool = false, contextSize: (Int, Int) = (256, 256)
-    ) {
+    ) throws {
         self.leftContext = contextSize.0
         self.rightContext = contextSize.1
-        super.init(dModel: dModel, maxLen: maxLen, scaleInput: scaleInput)
+        try super.init(dModel: dModel, maxLen: maxLen, scaleInput: scaleInput)
     }
 
     override func calculatePE() {
@@ -517,7 +534,7 @@ import MLX
         MLX.eval(self.posEmb)
     }
 
-    public override func callAsFunction(_ x: MLXArray, offset: Int = 0) -> (MLXArray, MLXArray) {
+    public override func callAsFunction(_ x: MLXArray, offset: Int = 0) throws -> (MLXArray, MLXArray) {
         var x = x
 
         // Scale input if needed
@@ -539,19 +556,19 @@ import MLX
     let preEncode: Module
     let layers: [ConformerBlock]
 
-    public init(config: ConformerConfig) {
+    public init(config: ConformerConfig) throws {
         self.config = config
 
         // Initialize positional encoding based on attention model
         switch config.selfAttentionModel {
         case "rel_pos":
-            self.posEnc = RelPositionalEncoding(
+            self.posEnc = try RelPositionalEncoding(
                 dModel: config.dModel,
                 maxLen: config.posEmbMaxLen,
                 scaleInput: config.xscaling
             )
         case "rel_pos_local_attn":
-            self.posEnc = LocalRelPositionalEncoding(
+            self.posEnc = try LocalRelPositionalEncoding(
                 dModel: config.dModel,
                 maxLen: config.posEmbMaxLen,
                 scaleInput: config.xscaling
@@ -563,16 +580,18 @@ import MLX
         // Initialize pre-encoding layer
         if config.subsamplingFactor > 1 {
             if config.subsampling == "dw_striding" && !config.causalDownsampling {
-                self.preEncode = DwStridingSubsampling(config: config)
+                self.preEncode = try DwStridingSubsampling(config: config)
             } else {
-                fatalError("Other subsampling methods not implemented yet!")
+                throw ParakeetError.modelLoadingError(
+                    "Only non-causal dw_striding subsampling is supported."
+                )
             }
         } else {
             self.preEncode = Linear(config.featIn, config.dModel)
         }
 
         // Initialize conformer blocks
-        self.layers = (0..<config.nLayers).map { _ in ConformerBlock(config: config) }
+        self.layers = try (0..<config.nLayers).map { _ in try ConformerBlock(config: config) }
 
         super.init()
     }
@@ -581,7 +600,7 @@ import MLX
         _ x: MLXArray,
         lengths: MLXArray? = nil,
         cache: [ConformerCache?]? = nil
-    ) -> (MLXArray, MLXArray) {
+    ) throws -> (MLXArray, MLXArray) {
 
         let actualLengths = lengths ?? MLXArray(Array(repeating: x.shape[1], count: x.shape[0]))
         let actualCache = cache ?? Array(repeating: nil, count: layers.count)
@@ -591,26 +610,26 @@ import MLX
 
         // Pre-encoding
         if let dwSubsampling = preEncode as? DwStridingSubsampling {
-            (x, outLengths) = dwSubsampling(x, lengths: actualLengths)
+            (x, outLengths) = try dwSubsampling(x, lengths: actualLengths)
         } else if let linear = preEncode as? Linear {
             x = linear(x)
         } else {
-            fatalError("Non-implemented pre-encoding layer type!")
+            throw ParakeetError.audioProcessingError("Unsupported Conformer pre-encoding layer.")
         }
 
         // Positional encoding
         var posEmb: MLXArray?
-        if let posEncLayer = posEnc as? RelPositionalEncoding {
+        if let localPosEncLayer = posEnc as? LocalRelPositionalEncoding {
             let offset = actualCache[0]?.offset ?? 0
-            (x, posEmb) = posEncLayer(x, offset: offset)
-        } else if let localPosEncLayer = posEnc as? LocalRelPositionalEncoding {
+            (x, posEmb) = try localPosEncLayer(x, offset: offset)
+        } else if let posEncLayer = posEnc as? RelPositionalEncoding {
             let offset = actualCache[0]?.offset ?? 0
-            (x, posEmb) = localPosEncLayer(x, offset: offset)
+            (x, posEmb) = try posEncLayer(x, offset: offset)
         }
 
         // Apply conformer blocks
         for (_, (layer, cache)) in zip(layers, actualCache).enumerated() {
-            x = layer(x, posEmb: posEmb, cache: cache)
+            x = try layer(x, posEmb: posEmb, cache: cache)
             let xAfter = x.max().item(Float.self)
 
             if xAfter.isInfinite {
@@ -624,7 +643,7 @@ import MLX
     public func setAttentionModel(
         _ name: String,
         contextSize: (Int, Int)? = (256, 256)
-    ) {
+    ) throws {
         // Update positional encoding
         switch name {
         case "rel_pos":
@@ -640,7 +659,7 @@ import MLX
 
         // Update attention in all layers
         for layer in layers {
-            layer.setAttentionModel(name, contextSize: contextSize)
+            try layer.setAttentionModel(name, contextSize: contextSize)
         }
     }
 }

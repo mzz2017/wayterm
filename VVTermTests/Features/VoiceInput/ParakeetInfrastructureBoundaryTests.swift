@@ -6,6 +6,8 @@ import Testing
 // feature-first cleanup. Codable model configuration and runtime inference
 // logic have different change cadences; merging them back into one broad file
 // makes model format updates and MLX runtime debugging harder to localize.
+// Runtime model code should report unsupported model shapes or inference
+// invariants as errors instead of terminating the app with crash-only APIs.
 // Update this test only if Parakeet infrastructure ownership intentionally
 // changes.
 struct ParakeetInfrastructureBoundaryTests {
@@ -42,6 +44,28 @@ struct ParakeetInfrastructureBoundaryTests {
                 lineCount < 800,
                 "\(file.lastPathComponent) should stay below the AGENTS.md superfile review threshold."
             )
+        }
+    }
+
+    @Test
+    func parakeetProductPathsDoNotUseCrashOnlyAPIs() throws {
+        let root = try sourceRoot()
+        let parakeet = root.appendingPathComponent("VVTerm/Features/VoiceInput/Infrastructure/Parakeet")
+        let forbiddenAPIs = [
+            "fatalError(",
+            "preconditionFailure(",
+            "assertionFailure(",
+            "assert("
+        ]
+
+        for file in try swiftFiles(in: parakeet) {
+            let source = try source(at: file)
+            for forbiddenAPI in forbiddenAPIs {
+                #expect(
+                    !source.contains(forbiddenAPI),
+                    "Parakeet product code should throw/report errors instead of using \(forbiddenAPI) in \(file.lastPathComponent)."
+                )
+            }
         }
     }
 

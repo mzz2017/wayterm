@@ -60,6 +60,16 @@ struct ParakeetConfigurationValidationTests {
         )
     }
 
+    @Test
+    func unsupportedConvolutionKernelThrowsInsteadOfCrashing() throws {
+        let config = try makeConfig(convKernelSize: 30)
+
+        try expectModelLoadingError(
+            from: config,
+            containing: "conv_kernel_size must be odd"
+        )
+    }
+
     private func expectModelLoadingError(
         from config: ParakeetTDTConfig,
         containing expectedMessage: String
@@ -83,6 +93,7 @@ struct ParakeetConfigurationValidationTests {
         jointActivation: String = "relu",
         subsamplingFactor: Int = 1,
         subsampling: String = "dw_striding",
+        convKernelSize: Int = 31,
         featIn: Int = 80
     ) throws -> ParakeetTDTConfig {
         let json = """
@@ -109,7 +120,7 @@ struct ParakeetConfigurationValidationTests {
             "subsampling_factor": \(subsamplingFactor),
             "self_attention_model": "\(selfAttentionModel)",
             "subsampling": "\(subsampling)",
-            "conv_kernel_size": 31,
+            "conv_kernel_size": \(convKernelSize),
             "subsampling_conv_channels": 4,
             "pos_emb_max_len": 32,
             "att_context_size": \(attContextSize)
