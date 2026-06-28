@@ -183,6 +183,31 @@ struct TerminalThemeManagerLifecycleTests {
     }
 
     @Test
+    func notificationObserverTokensInvalidateCallbacksExactlyOnce() {
+        let notificationCenter = NotificationCenter()
+        let notificationName = Notification.Name("TerminalThemeManagerLifecycleTests.observer")
+        let observerTokens = TerminalThemeNotificationObserverTokens(notificationCenter: notificationCenter)
+        var receivedCount = 0
+
+        // Given TerminalThemeManager owns NotificationCenter tokens through a
+        // separate lifecycle owner that can be invalidated from deinit.
+        let token = notificationCenter.addObserver(forName: notificationName, object: nil, queue: nil) { _ in
+            receivedCount += 1
+        }
+        observerTokens.append(token)
+
+        // When notifications are posted before and after invalidation.
+        notificationCenter.post(name: notificationName, object: nil)
+        observerTokens.invalidateAll()
+        observerTokens.invalidateAll()
+        notificationCenter.post(name: notificationName, object: nil)
+
+        // Then the callback is removed once and repeated teardown remains
+        // idempotent.
+        #expect(receivedCount == 1)
+    }
+
+    @Test
     func liveCloudStorePolicyStaysOutsideCoreCloudKitManager() throws {
         let root = try sourceRoot()
         let managerSource = try source(

@@ -133,8 +133,7 @@ final class TerminalThemeManager: ObservableObject {
     private let perAppearanceThemeKey = CloudKitSyncConstants.terminalUsePerAppearanceThemeKey
     private let preferenceUpdatedAtKey = CloudKitSyncConstants.terminalThemePreferenceUpdatedAtKey
 
-    private var defaultsObserver: NSObjectProtocol?
-    private var foregroundObserver: NSObjectProtocol?
+    nonisolated private let observerTokens = TerminalThemeNotificationObserverTokens()
     private var lastKnownPreferenceSnapshot: PreferenceSnapshot
     private var lastForegroundSyncAt: Date = .distantPast
     private var isApplyingRemotePreference = false
@@ -185,12 +184,7 @@ final class TerminalThemeManager: ObservableObject {
     }
 
     deinit {
-        if let defaultsObserver {
-            NotificationCenter.default.removeObserver(defaultsObserver)
-        }
-        if let foregroundObserver {
-            NotificationCenter.default.removeObserver(foregroundObserver)
-        }
+        observerTokens.invalidateAll()
         pendingPreferenceSyncTask?.cancel()
         pendingCloudSyncTasks.values.forEach { $0.cancel() }
     }
@@ -434,7 +428,7 @@ final class TerminalThemeManager: ObservableObject {
     }
 
     private func observeThemePreferenceChanges() {
-        defaultsObserver = NotificationCenter.default.addObserver(
+        let token = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: defaults,
             queue: .main
@@ -443,6 +437,7 @@ final class TerminalThemeManager: ObservableObject {
                 self?.handleThemePreferenceChange()
             }
         }
+        observerTokens.append(token)
     }
 
     private func observeForegroundSync() {
@@ -454,7 +449,7 @@ final class TerminalThemeManager: ObservableObject {
         return
         #endif
 
-        foregroundObserver = NotificationCenter.default.addObserver(
+        let token = NotificationCenter.default.addObserver(
             forName: name,
             object: nil,
             queue: .main
@@ -463,6 +458,7 @@ final class TerminalThemeManager: ObservableObject {
                 self?.requestForegroundCloudSyncIfNeeded()
             }
         }
+        observerTokens.append(token)
     }
 
     private func requestForegroundCloudSyncIfNeeded() {
