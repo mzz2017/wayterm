@@ -39,6 +39,7 @@ final class TerminalTabManager: ObservableObject {
     typealias SuccessfulConnectionRecorder = @MainActor (_ id: UUID, _ transport: String) -> Void
     typealias SplitPaneCreatedTracker = @MainActor () -> Void
     typealias TerminalSessionEndRecorder = @MainActor (_ otherTerminalsActive: Bool, _ isPro: Bool) -> Void
+    typealias VoiceInputCanceller = @MainActor (TerminalVoiceInputTarget) -> Void
 
     struct Dependencies {
         var isProProvider: IsProProvider
@@ -54,6 +55,7 @@ final class TerminalTabManager: ObservableObject {
         var successfulConnectionRecorder: SuccessfulConnectionRecorder
         var splitPaneCreatedTracker: SplitPaneCreatedTracker
         var terminalSessionEndRecorder: TerminalSessionEndRecorder
+        var voiceInputCanceller: VoiceInputCanceller
     }
 
     // MARK: - Published State
@@ -223,6 +225,10 @@ final class TerminalTabManager: ObservableObject {
     var terminalSessionEndRecorder: TerminalSessionEndRecorder {
         get { dependencies.terminalSessionEndRecorder }
         set { updateDependencies { $0.terminalSessionEndRecorder = newValue } }
+    }
+    var voiceInputCanceller: VoiceInputCanceller {
+        get { dependencies.voiceInputCanceller }
+        set { updateDependencies { $0.voiceInputCanceller = newValue } }
     }
     /// Application-owned pane SSH runtimes. SwiftUI coordinators attach surfaces and send intent only.
     var paneRuntimes: [UUID: PaneRuntimeState] = [:]

@@ -142,6 +142,7 @@ extension TerminalTabManager {
             )
         }
         cancelTmuxLifecycleRequest(for: paneId)
+        voiceInputCanceller(.pane(paneId))
         cancelInstallRequests(for: paneId)
         cancelPaneRetryRequest(for: paneId)
         cancelPaneHostRetrustRequest(for: paneId)

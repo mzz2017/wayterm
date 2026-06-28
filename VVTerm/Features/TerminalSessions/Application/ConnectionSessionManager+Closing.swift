@@ -333,6 +333,8 @@ extension ConnectionSessionManager {
 
         guard sessionWithID(sessionId) != nil else { return nil }
 
+        voiceInputCanceller(.session(sessionId))
+
         let tmuxSessionToKill = managedTmuxSessionNameToKill(for: sessionId, status: session.tmuxStatus)
 
         let replacementSessionId = replacementSessionIDAfterClosing(

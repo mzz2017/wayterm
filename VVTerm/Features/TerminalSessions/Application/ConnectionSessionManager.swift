@@ -35,6 +35,7 @@ final class ConnectionSessionManager: ObservableObject {
     typealias SuccessfulConnectionRecorder = @MainActor (_ id: UUID, _ transport: String) -> Void
     typealias TerminalSessionEndRecorder = @MainActor (_ otherTerminalsActive: Bool, _ isPro: Bool) -> Void
     typealias ApplicationActiveStateProvider = @MainActor () -> Bool
+    typealias VoiceInputCanceller = @MainActor (TerminalVoiceInputTarget) -> Void
 
     struct Dependencies {
         var serverProvider: ServerProvider
@@ -52,6 +53,7 @@ final class ConnectionSessionManager: ObservableObject {
         var successfulConnectionRecorder: SuccessfulConnectionRecorder
         var terminalSessionEndRecorder: TerminalSessionEndRecorder
         var isApplicationActive: ApplicationActiveStateProvider
+        var voiceInputCanceller: VoiceInputCanceller
     }
 
     @Published var sessions: [ConnectionSession] = [] {
@@ -301,6 +303,10 @@ final class ConnectionSessionManager: ObservableObject {
     var isApplicationActive: ApplicationActiveStateProvider {
         get { dependencies.isApplicationActive }
         set { updateDependencies { $0.isApplicationActive = newValue } }
+    }
+    var voiceInputCanceller: VoiceInputCanceller {
+        get { dependencies.voiceInputCanceller }
+        set { updateDependencies { $0.voiceInputCanceller = newValue } }
     }
     /// Per-server teardown work from ordinary tab closes. New opens wait for this too.
     var serverTeardownTaskStore = TerminalTeardownTaskStore()

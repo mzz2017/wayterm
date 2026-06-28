@@ -248,6 +248,10 @@ extension TerminalTabManager {
         serverUnlocker = unlocker
     }
 
+    func setVoiceInputCancellerForTesting(_ canceller: @escaping VoiceInputCanceller) {
+        voiceInputCanceller = canceller
+    }
+
     func beginShellStartForTesting(
         paneId: UUID,
         serverId: UUID,

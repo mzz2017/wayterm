@@ -56,6 +56,9 @@ extension ConnectionSessionManager.Dependencies {
                 #else
                 true
                 #endif
+            },
+            voiceInputCanceller: { target in
+                TerminalVoiceInputStore.shared.requestCancel(for: target)
             }
         )
     }
@@ -97,6 +100,9 @@ extension TerminalTabManager.Dependencies {
                     otherTerminalsActive: otherTerminalsActive,
                     isPro: isPro
                 )
+            },
+            voiceInputCanceller: { target in
+                TerminalVoiceInputStore.shared.requestCancel(for: target)
             }
         )
     }

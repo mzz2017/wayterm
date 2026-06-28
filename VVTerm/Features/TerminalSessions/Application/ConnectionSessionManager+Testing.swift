@@ -250,6 +250,10 @@ extension ConnectionSessionManager {
         isApplicationActive = provider
     }
 
+    func setVoiceInputCancellerForTesting(_ canceller: @escaping VoiceInputCanceller) {
+        voiceInputCanceller = canceller
+    }
+
     func setMoshServiceForTesting(_ service: any TerminalMoshServicing) {
         moshService = service
     }
