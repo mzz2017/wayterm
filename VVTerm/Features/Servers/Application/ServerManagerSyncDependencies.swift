@@ -1,5 +1,13 @@
 import Foundation
 
+struct CloudKitChanges {
+    let servers: [Server]
+    let workspaces: [Workspace]
+    let deletedServerIDs: [UUID]
+    let deletedWorkspaceIDs: [UUID]
+    let isFullFetch: Bool
+}
+
 @MainActor
 protocol ServerCloudSyncing {
     var isAvailable: Bool { get }

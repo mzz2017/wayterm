@@ -5,11 +5,9 @@ import os.log
 
 // MARK: - CloudKit Manager
 
-struct CloudKitChanges {
-    let servers: [Server]
-    let workspaces: [Workspace]
-    let deletedServerIDs: [UUID]
-    let deletedWorkspaceIDs: [UUID]
+struct CloudKitRecordChanges {
+    let records: [CKRecord]
+    let deletions: [CloudKitManager.Deletion]
     let isFullFetch: Bool
 }
 
@@ -30,15 +28,6 @@ final class CloudKitManager: ObservableObject {
     var recordZoneID: CKRecordZone.ID { recordZone.zoneID }
     var changeTokenKey: String { CloudKitSyncConstants.changeTokenKey(for: recordZoneName) }
     var zoneReadyKey: String { CloudKitSyncConstants.zoneReadyKey(for: recordZoneName) }
-
-    // Record types
-    enum RecordType {
-        static let server = "Server"
-        static let workspace = "Workspace"
-        static let terminalTheme = "TerminalTheme"
-        static let terminalThemePreference = "TerminalThemePreference"
-        static let userPreference = "UserPreference"
-    }
 
     enum SyncStatus: Equatable {
         case idle
@@ -61,7 +50,7 @@ final class CloudKitManager: ObservableObject {
     private var accountStatusChecked = false
     private var isSyncEnabled: Bool { SyncSettings.isEnabled }
     private var accountStatusRefreshTask: (id: UUID, task: Task<Void, Never>)?
-    private var fetchChangesTask: Task<CloudKitChanges, Error>?
+    private var fetchChangesTask: Task<CloudKitRecordChanges, Error>?
     var ensureZoneTask: Task<Void, Error>?
     var zoneReady: Bool
 
@@ -179,7 +168,7 @@ final class CloudKitManager: ObservableObject {
 
     // MARK: - Change Fetching (Incremental, No Queries)
 
-    func fetchChanges(forceFullFetch: Bool = false) async throws -> CloudKitChanges {
+    func fetchRecordChanges(forceFullFetch: Bool = false) async throws -> CloudKitRecordChanges {
         await ensureAccountStatusChecked()
         guard isAvailable else {
             throw CloudKitError.notAvailable
@@ -191,7 +180,7 @@ final class CloudKitManager: ObservableObject {
             return try await task.value
         }
 
-        let task = Task { try await self.withZoneRetry { try await self.fetchChangesFromCloudKit(forceFullFetch: forceFullFetch) } }
+        let task = Task { try await self.withZoneRetry { try await self.fetchRecordChangesFromCloudKit(forceFullFetch: forceFullFetch) } }
         if !forceFullFetch {
             fetchChangesTask = task
         }
@@ -204,27 +193,27 @@ final class CloudKitManager: ObservableObject {
         return try await task.value
     }
 
-    private func fetchChangesFromCloudKit(forceFullFetch: Bool) async throws -> CloudKitChanges {
+    private func fetchRecordChangesFromCloudKit(forceFullFetch: Bool) async throws -> CloudKitRecordChanges {
         syncStatus = .syncing
         defer { syncStatus = .idle }
 
         let previousToken = forceFullFetch ? nil : loadChangeToken()
 
         do {
-            let changes = try await fetchChangesFromCloudKit(
+            let changes = try await fetchRecordChangesFromCloudKit(
                 previousToken: previousToken,
                 isFullFetch: forceFullFetch || previousToken == nil
             )
             lastSyncDate = Date()
             logger.info(
-                "Fetched \(changes.workspaces.count) workspaces, \(changes.servers.count) servers (full fetch: \(changes.isFullFetch))"
+                "Fetched \(changes.records.count) CloudKit records and \(changes.deletions.count) deletions (full fetch: \(changes.isFullFetch))"
             )
             return changes
         } catch {
             if isChangeTokenExpired(error) {
                 logger.warning("CloudKit change token expired; resetting and performing full fetch")
                 clearChangeToken()
-                let changes = try await fetchChangesFromCloudKit(previousToken: nil, isFullFetch: true)
+                let changes = try await fetchRecordChangesFromCloudKit(previousToken: nil, isFullFetch: true)
                 lastSyncDate = Date()
                 return changes
             }
@@ -235,52 +224,21 @@ final class CloudKitManager: ObservableObject {
         }
     }
 
-    private func fetchChangesFromCloudKit(
+    private func fetchRecordChangesFromCloudKit(
         previousToken: CKServerChangeToken?,
         isFullFetch: Bool
-    ) async throws -> CloudKitChanges {
+    ) async throws -> CloudKitRecordChanges {
         let zoneID = recordZoneID
         var token = previousToken
         var moreComing = true
 
-        var servers: [Server] = []
-        var workspaces: [Workspace] = []
-        var deletedServerIDs: [UUID] = []
-        var deletedWorkspaceIDs: [UUID] = []
+        var records: [CKRecord] = []
+        var deletions: [Deletion] = []
 
         while moreComing {
             let batch = try await fetchZoneChanges(zoneID: zoneID, previousToken: token)
-
-            for record in batch.records {
-                switch record.recordType {
-                case RecordType.server:
-                    if let server = Server(from: record) {
-                        servers.append(server)
-                    }
-                case RecordType.workspace:
-                    if let workspace = Workspace(from: record) {
-                        workspaces.append(workspace)
-                    }
-                default:
-                    break
-                }
-            }
-
-            for deletion in batch.deletions {
-                switch deletion.recordType {
-                case RecordType.server:
-                    if let id = UUID(uuidString: deletion.recordID.recordName) {
-                        deletedServerIDs.append(id)
-                    }
-                case RecordType.workspace:
-                    if let id = UUID(uuidString: deletion.recordID.recordName) {
-                        deletedWorkspaceIDs.append(id)
-                    }
-                default:
-                    break
-                }
-            }
-
+            records.append(contentsOf: batch.records)
+            deletions.append(contentsOf: batch.deletions)
             token = batch.serverChangeToken
             moreComing = batch.moreComing
         }
@@ -289,113 +247,40 @@ final class CloudKitManager: ObservableObject {
             saveChangeToken(token)
         }
 
-        return CloudKitChanges(
-            servers: servers,
-            workspaces: workspaces,
-            deletedServerIDs: deletedServerIDs,
-            deletedWorkspaceIDs: deletedWorkspaceIDs,
+        return CloudKitRecordChanges(
+            records: records,
+            deletions: deletions,
             isFullFetch: isFullFetch
         )
     }
 
-    // MARK: - Server Operations
+    // MARK: - Record Operations
 
-    func saveServer(_ server: Server) async throws {
-        try await prepareSyncMutation()
-        let record = server.toRecord(in: recordZoneID)
-        try await performSyncMutation(
-            successLog: "Saved server \(server.name) to CloudKit",
-            failureLog: "Failed to save server"
-        ) {
-            try await withZoneRetry {
-                try await saveRecordWithUpsert(record)
-            }
-        }
-    }
-
-    func deleteServer(_ server: Server) async throws {
-        try await prepareSyncMutation()
-        let recordID = CKRecord.ID(recordName: server.id.uuidString, zoneID: recordZoneID)
-        _ = try await performSyncMutation(
-            successLog: "Deleted server \(server.name) from CloudKit",
-            failureLog: "Failed to delete server"
-        ) {
-            _ = try await withZoneRetry {
-                try await database.modifyRecords(saving: [], deleting: [recordID])
-            }
-        }
-    }
-
-    // MARK: - Workspace Operations
-
-    func saveWorkspace(_ workspace: Workspace) async throws {
-        try await prepareSyncMutation()
-        let record = workspace.toRecord(in: recordZoneID)
-        try await performSyncMutation(
-            successLog: "Saved workspace \(workspace.name) to CloudKit",
-            failureLog: "Failed to save workspace"
-        ) {
-            try await withZoneRetry {
-                try await saveRecordWithUpsert(record)
-            }
-        }
-    }
-
-    func deleteWorkspace(_ workspace: Workspace) async throws {
-        try await prepareSyncMutation()
-        let recordID = CKRecord.ID(recordName: workspace.id.uuidString, zoneID: recordZoneID)
-        _ = try await performSyncMutation(
-            successLog: "Deleted workspace \(workspace.name) from CloudKit",
-            failureLog: "Failed to delete workspace"
-        ) {
-            _ = try await withZoneRetry {
-                try await database.modifyRecords(saving: [], deleting: [recordID])
-            }
-        }
-    }
-
-    // MARK: - Terminal Theme Operations
-
-    func fetchTerminalThemes() async throws -> [TerminalTheme] {
+    func fetchRecords(matchingRecordTypes recordTypes: Set<String>) async throws -> [CKRecord] {
         await ensureAccountStatusChecked()
         guard isAvailable else {
             throw CloudKitError.notAvailable
         }
 
         try await ensureCustomZone()
-        let records = try await withZoneRetry {
-            try await fetchAllRecordsFromCloudKit(matchingRecordTypes: [RecordType.terminalTheme])
-        }
-        return records.compactMap(TerminalTheme.init(from:))
-    }
-
-    func saveTerminalTheme(_ theme: TerminalTheme) async throws {
-        try await prepareSyncMutation()
-        let record = theme.toRecord(in: recordZoneID)
-        try await performSyncMutation(
-            successLog: "Saved terminal theme \(theme.name) to CloudKit",
-            failureLog: "Failed to save terminal theme"
-        ) {
-            try await withZoneRetry {
-                try await saveRecordWithUpsert(record)
-            }
+        return try await withZoneRetry {
+            try await fetchAllRecordsFromCloudKit(matchingRecordTypes: recordTypes)
         }
     }
 
-    func fetchTerminalThemePreference() async throws -> TerminalThemePreference? {
+    func fetchRecord(named recordName: String) async throws -> CKRecord? {
         await ensureAccountStatusChecked()
         guard isAvailable else {
             throw CloudKitError.notAvailable
         }
 
         try await ensureCustomZone()
-        let recordID = CKRecord.ID(recordName: TerminalThemePreference.recordName, zoneID: recordZoneID)
+        let recordID = CKRecord.ID(recordName: recordName, zoneID: recordZoneID)
 
         do {
-            let record = try await withZoneRetry {
+            return try await withZoneRetry {
                 try await database.record(for: recordID)
             }
-            return TerminalThemePreference(from: record)
         } catch let ckError as CKError where ckError.code == .unknownItem || ckError.code == .zoneNotFound {
             return nil
         } catch {
@@ -403,136 +288,38 @@ final class CloudKitManager: ObservableObject {
         }
     }
 
-    func saveTerminalThemePreference(_ preference: TerminalThemePreference) async throws {
+    func saveCloudKitRecord(
+        _ record: CKRecord,
+        successLog: String,
+        failureLog: String,
+        savePolicy: CKModifyRecordsOperation.RecordSavePolicy = .changedKeys
+    ) async throws {
         try await prepareSyncMutation()
-        let record = preference.toRecord(in: recordZoneID)
         try await performSyncMutation(
-            successLog: "Saved terminal theme preference to CloudKit",
-            failureLog: "Failed to save terminal theme preference"
+            successLog: successLog,
+            failureLog: failureLog
         ) {
             try await withZoneRetry {
-                try await saveRecordWithUpsert(record)
+                try await saveRecord(record, savePolicy: savePolicy)
             }
         }
     }
 
-    // MARK: - Terminal Accessory Preference Operations
-
-    func fetchTerminalAccessoryProfile() async throws -> TerminalAccessoryProfile? {
-        await ensureAccountStatusChecked()
-        guard isAvailable else {
-            throw CloudKitError.notAvailable
-        }
-
-        try await ensureCustomZone()
-        let recordID = terminalAccessoryRecordID()
-
-        do {
-            let record = try await withZoneRetry {
-                try await database.record(for: recordID)
-            }
-            guard let profile = decodeTerminalAccessoryProfile(from: record) else {
-                logger.warning("Terminal accessory profile payload was invalid; ignoring remote value")
-                return nil
-            }
-            return profile
-        } catch let ckError as CKError where ckError.code == .unknownItem || ckError.code == .zoneNotFound {
-            return nil
-        } catch {
-            throw error
-        }
-    }
-
-    func saveTerminalAccessoryProfile(_ profile: TerminalAccessoryProfile) async throws {
+    func deleteCloudKitRecord(
+        named recordName: String,
+        successLog: String,
+        failureLog: String
+    ) async throws {
         try await prepareSyncMutation()
-        let recordID = terminalAccessoryRecordID()
-        let record = try makeTerminalAccessoryRecord(from: profile.normalized(), recordID: recordID)
-        try await performSyncMutation(
-            successLog: "Saved terminal accessory profile to CloudKit",
-            failureLog: "Failed to save terminal accessory profile"
+        let recordID = CKRecord.ID(recordName: recordName, zoneID: recordZoneID)
+        _ = try await performSyncMutation(
+            successLog: successLog,
+            failureLog: failureLog
         ) {
-            try await withZoneRetry {
-                try await saveRecordWithUpsert(record)
+            _ = try await withZoneRetry {
+                try await database.modifyRecords(saving: [], deleting: [recordID])
             }
         }
-    }
-
-    func syncTerminalAccessoryProfile(_ localProfile: TerminalAccessoryProfile) async throws -> TerminalAccessoryProfile {
-        try await prepareSyncMutation()
-        syncStatus = .syncing
-        defer { syncStatus = .idle }
-
-        let recordID = terminalAccessoryRecordID()
-        let normalizedLocal = localProfile.normalized()
-
-        var baseRecord: CKRecord?
-        var mergedProfile = normalizedLocal
-
-        do {
-            let remoteRecord = try await withZoneRetry {
-                try await database.record(for: recordID)
-            }
-            baseRecord = remoteRecord
-            if let remoteProfile = decodeTerminalAccessoryProfile(from: remoteRecord) {
-                let normalizedRemote = remoteProfile.normalized()
-                mergedProfile = TerminalAccessoryProfile.merged(local: normalizedLocal, remote: normalizedRemote).normalized()
-                if mergedProfile == normalizedRemote {
-                    lastSyncDate = Date()
-                    return normalizedRemote
-                }
-            } else {
-                logger.warning("Terminal accessory remote payload was invalid; keeping local profile")
-            }
-        } catch let ckError as CKError where ckError.code == .unknownItem || ckError.code == .zoneNotFound {
-            baseRecord = nil
-            mergedProfile = normalizedLocal
-        }
-
-        var attempts = 0
-        while attempts < 4 {
-            attempts += 1
-
-            let candidateRecord = try makeTerminalAccessoryRecord(
-                from: mergedProfile,
-                recordID: recordID,
-                existingRecord: baseRecord
-            )
-
-            do {
-                try await withZoneRetry {
-                    try await saveRecord(candidateRecord, savePolicy: .ifServerRecordUnchanged)
-                }
-                lastSyncDate = Date()
-                return mergedProfile
-            } catch {
-                if let serverRecord = extractServerRecord(from: error),
-                   let serverProfile = decodeTerminalAccessoryProfile(from: serverRecord) {
-                    let normalizedRemote = serverProfile.normalized()
-                    let conflictResolved = TerminalAccessoryProfile.merged(local: mergedProfile, remote: normalizedRemote).normalized()
-
-                    if conflictResolved == normalizedRemote {
-                        lastSyncDate = Date()
-                        return normalizedRemote
-                    }
-
-                    mergedProfile = conflictResolved
-                    baseRecord = serverRecord
-                    continue
-                }
-
-                if isUnknownItemError(error) {
-                    baseRecord = nil
-                    continue
-                }
-
-                logger.error("Failed to sync terminal accessory profile: \(error.localizedDescription)")
-                syncStatus = .error(error.localizedDescription)
-                throw error
-            }
-        }
-
-        logger.error("Failed to sync terminal accessory profile after retries")
-        throw CloudKitError.recordNotFound
     }
 
     private func prepareSyncMutation() async throws {
@@ -594,55 +381,6 @@ final class CloudKitManager: ObservableObject {
         }
     }
 
-    private func terminalAccessoryRecordID() -> CKRecord.ID {
-        CKRecord.ID(recordName: TerminalAccessoryProfile.recordName, zoneID: recordZoneID)
-    }
-
-    private func decodeTerminalAccessoryProfile(from record: CKRecord) -> TerminalAccessoryProfile? {
-        guard let payload = record["payload"] as? Data else {
-            return nil
-        }
-
-        guard var profile = try? JSONDecoder().decode(TerminalAccessoryProfile.self, from: payload) else {
-            return nil
-        }
-
-        if let schemaVersion = record["schemaVersion"] as? Int, schemaVersion > 0 {
-            profile.schemaVersion = schemaVersion
-        }
-
-        if let updatedAt = record["updatedAt"] as? Date, updatedAt > profile.updatedAt {
-            profile.updatedAt = updatedAt
-        }
-
-        if let writerDeviceID = record["lastWriterDeviceId"] as? String, !writerDeviceID.isEmpty {
-            profile.lastWriterDeviceId = writerDeviceID
-        }
-
-        return profile.normalized()
-    }
-
-    private func makeTerminalAccessoryRecord(
-        from profile: TerminalAccessoryProfile,
-        recordID: CKRecord.ID,
-        existingRecord: CKRecord? = nil
-    ) throws -> CKRecord {
-        let normalizedProfile = profile.normalized()
-        let payload: Data
-        do {
-            payload = try JSONEncoder().encode(normalizedProfile)
-        } catch {
-            throw CloudKitError.encodingFailed
-        }
-
-        let record = existingRecord ?? CKRecord(recordType: RecordType.userPreference, recordID: recordID)
-        record["schemaVersion"] = normalizedProfile.schemaVersion
-        record["payload"] = payload
-        record["updatedAt"] = normalizedProfile.updatedAt
-        record["lastWriterDeviceId"] = normalizedProfile.lastWriterDeviceId
-        return record
-    }
-
     // MARK: - Force Sync
 
     func forceSync() async {
@@ -655,7 +393,7 @@ final class CloudKitManager: ObservableObject {
     // MARK: - Cleanup
 
     /// Delete all records from CloudKit (use with caution!)
-    func deleteAllRecords() async throws {
+    func deleteAllRecords(matchingRecordTypes recordTypes: Set<String>) async throws {
         guard isAvailable else {
             throw CloudKitError.notAvailable
         }
@@ -669,13 +407,7 @@ final class CloudKitManager: ObservableObject {
             try await fetchAllRecordsFromCloudKit()
         }
         let recordIDs = records
-            .filter {
-                $0.recordType == RecordType.server ||
-                $0.recordType == RecordType.workspace ||
-                $0.recordType == RecordType.terminalTheme ||
-                $0.recordType == RecordType.terminalThemePreference ||
-                $0.recordType == RecordType.userPreference
-            }
+            .filter { recordTypes.contains($0.recordType) }
             .map(\.recordID)
 
         // Batch delete
@@ -703,14 +435,7 @@ final class CloudKitManager: ObservableObject {
             }
         }
 
-        let deletedServers = records.filter { $0.recordType == RecordType.server }.count
-        let deletedWorkspaces = records.filter { $0.recordType == RecordType.workspace }.count
-        let deletedThemes = records.filter { $0.recordType == RecordType.terminalTheme }.count
-        let deletedThemePreferences = records.filter { $0.recordType == RecordType.terminalThemePreference }.count
-        let deletedUserPreferences = records.filter { $0.recordType == RecordType.userPreference }.count
-        logger.info(
-            "Deleted \(deletedServers) servers, \(deletedWorkspaces) workspaces, \(deletedThemes) themes, \(deletedThemePreferences) theme preferences, \(deletedUserPreferences) user preferences from CloudKit"
-        )
+        logger.info("Deleted \(recordIDs.count) CloudKit records")
         lastSyncDate = Date()
     }
 

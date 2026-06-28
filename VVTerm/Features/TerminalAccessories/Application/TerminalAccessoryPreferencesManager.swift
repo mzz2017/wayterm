@@ -22,7 +22,6 @@ enum TerminalAccessoryCloudResolutionNotification {
     static let didResolve = Notification.Name("TerminalAccessoryProfileDidResolveFromCloudKit")
 }
 
-extension CloudKitManager: TerminalAccessoryCloudProfileSyncing {}
 extension CloudKitSyncCoordinator: TerminalAccessoryPendingSyncCoordinating {
     func enqueueTerminalAccessoryProfileUpsert(_ profile: TerminalAccessoryProfile) {
         guard let payload = try? PendingCloudKitMutation.encodedPayload(for: profile) else { return }

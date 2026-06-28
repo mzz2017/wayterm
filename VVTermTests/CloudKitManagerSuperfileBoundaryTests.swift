@@ -4,9 +4,10 @@ import Testing
 // Test Context:
 // These source-boundary tests protect CloudKitManager superfile control.
 // CloudKitManager.swift keeps account state, account-status refresh ownership,
-// and product record sync APIs, while low-level CloudKit zone, token, fetch,
-// save, and error infrastructure lives in a focused Core/Sync extension. Update
-// only when that ownership boundary intentionally changes.
+// and record-level sync orchestration, while low-level CloudKit zone, token,
+// fetch, save, and error infrastructure lives in a focused Core/Sync extension.
+// Product domain codecs live in feature adapters; update only when that
+// ownership boundary intentionally changes.
 struct CloudKitManagerSuperfileBoundaryTests {
     @Test
     func managerRootDoesNotOwnCloudKitInfrastructureImplementation() throws {
@@ -40,12 +41,8 @@ struct CloudKitManagerSuperfileBoundaryTests {
         }
 
         #expect(
-            managerSource.contains("func saveServer("),
-            "CloudKitManager.swift should keep product-facing server sync APIs."
-        )
-        #expect(
-            managerSource.contains("func fetchChanges("),
-            "CloudKitManager.swift should keep product-facing change fetch orchestration."
+            managerSource.contains("func fetchRecordChanges("),
+            "CloudKitManager.swift should keep record-level change fetch orchestration."
         )
         #expect(
             managerSource.contains("func subscribeToChanges("),

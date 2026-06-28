@@ -84,6 +84,38 @@ struct CoreSyncPendingMutationBoundaryTests {
         }
     }
 
+    @Test
+    func cloudKitManagerDoesNotExposeFeatureDomainSyncAPI() throws {
+        let root = try sourceRoot()
+        let source = try String(
+            contentsOf: root.appendingPathComponent("VVTerm/Core/Sync/CloudKitManager.swift"),
+            encoding: .utf8
+        )
+        let forbiddenDomainShapes = [
+            "CloudKitChanges",
+            "[Server]",
+            "[Workspace]",
+            "Server(from:",
+            "Workspace(from:",
+            "func saveServer(",
+            "func deleteServer(",
+            "func saveWorkspace(",
+            "func deleteWorkspace(",
+            "func fetchTerminalThemes(",
+            "func saveTerminalTheme(",
+            "func fetchTerminalThemePreference(",
+            "func saveTerminalThemePreference(",
+            "TerminalAccessoryProfile"
+        ]
+
+        for forbiddenShape in forbiddenDomainShapes {
+            #expect(
+                !source.contains(forbiddenShape),
+                "CloudKitManager should expose record-level CloudKit operations, not feature domain shape \(forbiddenShape)."
+            )
+        }
+    }
+
     private func sourceRoot() throws -> URL {
         var url = URL(fileURLWithPath: #filePath)
         while url.lastPathComponent != "VVTermTests" {

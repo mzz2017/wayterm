@@ -31,8 +31,6 @@ protocol TerminalThemeSyncCoordinating {
     func drainPendingMutations() async
 }
 
-extension CloudKitManager: TerminalThemeCloudStoring {}
-
 extension CloudKitSyncCoordinator: TerminalThemeSyncCoordinating {
     func enqueueTerminalThemeUpsert(_ theme: TerminalTheme) {
         guard let payload = try? PendingCloudKitMutation.encodedPayload(for: theme) else { return }
