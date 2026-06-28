@@ -7,6 +7,7 @@ extension ConnectionSessionManager {
         guard let closeResult = closeSessionUI(session, notingSessionEnd: notingSessionEnd) else { return }
         let teardownTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            await closeResult.voiceCancelTask.value
             for task in closeResult.richPasteUploadTasks {
                 await task.value
             }
@@ -23,6 +24,7 @@ extension ConnectionSessionManager {
     func closeSessionAndWait(_ session: ConnectionSession, notingSessionEnd: Bool = true) async {
         await waitForServerTeardownTasks(session.serverId)
         guard let closeResult = closeSessionUI(session, notingSessionEnd: notingSessionEnd) else { return }
+        await closeResult.voiceCancelTask.value
         for task in closeResult.richPasteUploadTasks {
             await task.value
         }
@@ -333,7 +335,7 @@ extension ConnectionSessionManager {
 
         guard sessionWithID(sessionId) != nil else { return nil }
 
-        voiceInputCanceller(.session(sessionId))
+        let voiceCancelTask = voiceInputCanceller(.session(sessionId))
 
         let tmuxSessionToKill = managedTmuxSessionNameToKill(for: sessionId, status: session.tmuxStatus)
 
@@ -378,6 +380,7 @@ extension ConnectionSessionManager {
             sessionId: sessionId,
             serverId: session.serverId,
             tmuxSessionNameToKill: tmuxSessionToKill,
+            voiceCancelTask: voiceCancelTask,
             richPasteUploadTasks: runtimeTeardown.richPasteUploadTasks,
             shellTeardownRequest: runtimeTeardown.shellTeardownRequest
         )
@@ -525,6 +528,7 @@ extension ConnectionSessionManager {
         }
 
         for closeResult in closeResults {
+            await closeResult.voiceCancelTask.value
             for task in closeResult.richPasteUploadTasks {
                 await task.value
             }

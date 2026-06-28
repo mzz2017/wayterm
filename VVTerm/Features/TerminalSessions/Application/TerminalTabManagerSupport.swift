@@ -11,6 +11,7 @@ enum TerminalTabManagerSupport {
     struct PaneCloseResult: Sendable {
         let paneId: UUID
         let tmuxSessionNameToKill: String?
+        let voiceCancelTask: Task<Void, Never>
         let richPasteUploadTasks: [Task<Void, Never>]
     }
 

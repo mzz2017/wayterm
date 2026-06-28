@@ -159,6 +159,15 @@ final class TerminalVoiceInputStore: ObservableObject {
         return requestID
     }
 
+    @discardableResult
+    func requestCancelTask(
+        for target: TerminalVoiceInputTarget,
+        onCancelled: @escaping () -> Void = {}
+    ) -> Task<Void, Never> {
+        let requestID = requestCancel(for: target, onCancelled: onCancelled)
+        return voiceRequests[requestID]?.task ?? Task {}
+    }
+
     func waitForVoiceRequest(_ requestID: UUID) async {
         guard let task = voiceRequests[requestID]?.task else { return }
         await task.value

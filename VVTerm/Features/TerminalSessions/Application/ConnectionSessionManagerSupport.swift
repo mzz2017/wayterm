@@ -17,6 +17,7 @@ enum ConnectionSessionManagerSupport {
         let sessionId: UUID
         let serverId: UUID
         let tmuxSessionNameToKill: String?
+        let voiceCancelTask: Task<Void, Never>
         let richPasteUploadTasks: [Task<Void, Never>]
         let shellTeardownRequest: ShellTeardownRequest?
     }

@@ -39,7 +39,7 @@ final class TerminalTabManager: ObservableObject {
     typealias SuccessfulConnectionRecorder = @MainActor (_ id: UUID, _ transport: String) -> Void
     typealias SplitPaneCreatedTracker = @MainActor () -> Void
     typealias TerminalSessionEndRecorder = @MainActor (_ otherTerminalsActive: Bool, _ isPro: Bool) -> Void
-    typealias VoiceInputCanceller = @MainActor (TerminalVoiceInputTarget) -> Void
+    typealias VoiceInputCanceller = @MainActor (TerminalVoiceInputTarget) -> Task<Void, Never>
 
     struct Dependencies {
         var isProProvider: IsProProvider

@@ -35,7 +35,7 @@ final class ConnectionSessionManager: ObservableObject {
     typealias SuccessfulConnectionRecorder = @MainActor (_ id: UUID, _ transport: String) -> Void
     typealias TerminalSessionEndRecorder = @MainActor (_ otherTerminalsActive: Bool, _ isPro: Bool) -> Void
     typealias ApplicationActiveStateProvider = @MainActor () -> Bool
-    typealias VoiceInputCanceller = @MainActor (TerminalVoiceInputTarget) -> Void
+    typealias VoiceInputCanceller = @MainActor (TerminalVoiceInputTarget) -> Task<Void, Never>
 
     struct Dependencies {
         var serverProvider: ServerProvider

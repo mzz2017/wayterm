@@ -142,7 +142,7 @@ extension TerminalTabManager {
             )
         }
         cancelTmuxLifecycleRequest(for: paneId)
-        voiceInputCanceller(.pane(paneId))
+        let voiceCancelTask = voiceInputCanceller(.pane(paneId))
         cancelInstallRequests(for: paneId)
         cancelPaneRetryRequest(for: paneId)
         cancelPaneHostRetrustRequest(for: paneId)
@@ -159,6 +159,7 @@ extension TerminalTabManager {
         return PaneCloseResult(
             paneId: paneId,
             tmuxSessionNameToKill: tmuxSessionToKill,
+            voiceCancelTask: voiceCancelTask,
             richPasteUploadTasks: richPasteUploadTasks
         )
     }
@@ -208,6 +209,8 @@ extension TerminalTabManager {
     }
 
     func finishPaneClose(_ closeResult: PaneCloseResult) async {
+        await closeResult.voiceCancelTask.value
+
         for task in closeResult.richPasteUploadTasks {
             await task.value
         }
