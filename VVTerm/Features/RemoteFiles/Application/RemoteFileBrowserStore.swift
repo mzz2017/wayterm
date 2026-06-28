@@ -257,6 +257,11 @@ final class RemoteFileBrowserStore: ObservableObject {
         await requestLifecycleCoordinator.waitForTransferRequest(requestID)
     }
 
+    @discardableResult
+    func cancelTransferRequest(_ requestID: UUID) -> Task<Void, Never>? {
+        requestLifecycleCoordinator.cancelTransferRequest(requestID)
+    }
+
     func waitForPreviewLoadRequest(_ requestID: UUID) async {
         await previewLoadCoordinator.waitForRequest(requestID)
     }

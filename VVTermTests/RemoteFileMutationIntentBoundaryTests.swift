@@ -170,6 +170,14 @@ struct RemoteFileMutationIntentBoundaryTests {
             "Remote drag file representations should not download through a UI-owned Task."
         )
         #expect(
+            transferSource.contains("progress.cancellationHandler"),
+            "Remote drag file representation Progress cancellation should be wired to store-owned transfer cancellation."
+        )
+        #expect(
+            transferSource.contains("browser.cancelTransferRequest"),
+            "Remote drag file representation cancellation should send transfer-cancel intent to RemoteFileBrowserStore."
+        )
+        #expect(
             !macOSSupportSource.contains("Task { @MainActor in\n                do {\n                    try await export(entry, url)"),
             "FilePromiseDelegate should complete through an application-owned request instead of starting its own Task."
         )

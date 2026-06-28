@@ -159,7 +159,15 @@ extension RemoteFileBrowserScreen {
         progress: Progress,
         completion: @escaping (URL?, Bool, Error?) -> Void
     ) {
-        browser.requestTransfer(
+        var transferRequestID: UUID?
+        progress.cancellationHandler = { [browser] in
+            Task { @MainActor in
+                guard let transferRequestID else { return }
+                browser.cancelTransferRequest(transferRequestID)
+            }
+        }
+
+        transferRequestID = browser.requestTransfer(
             serverId: server.id,
             operation: { _ in
                 let temporaryURL = try preparedTemporaryURL.get()
@@ -182,6 +190,9 @@ extension RemoteFileBrowserScreen {
                 }
             }
         )
+        if progress.isCancelled, let transferRequestID {
+            browser.cancelTransferRequest(transferRequestID)
+        }
     }
 
     func cleanupDownloadExport() {

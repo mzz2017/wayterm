@@ -7,7 +7,9 @@ import Testing
 // service disconnect serialization, mutation requests, and transfer requests.
 // The fake clients and gates block remote work deterministically; failures
 // usually mean UI intent can outlive, race, or bypass RemoteFileBrowserStore as
-// the owner of async work.
+// the owner of async work. Update this context only when RemoteFiles request
+// lifecycle ownership intentionally moves to another Application/Infrastructure
+// owner with equivalent cancel, wait, and disconnect serialization semantics.
 @MainActor
 struct RemoteFileBrowserRequestLifecycleTests {
     @Test
@@ -335,6 +337,66 @@ struct RemoteFileBrowserRequestLifecycleTests {
         )
 
         await gate.release()
+        await waitTask.value
+
+        #expect(await waitProbe.didReturn)
+        #expect(operationEvents == ["operation-started", "operation-finished"])
+        #expect(callbackEvents.isEmpty)
+    }
+
+    @Test
+    func cancelTransferRequestByIDHidesCallbacksButWaitsForOperationExit() async throws {
+        let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
+        let gate = RemoteFileMutationGate()
+        let waitProbe = RemoteFileWaitProbe()
+        var operationEvents: [String] = []
+        var callbackEvents: [String] = []
+
+        let requestID = store.requestTransfer(
+            operation: { onProgress in
+                operationEvents.append("operation-started")
+                await gate.wait()
+                onProgress(RemoteFileBrowserStore.TransferProgress(
+                    completedUnitCount: 1,
+                    totalUnitCount: 1,
+                    currentItemName: "export.txt"
+                ))
+                operationEvents.append("operation-finished")
+                return "exported"
+            },
+            onProgress: { progress in
+                callbackEvents.append("progress-\(progress.currentItemName)")
+            },
+            onSuccess: { result in
+                callbackEvents.append("success-\(result)")
+            },
+            onFailure: { _ in
+                callbackEvents.append("failure")
+            }
+        )
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(store.pendingTransferRequestIDs.contains(requestID))
+
+        // Given a system file-promise Progress cancel maps to a specific
+        // store-owned transfer request.
+        let canceledTask = store.cancelTransferRequest(requestID)
+        let waitTask = Task {
+            await store.waitForTransferRequest(requestID)
+            await waitProbe.markReturned()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then the request is no longer visible, but teardown remains
+        // awaitable until the underlying transfer exits.
+        #expect(canceledTask != nil)
+        #expect(!store.pendingTransferRequestIDs.contains(requestID))
+        #expect(
+            await !waitProbe.didReturn,
+            "Canceled transfer wait hook should not return before blocked remote transfer work exits."
+        )
+
+        await gate.release()
+        await canceledTask?.value
         await waitTask.value
 
         #expect(await waitProbe.didReturn)

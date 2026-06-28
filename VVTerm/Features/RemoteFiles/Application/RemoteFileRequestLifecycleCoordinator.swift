@@ -128,6 +128,15 @@ final class RemoteFileRequestLifecycleCoordinator {
     }
 
     @discardableResult
+    func cancelTransferRequest(_ requestID: UUID) -> Task<Void, Never>? {
+        guard var request = transferRequests[requestID] else { return nil }
+        request.isCancelled = true
+        transferRequests[requestID] = request
+        request.task.cancel()
+        return request.task
+    }
+
+    @discardableResult
     func cancelTransferRequests(for serverId: UUID) -> [Task<Void, Never>] {
         var canceledTasks: [Task<Void, Never>] = []
         for (requestID, request) in transferRequests where request.serverId == serverId {
