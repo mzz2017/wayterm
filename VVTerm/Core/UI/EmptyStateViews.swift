@@ -8,9 +8,9 @@ import SwiftUI
 // MARK: - Empty State Views
 
 struct ServerConnectEmptyState: View {
-    let server: Server
+    let serverName: String
+    let serverAddress: String
     let onConnect: () -> Void
-    @Environment(\.privacyModeEnabled) private var privacyModeEnabled
 
     var body: some View {
         VStack(spacing: 24) {
@@ -22,11 +22,11 @@ struct ServerConnectEmptyState: View {
                     .foregroundStyle(.secondary)
 
                 VStack(spacing: 8) {
-                    Text(server.name)
+                    Text(serverName)
                         .font(.title2)
                         .fontWeight(.semibold)
 
-                    Text(server.visibleAddress(privacyModeEnabled: privacyModeEnabled))
+                    Text(serverAddress)
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }
@@ -80,7 +80,7 @@ struct NoServerSelectedEmptyState: View {
 }
 
 struct MultiConnectionUpgradeEmptyState: View {
-    let server: Server
+    let serverName: String
     @State private var showingTabLimitAlert = false
 
     var body: some View {
@@ -93,7 +93,7 @@ struct MultiConnectionUpgradeEmptyState: View {
                     .foregroundStyle(.orange)
 
                 VStack(spacing: 8) {
-                    Text(server.name)
+                    Text(serverName)
                         .font(.title2)
                         .fontWeight(.semibold)
 

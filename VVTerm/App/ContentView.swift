@@ -24,6 +24,7 @@ struct ContentView: View {
     @StateObject private var engagementTracker = EngagementTracker.shared
     @Environment(\.requestReview) private var requestReview
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.privacyModeEnabled) private var privacyModeEnabled
 
     @State private var selectedWorkspace: Workspace?
     @State private var selectedServer: Server?
@@ -116,17 +117,23 @@ struct ContentView: View {
                 .id(server.id) // Ensure isolation per server
             } else if !hasOpenServers {
                 // Not connected to any server - can connect freely
-                ServerConnectEmptyState(server: server) {
+                ServerConnectEmptyState(
+                    serverName: server.name,
+                    serverAddress: server.visibleAddress(privacyModeEnabled: privacyModeEnabled)
+                ) {
                     connectToServer(server)
                 }
             } else if storeManager.isPro {
                 // Pro user already connected to other servers - can connect to more
-                ServerConnectEmptyState(server: server) {
+                ServerConnectEmptyState(
+                    serverName: server.name,
+                    serverAddress: server.visibleAddress(privacyModeEnabled: privacyModeEnabled)
+                ) {
                     connectToServer(server)
                 }
             } else {
                 // Free user already connected to different server - show upgrade
-                MultiConnectionUpgradeEmptyState(server: server)
+                MultiConnectionUpgradeEmptyState(serverName: server.name)
             }
         } else {
             // Nothing selected
