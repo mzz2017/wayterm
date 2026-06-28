@@ -14,18 +14,30 @@ protocol SyncSettingsCloudStatusProviding: AnyObject {
     var statusSnapshots: AnyPublisher<SyncSettingsCloudStatusSnapshot, Never> { get }
 }
 
-extension CloudKitManager: SyncSettingsCloudStatusProviding {
+@MainActor
+final class SyncSettingsCloudKitStatusProvider: SyncSettingsCloudStatusProviding {
+    private let cloudKit: CloudKitManager
+
+    init(cloudKit: CloudKitManager) {
+        self.cloudKit = cloudKit
+    }
+
     var currentStatusSnapshot: SyncSettingsCloudStatusSnapshot {
         SyncSettingsCloudStatusSnapshot(
-            syncStatus: syncStatus,
-            lastSyncDate: lastSyncDate,
-            isAvailable: isAvailable,
-            accountStatusDetail: accountStatusDetail
+            syncStatus: cloudKit.syncStatus,
+            lastSyncDate: cloudKit.lastSyncDate,
+            isAvailable: cloudKit.isAvailable,
+            accountStatusDetail: cloudKit.accountStatusDetail
         )
     }
 
     var statusSnapshots: AnyPublisher<SyncSettingsCloudStatusSnapshot, Never> {
-        Publishers.CombineLatest4($syncStatus, $lastSyncDate, $isAvailable, $accountStatusDetail)
+        Publishers.CombineLatest4(
+            cloudKit.$syncStatus,
+            cloudKit.$lastSyncDate,
+            cloudKit.$isAvailable,
+            cloudKit.$accountStatusDetail
+        )
             .map { syncStatus, lastSyncDate, isAvailable, accountStatusDetail in
                 SyncSettingsCloudStatusSnapshot(
                     syncStatus: syncStatus,
@@ -79,7 +91,7 @@ final class SyncSettingsStore: ObservableObject {
 
     convenience init() {
         self.init(
-            statusProvider: CloudKitManager.shared,
+            statusProvider: SyncSettingsCloudKitStatusProvider(cloudKit: CloudKitManager.shared),
             coordinator: AppSyncCoordinator.shared,
             preferences: UserDefaultsSyncSettingsPersistence()
         )

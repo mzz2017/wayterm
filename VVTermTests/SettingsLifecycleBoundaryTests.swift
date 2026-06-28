@@ -87,24 +87,39 @@ struct SettingsLifecycleBoundaryTests {
     func syncSettingsDelegatesCloudKitStatusAndIntentToApplicationStore() throws {
         // Given the sync settings SwiftUI source.
         let root = try sourceRoot()
-        let source = try source(
+        let viewSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Settings/UI/SyncSettingsView.swift")
+        )
+        let storeSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Settings/Application/SyncSettingsStore.swift")
         )
 
         // Then the view must observe the Settings application store rather than
         // directly owning CloudKit status observation or app-sync coordination.
         #expect(
-            !source.contains("CloudKitManager.shared"),
+            !viewSource.contains("CloudKitManager.shared"),
             "SyncSettingsView should read CloudKit status through SyncSettingsStore instead of CloudKitManager.shared."
         )
         #expect(
-            !source.contains("AppSyncCoordinator.shared"),
+            !viewSource.contains("AppSyncCoordinator.shared"),
             "SyncSettingsView should send sync intent through SyncSettingsStore instead of AppSyncCoordinator.shared."
         )
         #expect(
-            !source.contains("@AppStorage")
-                && !source.contains("SyncSettings.enabledKey"),
+            !viewSource.contains("@AppStorage")
+                && !viewSource.contains("SyncSettings.enabledKey"),
             "SyncSettingsView should delegate sync-enabled persistence to SyncSettingsStore."
+        )
+        #expect(
+            storeSource.contains("SyncSettingsCloudKitStatusProvider(cloudKit: CloudKitManager.shared)"),
+            "SyncSettingsStore live wiring should use a Settings-owned CloudKit status adapter."
+        )
+        #expect(
+            storeSource.contains("final class SyncSettingsCloudKitStatusProvider"),
+            "Settings CloudKit status projection should live in a Settings-owned adapter."
+        )
+        #expect(
+            !storeSource.contains("extension CloudKitManager: SyncSettingsCloudStatusProviding"),
+            "Settings should not attach feature status projection to the Core CloudKitManager type."
         )
     }
 
