@@ -645,6 +645,78 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         }
     }
 
+    func testSCPUploadChannelOpenFailurePreservesRawLibSSH2Error() async throws {
+        // Given SCP upload cannot open its channel and libssh2 exposes a raw
+        // diagnostic for the channel-open operation.
+        let payload = Data("payload".utf8)
+        let rawOpenError = LibSSH2RawError(
+            operation: .scpChannelOpen,
+            code: LIBSSH2_ERROR_SOCKET_RECV,
+            message: "socket recv failed while opening scp upload channel"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: nil,
+            rawErrors: [rawOpenError]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When SCP upload is selected directly for a regression-level error
+        // check.
+        try await session.connect()
+        do {
+            try await session.upload(payload, to: "/tmp/vvterm-upload", strategy: SSHUploadStrategy.scpOnly)
+            XCTFail("Expected raw libssh2 SCP upload channel-open failure")
+        } catch SSHError.libssh2(let rawError) {
+            // Then the SCP-specific raw operation, code, and message survive
+            // translation instead of being collapsed into a string code.
+            XCTAssertEqual(rawError.operation, .scpChannelOpen)
+            XCTAssertEqual(rawError.code, LIBSSH2_ERROR_SOCKET_RECV)
+            XCTAssertEqual(rawError.message, "socket recv failed while opening scp upload channel")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+    }
+
+    func testSCPUploadWriteFailurePreservesRawLibSSH2Error() async throws {
+        // Given SCP upload opens its channel but libssh2 fails while writing the
+        // payload.
+        let payload = Data("payload".utf8)
+        let rawWriteError = LibSSH2RawError(
+            operation: .channelWrite,
+            code: LIBSSH2_ERROR_SOCKET_SEND,
+            message: "socket send failed while writing scp upload payload"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x44),
+            rawErrors: [rawWriteError],
+            channelWriteResults: [
+                Int(rawWriteError.code)
+            ]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When SCP upload writes the payload.
+        try await session.connect()
+        do {
+            try await session.upload(payload, to: "/tmp/vvterm-upload", strategy: SSHUploadStrategy.scpOnly)
+            XCTFail("Expected raw libssh2 SCP upload write failure")
+        } catch SSHError.libssh2(let rawError) {
+            // Then payload write diagnostics keep the raw channel-write
+            // operation instead of becoming a generic socket error string.
+            XCTAssertEqual(rawError.operation, .channelWrite)
+            XCTAssertEqual(rawError.code, LIBSSH2_ERROR_SOCKET_SEND)
+            XCTAssertEqual(rawError.message, "socket send failed while writing scp upload payload")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+    }
+
     func testExecUploadStartupFailurePreservesRawLibSSH2Error() async throws {
         // Given exec-preferred upload opens a channel but the remote `cat`
         // startup request fails with a libssh2 diagnostic.

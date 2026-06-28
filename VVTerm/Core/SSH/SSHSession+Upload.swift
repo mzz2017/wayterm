@@ -15,10 +15,17 @@ extension SSHSession {
         permissions: Int32 = 0o600,
         strategy: SSHUploadStrategy = .automatic
     ) async throws {
-        if strategy == .execPreferred {
+        switch strategy {
+        case .execPreferred:
             logger.info("Using exec-preferred upload strategy [path: \(remotePath, privacy: .public)]")
             try await uploadViaExec(data, to: remotePath)
             return
+        case .scpOnly:
+            logger.info("Using SCP-only upload strategy [path: \(remotePath, privacy: .public)]")
+            try await uploadViaSCP(data, to: remotePath, permissions: permissions)
+            return
+        case .automatic:
+            break
         }
 
         do {
@@ -61,11 +68,12 @@ extension SSHSession {
                     await waitForSocket()
                     continue
                 }
-                throw SSHError.socketError("SCP channel open failed: \(rawError.code)")
+                throw SSHError.libssh2(rawError)
             }
 
             guard let openedSCPChannel = scpChannel else {
-                throw SSHError.socketError("SCP channel open failed")
+                let rawError = driver.lastError(session: session, operation: .scpChannelOpen, fallbackCode: 0)
+                throw SSHError.libssh2(rawError)
             }
 
             let bytes = [UInt8](data)
@@ -85,7 +93,12 @@ extension SSHSession {
                 } else if written == Int(LIBSSH2_ERROR_EAGAIN) {
                     await waitForSocket()
                 } else {
-                    throw SSHError.socketError("SCP write failed: \(written)")
+                    let rawError = driver.lastError(
+                        session: session,
+                        operation: .channelWrite,
+                        fallbackCode: Int32(written)
+                    )
+                    throw SSHError.libssh2(rawError)
                 }
             }
 
