@@ -71,6 +71,14 @@ final class RemoteFileNavigationRequestCoordinator {
         return task
     }
 
+    @discardableResult
+    func cancelAllRequests() -> [Task<Void, Never>] {
+        let tasks = requests.values.map(\.task)
+        requestByTab.removeAll()
+        tasks.forEach { $0.cancel() }
+        return tasks
+    }
+
     func affectedTabIDs(for serverId: UUID) -> Set<UUID> {
         Set(
             requests.values.compactMap { request in

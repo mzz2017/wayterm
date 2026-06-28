@@ -74,6 +74,20 @@ final class SSHSFTPAdapter {
         await registration.lease.close()
     }
 
+    func disconnectAll() async {
+        let registrations = Array(clients.values)
+        clients.removeAll()
+        let closeTasks = registrations.map { registration in
+            Task { @MainActor in
+                await registration.lease.close()
+            }
+        }
+
+        for closeTask in closeTasks {
+            await closeTask.value
+        }
+    }
+
     private func borrowedLease(for serverId: UUID) -> RemoteConnectionLease? {
         remoteConnectionLeaseProvider.lease(for: serverId)
     }

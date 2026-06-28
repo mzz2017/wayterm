@@ -51,6 +51,10 @@ struct AppLifecycleIntentBoundaryTests {
             source.contains("AppLifecycleCoordinator.shared"),
             "VVTermApp.swift should use AppLifecycleCoordinator as the app lifecycle intent boundary."
         )
+        #expect(
+            source.contains("disconnectRemoteFilesBeforeExit:"),
+            "VVTermApp.swift should wire RemoteFiles app-wide teardown into AppLifecycleCoordinator."
+        )
     }
 
     private func source(at url: URL) throws -> String {

@@ -77,6 +77,19 @@ final class RemoteFileRequestLifecycleCoordinator {
     }
 
     @discardableResult
+    func cancelAllMutationRequests() -> [Task<Void, Never>] {
+        var canceledTasks: [Task<Void, Never>] = []
+        for (requestID, request) in mutationRequests {
+            var canceledRequest = request
+            canceledRequest.isCancelled = true
+            mutationRequests[requestID] = canceledRequest
+            request.task.cancel()
+            canceledTasks.append(request.task)
+        }
+        return canceledTasks
+    }
+
+    @discardableResult
     func requestTransfer<Result>(
         serverId: UUID? = nil,
         operation: @escaping @MainActor @Sendable (@escaping @MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void) async throws -> Result,
@@ -118,6 +131,19 @@ final class RemoteFileRequestLifecycleCoordinator {
     func cancelTransferRequests(for serverId: UUID) -> [Task<Void, Never>] {
         var canceledTasks: [Task<Void, Never>] = []
         for (requestID, request) in transferRequests where request.serverId == serverId {
+            var canceledRequest = request
+            canceledRequest.isCancelled = true
+            transferRequests[requestID] = canceledRequest
+            request.task.cancel()
+            canceledTasks.append(request.task)
+        }
+        return canceledTasks
+    }
+
+    @discardableResult
+    func cancelAllTransferRequests() -> [Task<Void, Never>] {
+        var canceledTasks: [Task<Void, Never>] = []
+        for (requestID, request) in transferRequests {
             var canceledRequest = request
             canceledRequest.isCancelled = true
             transferRequests[requestID] = canceledRequest

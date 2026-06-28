@@ -401,6 +401,92 @@ struct RemoteFileBrowserRequestLifecycleTests {
     }
 
     @Test
+    func disconnectAllCancelsAllTransfersAndWaitsBeforeDisconnectingServices() async throws {
+        let defaults = makeRemoteFileBrowserDefaults()
+        let firstServer = makeRemoteFileBrowserServer()
+        let secondServer = makeRemoteFileBrowserServer()
+        let firstClient = BlockingDisconnectRemoteFileClient()
+        let secondClient = BlockingDisconnectRemoteFileClient()
+        var clients: [BlockingDisconnectRemoteFileClient] = [firstClient, secondClient]
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: makeRemoteFileBrowserPersistedStateStore(defaults: defaults),
+            remoteFileServiceAccess: SSHSFTPAdapter(
+                credentialsProvider: { server in makeRemoteFileBrowserCredentials(serverId: server.id) },
+                ownedClientFactory: {
+                    clients.removeFirst()
+                }
+            ),
+            serverProvider: { _ in nil }
+        )
+        let firstGate = RemoteFileMutationGate()
+        let secondGate = RemoteFileMutationGate()
+        let disconnectWaitProbe = RemoteFileWaitProbe()
+
+        // Given RemoteFiles has active SFTP clients and transfers for multiple
+        // servers.
+        _ = try await store.withRemoteFileService(for: firstServer) { service in
+            try await service.resolveHomeDirectory()
+        }
+        _ = try await store.withRemoteFileService(for: secondServer) { service in
+            try await service.resolveHomeDirectory()
+        }
+        let firstTransferID = store.requestTransfer(
+            serverId: firstServer.id,
+            operation: { _ in
+                await firstGate.wait()
+                return "first"
+            },
+            onSuccess: { _ in
+                Issue.record("Canceled first transfer should not publish success after disconnectAll.")
+            }
+        )
+        let secondTransferID = store.requestTransfer(
+            serverId: secondServer.id,
+            operation: { _ in
+                await secondGate.wait()
+                return "second"
+            },
+            onSuccess: { _ in
+                Issue.record("Canceled second transfer should not publish success after disconnectAll.")
+            }
+        )
+        try await Task.sleep(for: .milliseconds(20))
+
+        // When app-level teardown disconnects all RemoteFiles resources.
+        let disconnectTask = store.disconnectAll()
+        let disconnectWaitTask = Task {
+            await disconnectTask.value
+            await disconnectWaitProbe.markReturned()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then visible transfer state clears, but SFTP disconnect waits until
+        // canceled transfer work exits.
+        #expect(!store.pendingTransferRequestIDs.contains(firstTransferID))
+        #expect(!store.pendingTransferRequestIDs.contains(secondTransferID))
+        let firstDisconnectStartedBeforeRelease = await firstClient.hasStartedDisconnect()
+        let secondDisconnectStartedBeforeRelease = await secondClient.hasStartedDisconnect()
+        #expect(
+            !firstDisconnectStartedBeforeRelease && !secondDisconnectStartedBeforeRelease,
+            "RemoteFiles disconnectAll should wait for all canceled transfers before disconnecting SFTP services."
+        )
+        #expect(
+            await !disconnectWaitProbe.didReturn,
+            "RemoteFiles disconnectAll task should not complete while canceled transfer work is still blocked."
+        )
+
+        await firstGate.release()
+        await secondGate.release()
+        await firstClient.waitUntilDisconnectStarted()
+        await secondClient.waitUntilDisconnectStarted()
+        await firstClient.releaseDisconnect()
+        await secondClient.releaseDisconnect()
+        await disconnectWaitTask.value
+
+        #expect(await disconnectWaitProbe.didReturn)
+    }
+
+    @Test
     func disconnectLeavesOtherServerMutationAndTransferRequestsPending() async throws {
         let disconnectingServer = makeRemoteFileBrowserServer()
         let otherServer = makeRemoteFileBrowserServer()

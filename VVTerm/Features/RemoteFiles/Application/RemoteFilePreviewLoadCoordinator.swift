@@ -75,4 +75,12 @@ final class RemoteFilePreviewLoadCoordinator {
         task.cancel()
         return task
     }
+
+    @discardableResult
+    func cancelAllRequests() -> [Task<Void, Never>] {
+        let tasks = requests.values.map(\.task)
+        requestByTab.removeAll()
+        tasks.forEach { $0.cancel() }
+        return tasks
+    }
 }

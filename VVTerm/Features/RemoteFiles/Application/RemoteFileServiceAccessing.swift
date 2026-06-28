@@ -8,6 +8,7 @@ protocol RemoteFileServiceAccessing {
     ) async throws -> T
 
     func disconnect(serverId: UUID) async
+    func disconnectAll() async
 }
 
 struct MissingRemoteFileServiceAccess: RemoteFileServiceAccessing {
@@ -19,6 +20,8 @@ struct MissingRemoteFileServiceAccess: RemoteFileServiceAccessing {
     }
 
     func disconnect(serverId: UUID) async {}
+
+    func disconnectAll() async {}
 }
 
 private enum RemoteFileServiceAccessDependencyError: LocalizedError {

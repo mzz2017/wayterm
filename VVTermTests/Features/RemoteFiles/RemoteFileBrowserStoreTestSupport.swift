@@ -133,6 +133,10 @@ final class NonSerializingRemoteFileServiceAccess: RemoteFileServiceAccessing {
     func disconnect(serverId: UUID) async {
         await client.disconnect()
     }
+
+    func disconnectAll() async {
+        await client.disconnect()
+    }
 }
 
 actor BlockingDisconnectRemoteFileClient: SFTPRemoteFileClient {

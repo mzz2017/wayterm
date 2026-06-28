@@ -93,6 +93,14 @@ final class RemoteFileMoveDestinationLoadCoordinator {
     }
 
     @discardableResult
+    func cancelAllRequests() -> [Task<Void, Never>] {
+        let tasks = requests.values.compactMap(\.task)
+        requestByKey.removeAll()
+        tasks.forEach { $0.cancel() }
+        return tasks
+    }
+
+    @discardableResult
     func cancelRequest(_ requestID: UUID) -> Task<Void, Never>? {
         guard let request = requests[requestID] else { return nil }
         if requestByKey[request.key] == requestID {

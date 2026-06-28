@@ -154,6 +154,9 @@ struct VVTermApp: App {
                         AppLanguage.applySelection(appLanguage)
                         AppLifecycleCoordinator.shared.handleAppLanguageChange(appLanguage)
                         AppLifecycleCoordinator.shared.configureTerminationTeardown(
+                            disconnectRemoteFilesBeforeExit: {
+                                await remoteFileBrowserStore.disconnectAll().value
+                            },
                             disconnectStatsBeforeExit: statsRegistry.disconnectAll
                         )
                     }

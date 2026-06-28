@@ -9,6 +9,7 @@ final class RemoteFileServiceAccessCoordinator {
 
     private let remoteFileServiceAccess: any RemoteFileServiceAccessing
     private var pendingDisconnects: [UUID: PendingDisconnect] = [:]
+    private var pendingDisconnectAll: PendingDisconnect?
 
     #if DEBUG
     private var pendingDisconnectWaitDidFinishForTesting: (@MainActor (UUID) async -> Void)?
@@ -23,6 +24,10 @@ final class RemoteFileServiceAccessCoordinator {
         serverId: UUID,
         waitingFor prerequisiteTasks: [Task<Void, Never>] = []
     ) -> Task<Void, Never> {
+        if let pendingDisconnectAll {
+            return pendingDisconnectAll.task
+        }
+
         if let pending = pendingDisconnects[serverId] {
             return pending.task
         }
@@ -41,12 +46,48 @@ final class RemoteFileServiceAccessCoordinator {
         return task
     }
 
+    @discardableResult
+    func disconnectAll(
+        waitingFor prerequisiteTasks: [Task<Void, Never>] = []
+    ) -> Task<Void, Never> {
+        if let pendingDisconnectAll {
+            return pendingDisconnectAll.task
+        }
+
+        let disconnectID = UUID()
+        let pendingDisconnectTasks = pendingDisconnects.values.map(\.task)
+        let task = Task { @MainActor [weak self, remoteFileServiceAccess, prerequisiteTasks, pendingDisconnectTasks] in
+            for prerequisiteTask in prerequisiteTasks {
+                await prerequisiteTask.value
+            }
+            for pendingDisconnectTask in pendingDisconnectTasks {
+                await pendingDisconnectTask.value
+            }
+            await remoteFileServiceAccess.disconnectAll()
+            if self?.pendingDisconnectAll?.id == disconnectID {
+                self?.pendingDisconnectAll = nil
+            }
+        }
+        pendingDisconnectAll = PendingDisconnect(id: disconnectID, task: task)
+        return task
+    }
+
     func withRemoteFileService<T>(
         for server: Server,
         operation: @escaping (any RemoteFileService) async throws -> T
     ) async throws -> T {
+        await waitForPendingDisconnectAll()
         await waitForPendingDisconnect(serverId: server.id)
         return try await remoteFileServiceAccess.withService(for: server, operation: operation)
+    }
+
+    private func waitForPendingDisconnectAll() async {
+        while let pending = pendingDisconnectAll {
+            await pending.task.value
+            if pendingDisconnectAll?.id == pending.id {
+                pendingDisconnectAll = nil
+            }
+        }
     }
 
     private func waitForPendingDisconnect(serverId: UUID) async {

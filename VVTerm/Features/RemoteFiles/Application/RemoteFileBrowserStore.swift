@@ -446,6 +446,28 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     @discardableResult
+    func disconnectAll() -> Task<Void, Never> {
+        var canceledRequestTasks =
+            requestLifecycleCoordinator.cancelAllMutationRequests()
+            + requestLifecycleCoordinator.cancelAllTransferRequests()
+            + moveDestinationLoadCoordinator.cancelAllRequests()
+
+        for tabId in Array(states.keys) {
+            canceledRequestTasks += removeRuntimeState(for: tabId)
+        }
+
+        canceledRequestTasks += navigationRequestCoordinator.cancelAllRequests()
+        canceledRequestTasks += previewLoadCoordinator.cancelAllRequests()
+        directoryRequestIDs.removeAll()
+        viewerRequestIDs.removeAll()
+        pendingToolbarCommand = nil
+
+        return serviceAccessCoordinator.disconnectAll(
+            waitingFor: canceledRequestTasks
+        )
+    }
+
+    @discardableResult
     func cancelPreviewLoadRequest(for tabId: UUID) -> Task<Void, Never>? {
         viewerRequestIDs.removeValue(forKey: tabId)
         return previewLoadCoordinator.cancelRequest(for: tabId)
