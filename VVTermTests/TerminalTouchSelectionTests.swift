@@ -1,3 +1,4 @@
+#if os(iOS)
 import Testing
 @testable import VVTerm
 
@@ -32,3 +33,4 @@ struct TerminalTouchSelectionTests {
         #expect(min(left, right) == left)
     }
 }
+#endif

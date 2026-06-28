@@ -1,3 +1,4 @@
+#if os(iOS)
 import CoreGraphics
 import Testing
 @testable import VVTerm
@@ -81,3 +82,4 @@ struct TerminalTouchSelectionLayoutTests {
         #expect(point == CGPoint(x: 25, y: 59))
     }
 }
+#endif

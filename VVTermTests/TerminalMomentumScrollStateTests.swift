@@ -1,3 +1,4 @@
+#if os(iOS)
 import CoreGraphics
 import Testing
 @testable import VVTerm
@@ -58,3 +59,4 @@ struct TerminalMomentumScrollStateTests {
         #expect(nextFrame == nil)
     }
 }
+#endif

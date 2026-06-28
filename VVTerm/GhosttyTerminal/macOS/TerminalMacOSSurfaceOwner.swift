@@ -22,6 +22,14 @@ final class TerminalMacOSSurfaceOwner {
         self.appWrapper = appWrapper
     }
 
+    var hasLiveSurface: Bool {
+        surface?.unsafeCValue != nil
+    }
+
+    var liveSurfaceHandle: ghostty_surface_t? {
+        surface?.unsafeCValue
+    }
+
     func tickDisplayLink(_ displayLinkRuntime: TerminalMacOSDisplayLinkRuntime, isShuttingDown: Bool) {
         displayLinkRuntime.tick(
             isShuttingDown: isShuttingDown,

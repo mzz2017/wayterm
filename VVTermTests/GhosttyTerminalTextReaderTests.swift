@@ -1,3 +1,4 @@
+#if os(iOS)
 import Testing
 @testable import VVTerm
 
@@ -28,3 +29,4 @@ struct GhosttyTerminalTextReaderTests {
         #expect(line == "abcd")
     }
 }
+#endif
