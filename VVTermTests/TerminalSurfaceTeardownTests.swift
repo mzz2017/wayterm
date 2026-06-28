@@ -89,6 +89,42 @@ struct TerminalSurfaceTeardownTests {
 
     @MainActor
     @Test
+    func replacingSurfaceForSameEntityCleansPreviousSurface() {
+        // Given a registry-owned Ghostty surface for an entity.
+        let registry = TerminalSurfaceRegistry()
+        let entityId = TerminalEntityID.session(UUID())
+        let firstRecorder = TerminalSurfaceRegistryRecorder()
+        let secondRecorder = TerminalSurfaceRegistryRecorder()
+        registry.registerForTesting(
+            entityId: entityId,
+            pause: { firstRecorder.pauseCount += 1 },
+            cleanup: { firstRecorder.cleanupCount += 1 }
+        )
+
+        // When SwiftUI recreates a terminal surface for the same entity.
+        registry.registerForTesting(
+            entityId: entityId,
+            pause: { secondRecorder.pauseCount += 1 },
+            cleanup: { secondRecorder.cleanupCount += 1 }
+        )
+
+        // Then the old UI/FFI surface is released immediately, while business
+        // shell teardown remains outside the surface registry.
+        #expect(
+            firstRecorder.cleanupCount == 1,
+            "Replacing a Ghostty surface for the same entity must release the old FFI/UI surface immediately."
+        )
+        #expect(firstRecorder.pauseCount == 0)
+        #expect(firstRecorder.runtimeTeardownCount == 0)
+        #expect(secondRecorder.cleanupCount == 0)
+
+        registry.removeSurface(for: entityId, cleanup: true)
+
+        #expect(secondRecorder.cleanupCount == 1)
+    }
+
+    @MainActor
+    @Test
     func rootViewDisappearancePreservesLiveSessionSurfaceWithoutCleanup() async {
         let manager = ConnectionSessionManager.shared
         await manager.resetForTesting()

@@ -54,8 +54,14 @@ final class TerminalSurfaceRegistry {
     }
 
     func register(_ surface: GhosttyTerminalView, for entityId: TerminalEntityID) {
+        if surfaces[entityId] === surface {
+            testSurfaces.removeValue(forKey: entityId)
+            touch(entityId)
+            return
+        }
+
+        cleanupSurface(for: entityId)
         surfaces[entityId] = surface
-        testSurfaces.removeValue(forKey: entityId)
         touch(entityId)
     }
 
@@ -161,8 +167,8 @@ extension TerminalSurfaceRegistry {
         pause: @escaping () -> Void,
         cleanup: @escaping () -> Void
     ) {
+        cleanupSurface(for: entityId)
         testSurfaces[entityId] = TestSurface(pause: pause, cleanup: cleanup)
-        surfaces.removeValue(forKey: entityId)
         touch(entityId)
     }
 }
