@@ -64,6 +64,59 @@ struct ServerStatsCollectionRegistryLifecycleTests {
         )
     }
 
+    @Test
+    func disconnectAllAwaitsEveryCollectorCleanupAndRemovesOwners() async throws {
+        let firstServer = makeServer(name: "Stats 1")
+        let secondServer = makeServer(name: "Stats 2")
+        let firstClient = BlockingRegistryStatsLeaseClient()
+        let secondClient = BlockingRegistryStatsLeaseClient()
+        let factory = RegistryStatsConnectionFactory([
+            .init(lease: RemoteConnectionLease(client: firstClient, ownership: .owned)),
+            .init(lease: RemoteConnectionLease(client: secondClient, ownership: .owned))
+        ])
+        var madeCollectorCount = 0
+        let registry = ServerStatsCollectionRegistry(
+            collectorFactory: {
+                madeCollectorCount += 1
+                return makeCollector(ownedConnectionFactory: factory)
+            }
+        )
+
+        // Given multiple Stats collectors have active owned leases.
+        let firstCollector = registry.collector(for: firstServer.id)
+        let secondCollector = registry.collector(for: secondServer.id)
+        await firstCollector.startCollecting(for: firstServer)
+        await secondCollector.startCollecting(for: secondServer)
+
+        // When app-level teardown asks the registry to disconnect everything.
+        let cleanupCompletion = RegistryAsyncFlag()
+        let cleanupTask = Task {
+            await registry.disconnectAll()
+            await cleanupCompletion.mark()
+        }
+
+        await firstClient.waitUntilDisconnectStarted()
+        await secondClient.waitUntilDisconnectStarted()
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(
+            await cleanupCompletion.isMarked() == false,
+            "Stats registry disconnectAll must wait for every owned collector lease to close."
+        )
+
+        await firstClient.releaseDisconnect()
+        await secondClient.releaseDisconnect()
+        await cleanupTask.value
+
+        // Then every collector owner is removed after its teardown completes.
+        let firstReplacement = registry.collector(for: firstServer.id)
+        let secondReplacement = registry.collector(for: secondServer.id)
+        #expect(firstReplacement !== firstCollector)
+        #expect(secondReplacement !== secondCollector)
+        #expect(madeCollectorCount == 4)
+        #expect(await firstClient.disconnectCount() == 1)
+        #expect(await secondClient.disconnectCount() == 1)
+    }
+
     private func makeCollector(
         ownedConnectionFactory: RegistryStatsConnectionFactory
     ) -> ServerStatsCollector {
@@ -84,10 +137,10 @@ struct ServerStatsCollectionRegistryLifecycleTests {
         )
     }
 
-    private func makeServer() -> Server {
+    private func makeServer(name: String = "Stats") -> Server {
         Server(
             workspaceId: UUID(),
-            name: "Stats",
+            name: name,
             host: "example.com",
             username: "root"
         )

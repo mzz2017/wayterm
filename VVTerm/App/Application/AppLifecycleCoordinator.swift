@@ -22,6 +22,7 @@ final class AppLifecycleCoordinator {
 
     private let disconnectConnectionSessionsBeforeExit: TerminalLifecycleAction
     private let disconnectTerminalTabsBeforeExit: TerminalLifecycleAction
+    private var disconnectStatsBeforeExit: TerminalLifecycleAction
     private let suspendTerminalSessionsForBackground: TerminalLifecycleAction
     private let lockAppIfNeededForBackground: AppLockLifecycleAction
     private let startChangeSubscription: LaunchAction
@@ -63,6 +64,7 @@ final class AppLifecycleCoordinator {
         disconnectTerminalTabsBeforeExit: @escaping TerminalLifecycleAction = {
             await TerminalTabManager.shared.disconnectAllAndWait()
         },
+        disconnectStatsBeforeExit: @escaping TerminalLifecycleAction = {},
         suspendTerminalSessionsForBackground: @escaping TerminalLifecycleAction = {
             await ConnectionSessionManager.shared.suspendAllForBackground()
         },
@@ -103,6 +105,7 @@ final class AppLifecycleCoordinator {
     ) {
         self.disconnectConnectionSessionsBeforeExit = disconnectConnectionSessionsBeforeExit
         self.disconnectTerminalTabsBeforeExit = disconnectTerminalTabsBeforeExit
+        self.disconnectStatsBeforeExit = disconnectStatsBeforeExit
         self.suspendTerminalSessionsForBackground = suspendTerminalSessionsForBackground
         self.lockAppIfNeededForBackground = lockAppIfNeededForBackground
         self.startChangeSubscription = startChangeSubscription
@@ -120,6 +123,7 @@ final class AppLifecycleCoordinator {
     static func makeForTesting(
         disconnectConnectionSessionsBeforeExit: @escaping TerminalLifecycleAction = {},
         disconnectTerminalTabsBeforeExit: @escaping TerminalLifecycleAction = {},
+        disconnectStatsBeforeExit: @escaping TerminalLifecycleAction = {},
         suspendTerminalSessionsForBackground: @escaping TerminalLifecycleAction = {},
         lockAppIfNeededForBackground: @escaping AppLockLifecycleAction = {},
         startChangeSubscription: @escaping LaunchAction = { Task {} },
@@ -137,6 +141,7 @@ final class AppLifecycleCoordinator {
         AppLifecycleCoordinator(
             disconnectConnectionSessionsBeforeExit: disconnectConnectionSessionsBeforeExit,
             disconnectTerminalTabsBeforeExit: disconnectTerminalTabsBeforeExit,
+            disconnectStatsBeforeExit: disconnectStatsBeforeExit,
             suspendTerminalSessionsForBackground: suspendTerminalSessionsForBackground,
             lockAppIfNeededForBackground: lockAppIfNeededForBackground,
             startChangeSubscription: startChangeSubscription,
@@ -256,12 +261,21 @@ final class AppLifecycleCoordinator {
         handleAppLanguageChangeAction(appLanguage)
     }
 
+    func configureTerminationTeardown(
+        disconnectStatsBeforeExit: @escaping TerminalLifecycleAction
+    ) {
+        self.disconnectStatsBeforeExit = disconnectStatsBeforeExit
+    }
+
     private func runTerminationTeardownOrTimeout() async {
+        let disconnectStatsBeforeExit = disconnectStatsBeforeExit
         let disconnectConnectionSessionsBeforeExit = disconnectConnectionSessionsBeforeExit
         let disconnectTerminalTabsBeforeExit = disconnectTerminalTabsBeforeExit
         let sleepForTerminationTimeout = sleepForTerminationTimeout
         let terminationTeardownTimeout = terminationTeardownTimeout
         let teardownTask = Task { @MainActor in
+            await disconnectStatsBeforeExit()
+            guard !Task.isCancelled else { return }
             await disconnectConnectionSessionsBeforeExit()
             guard !Task.isCancelled else { return }
             await disconnectTerminalTabsBeforeExit()

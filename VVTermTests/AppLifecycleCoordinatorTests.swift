@@ -155,6 +155,35 @@ struct AppLifecycleCoordinatorTests {
     }
 
     @Test
+    func terminationTeardownRequestStopsStatsBeforeTerminalManagers() async {
+        // Given Stats and terminal teardown dependencies are injected into the
+        // app lifecycle owner.
+        let probe = AppLifecycleProbe()
+        let coordinator = AppLifecycleCoordinator.makeForTesting(
+            disconnectConnectionSessionsBeforeExit: {
+                await probe.record("sessions")
+            },
+            disconnectTerminalTabsBeforeExit: {
+                await probe.record("tabs")
+            },
+            disconnectStatsBeforeExit: {
+                await probe.record("stats")
+            }
+        )
+
+        // When the platform delegate sends termination intent.
+        let requestID = coordinator.requestTerminationTeardown()
+        await coordinator.waitForTerminationTeardownRequest(requestID)
+
+        // Then Stats collection stops before terminal managers close shared
+        // terminal leases.
+        #expect(
+            await probe.events() == ["stats", "sessions", "tabs"],
+            "Termination should stop Stats collection before terminal managers close shared terminal leases."
+        )
+    }
+
+    @Test
     func terminationTeardownRequestCompletesAfterTimeoutWhenDisconnectDoesNotFinish() async {
         // Given terminal teardown starts but the first terminal manager does
         // not finish before the app termination timeout.

@@ -33,4 +33,24 @@ final class ServerStatsCollectionRegistry: ObservableObject {
             collectorsByServer.removeValue(forKey: serverId)
         }
     }
+
+    func disconnectAll() async {
+        let collectors = collectorsByServer
+        let stopTasks = collectors.map { serverId, collector in
+            (
+                serverId: serverId,
+                collector: collector,
+                task: Task { @MainActor in
+                    await collector.stopCollectingAndWait()
+                }
+            )
+        }
+
+        for (serverId, collector, task) in stopTasks {
+            await task.value
+            if collectorsByServer[serverId] === collector {
+                collectorsByServer.removeValue(forKey: serverId)
+            }
+        }
+    }
 }

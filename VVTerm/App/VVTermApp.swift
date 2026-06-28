@@ -153,6 +153,9 @@ struct VVTermApp: App {
                         )
                         AppLanguage.applySelection(appLanguage)
                         AppLifecycleCoordinator.shared.handleAppLanguageChange(appLanguage)
+                        AppLifecycleCoordinator.shared.configureTerminationTeardown(
+                            disconnectStatsBeforeExit: statsRegistry.disconnectAll
+                        )
                     }
                     .onChange(of: appLanguage) { newValue in
                         AppLanguage.applySelection(newValue)
