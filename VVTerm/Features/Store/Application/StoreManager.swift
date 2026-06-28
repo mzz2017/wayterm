@@ -8,6 +8,7 @@ import os.log
 @MainActor
 final class StoreManager: ObservableObject {
     private typealias StoreLifecycleAction = @MainActor (StoreManager) async -> Void
+    private typealias StoreTransactionListenerAction = @MainActor (StoreManager) async -> Void
 
     static let shared = StoreManager()
     static let reviewModeCode = ReviewModeCode.value
@@ -40,11 +41,13 @@ final class StoreManager: ObservableObject {
     private var productLoadRequestTask: Task<Void, Never>?
     private var productLoadRequestID: UUID?
     private var productLoadCompletionCallbacks: [@MainActor () -> Void] = []
-    private var updateListenerTask: Task<Void, Error>?
+    private var updateListenerTask: Task<Void, Never>?
+    private var updateListenerTaskID: UUID?
     private var reviewModeExpiryTask: Task<Void, Never>?
     private var reviewModeExpiresAt: Date?
     private let loadProductsAction: StoreLifecycleAction
     private let checkEntitlementsAction: StoreLifecycleAction
+    private let transactionListenerAction: StoreTransactionListenerAction
     private let telemetry: any StoreTelemetry
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Store")
     private let reviewModeDuration: TimeInterval = 60 * 60 * 5
@@ -69,6 +72,7 @@ final class StoreManager: ObservableObject {
         startBackgroundTasks: Bool = true,
         loadProductsAction: StoreLifecycleAction? = nil,
         checkEntitlementsAction: StoreLifecycleAction? = nil,
+        transactionListenerAction: StoreTransactionListenerAction? = nil,
         telemetry: (any StoreTelemetry)? = nil
     ) {
         self.loadProductsAction = loadProductsAction ?? { manager in
@@ -76,6 +80,9 @@ final class StoreManager: ObservableObject {
         }
         self.checkEntitlementsAction = checkEntitlementsAction ?? { manager in
             await manager.checkEntitlements()
+        }
+        self.transactionListenerAction = transactionListenerAction ?? { manager in
+            await manager.listenForLiveTransactions()
         }
         self.telemetry = telemetry ?? LiveStoreTelemetry.shared
 
@@ -362,13 +369,27 @@ final class StoreManager: ObservableObject {
 
     // MARK: - Transaction Listener
 
-    private func listenForTransactions() -> Task<Void, Error> {
-        Task.detached {
-            for await result in Transaction.updates {
-                if case .verified(let transaction) = result {
-                    await self.checkEntitlements()
-                    await transaction.finish()
+    private func listenForTransactions() -> Task<Void, Never> {
+        let taskID = UUID()
+        updateListenerTaskID = taskID
+        return Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.updateListenerTaskID == taskID {
+                    self.updateListenerTaskID = nil
+                    self.updateListenerTask = nil
                 }
+            }
+            await self.transactionListenerAction(self)
+        }
+    }
+
+    private func listenForLiveTransactions() async {
+        for await result in Transaction.updates {
+            guard !Task.isCancelled else { return }
+            if case .verified(let transaction) = result {
+                await checkEntitlements()
+                await transaction.finish()
             }
         }
     }
@@ -524,12 +545,14 @@ extension StoreManager {
         startBackgroundTasks: Bool = false,
         loadProductsAction: (@MainActor (StoreManager) async -> Void)? = nil,
         checkEntitlementsAction: (@MainActor (StoreManager) async -> Void)? = nil,
+        transactionListenerAction: (@MainActor (StoreManager) async -> Void)? = nil,
         telemetry: (any StoreTelemetry)? = nil
     ) -> StoreManager {
         StoreManager(
             startBackgroundTasks: startBackgroundTasks,
             loadProductsAction: loadProductsAction,
             checkEntitlementsAction: checkEntitlementsAction,
+            transactionListenerAction: transactionListenerAction,
             telemetry: telemetry ?? NoopStoreTelemetry()
         )
     }
@@ -570,6 +593,18 @@ extension StoreManager {
 
     func waitForReviewModeRefreshForTesting() async {
         await reviewModeRefreshTask?.value
+    }
+
+    var hasPendingTransactionListenerForTesting: Bool {
+        updateListenerTask != nil
+    }
+
+    func waitForTransactionListenerForTesting() async {
+        await updateListenerTask?.value
+    }
+
+    func cancelTransactionListenerForTesting() {
+        updateListenerTask?.cancel()
     }
 
     func cancelProductLoadRequestForTesting(_ requestID: UUID) {

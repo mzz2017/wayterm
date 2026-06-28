@@ -308,6 +308,34 @@ struct StoreManagerLifecycleTests {
     }
 
     @Test
+    func transactionListenerIsTrackedUntilListenerOperationCompletes() async {
+        let listenerGate = StoreRequestGate()
+        let manager = StoreManager.makeForTesting(
+            startBackgroundTasks: true,
+            loadProductsAction: { _ in },
+            checkEntitlementsAction: { _ in },
+            transactionListenerAction: { _ in
+                await listenerGate.waitForRelease()
+            }
+        )
+
+        await listenerGate.waitForOperationStart()
+
+        #expect(
+            manager.hasPendingTransactionListenerForTesting,
+            "StoreKit transaction listener must be tracked by StoreManager while the long-lived listener is running."
+        )
+
+        await listenerGate.release()
+        await manager.waitForTransactionListenerForTesting()
+
+        #expect(
+            !manager.hasPendingTransactionListenerForTesting,
+            "StoreManager should clear transaction listener tracking after the listener task exits."
+        )
+    }
+
+    @Test
     func disablingReviewModeTracksEntitlementRefreshUntilCompletion() async {
         let entitlementGate = StoreRequestGate()
         var entitlementRefreshCount = 0
