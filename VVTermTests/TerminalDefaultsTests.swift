@@ -7,6 +7,7 @@ import Testing
 // rendering surfaces. They use pure defaults and no persistent user settings;
 // update only when product default terminal behavior intentionally changes.
 
+@MainActor
 struct TerminalDefaultsTests {
     private func makeDefaults(testName: String = #function) -> UserDefaults {
         let suiteName = "TerminalDefaultsTests.\(testName)"
@@ -42,6 +43,16 @@ struct TerminalDefaultsTests {
         #expect(defaults.object(forKey: TerminalDefaults.fontSizeKey) as? Double == TerminalDefaults.defaultFontSize)
         #endif
         #expect(defaults.object(forKey: ImagePasteBehavior.userDefaultsKey) as? String == ImagePasteBehavior.askOnce.rawValue)
+    }
+
+    @Test
+    func emptyPresentationOverridesAreAvailableFromNonisolatedDefaults() {
+        // Given terminal runtime policy may read empty overrides outside UI actor context.
+        let emptyOverrides = makeEmptyPresentationOverrides()
+
+        // Then the pure default stays empty and does not require user defaults or UIKit state.
+        #expect(emptyOverrides.isEmpty)
+        #expect(emptyOverrides.fontSize == nil)
     }
 
     @Test
@@ -122,4 +133,8 @@ struct TerminalDefaultsTests {
         #expect(defaults.object(forKey: TerminalDefaults.fontSizeKey) as? Double == 16.0)
     }
     #endif
+}
+
+private nonisolated func makeEmptyPresentationOverrides() -> TerminalPresentationOverrides {
+    TerminalPresentationOverrides.empty
 }

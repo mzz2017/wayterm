@@ -39,12 +39,12 @@ struct TerminalZoomResult: Hashable {
     let effectiveFontSize: Double
 }
 
-struct TerminalPresentationOverrides: Codable, Hashable {
+struct TerminalPresentationOverrides: Codable, Hashable, Sendable {
     nonisolated static let empty = TerminalPresentationOverrides()
 
     var fontSize: Double?
 
-    init(fontSize: Double? = nil) {
+    nonisolated init(fontSize: Double? = nil) {
         self.fontSize = fontSize.map(TerminalDefaults.clampedFontSize)
     }
 
