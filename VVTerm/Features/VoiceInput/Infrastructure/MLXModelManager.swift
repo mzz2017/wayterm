@@ -67,6 +67,7 @@ final class MLXModelManager: NSObject, ObservableObject {
     private var storageTask: Task<Void, Never>?
     private var repoSizeTask: Task<Void, Never>?
     private var lastRepoSizeModelId: String?
+    private var isCleanedUp = false
     private let modelSizeProvider: any MLXModelSizing
 
     init(
@@ -79,6 +80,14 @@ final class MLXModelManager: NSObject, ObservableObject {
         self.modelSizeProvider = modelSizeProvider
         super.init()
         session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+    }
+
+    deinit {
+        storageTask?.cancel()
+        repoSizeTask?.cancel()
+        activeTask?.cancel()
+        activeContinuation?.resume(throwing: CancellationError())
+        session?.invalidateAndCancel()
     }
 
     private struct HFModelInfo: Decodable {
@@ -128,6 +137,7 @@ final class MLXModelManager: NSObject, ObservableObject {
     }
 
     func refreshStatus() {
+        guard !isCleanedUp else { return }
         if isModelAvailable {
             state = .ready
         } else if case .downloading = state {
@@ -140,6 +150,7 @@ final class MLXModelManager: NSObject, ObservableObject {
     }
 
     func removeModel() {
+        guard !isCleanedUp else { return }
         do {
             if FileManager.default.fileExists(atPath: modelDirectory.path) {
                 try FileManager.default.removeItem(at: modelDirectory)
@@ -159,6 +170,7 @@ final class MLXModelManager: NSObject, ObservableObject {
     }
 
     func downloadModel() async {
+        guard !isCleanedUp else { return }
         if case .downloading = state { return }
 
         let modelId = normalizedModelId
@@ -204,6 +216,17 @@ final class MLXModelManager: NSObject, ObservableObject {
         if case .downloading = state {
             state = .idle
         }
+    }
+
+    func cleanup() {
+        guard !isCleanedUp else { return }
+        isCleanedUp = true
+        storageTask?.cancel()
+        storageTask = nil
+        repoSizeTask?.cancel()
+        repoSizeTask = nil
+        cancelDownload()
+        session.invalidateAndCancel()
     }
 
     static func isModelAvailable(kind: MLXModelKind, modelId: String) -> Bool {
@@ -263,6 +286,7 @@ final class MLXModelManager: NSObject, ObservableObject {
     }
 
     func refreshStorageUsage() {
+        guard !isCleanedUp else { return }
         storageTask?.cancel()
         let modelDir = modelDirectory
         let rootDir = Self.modelsRoot
@@ -278,6 +302,7 @@ final class MLXModelManager: NSObject, ObservableObject {
     }
 
     func refreshRepoSize() {
+        guard !isCleanedUp else { return }
         let modelId = normalizedModelId
         guard !modelId.isEmpty else {
             repoSizeBytes = nil

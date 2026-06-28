@@ -113,6 +113,82 @@ struct VoiceModelDownloadStoreTests {
             "Canceling a voice model download must clear the tracked task immediately so retry starts fresh work."
         )
     }
+
+    @Test
+    func deinitCancelsTrackedDownloads() async {
+        // Given a store-owned model download is still running.
+        let probe = VoiceModelDownloadProbe()
+        let releaseDownload = VoiceModelDownloadGate()
+        var store: VoiceModelDownloadStore? = VoiceModelDownloadStore.makeForTesting(
+            downloadAction: { kind in
+                await probe.record("download-start:\(kind.rawValue)")
+                await withTaskCancellationHandler {
+                    await releaseDownload.wait()
+                } onCancel: {
+                    Task {
+                        await probe.record("download-cancel:\(kind.rawValue)")
+                    }
+                }
+            }
+        )
+
+        let task = store?.downloadModel(for: .whisper)
+        await probe.waitForCount(1)
+
+        // When the application-layer owner is released.
+        store = nil
+        await probe.waitForCount(2)
+        await releaseDownload.open()
+        await task?.value
+
+        // Then the owner cancels tracked work instead of being kept alive by
+        // its own task closure.
+        #expect(
+            await probe.events() == [
+                "download-start:whisper",
+                "download-cancel:whisper"
+            ],
+            "Dropping the voice model download store must cancel tracked work instead of keeping the owner alive."
+        )
+    }
+
+    @Test
+    func modelManagerCleanupCancelsSessionAndBackgroundWork() throws {
+        // Given MLXModelManager owns URLSession delegate downloads plus
+        // background storage and repo-size tasks.
+        let root = try sourceRoot()
+        let modelManagerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/VoiceInput/Infrastructure/MLXModelManager.swift")
+        )
+        let cleanup = try sourceSlice(
+            in: modelManagerSource,
+            from: "func cleanup()",
+            to: "static func isModelAvailable"
+        )
+        let deinitSlice = try sourceSlice(
+            in: modelManagerSource,
+            from: "deinit",
+            to: "private struct HFModelInfo"
+        )
+
+        // Then explicit and fallback teardown paths cancel each owned resource.
+        #expect(
+            cleanup.contains("storageTask?.cancel()")
+                && cleanup.contains("repoSizeTask?.cancel()")
+                && cleanup.contains("cancelDownload()")
+                && cleanup.contains("session.invalidateAndCancel()")
+                && cleanup.contains("isCleanedUp = true"),
+            "MLXModelManager cleanup must cancel background work, active downloads, its URLSession delegate resource, and close future work."
+        )
+        #expect(
+            modelManagerSource.contains("func refreshStorageUsage() {\n        guard !isCleanedUp else { return }"),
+            "Cleanup should prevent cancellation handlers from starting fresh storage work after teardown."
+        )
+        #expect(
+            deinitSlice.contains("session?.invalidateAndCancel()"),
+            "MLXModelManager deinit should invalidate URLSession to break delegate retention if explicit cleanup was missed."
+        )
+    }
 }
 
 private actor VoiceModelDownloadProbe {
@@ -172,4 +248,35 @@ private actor VoiceModelDownloadGate {
             continuations.append(continuation)
         }
     }
+}
+
+private func source(at url: URL) throws -> String {
+    try String(contentsOf: url, encoding: .utf8)
+}
+
+private func sourceSlice(in source: String, from start: String, to end: String) throws -> String {
+    guard let startRange = source.range(of: start) else {
+        throw VoiceModelDownloadSourceError.markerNotFound(start)
+    }
+    guard let endRange = source[startRange.lowerBound...].range(of: end) else {
+        throw VoiceModelDownloadSourceError.markerNotFound(end)
+    }
+    return String(source[startRange.lowerBound..<endRange.lowerBound])
+}
+
+private func sourceRoot() throws -> URL {
+    var url = URL(fileURLWithPath: #filePath)
+    while url.lastPathComponent != "VVTermTests" {
+        let next = url.deletingLastPathComponent()
+        if next.path == url.path {
+            throw VoiceModelDownloadSourceError.sourceRootNotFound
+        }
+        url = next
+    }
+    return url.deletingLastPathComponent()
+}
+
+private enum VoiceModelDownloadSourceError: Error {
+    case markerNotFound(String)
+    case sourceRootNotFound
 }
