@@ -65,6 +65,10 @@ struct CloudflareTransportManagerLifecycleTests {
             "Cloudflare OAuth should own a registry for completion callbacks that hop out of ASWebAuthenticationSession."
         )
         #expect(
+            source.contains("private nonisolated final class CloudflareOAuthCompletionTaskRegistry"),
+            "The completion task registry uses its own lock and should not inherit actor isolation warnings."
+        )
+        #expect(
             source.contains("completionTasks.track"),
             "The ASWebAuthenticationSession completion should publish its lifecycle work before returning."
         )

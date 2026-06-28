@@ -149,7 +149,7 @@ actor CloudflareWebAuthenticationSessionActor: OAuthWebSession {
     }
 }
 
-private final class CloudflareOAuthCompletionTaskRegistry: @unchecked Sendable {
+private nonisolated final class CloudflareOAuthCompletionTaskRegistry: @unchecked Sendable {
     private final class Record {
         var task: Task<Void, Never>?
     }
