@@ -60,6 +60,30 @@ struct CoreSyncPendingMutationBoundaryTests {
         }
     }
 
+    @Test
+    func cloudKitSyncCoordinatorDoesNotDecodeFeatureDomainPayloads() throws {
+        let root = try sourceRoot()
+        let source = try String(
+            contentsOf: root.appendingPathComponent("VVTerm/Core/Sync/CloudKitSyncCoordinator.swift"),
+            encoding: .utf8
+        )
+        let forbiddenDrainShapes = [
+            "decodedPayload(as: Server.self)",
+            "decodedPayload(as: Workspace.self)",
+            "decodedPayload(as: TerminalTheme.self)",
+            "decodedPayload(as: TerminalThemePreference.self)",
+            "decodedPayload(as: TerminalAccessoryProfile.self)",
+            "CloudKitManager.shared"
+        ]
+
+        for forbiddenShape in forbiddenDrainShapes {
+            #expect(
+                !source.contains(forbiddenShape),
+                "CloudKitSyncCoordinator should delegate pending mutation sync, not decode or save feature domain shape \(forbiddenShape)."
+            )
+        }
+    }
+
     private func sourceRoot() throws -> URL {
         var url = URL(fileURLWithPath: #filePath)
         while url.lastPathComponent != "VVTermTests" {

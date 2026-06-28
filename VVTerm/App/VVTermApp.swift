@@ -12,6 +12,7 @@ import AppKit
 struct VVTermApp: App {
     init() {
         TerminalDefaults.applyIfNeeded()
+        CloudKitSyncCoordinator.shared.configurePendingMutationSync(CloudKitPendingMutationLiveSync.sync)
         ServerManager.shared.configureDeletionTeardown { server in
             await ServerConnectionLifecycleCoordinator.shared.disconnectServerBeforeDeletion(server: server)
         }

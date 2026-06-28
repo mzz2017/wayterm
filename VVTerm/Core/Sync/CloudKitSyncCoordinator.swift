@@ -8,25 +8,21 @@ final class CloudKitSyncCoordinator {
 
     static let shared = CloudKitSyncCoordinator()
 
-    private let cloudKit = CloudKitManager.shared
     private let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "app.vivy.vvterm",
         category: "CloudKitSyncCoordinator"
     )
     private let queue: PendingCloudKitSyncQueue
-    private let syncPendingMutationOverride: PendingMutationSyncAction?
+    private var syncPendingMutation: PendingMutationSyncAction
     private var drainTask: Task<Void, Never>?
     private var shouldDrainAgain = false
-    static let terminalAccessoryProfileDidResolveNotification = Notification.Name(
-        "TerminalAccessoryProfileDidResolveFromCloudKit"
-    )
 
     private init(
         queue: PendingCloudKitSyncQueue? = nil,
         syncPendingMutation: PendingMutationSyncAction? = nil
     ) {
         self.queue = queue ?? PendingCloudKitSyncQueue()
-        self.syncPendingMutationOverride = syncPendingMutation
+        self.syncPendingMutation = syncPendingMutation ?? Self.unconfiguredPendingMutationSync
     }
 
     #if DEBUG
@@ -59,6 +55,10 @@ final class CloudKitSyncCoordinator {
 
     func enqueuePendingMutation(_ mutation: PendingCloudKitMutation) {
         queue.enqueue(mutation)
+    }
+
+    func configurePendingMutationSync(_ syncPendingMutation: @escaping PendingMutationSyncAction) {
+        self.syncPendingMutation = syncPendingMutation
     }
 
     func drainPendingMutations() async {
@@ -129,53 +129,6 @@ final class CloudKitSyncCoordinator {
         }
     }
 
-    private func syncPendingMutation(_ mutation: PendingCloudKitMutation) async throws {
-        if let syncPendingMutationOverride {
-            try await syncPendingMutationOverride(mutation)
-            return
-        }
-
-        switch (mutation.entity, mutation.operation) {
-        case (.server, .upsert):
-            if let server = try mutation.decodedPayload(as: Server.self) {
-                try await cloudKit.saveServer(server)
-            }
-        case (.server, .delete):
-            if let server = try mutation.decodedPayload(as: Server.self) {
-                try await cloudKit.deleteServer(server)
-            }
-        case (.workspace, .upsert):
-            if let workspace = try mutation.decodedPayload(as: Workspace.self) {
-                try await cloudKit.saveWorkspace(workspace)
-            }
-        case (.workspace, .delete):
-            if let workspace = try mutation.decodedPayload(as: Workspace.self) {
-                try await cloudKit.deleteWorkspace(workspace)
-            }
-        case (.terminalTheme, .upsert), (.terminalTheme, .delete):
-            if let theme = try mutation.decodedPayload(as: TerminalTheme.self) {
-                try await cloudKit.saveTerminalTheme(theme)
-            }
-        case (.terminalThemePreference, .upsert):
-            if let preference = try mutation.decodedPayload(as: TerminalThemePreference.self) {
-                try await cloudKit.saveTerminalThemePreference(preference)
-            }
-        case (.terminalThemePreference, .delete):
-            break
-        case (.terminalAccessoryProfile, .upsert):
-            if let profile = try mutation.decodedPayload(as: TerminalAccessoryProfile.self) {
-                let resolvedProfile = try await cloudKit.syncTerminalAccessoryProfile(profile)
-                NotificationCenter.default.post(
-                    name: Self.terminalAccessoryProfileDidResolveNotification,
-                    object: self,
-                    userInfo: ["profile": resolvedProfile]
-                )
-            }
-        case (.terminalAccessoryProfile, .delete):
-            break
-        }
-    }
-
     private func pendingSyncDrainOrder(_ lhs: PendingCloudKitMutation, _ rhs: PendingCloudKitMutation) -> Bool {
         if lhs.drainPriority != rhs.drainPriority {
             return lhs.drainPriority < rhs.drainPriority
@@ -216,4 +169,19 @@ final class CloudKitSyncCoordinator {
         }
     }
 
+    private static func unconfiguredPendingMutationSync(_ mutation: PendingCloudKitMutation) async throws {
+        throw CloudKitPendingMutationSyncError.unconfigured(mutation.entityDescription)
+    }
+
+}
+
+private enum CloudKitPendingMutationSyncError: LocalizedError {
+    case unconfigured(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unconfigured(let entityDescription):
+            return "Pending CloudKit sync is not configured for \(entityDescription)"
+        }
+    }
 }

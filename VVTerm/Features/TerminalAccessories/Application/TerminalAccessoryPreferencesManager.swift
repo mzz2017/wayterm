@@ -18,6 +18,10 @@ protocol TerminalAccessoryPendingSyncCoordinating {
     func drainPendingMutations() async
 }
 
+enum TerminalAccessoryCloudResolutionNotification {
+    static let didResolve = Notification.Name("TerminalAccessoryProfileDidResolveFromCloudKit")
+}
+
 extension CloudKitManager: TerminalAccessoryCloudProfileSyncing {}
 extension CloudKitSyncCoordinator: TerminalAccessoryPendingSyncCoordinating {
     func enqueueTerminalAccessoryProfileUpsert(_ profile: TerminalAccessoryProfile) {
@@ -604,7 +608,7 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
 
     private func observeCloudResolutionChanges() {
         cloudResolutionObserver = NotificationCenter.default.addObserver(
-            forName: CloudKitSyncCoordinator.terminalAccessoryProfileDidResolveNotification,
+            forName: TerminalAccessoryCloudResolutionNotification.didResolve,
             object: nil,
             queue: .main
         ) { [weak self] notification in
