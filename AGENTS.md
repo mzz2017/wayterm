@@ -232,7 +232,7 @@ Output: `Vendor/libssh2/{macos,ios,ios-simulator}/`
 - If a test primarily enforces architecture, keep assertions close to the rule being protected and avoid coupling to unrelated source layout.
 
 ### iOS CLI tests
-- For full iOS CLI verification, prefer the repo wrapper. It serializes testing, disables Xcode's debug dylib layout, preboots the target simulator, and retries only simulator preflight launch failures:
+- For full iOS CLI verification, prefer the repo wrapper. It serializes testing, uses isolated DerivedData with a shared Swift package clone cache, disables Xcode's debug dylib layout, preboots the target simulator, and retries only simulator preflight launch failures:
 
 ```bash
 ./scripts/test-ios.sh
@@ -246,7 +246,7 @@ Output: `Vendor/libssh2/{macos,ios,ios-simulator}/`
 ```
 
 - The wrapper defaults to the shared `VVTermUnitTests` scheme, which contains `VVTermTests` but not `VVTermUITests`. Set `IOS_TEST_SCHEME=VVTerm` when intentionally exercising the full shared scheme or UI test target.
-- The default destination is `iPhone 17`. Override with `IOS_TEST_DEVICE_NAME` or `IOS_TEST_DESTINATION_ID` when needed.
+- The default destination is `iPhone 17`. Override with `IOS_TEST_DEVICE_NAME` or `IOS_TEST_DESTINATION_ID` when needed. Override the package clone cache with `IOS_TEST_CLONED_SOURCE_PACKAGES_DIR` when isolation from the shared package cache is required. The default no-output watchdog is 900 seconds; use `IOS_TEST_NO_OUTPUT_TIMEOUT` for shorter focused diagnostics.
 
 ### iOS simulator tests
 - On macOS 26.5.1 / Xcode 26.5, app-hosted iOS unit tests can hang before XCTest output when Xcode's debug dylib layout is enabled (`ENABLE_DEBUG_DYLIB=YES`, the default app-debug layout). The app launches, but the host process has no `XCTestConfigurationFilePath` and no `DYLD_INSERT_LIBRARIES=...libXCTestBundleInject...`, so XCTest never injects the test bundle.

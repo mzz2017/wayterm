@@ -12,8 +12,9 @@ allow_device_fallback="${IOS_TEST_ALLOW_DEVICE_FALLBACK:-0}"
 lock_dir="${IOS_TEST_LOCK_DIR:-${TMPDIR:-/tmp}/vvterm-ios-test.lock}"
 lock_timeout="${IOS_TEST_LOCK_TIMEOUT:-600}"
 derived_data_path="${IOS_TEST_DERIVED_DATA_PATH:-}"
+cloned_source_packages_path="${IOS_TEST_CLONED_SOURCE_PACKAGES_DIR:-${TMPDIR:-/tmp}/vvterm-ios-source-packages}"
 keep_derived_data="${IOS_TEST_KEEP_DERIVED_DATA:-0}"
-no_output_timeout="${IOS_TEST_NO_OUTPUT_TIMEOUT:-300}"
+no_output_timeout="${IOS_TEST_NO_OUTPUT_TIMEOUT:-900}"
 xcodebuild_quiet="${IOS_TEST_XCODEBUILD_QUIET:-0}"
 lock_acquired=0
 created_derived_data=0
@@ -81,6 +82,10 @@ prepare_derived_data() {
 
     derived_data_path="$(mktemp -d -t vvterm-ios-derived-data.XXXXXX)"
     created_derived_data=1
+}
+
+prepare_cloned_source_packages() {
+    mkdir -p "$cloned_source_packages_path"
 }
 
 resolve_destination_id() {
@@ -158,6 +163,7 @@ run_xcodebuild_test() {
         -scheme "$scheme" \
         -destination "platform=iOS Simulator,id=${udid}" \
         -derivedDataPath "$derived_data_path" \
+        -clonedSourcePackagesDirPath "$cloned_source_packages_path" \
         -parallel-testing-enabled NO \
         "$@" \
         ENABLE_DEBUG_DYLIB=NO >"$log_file" 2>&1 &
@@ -220,6 +226,7 @@ run_xcodebuild_test() {
 
 acquire_global_lock
 prepare_derived_data
+prepare_cloned_source_packages
 
 udid="$(resolve_destination_id)"
 if [[ -z "$udid" ]]; then
@@ -234,6 +241,7 @@ last_status=0
 while (( attempt <= total_attempts )); do
     echo "Preparing iOS simulator ${device_name} (${udid}) for test attempt ${attempt}/${total_attempts}."
     echo "Using isolated DerivedData at ${derived_data_path}."
+    echo "Using shared cloned source packages at ${cloned_source_packages_path}."
     prepare_simulator "$udid"
 
     log_file="$(mktemp -t vvterm-ios-test.XXXXXX)"
