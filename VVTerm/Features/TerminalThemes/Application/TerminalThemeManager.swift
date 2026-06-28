@@ -155,7 +155,7 @@ final class TerminalThemeManager: ObservableObject {
         observesSystemNotifications: Bool = true
     ) {
         self.defaults = defaults
-        self.cloudStore = cloudStore ?? CloudKitManager.shared
+        self.cloudStore = cloudStore ?? TerminalThemeCloudKitStore(cloudKit: CloudKitManager.shared)
         self.syncCoordinator = syncCoordinator ?? CloudKitSyncCoordinator.shared
         self.customThemeStore = customThemeStore ?? UserDefaultsTerminalThemeCustomThemeStore(
             defaults: defaults,

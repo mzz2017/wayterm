@@ -182,6 +182,30 @@ struct TerminalThemeManagerLifecycleTests {
         #expect(!manager.pendingCloudSyncRequestIDs.contains(requestID))
     }
 
+    @Test
+    func liveCloudStorePolicyStaysOutsideCoreCloudKitManager() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalThemes/Application/TerminalThemeManager.swift")
+        )
+        let cloudStoreSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/TerminalThemes/Infrastructure/TerminalThemeCloudStore.swift")
+        )
+
+        #expect(
+            managerSource.contains("cloudStore ?? TerminalThemeCloudKitStore(cloudKit: CloudKitManager.shared)"),
+            "TerminalThemeManager default wiring should use the feature-owned CloudKit adapter."
+        )
+        #expect(
+            cloudStoreSource.contains("final class TerminalThemeCloudKitStore"),
+            "Terminal theme CloudKit record policy should live in a feature-owned adapter."
+        )
+        #expect(
+            !cloudStoreSource.contains("extension CloudKitManager: TerminalThemeCloudStoring"),
+            "TerminalThemes should not attach feature cloud-store policy to the Core CloudKitManager type."
+        )
+    }
+
     private func foregroundNotificationName() -> Notification.Name {
         #if os(iOS)
         UIApplication.didBecomeActiveNotification
@@ -211,6 +235,26 @@ struct TerminalThemeManagerLifecycleTests {
         background = #000000
         foreground = \(foreground)
         """
+    }
+
+    private func source(at url: URL) throws -> String {
+        try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func sourceRoot() throws -> URL {
+        var url = URL(fileURLWithPath: #filePath)
+        while url.lastPathComponent != "VVTermTests" {
+            let next = url.deletingLastPathComponent()
+            if next.path == url.path {
+                throw SourceRootError.notFound
+            }
+            url = next
+        }
+        return url.deletingLastPathComponent()
+    }
+
+    private enum SourceRootError: Error {
+        case notFound
     }
 }
 
