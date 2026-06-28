@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 @testable import VVTerm
 
@@ -494,7 +495,7 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
         var abstract = sessionAbstractPointer
         lock.unlock()
 
-        var responses = [LIBSSH2_USERAUTH_KBDINT_RESPONSE](repeating: LIBSSH2_USERAUTH_KBDINT_RESPONSE(), count: 1)
+        var responses = [LIBSSH2_USERAUTH_KBDINT_RESPONSE(text: nil, length: 0)]
         withUnsafeMutablePointer(to: &abstract) { abstractPointer in
             responses.withUnsafeMutableBufferPointer { responseBuffer in
                 callback(
@@ -515,7 +516,7 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
             lock.lock()
             keyboardInteractiveResponseLog.append(response)
             lock.unlock()
-            responseText.deallocate()
+            Darwin.free(responseText)
         }
 
         return responses[0].length > 0 ? 0 : LIBSSH2_ERROR_AUTHENTICATION_FAILED

@@ -181,7 +181,7 @@ actor SSHSession {
                     authResult = driver.authenticateWithKeyboardInteractive(
                         session: session,
                         username: username,
-                        callback: kbdintCallback
+                        callback: keyboardInteractiveCallback
                     )
                 }
             }

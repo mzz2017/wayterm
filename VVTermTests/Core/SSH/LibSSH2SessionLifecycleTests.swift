@@ -238,6 +238,33 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         )
     }
 
+    func testKeyboardInteractiveCallbackLeavesResponsesEmptyWithoutContext() {
+        var abstract: UnsafeMutableRawPointer?
+        var response = LIBSSH2_USERAUTH_KBDINT_RESPONSE(text: nil, length: 0)
+
+        // Given libssh2 invokes the callback without the session-owned abstract
+        // context that carries the keyboard-interactive password.
+        withUnsafeMutablePointer(to: &abstract) { abstractPointer in
+            withUnsafeMutablePointer(to: &response) { responsePointer in
+                KeyboardInteractiveCallbackOwner.respond(
+                    nil,
+                    0,
+                    nil,
+                    0,
+                    1,
+                    nil,
+                    responsePointer,
+                    abstractPointer
+                )
+            }
+        }
+
+        // Then the callback does not allocate or publish a response, avoiding
+        // stale credential reuse across auth sessions.
+        XCTAssertNil(response.text)
+        XCTAssertEqual(response.length, 0)
+    }
+
     func testKeepAliveUsesDriverBoundary() async throws {
         // Given a connected session using the fake libssh2 driver.
         let driver = RecordingLibSSH2SessionDriver(

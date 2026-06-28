@@ -142,14 +142,14 @@ struct SSHClientSuperfileBoundaryTests {
             "SSHClient.swift should not own the libssh2 keyboard-interactive auth context."
         )
         #expect(
-            !clientSource.contains("let kbdintCallback"),
+            !clientSource.contains("KeyboardInteractiveCallbackOwner"),
             "SSHClient.swift should not own the libssh2 keyboard-interactive auth callback."
         )
 
         // Then keyboard-interactive auth support has a dedicated Core/SSH file.
         #expect(authSource.contains("final class KeyboardInteractiveContext"))
         #expect(authSource.contains("keyboardInteractivePassword"))
-        #expect(authSource.contains("kbdintCallback"))
+        #expect(authSource.contains("KeyboardInteractiveCallbackOwner"))
     }
 
     @Test
