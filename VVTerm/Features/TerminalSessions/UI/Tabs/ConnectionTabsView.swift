@@ -623,8 +623,7 @@ struct ConnectionTerminalContainer: View {
 
     private func disconnectFromServer() {
         disconnectCoordinator.requestServerDisconnect(
-            serverId: server.id,
-            disconnectTerminals: tabManager.disconnectServerAndWait
+            serverId: server.id
         )
     }
 

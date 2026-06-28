@@ -20,6 +20,7 @@ final class ServerConnectionLifecycleCoordinator {
         var disconnectRemoteFiles: RemoteFilesDisconnectAction = { _ in Task {} }
         var disconnectStats: StatsDisconnectAction = { _ in }
         var disconnectFileTabs: FileTabsDisconnectAction?
+        var disconnectTerminals: TerminalDisconnectAction = { _ in }
     }
 
     private var disconnectRequests: [UUID: DisconnectRequest] = [:]
@@ -33,12 +34,14 @@ final class ServerConnectionLifecycleCoordinator {
     func configureResourceDisconnects(
         disconnectRemoteFiles: @escaping RemoteFilesDisconnectAction,
         disconnectStats: @escaping StatsDisconnectAction = { _ in },
-        disconnectFileTabs: FileTabsDisconnectAction? = nil
+        disconnectFileTabs: FileTabsDisconnectAction? = nil,
+        disconnectTerminals: TerminalDisconnectAction? = nil
     ) {
         resourceDisconnects = ResourceDisconnects(
             disconnectRemoteFiles: disconnectRemoteFiles,
             disconnectStats: disconnectStats,
-            disconnectFileTabs: disconnectFileTabs
+            disconnectFileTabs: disconnectFileTabs,
+            disconnectTerminals: disconnectTerminals ?? resourceDisconnects.disconnectTerminals
         )
     }
 
@@ -48,7 +51,7 @@ final class ServerConnectionLifecycleCoordinator {
         disconnectRemoteFiles: RemoteFilesDisconnectAction? = nil,
         disconnectStats: StatsDisconnectAction? = nil,
         disconnectFileTabs: FileTabsDisconnectAction? = nil,
-        disconnectTerminals: @escaping TerminalDisconnectAction,
+        disconnectTerminals: TerminalDisconnectAction? = nil,
         onCompleted: @escaping @MainActor () -> Void = {}
     ) -> UUID {
         if let requestID = disconnectRequestByServer[serverId] {
@@ -74,7 +77,7 @@ final class ServerConnectionLifecycleCoordinator {
             await (disconnectStats ?? resourceDisconnects.disconnectStats)(serverId)
             guard !Task.isCancelled else { return }
             (disconnectFileTabs ?? resourceDisconnects.disconnectFileTabs)?(serverId)
-            await disconnectTerminals(serverId)
+            await (disconnectTerminals ?? resourceDisconnects.disconnectTerminals)(serverId)
 
             self.deliverCompletionCallbacks(for: requestID)
         }

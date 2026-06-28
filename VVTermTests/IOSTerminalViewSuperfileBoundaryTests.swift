@@ -266,7 +266,7 @@ struct IOSTerminalViewSuperfileBoundaryTests {
             "requestConnectionOpen(",
             "requestForegroundReconnectForSelectedSession(",
             "closeSession(",
-            "disconnectServerAndWait",
+            "requestServerDisconnect(",
             "peekTerminal("
         ] {
             #expect(

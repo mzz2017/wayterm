@@ -38,6 +38,8 @@ struct ServerDisconnectIntentBoundaryTests {
         // Then SwiftUI must not own the async teardown sequence.
         #expect(!helper.containsRegex(#"Task\s*\{"#))
         #expect(!helper.contains("await sessionManager.disconnectServerAndWait"))
+        #expect(!helper.contains("sessionManager.disconnectServerAndWait"))
+        #expect(!helper.contains("disconnectTerminals"))
         #expect(!helper.contains("fileBrowser.disconnect"))
         #expect(!helper.contains("statsRegistry.disconnect"))
         #expect(!helper.contains("disconnectRemoteFiles"))
@@ -72,6 +74,8 @@ struct ServerDisconnectIntentBoundaryTests {
         // disconnect, and navigation completion itself.
         #expect(!helper.containsRegex(#"Task\s*\{"#))
         #expect(!helper.contains("await sessionManager.disconnectServerAndWait"))
+        #expect(!helper.contains("sessionManager.disconnectServerAndWait"))
+        #expect(!helper.contains("disconnectTerminals"))
         #expect(!helper.contains("fileBrowser.disconnect"))
         #expect(!helper.contains("statsRegistry.disconnect"))
         #expect(!helper.contains("fileTabs.disconnect"))
@@ -109,6 +113,8 @@ struct ServerDisconnectIntentBoundaryTests {
         // Then SwiftUI must not own the multi-feature teardown ordering.
         #expect(!helper.containsRegex(#"Task\s*\{"#))
         #expect(!helper.contains("await tabManager.disconnectServerAndWait"))
+        #expect(!helper.contains("tabManager.disconnectServerAndWait"))
+        #expect(!helper.contains("disconnectTerminals"))
         #expect(!helper.contains("fileBrowser.disconnect"))
         #expect(!helper.contains("statsRegistry.disconnect"))
         #expect(!helper.contains("fileTabManager.disconnect"))
@@ -128,6 +134,18 @@ struct ServerDisconnectIntentBoundaryTests {
         #expect(
             appSource.contains("ServerConnectionLifecycleCoordinator.shared"),
             "VVTermApp should be the composition boundary that resolves the shared disconnect coordinator."
+        )
+        #expect(
+            appSource.contains("disconnectTerminals:"),
+            "VVTermApp should configure terminal teardown on the App/Application disconnect coordinator."
+        )
+        #expect(
+            appSource.contains("ConnectionSessionManager.shared.disconnectServerAndWait(serverId)"),
+            "VVTermApp should route server disconnect through the connection-session owner."
+        )
+        #expect(
+            appSource.contains("TerminalTabManager.shared.disconnectServerAndWait(serverId)"),
+            "VVTermApp should route server disconnect through the terminal-tab owner."
         )
         #expect(
             macRootSource.contains("disconnectCoordinator: disconnectCoordinator"),

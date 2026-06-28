@@ -144,7 +144,12 @@ struct VVTermApp: App {
                         serverConnectionLifecycleCoordinator.configureResourceDisconnects(
                             disconnectRemoteFiles: remoteFileBrowserStore.disconnect,
                             disconnectStats: statsRegistry.disconnect,
-                            disconnectFileTabs: remoteFileTabManager.disconnect
+                            disconnectFileTabs: remoteFileTabManager.disconnect,
+                            disconnectTerminals: { serverId in
+                                await ConnectionSessionManager.shared.disconnectServerAndWait(serverId)
+                                guard !Task.isCancelled else { return }
+                                await TerminalTabManager.shared.disconnectServerAndWait(serverId)
+                            }
                         )
                         AppLanguage.applySelection(appLanguage)
                         AppLifecycleCoordinator.shared.handleAppLanguageChange(appLanguage)

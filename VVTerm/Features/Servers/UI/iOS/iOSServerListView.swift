@@ -471,8 +471,7 @@ struct iOSServerListView: View {
 
     private func disconnectActiveConnection(_ connection: ActiveConnection) {
         disconnectCoordinator.requestServerDisconnect(
-            serverId: connection.id,
-            disconnectTerminals: sessionManager.disconnectServerAndWait
+            serverId: connection.id
         )
     }
 

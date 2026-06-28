@@ -687,7 +687,6 @@ struct iOSTerminalView: View {
         }
         disconnectCoordinator.requestServerDisconnect(
             serverId: serverId,
-            disconnectTerminals: sessionManager.disconnectServerAndWait,
             onCompleted: {
                 onBack()
             }

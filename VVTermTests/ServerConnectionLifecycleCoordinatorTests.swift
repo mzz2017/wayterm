@@ -171,7 +171,7 @@ struct ServerConnectionLifecycleCoordinatorTests {
     }
 
     @Test
-    func serverDisconnectRequestUsesConfiguredResourceTeardownWhenCallerOnlySendsTerminalIntent() async {
+    func serverDisconnectRequestUsesConfiguredTeardownWhenCallerOnlySendsServerIntent() async {
         let serverId = UUID()
         let recorder = ServerDisconnectRecorder()
         let remoteGate = ServerDisconnectGate()
@@ -193,23 +193,20 @@ struct ServerConnectionLifecycleCoordinatorTests {
             disconnectFileTabs: { requestedServerId in
                 #expect(requestedServerId == serverId)
                 recorder.record("file-tabs")
-            }
-        )
-
-        // Given UI only sends a server disconnect intent and the terminal owner action.
-        let requestID = coordinator.requestServerDisconnect(
-            serverId: serverId,
+            },
             disconnectTerminals: { requestedServerId in
                 #expect(requestedServerId == serverId)
                 recorder.record("terminal")
-            },
-            onCompleted: {
-                recorder.record("complete")
             }
         )
+
+        // Given UI only sends a server disconnect intent.
+        let requestID = coordinator.requestServerDisconnect(serverId: serverId, onCompleted: {
+            recorder.record("complete")
+        })
         await recorder.waitForCount(1)
 
-        // Then configured resource teardown is owned and awaited by the coordinator.
+        // Then configured resource and terminal teardown are owned and awaited by the coordinator.
         #expect(recorder.events == ["remote-start"])
         #expect(coordinator.pendingDisconnectRequestIDs == [requestID])
 
@@ -218,7 +215,7 @@ struct ServerConnectionLifecycleCoordinatorTests {
 
         #expect(
             recorder.events == ["remote-start", "remote-end", "stats", "file-tabs", "terminal", "complete"],
-            "Server disconnect should use configured resource teardown before terminal cleanup when UI sends only intent."
+            "Server disconnect should use configured resource and terminal teardown when UI sends only intent."
         )
         #expect(coordinator.pendingDisconnectRequestIDs.isEmpty)
     }
