@@ -16,11 +16,30 @@ final class ServerConnectionLifecycleCoordinator {
         var onCompleted: [@MainActor () -> Void]
     }
 
+    private struct ResourceDisconnects {
+        var disconnectRemoteFiles: RemoteFilesDisconnectAction = { _ in Task {} }
+        var disconnectStats: StatsDisconnectAction = { _ in }
+        var disconnectFileTabs: FileTabsDisconnectAction?
+    }
+
     private var disconnectRequests: [UUID: DisconnectRequest] = [:]
     private var disconnectRequestByServer: [UUID: UUID] = [:]
+    private var resourceDisconnects = ResourceDisconnects()
 
     var pendingDisconnectRequestIDs: Set<UUID> {
         Set(disconnectRequests.keys)
+    }
+
+    func configureResourceDisconnects(
+        disconnectRemoteFiles: @escaping RemoteFilesDisconnectAction,
+        disconnectStats: @escaping StatsDisconnectAction = { _ in },
+        disconnectFileTabs: FileTabsDisconnectAction? = nil
+    ) {
+        resourceDisconnects = ResourceDisconnects(
+            disconnectRemoteFiles: disconnectRemoteFiles,
+            disconnectStats: disconnectStats,
+            disconnectFileTabs: disconnectFileTabs
+        )
     }
 
     @discardableResult
@@ -74,8 +93,8 @@ final class ServerConnectionLifecycleCoordinator {
 
     func disconnectServerBeforeDeletion(
         server: Server,
-        disconnectRemoteFiles: @escaping RemoteFilesDisconnectAction = { _ in Task {} },
-        disconnectStats: @escaping StatsDisconnectAction = { _ in },
+        disconnectRemoteFiles: RemoteFilesDisconnectAction? = nil,
+        disconnectStats: StatsDisconnectAction? = nil,
         disconnectFileTabs: FileTabsDisconnectAction? = nil,
         disconnectConnectionSessions: @escaping DeletionTerminalDisconnectAction = { serverId in
             await ConnectionSessionManager.shared.disconnectServerAndWait(serverId)
@@ -84,11 +103,12 @@ final class ServerConnectionLifecycleCoordinator {
             await TerminalTabManager.shared.disconnectServerAndWait(serverId)
         }
     ) async {
+        let resourceDisconnects = self.resourceDisconnects
         let requestID = requestServerDisconnect(
             serverId: server.id,
-            disconnectRemoteFiles: disconnectRemoteFiles,
-            disconnectStats: disconnectStats,
-            disconnectFileTabs: disconnectFileTabs,
+            disconnectRemoteFiles: disconnectRemoteFiles ?? resourceDisconnects.disconnectRemoteFiles,
+            disconnectStats: disconnectStats ?? resourceDisconnects.disconnectStats,
+            disconnectFileTabs: disconnectFileTabs ?? resourceDisconnects.disconnectFileTabs,
             disconnectTerminals: { serverId in
                 await disconnectConnectionSessions(serverId)
                 guard !Task.isCancelled else { return }

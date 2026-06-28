@@ -141,6 +141,11 @@ struct VVTermApp: App {
                     .environment(\.locale, appLocale)
                     .environment(\.privacyModeEnabled, privacyModeEnabled)
                     .onAppear {
+                        serverConnectionLifecycleCoordinator.configureResourceDisconnects(
+                            disconnectRemoteFiles: remoteFileBrowserStore.disconnect,
+                            disconnectStats: statsRegistry.disconnect,
+                            disconnectFileTabs: remoteFileTabManager.disconnect
+                        )
                         AppLanguage.applySelection(appLanguage)
                         AppLifecycleCoordinator.shared.handleAppLanguageChange(appLanguage)
                     }

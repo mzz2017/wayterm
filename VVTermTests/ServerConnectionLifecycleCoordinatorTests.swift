@@ -279,6 +279,78 @@ struct ServerConnectionLifecycleCoordinatorTests {
         )
         #expect(coordinator.pendingDisconnectRequestIDs.isEmpty)
     }
+
+    @Test
+    func serverDeletionUsesConfiguredResourceTeardownWhenCallSiteOnlySendsIntent() async {
+        let workspaceId = UUID()
+        let server = Server(
+            id: UUID(),
+            workspaceId: workspaceId,
+            name: "Configured Delete Target",
+            host: "configured-delete.example.com",
+            username: "root"
+        )
+        let recorder = ServerDisconnectRecorder()
+        let remoteGate = ServerDisconnectGate()
+        let coordinator = ServerConnectionLifecycleCoordinator()
+
+        coordinator.configureResourceDisconnects(
+            disconnectRemoteFiles: { requestedServerId in
+                #expect(requestedServerId == server.id)
+                return Task { @MainActor in
+                    recorder.record("remote-start")
+                    await remoteGate.wait()
+                    recorder.record("remote-end")
+                }
+            },
+            disconnectStats: { requestedServerId in
+                #expect(requestedServerId == server.id)
+                recorder.record("stats")
+            },
+            disconnectFileTabs: { requestedServerId in
+                #expect(requestedServerId == server.id)
+                recorder.record("file-tabs")
+            }
+        )
+
+        let teardownTask = Task { @MainActor in
+            await coordinator.disconnectServerBeforeDeletion(
+                server: server,
+                disconnectConnectionSessions: { requestedServerId in
+                    #expect(requestedServerId == server.id)
+                    recorder.record("connection-sessions")
+                },
+                disconnectTerminalTabs: { requestedServerId in
+                    #expect(requestedServerId == server.id)
+                    recorder.record("terminal-tabs")
+                }
+            )
+            recorder.record("deletion-teardown-returned")
+        }
+        await recorder.waitForCount(1)
+
+        #expect(
+            recorder.events == ["remote-start"],
+            "Server deletion should await configured RemoteFiles cleanup before continuing."
+        )
+
+        await remoteGate.open()
+        await teardownTask.value
+
+        #expect(
+            recorder.events == [
+                "remote-start",
+                "remote-end",
+                "stats",
+                "file-tabs",
+                "connection-sessions",
+                "terminal-tabs",
+                "deletion-teardown-returned"
+            ],
+            "Server deletion should use the App/Application owner's configured resource teardown chain."
+        )
+        #expect(coordinator.pendingDisconnectRequestIDs.isEmpty)
+    }
 }
 
 @MainActor

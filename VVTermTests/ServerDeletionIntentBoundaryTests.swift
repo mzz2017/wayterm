@@ -87,6 +87,22 @@ struct ServerDeletionIntentBoundaryTests {
             "VVTermApp should configure ServerManager deletion teardown through the App/Application lifecycle owner."
         )
         #expect(
+            appSource.contains("serverConnectionLifecycleCoordinator.configureResourceDisconnects"),
+            "VVTermApp should configure live server-scoped resource teardown on the App/Application lifecycle owner."
+        )
+        #expect(
+            appSource.contains("disconnectRemoteFiles: remoteFileBrowserStore.disconnect"),
+            "Server deletion teardown should use the app-owned RemoteFiles browser store."
+        )
+        #expect(
+            appSource.contains("disconnectStats: statsRegistry.disconnect"),
+            "Server deletion teardown should use the app-owned Stats registry."
+        )
+        #expect(
+            appSource.contains("disconnectFileTabs: remoteFileTabManager.disconnect"),
+            "Server deletion teardown should use the app-owned RemoteFiles tab manager."
+        )
+        #expect(
             !appSource.contains("static func disconnectServerBeforeDeletion"),
             "VVTermApp should not own the server deletion teardown implementation."
         )
