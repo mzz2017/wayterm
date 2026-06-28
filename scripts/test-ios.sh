@@ -11,6 +11,7 @@ app_identifier="${IOS_TEST_APP_IDENTIFIER:-app.vivy.VivyTerm}"
 allow_device_fallback="${IOS_TEST_ALLOW_DEVICE_FALLBACK:-0}"
 lock_dir="${IOS_TEST_LOCK_DIR:-${TMPDIR:-/tmp}/vvterm-ios-test.lock}"
 lock_timeout="${IOS_TEST_LOCK_TIMEOUT:-600}"
+lock_owner_metadata_grace="${IOS_TEST_LOCK_OWNER_METADATA_GRACE:-10}"
 derived_data_path="${IOS_TEST_DERIVED_DATA_PATH:-}"
 cloned_source_packages_path="${IOS_TEST_CLONED_SOURCE_PACKAGES_DIR:-${TMPDIR:-/tmp}/vvterm-ios-source-packages}"
 keep_derived_data="${IOS_TEST_KEEP_DERIVED_DATA:-0}"
@@ -21,6 +22,7 @@ created_derived_data=0
 log_file=""
 tail_pid=""
 watchdog_pid=""
+xcode_pid=""
 
 cleanup() {
     if [[ -n "$tail_pid" ]]; then
@@ -29,6 +31,9 @@ cleanup() {
     if [[ -n "$watchdog_pid" ]]; then
         kill "$watchdog_pid" >/dev/null 2>&1 || true
     fi
+    if [[ -n "$xcode_pid" ]]; then
+        kill "$xcode_pid" >/dev/null 2>&1 || true
+    fi
     if [[ -n "$log_file" ]]; then
         rm -f "$log_file"
     fi
@@ -36,42 +41,70 @@ cleanup() {
         rm -rf "$derived_data_path"
     fi
     if [[ "$lock_acquired" -eq 1 ]]; then
-        rm -rf "$lock_dir"
+        if [[ "$(cat "$lock_dir/pid" 2>/dev/null || true)" == "$$" ]]; then
+            rm -rf "$lock_dir"
+        fi
     fi
 }
 
 trap cleanup EXIT
 trap 'trap - EXIT INT TERM; cleanup; exit 130' INT
 trap 'trap - EXIT INT TERM; cleanup; exit 143' TERM
+trap 'trap - EXIT HUP; cleanup; exit 129' HUP
 
 acquire_global_lock() {
     local start
     start="$(date +%s)"
 
     while ! mkdir "$lock_dir" 2>/dev/null; do
+        local owner_pid=""
+        local owner_command=""
+        local now
+        now="$(date +%s)"
         if [[ -f "$lock_dir/pid" ]]; then
-            local owner_pid
             owner_pid="$(cat "$lock_dir/pid" 2>/dev/null || true)"
+        fi
+
+        if [[ -n "$owner_pid" ]]; then
             if [[ -n "$owner_pid" ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
                 echo "Removing stale iOS test lock from PID ${owner_pid}." >&2
                 rm -rf "$lock_dir"
                 continue
             fi
+            owner_command="$(ps -p "$owner_pid" -o command= 2>/dev/null || true)"
+        else
+            local lock_mtime
+            lock_mtime="$(stat -f %m "$lock_dir" 2>/dev/null || printf '%s\n' "$now")"
+            if (( now - lock_mtime >= lock_owner_metadata_grace )); then
+                echo "Removing stale iOS test lock without an owner PID: ${lock_dir}" >&2
+                rm -rf "$lock_dir"
+                continue
+            fi
         fi
 
-        local now
-        now="$(date +%s)"
         if (( now - start >= lock_timeout )); then
             echo "Timed out waiting for iOS test lock: ${lock_dir}" >&2
+            if [[ -n "$owner_pid" ]]; then
+                echo "Lock owner PID: ${owner_pid}" >&2
+                echo "Lock owner command: ${owner_command:-unknown}" >&2
+            fi
             exit 3
         fi
 
-        echo "Waiting for iOS test lock: ${lock_dir}" >&2
+        if [[ -n "$owner_pid" ]]; then
+            echo "Waiting for iOS test lock: ${lock_dir} (owner PID ${owner_pid}: ${owner_command:-unknown})" >&2
+        else
+            echo "Waiting for iOS test lock: ${lock_dir}" >&2
+        fi
         sleep 2
     done
 
     lock_acquired=1
     printf '%s\n' "$$" > "$lock_dir/pid"
+    printf '%s\n' "${PPID:-}" > "$lock_dir/ppid"
+    ps -p "$$" -o command= > "$lock_dir/command" 2>/dev/null || true
+    pwd > "$lock_dir/cwd" 2>/dev/null || true
+    date > "$lock_dir/started_at" 2>/dev/null || true
 }
 
 prepare_derived_data() {
@@ -169,7 +202,6 @@ is_preflight_failure() {
 run_xcodebuild_test() {
     local status_file
     local timeout_file
-    local xcode_pid
     local -a xcodebuild_args
     local last_output_at
     local now
@@ -228,6 +260,7 @@ run_xcodebuild_test() {
 
     wait "$xcode_pid"
     printf '%s\n' "$?" > "$status_file"
+    xcode_pid=""
 
     if [[ -n "$watchdog_pid" ]]; then
         kill "$watchdog_pid" >/dev/null 2>&1 || true
