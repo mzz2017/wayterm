@@ -187,12 +187,12 @@ struct TerminalThemeManagerLifecycleTests {
         let notificationCenter = NotificationCenter()
         let notificationName = Notification.Name("TerminalThemeManagerLifecycleTests.observer")
         let observerTokens = TerminalThemeNotificationObserverTokens(notificationCenter: notificationCenter)
-        var receivedCount = 0
+        let receipts = TerminalThemeNotificationReceiptCounter()
 
         // Given TerminalThemeManager owns NotificationCenter tokens through a
         // separate lifecycle owner that can be invalidated from deinit.
         let token = notificationCenter.addObserver(forName: notificationName, object: nil, queue: nil) { _ in
-            receivedCount += 1
+            receipts.record()
         }
         observerTokens.append(token)
 
@@ -204,7 +204,7 @@ struct TerminalThemeManagerLifecycleTests {
 
         // Then the callback is removed once and repeated teardown remains
         // idempotent.
-        #expect(receivedCount == 1)
+        #expect(receipts.count == 1)
     }
 
     @Test
@@ -377,6 +377,23 @@ private actor TerminalThemeLifecycleGate {
         let waiters = openWaiters
         openWaiters.removeAll()
         waiters.forEach { $0.resume() }
+    }
+}
+
+private final class TerminalThemeNotificationReceiptCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var receivedCount = 0
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return receivedCount
+    }
+
+    func record() {
+        lock.lock()
+        receivedCount += 1
+        lock.unlock()
     }
 }
 

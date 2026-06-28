@@ -59,6 +59,27 @@ struct TerminalRuntimePreferencesStoreTests {
         #expect(store.terminalVoiceButtonEnabled == false)
     }
 
+    @Test
+    func deinitInvalidatesPreferenceChangeObserver() {
+        let notificationCenter = NotificationCenter()
+        let persistence = CountingTerminalRuntimePreferencesPersistence()
+        var store: TerminalRuntimePreferencesStore? = TerminalRuntimePreferencesStore(
+            persistence: persistence,
+            notificationCenter: notificationCenter
+        )
+
+        // Given the runtime preference store registered for persistence change notifications.
+        #expect(persistence.loadCount == 1)
+        #expect(store?.terminalThemeName == "Aizen Dark")
+
+        // When the store is released and a late notification arrives.
+        store = nil
+        notificationCenter.post(name: UserDefaults.didChangeNotification, object: persistence.changeNotificationObject)
+
+        // Then the observer has been invalidated and no late reload is attempted.
+        #expect(persistence.loadCount == 1)
+    }
+
     private func makeStore() -> TerminalRuntimePreferencesStore {
         TerminalRuntimePreferencesStore(
             persistence: UserDefaultsTerminalRuntimePreferencesPersistence(defaults: defaults)
@@ -73,5 +94,22 @@ struct TerminalRuntimePreferencesStoreTests {
             UserDefaultsTerminalRuntimePreferencesPersistence.sshAutoReconnectKey,
             UserDefaultsTerminalRuntimePreferencesPersistence.terminalVoiceButtonEnabledKey,
         ].forEach(defaults.removeObject(forKey:))
+    }
+}
+
+@MainActor
+private final class CountingTerminalRuntimePreferencesPersistence: TerminalRuntimePreferencesPersisting {
+    private(set) var loadCount = 0
+    let changeNotificationObject: Any? = NSObject()
+
+    func loadTerminalRuntimePreferences() -> TerminalRuntimePreferenceSnapshot {
+        loadCount += 1
+        return TerminalRuntimePreferenceSnapshot(
+            terminalThemeName: "Aizen Dark",
+            terminalThemeNameLight: "Aizen Light",
+            usePerAppearanceTheme: true,
+            autoReconnectEnabled: true,
+            terminalVoiceButtonEnabled: true
+        )
     }
 }

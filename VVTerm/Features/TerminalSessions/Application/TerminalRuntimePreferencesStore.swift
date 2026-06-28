@@ -24,15 +24,14 @@ final class TerminalRuntimePreferencesStore: ObservableObject {
     @Published private(set) var terminalVoiceButtonEnabled: Bool
 
     private let persistence: any TerminalRuntimePreferencesPersisting
-    private let notificationCenter: NotificationCenter
-    private var changeObserver: NSObjectProtocol?
+    nonisolated private let observerTokens: NotificationObserverTokens
 
     init(
         persistence: any TerminalRuntimePreferencesPersisting,
         notificationCenter: NotificationCenter = .default
     ) {
         self.persistence = persistence
-        self.notificationCenter = notificationCenter
+        self.observerTokens = NotificationObserverTokens(notificationCenter: notificationCenter)
 
         let snapshot = persistence.loadTerminalRuntimePreferences()
         terminalThemeName = snapshot.terminalThemeName
@@ -41,7 +40,7 @@ final class TerminalRuntimePreferencesStore: ObservableObject {
         autoReconnectEnabled = snapshot.autoReconnectEnabled
         terminalVoiceButtonEnabled = snapshot.terminalVoiceButtonEnabled
 
-        changeObserver = notificationCenter.addObserver(
+        let token = notificationCenter.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: persistence.changeNotificationObject,
             queue: .main
@@ -50,12 +49,11 @@ final class TerminalRuntimePreferencesStore: ObservableObject {
                 self?.refreshFromPersistence()
             }
         }
+        observerTokens.append(token)
     }
 
     deinit {
-        if let changeObserver {
-            notificationCenter.removeObserver(changeObserver)
-        }
+        observerTokens.invalidateAll()
     }
 
     func refreshFromPersistence() {
