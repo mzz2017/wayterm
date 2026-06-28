@@ -12,6 +12,8 @@ BUILD_DIR_SSH="$PROJECT_ROOT/.build/ssh"
 
 OPENSSL_VERSION="3.2.0"
 LIBSSH2_VERSION="1.11.0"
+OPENSSL_SHA256="14c826f07c7e433706fb5c69fa9e25dab95684844b4c962a2cf1bf183eb4690e"
+LIBSSH2_SHA256="3736161e41e2693324deb38c26cfdc3efe6209d634ba4258db1cecff6a5ad461"
 MACOS_DEPLOYMENT_TARGET="13.3"
 IOS_DEPLOYMENT_TARGET="16.0"
 
@@ -47,6 +49,8 @@ Commands:
   check-ghostty
             Verify vendored Ghostty headers/libs expose the ABI VVTerm uses
   ssh       Build libssh2 + OpenSSL (macOS + iOS + simulator)
+  check-ssh-sources
+            Download and verify OpenSSL/libssh2 source archives
   clean     Remove .build + Vendor libraries
   help      Show this help message
 
@@ -77,6 +81,7 @@ check_deps_ghostty() {
 
 check_deps_ssh() {
     require_cmd curl
+    require_cmd shasum
     require_cmd tar
     require_cmd cmake
     require_cmd make
@@ -394,19 +399,52 @@ PY
 
 # ---------- libssh2 / OpenSSL ----------
 
+verify_sha256() {
+    local file="$1"
+    local expected="$2"
+    local actual
+
+    actual="$(shasum -a 256 "${file}" | awk '{print $1}')"
+    if [ "${actual}" != "${expected}" ]; then
+        log_error "Checksum mismatch for ${file}"
+        log_error "  expected: ${expected}"
+        log_error "  actual:   ${actual}"
+        exit 1
+    fi
+}
+
+download_archive() {
+    local url="$1"
+    local archive="$2"
+    local expected_sha256="$3"
+
+    if [ ! -f "${archive}" ]; then
+        curl -fL --retry 3 --output "${archive}.tmp" "${url}"
+        mv "${archive}.tmp" "${archive}"
+    fi
+
+    verify_sha256 "${archive}" "${expected_sha256}"
+}
+
 download_sources() {
     mkdir -p "${BUILD_DIR_SSH}"
     cd "${BUILD_DIR_SSH}"
 
+    log_info "Preparing OpenSSL ${OPENSSL_VERSION} source..."
+    download_archive \
+        "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz" \
+        "openssl-${OPENSSL_VERSION}.tar.gz" \
+        "${OPENSSL_SHA256}"
     if [ ! -d "openssl-${OPENSSL_VERSION}" ]; then
-        log_info "Downloading OpenSSL ${OPENSSL_VERSION}..."
-        curl -L -O "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz"
         tar xzf "openssl-${OPENSSL_VERSION}.tar.gz"
     fi
 
+    log_info "Preparing libssh2 ${LIBSSH2_VERSION} source..."
+    download_archive \
+        "https://www.libssh2.org/download/libssh2-${LIBSSH2_VERSION}.tar.gz" \
+        "libssh2-${LIBSSH2_VERSION}.tar.gz" \
+        "${LIBSSH2_SHA256}"
     if [ ! -d "libssh2-${LIBSSH2_VERSION}" ]; then
-        log_info "Downloading libssh2 ${LIBSSH2_VERSION}..."
-        curl -L -O "https://www.libssh2.org/download/libssh2-${LIBSSH2_VERSION}.tar.gz"
         tar xzf "libssh2-${LIBSSH2_VERSION}.tar.gz"
     fi
 }
@@ -731,6 +769,10 @@ case "${COMMAND}" in
     ssh)
         check_deps_ssh
         build_ssh
+        ;;
+    check-ssh-sources)
+        check_deps_ssh
+        download_sources
         ;;
     clean)
         clean
