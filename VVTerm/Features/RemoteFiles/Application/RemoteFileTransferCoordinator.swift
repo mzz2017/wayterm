@@ -347,7 +347,7 @@ extension RemoteFileBrowserStore {
     func performMutation(
         in tab: RemoteFileTab,
         server: Server,
-        operation: @escaping (any RemoteFileService) async throws -> Void
+        operation: @Sendable @escaping (any RemoteFileService) async throws -> Void
     ) async throws {
         guard tab.serverId == server.id else {
             throw RemoteFileBrowserError.disconnected

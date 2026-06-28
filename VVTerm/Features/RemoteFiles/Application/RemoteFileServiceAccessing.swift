@@ -2,9 +2,9 @@ import Foundation
 
 @MainActor
 protocol RemoteFileServiceAccessing {
-    func withService<T>(
+    func withService<T: Sendable>(
         for server: Server,
-        operation: @escaping (any RemoteFileService) async throws -> T
+        operation: @Sendable @escaping (any RemoteFileService) async throws -> T
     ) async throws -> T
 
     func disconnect(serverId: UUID) async
@@ -12,9 +12,9 @@ protocol RemoteFileServiceAccessing {
 }
 
 struct MissingRemoteFileServiceAccess: RemoteFileServiceAccessing {
-    func withService<T>(
+    func withService<T: Sendable>(
         for server: Server,
-        operation: @escaping (any RemoteFileService) async throws -> T
+        operation: @Sendable @escaping (any RemoteFileService) async throws -> T
     ) async throws -> T {
         throw RemoteFileServiceAccessDependencyError.missingRemoteFileServiceAccess
     }

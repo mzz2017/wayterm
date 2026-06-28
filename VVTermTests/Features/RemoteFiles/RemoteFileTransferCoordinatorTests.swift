@@ -56,14 +56,21 @@ struct RemoteFileTransferCoordinatorTests {
     }
 }
 
-private final class RecordingRemoteFileService: RemoteFileService {
-    enum Operation: Equatable {
+private final class RecordingRemoteFileService: RemoteFileService, @unchecked Sendable {
+    enum Operation: Equatable, Sendable {
         case deleteFile(String)
         case deleteDirectory(String)
     }
 
     let directoryContents: [String: [RemoteFileEntry]]
-    private(set) var operations: [Operation] = []
+    private let lock = NSLock()
+    private var operationStorage: [Operation] = []
+
+    var operations: [Operation] {
+        lock.lock()
+        defer { lock.unlock() }
+        return operationStorage
+    }
 
     init(directoryContents: [String: [RemoteFileEntry]]) {
         self.directoryContents = directoryContents
@@ -99,11 +106,11 @@ private final class RecordingRemoteFileService: RemoteFileService {
     func renameItem(at sourcePath: String, to destinationPath: String) async throws {}
 
     func deleteFile(at path: String) async throws {
-        operations.append(.deleteFile(RemoteFilePath.normalize(path)))
+        record(.deleteFile(RemoteFilePath.normalize(path)))
     }
 
     func deleteDirectory(at path: String) async throws {
-        operations.append(.deleteDirectory(RemoteFilePath.normalize(path)))
+        record(.deleteDirectory(RemoteFilePath.normalize(path)))
     }
 
     func setPermissions(at path: String, permissions: UInt32) async throws {}
@@ -114,5 +121,11 @@ private final class RecordingRemoteFileService: RemoteFileService {
 
     func fileSystemStatus(at path: String) async throws -> RemoteFileFilesystemStatus {
         throw RemoteFileBrowserError.failed("Unused in tests")
+    }
+
+    private func record(_ operation: Operation) {
+        lock.lock()
+        operationStorage.append(operation)
+        lock.unlock()
     }
 }

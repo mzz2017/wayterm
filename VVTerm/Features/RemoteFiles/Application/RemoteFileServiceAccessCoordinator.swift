@@ -72,9 +72,9 @@ final class RemoteFileServiceAccessCoordinator {
         return task
     }
 
-    func withRemoteFileService<T>(
+    func withRemoteFileService<T: Sendable>(
         for server: Server,
-        operation: @escaping (any RemoteFileService) async throws -> T
+        operation: @Sendable @escaping (any RemoteFileService) async throws -> T
     ) async throws -> T {
         await waitForPendingDisconnectAll()
         await waitForPendingDisconnect(serverId: server.id)

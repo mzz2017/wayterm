@@ -513,9 +513,9 @@ final class RemoteFileBrowserStore: ObservableObject {
         moveDestinationLoadCoordinator.cancelRequests(for: serverId)
     }
 
-    func withRemoteFileService<T>(
+    func withRemoteFileService<T: Sendable>(
         for server: Server,
-        operation: @escaping (any RemoteFileService) async throws -> T
+        operation: @Sendable @escaping (any RemoteFileService) async throws -> T
     ) async throws -> T {
         try await serviceAccessCoordinator.withRemoteFileService(for: server, operation: operation)
     }

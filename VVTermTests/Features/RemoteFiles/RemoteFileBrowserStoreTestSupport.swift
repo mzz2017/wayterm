@@ -123,9 +123,9 @@ final class NonSerializingRemoteFileServiceAccess: RemoteFileServiceAccessing {
         self.client = client
     }
 
-    func withService<T>(
+    func withService<T: Sendable>(
         for server: Server,
-        operation: @escaping (any RemoteFileService) async throws -> T
+        operation: @Sendable @escaping (any RemoteFileService) async throws -> T
     ) async throws -> T {
         try await operation(SFTPRemoteFileService(client: client))
     }

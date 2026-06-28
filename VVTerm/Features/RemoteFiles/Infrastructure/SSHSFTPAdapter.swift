@@ -46,9 +46,9 @@ final class SSHSFTPAdapter {
         )
     }
 
-    func withService<T>(
+    func withService<T: Sendable>(
         for server: Server,
-        operation: @escaping (any RemoteFileService) async throws -> T
+        operation: @Sendable @escaping (any RemoteFileService) async throws -> T
     ) async throws -> T {
         let registration = clientRegistration(for: server)
         let credentials = try credentialsProvider(server)
