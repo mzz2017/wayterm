@@ -9,6 +9,45 @@ import Testing
 
 struct RemoteFileTemporaryStorageTests {
     @Test
+    func temporaryStorageIsSendableForNonisolatedStoreHelpers() {
+        let rootDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let storage = RemoteFileTemporaryStorage(rootDirectory: rootDirectory)
+
+        // Given RemoteFileBrowserStore exposes temporary storage through
+        // nonisolated helper methods used by drag/download callbacks.
+        assertSendable(storage)
+    }
+
+    @Test
+    func concurrentDownloadExportPathsAreUniqueAndCreateDirectory() async throws {
+        let rootDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let storage = RemoteFileTemporaryStorage(rootDirectory: rootDirectory)
+        let entry = makeEntry(name: "notes.txt", path: "/tmp/notes.txt")
+        let recorder = URLRecorder()
+
+        // Given drag/download callbacks may ask temporary storage for export
+        // paths from nonisolated contexts.
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<32 {
+                group.addTask {
+                    if let url = try? storage.makeDownloadExportFileURL(for: entry) {
+                        await recorder.append(url)
+                    }
+                }
+            }
+        }
+        let urls = await recorder.urls
+
+        // Then the storage owner serializes directory creation and returns a
+        // distinct temporary URL for each export.
+        #expect(urls.count == 32)
+        #expect(Set(urls.map(\.lastPathComponent)).count == 32)
+        #expect(FileManager.default.fileExists(atPath: rootDirectory.appendingPathComponent("Downloads").path))
+    }
+
+    @Test
     func previewFilesArePlacedInPreviewSubdirectoryAndKeepExtension() throws {
         let rootDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -115,5 +154,17 @@ struct RemoteFileTemporaryStorageTests {
             permissions: nil,
             symlinkTarget: nil
         )
+    }
+
+    private func assertSendable<T: Sendable>(_ value: T) {
+        _ = value
+    }
+}
+
+private actor URLRecorder {
+    private(set) var urls: [URL] = []
+
+    func append(_ url: URL) {
+        urls.append(url)
     }
 }

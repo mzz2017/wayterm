@@ -1,6 +1,7 @@
 import Foundation
 
-nonisolated final class RemoteFileTemporaryStorage {
+nonisolated final class RemoteFileTemporaryStorage: @unchecked Sendable {
+    private let lock = NSLock()
     private let fileManager: FileManager
     private let rootDirectory: URL
 
@@ -32,17 +33,14 @@ nonisolated final class RemoteFileTemporaryStorage {
     }
 
     func makeDragExportDirectory(named folderName: String? = nil) throws -> URL {
-        let rootDirectory = rootDirectory.appendingPathComponent("DraggedItems", isDirectory: true)
-        try fileManager.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
-
-        let trimmedFolderName = folderName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let directoryName = trimmedFolderName.isEmpty ? UUID().uuidString : trimmedFolderName
-        let exportDirectory = rootDirectory.appendingPathComponent(directoryName, isDirectory: true)
-        try fileManager.createDirectory(at: exportDirectory, withIntermediateDirectories: true)
-        return exportDirectory
+        lock.lock()
+        defer { lock.unlock() }
+        return try makeDragExportDirectoryLocked(named: folderName)
     }
 
     func removeItem(at url: URL) {
+        lock.lock()
+        defer { lock.unlock() }
         try? fileManager.removeItem(at: url)
     }
 
@@ -52,6 +50,9 @@ nonisolated final class RemoteFileTemporaryStorage {
     }
 
     private func makeFileURL(in subdirectoryName: String, suggestedName: String) throws -> URL {
+        lock.lock()
+        defer { lock.unlock() }
+
         let directory = rootDirectory.appendingPathComponent(subdirectoryName, isDirectory: true)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
 
@@ -65,9 +66,23 @@ nonisolated final class RemoteFileTemporaryStorage {
     }
 
     private func makeNamedFileURL(in subdirectoryName: String, suggestedName: String) throws -> URL {
+        lock.lock()
+        defer { lock.unlock() }
+
         let directory = rootDirectory.appendingPathComponent(subdirectoryName, isDirectory: true)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
 
         return directory.appendingPathComponent("\(UUID().uuidString)-\(suggestedName)")
+    }
+
+    private func makeDragExportDirectoryLocked(named folderName: String?) throws -> URL {
+        let rootDirectory = rootDirectory.appendingPathComponent("DraggedItems", isDirectory: true)
+        try fileManager.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
+
+        let trimmedFolderName = folderName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let directoryName = trimmedFolderName.isEmpty ? UUID().uuidString : trimmedFolderName
+        let exportDirectory = rootDirectory.appendingPathComponent(directoryName, isDirectory: true)
+        try fileManager.createDirectory(at: exportDirectory, withIntermediateDirectories: true)
+        return exportDirectory
     }
 }
