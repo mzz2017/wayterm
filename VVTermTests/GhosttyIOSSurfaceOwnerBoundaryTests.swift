@@ -39,8 +39,10 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
         #expect(viewSource.contains("TerminalIOSSurfaceOwner(ghosttyApp: ghosttyApp, appWrapper: appWrapper)"))
         #expect(viewSource.contains("get { surfaceOwner.surface }"))
         #expect(viewSource.contains("set { surfaceOwner.surface = newValue }"))
-        #expect(surfaceRuntimeSource.contains("let app = surfaceOwner.ghosttyApp"))
-        #expect(surfaceRuntimeSource.contains("appWrapper: surfaceOwner.appWrapper"))
+        #expect(surfaceRuntimeSource.contains("surfaceOwner.createAndRegisterSurface("))
+        #expect(ownerSource.contains("func createAndRegisterSurface("))
+        #expect(ownerSource.contains("ghosttyApp: ghosttyApp"))
+        #expect(ownerSource.contains("appWrapper: appWrapper"))
 
         #expect(
             !viewSource.contains("var ghosttyApp: ghostty_app_t?"),
@@ -118,6 +120,14 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
             "GhosttyTerminalView+iOS.swift should route surface config updates through the surface owner."
         )
         #expect(
+            !surfaceRuntimeSource.contains("surfaceOwner.ghosttyApp"),
+            "GhosttyTerminalView+SurfaceRuntime+iOS.swift should not read the Ghostty app pointer directly."
+        )
+        #expect(
+            !surfaceRuntimeSource.contains("surfaceOwner.appWrapper"),
+            "GhosttyTerminalView+SurfaceRuntime+iOS.swift should not read the Ghostty app wrapper directly."
+        )
+        #expect(
             !surfaceRuntimeSource.contains("surfaceDisplayRuntime.forceResize(surface:"),
             "GhosttyTerminalView+SurfaceRuntime+iOS.swift should not pass raw surface handles into forced resizing."
         )
@@ -160,6 +170,14 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
         #expect(
             !surfaceRuntimeSource.contains("guard let surface else"),
             "GhosttyTerminalView+SurfaceRuntime+iOS.swift should not unwrap the surface for lifecycle state."
+        )
+        #expect(
+            !surfaceRuntimeSource.contains("Ghostty.Surface("),
+            "GhosttyTerminalView+SurfaceRuntime+iOS.swift should not create the owned surface wrapper directly."
+        )
+        #expect(
+            !surfaceRuntimeSource.contains("surfaceRegistration.register("),
+            "GhosttyTerminalView+SurfaceRuntime+iOS.swift should not register raw surfaces outside the surface owner."
         )
         #expect(
             !findSource.contains("surfaceLifecycleRuntime.setFocus("),

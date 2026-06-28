@@ -32,6 +32,38 @@ final class TerminalIOSSurfaceOwner {
         surface?.inAlternateScreen ?? false
     }
 
+    @discardableResult
+    func createAndRegisterSurface(
+        using renderingSetup: GhosttyRenderingSetup,
+        terminalView: GhosttyTerminalView,
+        worktreePath: String,
+        initialBounds: CGRect,
+        surfaceCallbackContext: GhosttySurfaceCallbackContext,
+        paneId: String?,
+        command: String?,
+        useCustomIO: Bool,
+        surfaceRegistration: GhosttySurfaceRegistration,
+        configureSurfaceLayers: () -> Void
+    ) -> Bool {
+        guard let cSurface = renderingSetup.setupSurface(
+            view: terminalView,
+            ghosttyApp: ghosttyApp,
+            worktreePath: worktreePath,
+            initialBounds: initialBounds,
+            surfaceCallbackContext: surfaceCallbackContext,
+            paneId: paneId,
+            command: command,
+            useCustomIO: useCustomIO
+        ) else {
+            return false
+        }
+
+        configureSurfaceLayers()
+        surface = Ghostty.Surface(cSurface: cSurface, callbackContext: surfaceCallbackContext)
+        surfaceRegistration.register(cSurface, appWrapper: appWrapper, terminalView: terminalView)
+        return true
+    }
+
     func cleanup(
         using lifecycleRuntime: TerminalIOSSurfaceLifecycleRuntime,
         surfaceRegistration: GhosttySurfaceRegistration,

@@ -7,28 +7,25 @@ extension GhosttyTerminalView {
 
     /// Create and configure the Ghostty surface.
     func setupSurface() {
-        let app = surfaceOwner.ghosttyApp
-
         let callbackContext = GhosttySurfaceCallbackContext(terminalView: self)
-        guard let cSurface = renderingSetup.setupSurface(
-            view: self,
-            ghosttyApp: app,
+        guard surfaceOwner.createAndRegisterSurface(
+            using: renderingSetup,
+            terminalView: self,
             worktreePath: worktreePath,
             initialBounds: bounds,
             surfaceCallbackContext: callbackContext,
             paneId: paneId,
             command: initialCommand,
-            useCustomIO: useCustomIO
+            useCustomIO: useCustomIO,
+            surfaceRegistration: surfaceRegistration,
+            configureSurfaceLayers: {
+                // Ghostty's iOS renderer adds IOSurface layers that need immediate sizing
+                // before frame callbacks can be accepted.
+                configureIOSurfaceLayers(size: bounds.size)
+            }
         ) else {
             return
         }
-
-        // Ghostty's iOS renderer adds IOSurface layers that need immediate sizing
-        // before frame callbacks can be accepted.
-        configureIOSurfaceLayers(size: bounds.size)
-
-        surface = Ghostty.Surface(cSurface: cSurface, callbackContext: callbackContext)
-        surfaceRegistration.register(cSurface, appWrapper: surfaceOwner.appWrapper, terminalView: self)
 
         Self.logger.info("Ghostty surface created, sublayers: \(self.layer.sublayers?.count ?? 0)")
     }

@@ -25,6 +25,9 @@ struct GhosttySurfaceRegistrationBoundaryTests {
         let iOSSurfaceSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/GhosttyTerminalView+SurfaceRuntime+iOS.swift")
         )
+        let iOSSurfaceOwnerSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/TerminalIOSSurfaceOwner.swift")
+        )
         let registrationSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/Surface/GhosttySurfaceRegistration.swift")
         )
@@ -35,7 +38,7 @@ struct GhosttySurfaceRegistrationBoundaryTests {
         // Given both platform terminal views create Ghostty surfaces.
         #expect(iOSSource.contains("let surfaceRegistration = GhosttySurfaceRegistration()"))
         #expect(macOSSource.contains("private let surfaceRegistration = GhosttySurfaceRegistration()"))
-        #expect(iOSSurfaceSource.contains("surfaceRegistration.register(cSurface"))
+        #expect(iOSSurfaceOwnerSource.contains("surfaceRegistration.register(cSurface"))
         #expect(macOSSource.contains("surfaceRegistration.register(cSurface"))
         #expect(iOSSurfaceSource.contains("surfaceRegistration: surfaceRegistration"))
         #expect(iOSLifecycleSource.contains("surfaceRegistration.unregister()"))
@@ -51,6 +54,10 @@ struct GhosttySurfaceRegistrationBoundaryTests {
         #expect(!macOSSource.contains("registerSurface"))
         #expect(!iOSSource.contains("unregisterSurface"))
         #expect(!macOSSource.contains("unregisterSurface"))
+        #expect(
+            !iOSSurfaceSource.contains("surfaceRegistration.register(cSurface"),
+            "iOS surface runtime should pass the registration lease to the surface owner instead of registering raw surfaces directly."
+        )
 
         #expect(registrationSource.contains("final class GhosttySurfaceRegistration"))
         #expect(registrationSource.contains("func register(_ surface: ghostty_surface_t"))
