@@ -14,6 +14,7 @@ final class TerminalIOSSurfaceOwner {
     let ghosttyApp: ghostty_app_t
     weak var appWrapper: Ghostty.App?
     var surface: Ghostty.Surface?
+    private let surfaceInputRuntime = TerminalIOSSurfaceInputRuntime()
 
     init(ghosttyApp: ghostty_app_t, appWrapper: Ghostty.App?) {
         self.ghosttyApp = ghosttyApp
@@ -198,21 +199,19 @@ final class TerminalIOSSurfaceOwner {
     }
 
     func sendText(_ text: String) {
-        surface?.sendText(text)
+        surfaceInputRuntime.sendText(text, surface: surface)
     }
 
     @discardableResult
     func perform(action: String) -> Bool {
-        surface?.perform(action: action) ?? false
+        surfaceInputRuntime.perform(action: action, surface: surface)
     }
 
     func sendKeyPress(
         _ key: Ghostty.Input.Key,
         using inputRuntime: TerminalIOSInputRuntime
     ) {
-        inputRuntime.sendKeyPress(key) { [weak self] event in
-            self?.sendKeyEvent(event)
-        }
+        surfaceInputRuntime.sendKeyPress(key, surface: surface, using: inputRuntime)
     }
 
     func sendModifiedKey(
@@ -222,30 +221,30 @@ final class TerminalIOSSurfaceOwner {
         unshiftedCodepoint: UInt32,
         using inputRuntime: TerminalIOSInputRuntime
     ) {
-        inputRuntime.sendModifiedKey(
+        surfaceInputRuntime.sendModifiedKey(
             key,
             mods: mods,
             text: text,
-            unshiftedCodepoint: unshiftedCodepoint
-        ) { [weak self] event in
-            self?.sendKeyEvent(event)
-        }
+            unshiftedCodepoint: unshiftedCodepoint,
+            surface: surface,
+            using: inputRuntime
+        )
     }
 
     func sendKeyEvent(_ event: Ghostty.Input.KeyEvent) {
-        surface?.sendKeyEvent(event)
+        surfaceInputRuntime.sendKeyEvent(event, surface: surface)
     }
 
     func sendMousePosition(_ position: CGPoint) {
-        surface?.sendMousePos(.init(x: position.x, y: position.y, mods: []))
+        surfaceInputRuntime.sendMousePosition(position, surface: surface)
     }
 
     func sendMouseButton(_ event: Ghostty.Input.MouseButtonEvent) {
-        surface?.sendMouseButton(event)
+        surfaceInputRuntime.sendMouseButton(event, surface: surface)
     }
 
     func sendMouseScroll(_ event: Ghostty.Input.MouseScrollEvent) {
-        surface?.sendMouseScroll(event)
+        surfaceInputRuntime.sendMouseScroll(event, surface: surface)
     }
 
     func sendDirectHardwareKeyEvent(
@@ -253,8 +252,7 @@ final class TerminalIOSSurfaceOwner {
         action: ghostty_input_action_e,
         using inputRuntime: TerminalIOSInputRuntime
     ) -> Bool {
-        guard let cSurface = surface?.unsafeCValue else { return false }
-        return inputRuntime.sendDirectHardwareKeyEvent(key, action: action, surface: cSurface)
+        surfaceInputRuntime.sendDirectHardwareKeyEvent(key, action: action, surface: surface, using: inputRuntime)
     }
 
     func syncVisiblePreedit(
@@ -262,16 +260,16 @@ final class TerminalIOSSurfaceOwner {
         inputModePrimaryLanguage: String?,
         using inputRuntime: TerminalIOSInputRuntime
     ) -> Bool {
-        inputRuntime.syncVisiblePreedit(
+        surfaceInputRuntime.syncVisiblePreedit(
             text,
             inputModePrimaryLanguage: inputModePrimaryLanguage,
-            surface: surface?.unsafeCValue
+            surface: surface,
+            using: inputRuntime
         )
     }
 
     func imePoint(using inputRuntime: TerminalIOSInputRuntime) -> CGRect? {
-        guard let cSurface = surface?.unsafeCValue else { return nil }
-        return inputRuntime.imePoint(surface: cSurface)
+        surfaceInputRuntime.imePoint(surface: surface, using: inputRuntime)
     }
 }
 #endif

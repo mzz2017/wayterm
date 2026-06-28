@@ -3,11 +3,12 @@ import Testing
 
 // Test Context:
 // These source-boundary tests protect iOS Ghostty input ownership. The UIKit
-// terminal view may route UI events, but raw surface access, direct hardware key
-// FFI, visible IME preedit state, IME proxy focus/resign state, toolbar key
-// routing, and committed-text routing policy should be owned by
-// TerminalIOSSurfaceOwner and TerminalIOSInputRuntime. Update these tests only
-// if those responsibilities intentionally move to another non-view owner.
+// terminal view may route UI events, but raw surface input access should be
+// executed by TerminalIOSSurfaceInputRuntime behind TerminalIOSSurfaceOwner,
+// while direct hardware key FFI, visible IME preedit state, IME proxy
+// focus/resign state, toolbar key routing, and committed-text routing policy
+// should stay in TerminalIOSInputRuntime. Update these tests only if those
+// responsibilities intentionally move to another non-view owner.
 
 @Suite(.serialized)
 struct GhosttyIOSInputRuntimeBoundaryTests {
@@ -37,6 +38,9 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         )
         let ownerSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/TerminalIOSSurfaceOwner.swift")
+        )
+        let surfaceInputSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/TerminalIOSSurfaceInputRuntime.swift")
         )
 
         // Given the iOS terminal view routes hardware keys and IME preedit.
@@ -134,12 +138,42 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(runtimeSource.contains("ghostty_surface_preedit"))
         #expect(runtimeSource.contains("ghostty_surface_ime_point"))
         #expect(runtimeSource.contains("private func ghosttyInputAction"))
+        #expect(surfaceInputSource.contains("final class TerminalIOSSurfaceInputRuntime"))
+        #expect(surfaceInputSource.contains("func sendText("))
+        #expect(surfaceInputSource.contains("func perform(action:"))
+        #expect(surfaceInputSource.contains("func sendKeyPress("))
+        #expect(surfaceInputSource.contains("func sendModifiedKey("))
+        #expect(surfaceInputSource.contains("func sendKeyEvent("))
+        #expect(surfaceInputSource.contains("func sendMousePosition("))
+        #expect(surfaceInputSource.contains("func sendMouseButton("))
+        #expect(surfaceInputSource.contains("func sendMouseScroll("))
+        #expect(surfaceInputSource.contains("func sendDirectHardwareKeyEvent("))
+        #expect(surfaceInputSource.contains("func syncVisiblePreedit("))
+        #expect(surfaceInputSource.contains("func imePoint("))
+        #expect(surfaceInputSource.contains("surface?.sendText"))
+        #expect(surfaceInputSource.contains("surface?.perform"))
+        #expect(surfaceInputSource.contains("surface?.sendKeyEvent"))
+        #expect(surfaceInputSource.contains("surface?.sendMousePos"))
+        #expect(surfaceInputSource.contains("surface?.sendMouseButton"))
+        #expect(surfaceInputSource.contains("surface?.sendMouseScroll"))
         #expect(ownerSource.contains("func sendDirectHardwareKeyEvent("))
         #expect(ownerSource.contains("func sendKeyPress("))
         #expect(ownerSource.contains("func sendKeyEvent("))
         #expect(ownerSource.contains("func sendModifiedKey("))
         #expect(ownerSource.contains("func syncVisiblePreedit("))
         #expect(ownerSource.contains("func imePoint(using inputRuntime: TerminalIOSInputRuntime)"))
+        #expect(ownerSource.contains("private let surfaceInputRuntime = TerminalIOSSurfaceInputRuntime()"))
+        #expect(ownerSource.contains("surfaceInputRuntime.sendText"))
+        #expect(ownerSource.contains("surfaceInputRuntime.perform"))
+        #expect(ownerSource.contains("surfaceInputRuntime.sendKeyPress"))
+        #expect(ownerSource.contains("surfaceInputRuntime.sendModifiedKey"))
+        #expect(ownerSource.contains("surfaceInputRuntime.sendKeyEvent"))
+        #expect(ownerSource.contains("surfaceInputRuntime.sendMousePosition"))
+        #expect(ownerSource.contains("surfaceInputRuntime.sendMouseButton"))
+        #expect(ownerSource.contains("surfaceInputRuntime.sendMouseScroll"))
+        #expect(ownerSource.contains("surfaceInputRuntime.sendDirectHardwareKeyEvent"))
+        #expect(ownerSource.contains("surfaceInputRuntime.syncVisiblePreedit"))
+        #expect(ownerSource.contains("surfaceInputRuntime.imePoint"))
         #expect(
             !ownerSource.contains("action: .press"),
             "TerminalIOSSurfaceOwner should delegate key-event sequencing to TerminalIOSInputRuntime."

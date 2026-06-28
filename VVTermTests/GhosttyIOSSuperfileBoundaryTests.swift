@@ -322,6 +322,9 @@ struct GhosttyIOSSuperfileBoundaryTests {
         let surfaceSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/GhosttyTerminalView+SurfaceRuntime+iOS.swift")
         )
+        let surfaceOwnerSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/TerminalIOSSurfaceOwner.swift")
+        )
 
         #expect(
             !mainSource.contains("func setupSurface"),
@@ -343,8 +346,9 @@ struct GhosttyIOSSuperfileBoundaryTests {
         #expect(surfaceSource.contains("func setupSurface"))
         #expect(surfaceSource.contains("surfaceOwner.cleanup"))
         #expect(surfaceSource.contains("using: surfaceLifecycleRuntime"))
-        #expect(surfaceSource.contains("surfaceRegistration.register"))
-        #expect(surfaceSource.contains("renderingSetup.setupSurface"))
+        #expect(surfaceSource.contains("surfaceOwner.createAndRegisterSurface"))
+        #expect(surfaceOwnerSource.contains("surfaceRegistration.register"))
+        #expect(surfaceOwnerSource.contains("renderingSetup.setupSurface"))
     }
 
     @Test
