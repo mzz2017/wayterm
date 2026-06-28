@@ -159,20 +159,19 @@ extension SSHSession {
         logger.info("Shell started (\(cols)x\(rows))")
 
         let shellId = UUID()
-        let stream = AsyncStream<Data> { continuation in
-            let state = SSHSessionShellChannelState(id: shellId, channel: channel, continuation: continuation)
-            self.shellChannels[shellId] = state
+        let streamSource = AsyncStream<Data>.makeStream(of: Data.self)
+        let state = SSHSessionShellChannelState(id: shellId, channel: channel, continuation: streamSource.continuation)
+        shellChannels[shellId] = state
 
-            continuation.onTermination = { _ in
-                self.trackChannelCleanupTask {
-                    await self.closeShell(shellId)
-                }
+        streamSource.continuation.onTermination = { _ in
+            self.trackChannelCleanupTask {
+                await self.closeShell(shellId)
             }
         }
 
         startIOLoop()
 
-        return ShellHandle(id: shellId, stream: stream)
+        return ShellHandle(id: shellId, stream: streamSource.stream)
     }
 
     func startIOLoop() {

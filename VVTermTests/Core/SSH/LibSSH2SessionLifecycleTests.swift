@@ -394,6 +394,36 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         await session.closeShell(shell.id)
     }
 
+    func testDisconnectWaitsForShellStreamTerminationCleanup() async throws {
+        // Given a connected shell stream whose consumer is canceled before the
+        // session is disconnected.
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x22)
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+        try await session.connect()
+        let shell = try await session.startShell(cols: 80, rows: 24)
+        let consumer = Task {
+            for await _ in shell.stream {}
+        }
+
+        // When stream termination races with session disconnect.
+        consumer.cancel()
+        await session.disconnect()
+        await consumer.value
+
+        // Then disconnect waits for the termination-triggered close/free task
+        // before final session teardown can be reported complete.
+        XCTAssertEqual(
+            driver.channelEvents().filter { $0 == .close || $0 == .free },
+            [.close, .free],
+            "Disconnect must await stream termination cleanup before completing"
+        )
+    }
+
     func testExecuteRetriesStartupEAGAINReadsStdoutAndClosesChannel() async throws {
         // Given an exec request whose process startup would block once, then
         // produces stdout and reaches EOF.
