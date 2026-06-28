@@ -26,20 +26,42 @@ struct SSHClientSupportOwnerTests {
     }
 
     @Test
-    func moshTeardownRegistryTracksTaskUntilOperationCompletes() async {
-        let registry = SSHMoshTeardownTaskRegistry()
+    func channelCleanupRegistryPublishesTaskBeforeTrackReturns() async {
+        let registry = SSHChannelCleanupTaskRegistry()
         let gate = TeardownGate()
 
-        // When a teardown operation is tracked.
+        // When a channel cleanup operation is tracked from a synchronous
+        // stream-termination callback.
         registry.track {
             await gate.wait()
         }
 
-        // Then a task is visible while the operation is still suspended.
-        for _ in 0..<20 where registry.tasks().isEmpty {
+        // Then the pending task is visible immediately, so a concurrent
+        // disconnect wait cannot incorrectly observe no registered cleanup.
+        #expect(registry.tasks().count == 1, "Channel cleanup task should be published before track returns.")
+
+        // And completing the operation removes it from the registry.
+        await gate.open()
+        for _ in 0..<20 where !registry.tasks().isEmpty {
             try? await Task.sleep(for: .milliseconds(10))
         }
-        #expect(registry.tasks().count == 1, "Registry should expose pending teardown tasks.")
+        #expect(registry.tasks().isEmpty, "Registry should remove completed cleanup tasks.")
+    }
+
+    @Test
+    func moshTeardownRegistryPublishesTaskBeforeTrackReturns() async {
+        let registry = SSHMoshTeardownTaskRegistry()
+        let gate = TeardownGate()
+
+        // When a mosh teardown operation is tracked from a synchronous
+        // stream-termination callback.
+        registry.track {
+            await gate.wait()
+        }
+
+        // Then the pending task is visible immediately, so disconnect cannot
+        // incorrectly observe no registered teardown.
+        #expect(registry.tasks().count == 1, "Mosh teardown task should be published before track returns.")
 
         // And completing the operation removes it from the registry.
         await gate.open()
@@ -47,6 +69,34 @@ struct SSHClientSupportOwnerTests {
             try? await Task.sleep(for: .milliseconds(10))
         }
         #expect(registry.tasks().isEmpty, "Registry should remove completed teardown tasks.")
+    }
+
+    @Test
+    func teardownRegistriesPublishTaskBeforeReleasingTrackLock() throws {
+        for path in [
+            "VVTerm/Core/SSH/SSHChannelCleanupTaskRegistry.swift",
+            "VVTerm/Core/SSH/SSHMoshTeardownTaskRegistry.swift"
+        ] {
+            let source = try source(at: sourceRoot().appendingPathComponent(path))
+            let trackSource = try slice(
+                startingAt: "    @discardableResult",
+                endingBefore: "\n\n    func tasks()",
+                in: source
+            )
+            guard let assignment = trackSource.range(of: "record.task = task"),
+                  let unlock = trackSource.range(of: "lock.unlock()") else {
+                Issue.record("Expected \(path) track implementation to publish the task before unlocking")
+                continue
+            }
+
+            // Then task publication stays inside the same critical section as
+            // record insertion. This guards the wait-before-publish race that
+            // can otherwise let disconnect finish before cleanup/teardown.
+            #expect(
+                assignment.lowerBound < unlock.lowerBound,
+                "\(path) should assign record.task before releasing the track lock."
+            )
+        }
     }
 }
 
@@ -67,4 +117,33 @@ private actor TeardownGate {
         continuations.removeAll()
         pending.forEach { $0.resume() }
     }
+}
+
+private func source(at url: URL) throws -> String {
+    try String(contentsOf: url, encoding: .utf8)
+}
+
+private func sourceRoot() throws -> URL {
+    var url = URL(fileURLWithPath: #filePath)
+    while url.lastPathComponent != "VVTermTests" {
+        let next = url.deletingLastPathComponent()
+        if next.path == url.path {
+            throw SourceRootError.notFound
+        }
+        url = next
+    }
+    return url.deletingLastPathComponent()
+}
+
+private func slice(startingAt marker: String, endingBefore endMarker: String, in source: String) throws -> String {
+    guard let start = source.range(of: marker),
+          let end = source[start.upperBound...].range(of: endMarker) else {
+        throw SourceRootError.markerNotFound(marker)
+    }
+    return String(source[start.lowerBound..<end.lowerBound])
+}
+
+private enum SourceRootError: Error {
+    case notFound
+    case markerNotFound(String)
 }

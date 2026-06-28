@@ -25,17 +25,13 @@ nonisolated final class SSHChannelCleanupTaskRegistry: @unchecked Sendable {
 
         lock.lock()
         records[requestID] = record
-        lock.unlock()
-
+        // Keep task publication atomic with record insertion so waiters cannot
+        // observe an empty task list while cleanup has already been registered.
         let task = Task.detached { [weak self] in
             await operation()
             self?.remove(requestID)
         }
-
-        lock.lock()
-        if records[requestID] === record {
-            record.task = task
-        }
+        record.task = task
         lock.unlock()
 
         return requestID
