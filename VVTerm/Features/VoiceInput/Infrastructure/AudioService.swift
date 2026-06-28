@@ -102,7 +102,7 @@ class AudioService: NSObject, ObservableObject {
 
         // Reset state
         speechRecognitionService.resetTranscriptions()
-        audioCaptureService.cancel()
+        await audioCaptureService.cancel()
 
         // Start services
         switch effectiveProvider {
@@ -118,7 +118,7 @@ class AudioService: NSObject, ObservableObject {
     func stopRecording() async -> String {
         isRecording = false
 
-        let samples = audioCaptureService.stop()
+        let samples = await audioCaptureService.stop()
 
         switch activeProvider {
         case .system:
@@ -154,10 +154,10 @@ class AudioService: NSObject, ObservableObject {
         }
     }
 
-    func cancelRecording() {
+    func cancelRecording() async {
         isRecording = false
 
-        audioCaptureService.cancel()
+        await audioCaptureService.cancel()
         speechRecognitionService.cancelRecognition()
         speechRecognitionService.resetTranscriptions()
         transcribedText = ""

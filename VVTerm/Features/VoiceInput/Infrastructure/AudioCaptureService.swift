@@ -24,6 +24,7 @@ final class AudioCaptureService: ObservableObject {
 
     private let targetSampleRate: Double = 16_000
     private let audioSession: any AudioCaptureSessionManaging
+    nonisolated private let bufferUpdateTasks = AudioBufferUpdateTaskRegistry()
     private var audioEngine: AVAudioEngine?
     private var converter: AVAudioConverter?
     private var recordedSamples: [Float] = []
@@ -67,14 +68,19 @@ final class AudioCaptureService: ObservableObject {
         isRecording = true
     }
 
-    func stop() -> [Float] {
-        guard isRecording else { return [] }
+    func stop() async -> [Float] {
+        guard isRecording else {
+            await waitForBufferUpdateTasks()
+            return []
+        }
         isRecording = false
 
         if let engine = audioEngine {
             engine.inputNode.removeTap(onBus: 0)
             engine.stop()
         }
+
+        await waitForBufferUpdateTasks()
 
         // Release the session so system services (e.g. keyboard dictation) regain the mic.
         do {
@@ -92,8 +98,8 @@ final class AudioCaptureService: ObservableObject {
         return samples
     }
 
-    func cancel() {
-        _ = stop()
+    func cancel() async {
+        _ = await stop()
         recordedSamples.removeAll(keepingCapacity: false)
         audioLevel = 0
         recordingDuration = 0
@@ -117,8 +123,8 @@ final class AudioCaptureService: ObservableObject {
         converter.convert(to: convertedBuffer, error: &error, withInputFrom: inputBlock)
 
         if error != nil {
-            Task { @MainActor in
-                self.audioLevel = 0
+            bufferUpdateTasks.track { [weak self] in
+                self?.audioLevel = 0
             }
             return
         }
@@ -127,9 +133,20 @@ final class AudioCaptureService: ObservableObject {
         let frameLength = Int(convertedBuffer.frameLength)
         let samples = Array(UnsafeBufferPointer(start: channelData[0], count: frameLength))
 
-        Task { @MainActor in
+        bufferUpdateTasks.track { [weak self] in
+            guard let self else { return }
             self.updateMetrics(with: samples)
             self.bufferHandler?(convertedBuffer)
+        }
+    }
+
+    private func waitForBufferUpdateTasks() async {
+        while true {
+            let tasks = bufferUpdateTasks.tasks()
+            guard !tasks.isEmpty else { return }
+            for task in tasks {
+                await task.value
+            }
         }
     }
 

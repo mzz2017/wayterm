@@ -255,7 +255,7 @@ private final class FakeTerminalVoiceAudioService: TerminalVoiceAudioServicing {
         return stopText
     }
 
-    func cancelRecording() {
+    func cancelRecording() async {
         cancelCallCount += 1
         isRecording = false
         transcribedText = ""

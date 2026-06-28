@@ -16,7 +16,7 @@ protocol TerminalVoiceAudioServicing: AnyObject {
 
     func startRecording() async throws
     func stopRecording() async -> String
-    func cancelRecording()
+    func cancelRecording() async
 }
 
 extension AudioService: TerminalVoiceAudioServicing {}
@@ -168,7 +168,7 @@ final class TerminalVoiceInputStore: ObservableObject {
         do {
             try await audioService.startRecording()
             guard !Task.isCancelled, activeTarget == target else {
-                audioService.cancelRecording()
+                await audioService.cancelRecording()
                 _ = finishRequest(requestID)
                 objectWillChange.send()
                 return
@@ -215,7 +215,7 @@ final class TerminalVoiceInputStore: ObservableObject {
         target: TerminalVoiceInputTarget,
         waitingFor canceledTasks: [Task<Void, Never>]
     ) async {
-        audioService.cancelRecording()
+        await audioService.cancelRecording()
         if activeTarget == target {
             activeTarget = nil
         }

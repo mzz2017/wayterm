@@ -50,6 +50,29 @@ struct AudioServiceDependencyBoundaryTests {
     }
 
     @Test
+    func audioBufferUpdateRegistryTracksMainActorUpdatesUntilCompletion() async {
+        let registry = AudioBufferUpdateTaskRegistry()
+        let gate = AudioBufferUpdateGate()
+
+        // When an audio tap callback queues a main-actor buffer update.
+        registry.track {
+            await gate.wait()
+        }
+
+        // Then the task is visible immediately, so AudioCaptureService.stop()
+        // can wait for already-queued sample updates before returning samples
+        // for transcription.
+        #expect(registry.tasks().count == 1, "Audio buffer update should be published before track returns.")
+
+        // And completing the update removes it from the registry.
+        await gate.open()
+        for _ in 0..<20 where !registry.tasks().isEmpty {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(registry.tasks().isEmpty, "Audio buffer update registry should remove completed tasks.")
+    }
+
+    @Test
     func audioRuntimeDoesNotReadGlobalVoiceSettingsOrProvidersDirectly() throws {
         let root = try sourceRoot()
         let voiceInput = root.appendingPathComponent("VVTerm/Features/VoiceInput")
@@ -149,6 +172,10 @@ struct AudioServiceDependencyBoundaryTests {
             "AudioCaptureService should preserve audio session deactivation failure diagnostics."
         )
         #expect(
+            audioCaptureService.contains("await waitForBufferUpdateTasks()"),
+            "AudioCaptureService stop/cancel should await queued buffer updates before returning samples."
+        )
+        #expect(
             liveDependencies.contains("audioCaptureSession = LiveAudioCaptureSession()")
                 && liveDependencies.contains("audioCaptureSession: audioCaptureSession"),
             "App live VoiceInput dependencies should provide the iOS audio session lifecycle service."
@@ -205,5 +232,24 @@ struct AudioServiceDependencyBoundaryTests {
 private final class FakeVoiceSampleTranscriber: VoiceSampleTranscribing {
     func transcribe(samples: [Float]) async throws -> String {
         ""
+    }
+}
+
+private actor AudioBufferUpdateGate {
+    private var isOpen = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func open() {
+        isOpen = true
+        let pending = continuations
+        continuations.removeAll()
+        pending.forEach { $0.resume() }
     }
 }
