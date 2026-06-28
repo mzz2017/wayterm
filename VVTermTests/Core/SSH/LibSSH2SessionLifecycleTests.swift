@@ -19,6 +19,54 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         try await super.tearDown()
     }
 
+    func testRuntimeInitializationStateRunsInitializerOnlyOnceAcrossConcurrentCallers() throws {
+        let state = LibSSH2RuntimeInitializationState()
+        let recorder = LibSSH2RuntimeInitializationRecorder()
+
+        // Given libssh2 process initialization is a global FFI lifecycle step
+        // that may be requested by multiple sessions at the same time.
+        DispatchQueue.concurrentPerform(iterations: 32) { _ in
+            try? state.ensureInitialized {
+                recorder.recordInitialization()
+            }
+        }
+
+        // Then the runtime owner serializes callers and invokes libssh2_init
+        // once, keeping the process-global C runtime alive for the app lifetime.
+        XCTAssertEqual(
+            recorder.initializationCount,
+            1,
+            "libssh2 runtime initialization must run exactly once across concurrent session starts"
+        )
+    }
+
+    func testRuntimeInitializationStateRetriesAfterInitializationFailure() throws {
+        let state = LibSSH2RuntimeInitializationState()
+        let recorder = LibSSH2RuntimeInitializationRecorder()
+
+        // Given the first libssh2_init attempt fails before the C runtime is
+        // ready for use.
+        XCTAssertThrowsError(
+            try state.ensureInitialized {
+                recorder.recordInitialization()
+                throw SSHError.unknown("libssh2_init failed: -1")
+            }
+        )
+
+        // When a later session attempts initialization again.
+        try state.ensureInitialized {
+            recorder.recordInitialization()
+        }
+
+        // Then failure is not cached as success; the owner retries once and
+        // records the successful process-global initialization.
+        XCTAssertEqual(
+            recorder.initializationCount,
+            2,
+            "Failed libssh2 initialization must not mark the runtime as initialized"
+        )
+    }
+
     func testSessionInitFailureClosesConfiguredSocketExactlyOnce() async {
         // Given a driver that can open a socket but cannot create a libssh2 session.
         let driver = RecordingLibSSH2SessionDriver(sessionInitResult: nil)
@@ -1099,6 +1147,23 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
             throw SourceSliceError.notFound
         }
         return String(source[start.lowerBound..<end.lowerBound])
+    }
+}
+
+private final class LibSSH2RuntimeInitializationRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var initializationCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func recordInitialization() {
+        lock.lock()
+        count += 1
+        lock.unlock()
     }
 }
 

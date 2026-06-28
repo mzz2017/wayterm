@@ -6,17 +6,27 @@ import Foundation
 /// Initialize once and keep alive for the app lifetime to avoid tearing down
 /// the library while other SSH sessions are still active.
 nonisolated private enum LibSSH2Runtime {
-    private static let lock = NSLock()
-    private static var initialized = false
+    private static let initializationState = LibSSH2RuntimeInitializationState()
 
     nonisolated static func ensureInitialized() throws {
+        try initializationState.ensureInitialized {
+            let rc = libssh2_init(0)
+            guard rc == 0 else {
+                throw SSHError.unknown("libssh2_init failed: \(rc)")
+            }
+        }
+    }
+}
+
+nonisolated final class LibSSH2RuntimeInitializationState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var initialized = false
+
+    func ensureInitialized(_ initialize: () throws -> Void) throws {
         lock.lock()
         defer { lock.unlock() }
         guard !initialized else { return }
-        let rc = libssh2_init(0)
-        guard rc == 0 else {
-            throw SSHError.unknown("libssh2_init failed: \(rc)")
-        }
+        try initialize()
         initialized = true
     }
 }
