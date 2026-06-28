@@ -2,7 +2,16 @@ import Foundation
 import Cloudflared
 import os.log
 
+nonisolated protocol CloudflareTransportSession: AnyObject, Sendable {
+    func connect(hostname: String, method: Cloudflared.AuthMethod) async throws -> UInt16
+    func disconnect() async
+}
+
+extension SessionActor: CloudflareTransportSession {}
+
 actor CloudflareTransportManager {
+    private typealias SessionFactory = @Sendable (any AuthProviding) -> any CloudflareTransportSession
+
     private struct AccessMetadata: Sendable {
         let teamDomain: String
         let appDomain: String
@@ -29,9 +38,26 @@ actor CloudflareTransportManager {
     private let disconnectTimeout: Duration = .seconds(4)
     private let metadataKeychain = KeychainStore(service: "app.vivy.vvterm.cloudflare.metadata")
     private let metadataStorageKey = "cache.v1"
-    private var activeSession: SessionActor?
+    private let makeSession: SessionFactory
+    private var activeSession: (any CloudflareTransportSession)?
     private var metadataCache: [String: AccessMetadata] = [:]
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "CloudflareTransport")
+
+    init(
+        makeSession: @escaping @Sendable (any AuthProviding) -> any CloudflareTransportSession = { authProvider in
+            SessionActor(
+                authProvider: authProvider,
+                tunnelProvider: CloudflareTunnelProvider(),
+                retryPolicy: RetryPolicy(maxReconnectAttempts: 1, baseDelayNanoseconds: 500_000_000),
+                oauthFallback: nil,
+                sleep: { delay in
+                    try? await Task.sleep(nanoseconds: delay)
+                }
+            )
+        }
+    ) {
+        self.makeSession = makeSession
+    }
 
     func connect(server: Server, credentials: ServerCredentials) async throws -> UInt16 {
         await disconnect()
@@ -84,23 +110,24 @@ actor CloudflareTransportManager {
             )
         }
 
-        let session = SessionActor(
-            authProvider: authProvider,
-            tunnelProvider: CloudflareTunnelProvider(),
-            retryPolicy: RetryPolicy(maxReconnectAttempts: 1, baseDelayNanoseconds: 500_000_000),
-            oauthFallback: nil,
-            sleep: { delay in
-                try? await Task.sleep(nanoseconds: delay)
-            }
-        )
+        let session = makeSession(authProvider)
 
         do {
             let localPort = try await session.connect(hostname: hostname, method: authMethod)
+            guard !Task.isCancelled else {
+                await disconnect(session: session)
+                throw CancellationError()
+            }
             activeSession = session
             return localPort
+        } catch is CancellationError {
+            await disconnect(session: session)
+            throw CancellationError()
         } catch let failure as Failure {
+            await disconnect(session: session)
             throw mapFailure(failure)
         } catch {
+            await disconnect(session: session)
             throw SSHError.cloudflareTunnelFailed(error.localizedDescription)
         }
     }
@@ -109,11 +136,23 @@ actor CloudflareTransportManager {
         guard let activeSession else { return }
         self.activeSession = nil
         do {
-            try await CloudflareTransportManager.runWithTimeout(disconnectTimeout) {
-                await activeSession.disconnect()
-            }
+            try await disconnectWithTimeout(activeSession)
         } catch {
             logger.warning("Timed out while disconnecting Cloudflare transport session")
+        }
+    }
+
+    private func disconnect(session: any CloudflareTransportSession) async {
+        do {
+            try await disconnectWithTimeout(session)
+        } catch {
+            logger.warning("Timed out while disconnecting Cloudflare transport session")
+        }
+    }
+
+    private func disconnectWithTimeout(_ session: any CloudflareTransportSession) async throws {
+        try await CloudflareTransportManager.runWithTimeout(disconnectTimeout) {
+            await session.disconnect()
         }
     }
 
