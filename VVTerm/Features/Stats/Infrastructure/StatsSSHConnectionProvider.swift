@@ -20,7 +20,7 @@ enum StatsSSHConnectionProvider {
 
                 try await SSHConnectionOperationService.shared.runWithConnection(
                     using: sshClient,
-                    server: server,
+                    target: server.sshConnectionTarget,
                     credentials: credentials,
                     disconnectWhenDone: false
                 ) { connectedClient in

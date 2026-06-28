@@ -38,7 +38,7 @@ nonisolated actor SSHClient {
     private var connectTask: Task<SSHSession, Error>?
     private var pendingConnectSession: SSHSession?
     private var connectionKey: String?
-    private var connectedServer: Server?
+    private var connectedTarget: SSHConnectionTarget?
     private var resolvedRemoteEnvironment: RemoteEnvironment?
     private var resolvedRemoteTerminalType: RemoteTerminalType?
     private var moshShells: [UUID: MoshShellRuntime] = [:]
@@ -65,20 +65,20 @@ nonisolated actor SSHClient {
 
     // MARK: - Connection
 
-    func connect(to server: Server, credentials: ServerCredentials) async throws -> SSHSession {
+    func connect(to target: SSHConnectionTarget, credentials: ServerCredentials) async throws -> SSHSession {
         abortState.reset()
         try Task.checkCancellation()
 
-        let key = "\(server.host):\(server.port):\(server.username):\(server.connectionMode):\(server.authMethod):\(server.cloudflareAccessMode?.rawValue ?? "none"):\(server.cloudflareTeamDomainOverride ?? "")"
+        let key = target.connectionKey
 
         if let session = session, await session.isConnected, connectionKey == key {
-            connectedServer = server
+            connectedTarget = target
             return session
         }
 
         if let task = connectTask, connectionKey == key {
             let connected = try await task.value
-            connectedServer = server
+            connectedTarget = target
             return connected
         }
 
@@ -86,14 +86,14 @@ nonisolated actor SSHClient {
             throw SSHError.connectionFailed("SSH client already connected")
         }
 
-        logger.info("Connecting to \(server.host):\(server.port) [mode: \(server.connectionMode.rawValue)]")
-        logger.info("Auth method: \(String(describing: server.authMethod)), password present: \(credentials.password != nil)")
+        logger.info("Connecting to \(target.host):\(target.port) [mode: \(target.connectionMode.rawValue)]")
+        logger.info("Auth method: \(String(describing: target.authMethod)), password present: \(credentials.password != nil)")
 
-        var dialHost = server.host
-        var dialPort = server.port
+        var dialHost = target.host
+        var dialPort = target.port
 
-        if server.connectionMode == .cloudflare {
-            let localPort = try await cloudflareTransportManager.connect(server: server, credentials: credentials)
+        if target.connectionMode == .cloudflare {
+            let localPort = try await cloudflareTransportManager.connect(target: target, credentials: credentials)
             dialHost = "127.0.0.1"
             dialPort = Int(localPort)
             logger.info("Using Cloudflare local tunnel endpoint \(dialHost):\(dialPort)")
@@ -102,15 +102,15 @@ nonisolated actor SSHClient {
         }
 
         let config = SSHSessionConfig(
-            host: server.host,
-            port: server.port,
+            host: target.host,
+            port: target.port,
             dialHost: dialHost,
             dialPort: dialPort,
-            hostKeyHost: server.host,
-            hostKeyPort: server.port,
-            username: server.username,
-            connectionMode: server.connectionMode,
-            authMethod: server.authMethod,
+            hostKeyHost: target.host,
+            hostKeyPort: target.port,
+            username: target.username,
+            connectionMode: target.connectionMode,
+            authMethod: target.authMethod,
             credentials: credentials
         )
 
@@ -152,18 +152,18 @@ nonisolated actor SSHClient {
                 connectionKey = nil
                 self.session = nil
                 abortState.setSessionForAbort(nil)
-                self.connectedServer = nil
+                self.connectedTarget = nil
                 await disconnectCloudflareTransport(reason: "connect cancellation")
                 throw CancellationError()
             }
             self.session = session
             abortState.setSessionForAbort(session)
-            self.connectedServer = server
+            self.connectedTarget = target
             self.resolvedRemoteEnvironment = nil
             self.resolvedRemoteTerminalType = nil
             startKeepAlive()
             connectTask = nil
-            logger.info("Connected to \(server.host)")
+            logger.info("Connected to \(target.host)")
             return session
         } catch {
             pendingConnectSession = nil
@@ -171,11 +171,11 @@ nonisolated actor SSHClient {
             connectionKey = nil
             self.session = nil
             abortState.setSessionForAbort(nil)
-            self.connectedServer = nil
+            self.connectedTarget = nil
             self.resolvedRemoteEnvironment = nil
             self.resolvedRemoteTerminalType = nil
             await disconnectCloudflareTransport(reason: "connect failure")
-            if server.connectionMode == .cloudflare,
+            if target.connectionMode == .cloudflare,
                case SSHError.libssh2(let rawError) = error,
                rawError.operation == .handshake,
                rawError.code == LIBSSH2_ERROR_SOCKET_RECV {
@@ -213,7 +213,7 @@ nonisolated actor SSHClient {
         let activeSession = session
         session = nil
         abortState.setSessionForAbort(nil)
-        connectedServer = nil
+        connectedTarget = nil
         resolvedRemoteEnvironment = nil
         resolvedRemoteTerminalType = nil
         await disconnectSSHSession(activeSession)
@@ -417,7 +417,7 @@ nonisolated actor SSHClient {
             throw SSHError.notConnected
         }
 
-        let connectionMode = connectedServer?.connectionMode ?? .standard
+        let connectionMode = connectedTarget?.connectionMode ?? .standard
         let environment = await remoteEnvironment()
         let terminalType = await remoteTerminalType()
         if connectionMode != .mosh {
@@ -614,7 +614,7 @@ nonisolated actor SSHClient {
         rows: Int,
         startupCommand: String?
     ) async throws -> ShellHandle {
-        let configuredHost = connectedServer?.host.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let configuredHost = connectedTarget?.host.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !configuredHost.isEmpty else {
             throw SSHError.moshBootstrapFailed("Missing server host for Mosh endpoint")
         }

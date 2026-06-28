@@ -16,9 +16,9 @@ struct CloudflareTransportManagerLifecycleTests {
         let manager = CloudflareTransportManager { _ in
             fakeSession
         }
-        let server = makeCloudflareServer()
+        let target = makeCloudflareTarget()
         let credentials = ServerCredentials(
-            serverId: server.id,
+            serverId: UUID(),
             password: nil,
             privateKey: nil,
             publicKey: nil,
@@ -30,7 +30,7 @@ struct CloudflareTransportManagerLifecycleTests {
         // Given Cloudflare connect has created a session and is suspended
         // inside the tunnel connect operation.
         let connectTask = Task {
-            try await manager.connect(server: server, credentials: credentials)
+            try await manager.connect(target: target, credentials: credentials)
         }
         await fakeSession.waitForConnectStart()
 
@@ -54,10 +54,8 @@ struct CloudflareTransportManagerLifecycleTests {
         )
     }
 
-    private func makeCloudflareServer() -> Server {
-        Server(
-            workspaceId: UUID(),
-            name: "Cloudflare",
+    private func makeCloudflareTarget() -> SSHConnectionTarget {
+        SSHConnectionTarget(
             host: "ssh.example.com",
             username: "root",
             connectionMode: .cloudflare,

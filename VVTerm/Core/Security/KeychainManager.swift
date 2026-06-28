@@ -313,4 +313,4 @@ final class KeychainManager {
 }
 
 // KeychainError is defined in KeychainStore.swift
-// ServerCredentials is defined in Server.swift
+// ServerCredentials is defined with Core SSH connection primitives.

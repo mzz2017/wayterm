@@ -1,6 +1,18 @@
 import Foundation
 
-extension SSHConnectionOperationService: ServerConnectionOperationServing {}
+extension SSHConnectionOperationService: ServerConnectionOperationServing {
+    func withTemporaryConnection<T>(
+        server: Server,
+        credentials: ServerCredentials,
+        operation: @escaping (SSHClient) async throws -> T
+    ) async throws -> T {
+        try await withTemporaryConnection(
+            target: server.sshConnectionTarget,
+            credentials: credentials,
+            operation: operation
+        )
+    }
+}
 
 extension ServerConnectionTester {
     static let shared = ServerConnectionTester()

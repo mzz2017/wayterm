@@ -59,18 +59,18 @@ actor CloudflareTransportManager {
         self.makeSession = makeSession
     }
 
-    func connect(server: Server, credentials: ServerCredentials) async throws -> UInt16 {
+    func connect(target: SSHConnectionTarget, credentials: ServerCredentials) async throws -> UInt16 {
         await disconnect()
 
-        let hostname = server.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hostname = target.host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !hostname.isEmpty else {
             throw SSHError.cloudflareConfigurationRequired(
                 String(localized: "Cloudflare transport requires a valid hostname.")
             )
         }
 
-        let accessMode = server.cloudflareAccessMode ?? .oauth
-        let metadata = try await resolveAccessMetadata(for: hostname, server: server, mode: accessMode)
+        let accessMode = target.cloudflareAccessMode ?? .oauth
+        let metadata = try await resolveAccessMetadata(for: hostname, target: target, mode: accessMode)
 
         let authProvider: any AuthProviding
         let authMethod: Cloudflared.AuthMethod
@@ -179,11 +179,11 @@ actor CloudflareTransportManager {
 
     private func resolveAccessMetadata(
         for hostname: String,
-        server: Server,
+        target: SSHConnectionTarget,
         mode: CloudflareAccessMode
     ) async throws -> AccessMetadata {
         let cacheKey = metadataCacheKey(for: hostname)
-        let teamOverride = server.cloudflareTeamDomainOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let teamOverride = target.cloudflareTeamDomainOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let normalizedHost = normalizedHostName(from: hostname)
         switch mode {
         case .oauth:

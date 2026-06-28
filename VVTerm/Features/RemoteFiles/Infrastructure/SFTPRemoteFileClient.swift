@@ -18,7 +18,7 @@ protocol SFTPRemoteFileClient: RemoteConnectionLeaseClient {
 
 extension SSHClient: SFTPRemoteFileClient {
     func connectForRemoteFileLease(to server: Server, credentials: ServerCredentials) async throws {
-        _ = try await connect(to: server, credentials: credentials)
+        _ = try await connect(to: server.sshConnectionTarget, credentials: credentials)
     }
 
     func readFile(at path: String, maxBytes: Int) async throws -> Data {

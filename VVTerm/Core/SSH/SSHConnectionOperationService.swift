@@ -15,13 +15,13 @@ actor SSHConnectionOperationService {
 
     func runWithConnection<T>(
         using client: SSHClient,
-        server: Server,
+        target: SSHConnectionTarget,
         credentials: ServerCredentials,
         disconnectWhenDone: Bool = false,
         operation: @escaping (SSHClient) async throws -> T
     ) async throws -> T {
         do {
-            _ = try await client.connect(to: server, credentials: credentials)
+            _ = try await client.connect(to: target, credentials: credentials)
             let result = try await operation(client)
             if disconnectWhenDone {
                 await client.disconnect()
@@ -36,14 +36,14 @@ actor SSHConnectionOperationService {
     }
 
     func withTemporaryConnection<T>(
-        server: Server,
+        target: SSHConnectionTarget,
         credentials: ServerCredentials,
         operation: @escaping (SSHClient) async throws -> T
     ) async throws -> T {
         let client = SSHClient()
         return try await runWithConnection(
             using: client,
-            server: server,
+            target: target,
             credentials: credentials,
             disconnectWhenDone: true,
             operation: operation

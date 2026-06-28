@@ -34,7 +34,7 @@ enum TerminalConnectionRunner {
                 onAttempt(attempt)
             },
             connect: {
-                _ = try await sshClient.connect(to: server, credentials: credentials)
+                _ = try await sshClient.connect(to: server.sshConnectionTarget, credentials: credentials)
             },
             startShell: { cols, rows, startupCommand in
                 try await sshClient.startShell(

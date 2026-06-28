@@ -88,7 +88,8 @@ let package = Package(
                 "RemoteEnvironment.swift",
                 "RemotePlatform.swift",
                 "RemoteTerminalBootstrap.swift",
-                "RemoteTerminalTypeResolver.swift"
+                "RemoteTerminalTypeResolver.swift",
+                "SSHConnectionTarget.swift"
             ]
         ),
         .target(
