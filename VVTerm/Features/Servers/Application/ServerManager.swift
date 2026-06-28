@@ -162,7 +162,9 @@ final class ServerManager: ObservableObject {
         deletionTeardown: @escaping ServerDeletionTeardown = ServerManager.defaultDeletionTeardown,
         deleteCredentials: @escaping ServerCredentialDeletion = ServerManager.defaultCredentialDeletion,
         storeCredentials: @escaping ServerCredentialStore = ServerManager.defaultCredentialStore,
-        removeKnownHostEntries: @escaping ServerKnownHostRemoval = ServerManager.defaultKnownHostRemoval,
+        removeKnownHostEntries: @escaping ServerKnownHostRemoval = { candidates in
+            await ServerManager.defaultKnownHostRemoval(for: candidates)
+        },
         startupLoadAction: ServerStartupLoadAction? = nil,
         isProProvider: @escaping IsProProvider,
         syncStateService: ServerSyncStateService = ServerSyncStateService(),
