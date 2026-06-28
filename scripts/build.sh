@@ -318,9 +318,39 @@ PY
     # Patch bundle ID to use VVTerm's instead of Ghostty's
     sed -i '' "s/com\\.mitchellh\\.ghostty/${BUNDLE_ID}/g" "${workdir}/ghostty/src/build_config.zig"
 
-    # Lower iOS minimum to match app deployment target
-    perl -0pi -e 's@// iOS [0-9]+ picked arbitrarily@// iOS 16.1 matches app deployment target@' "${workdir}/ghostty/src/build/Config.zig"
-    perl -0pi -e 's/\\.ios => \\.\\{ \\.semver = \\.\\{\\n\\s*\\.major = [0-9]+,\\n\\s*\\.minor = [0-9]+,\\n\\s*\\.patch = [0-9]+,\\n\\s*\\} \\},/\\.ios => .{ .semver = .{\\n            .major = 16,\\n            .minor = 1,\\n            .patch = 0,\\n        } },/s' "${workdir}/ghostty/src/build/Config.zig"
+    # Lower iOS minimum to match app deployment target.
+    local ghostty_config_path="${workdir}/ghostty/src/build/Config.zig"
+    python3 - <<PY
+from pathlib import Path
+import re
+
+target = "${IOS_DEPLOYMENT_TARGET}"
+parts = target.split(".")
+major = int(parts[0])
+minor = int(parts[1]) if len(parts) > 1 else 0
+patch = int(parts[2]) if len(parts) > 2 else 0
+
+path = Path("${ghostty_config_path}")
+text = path.read_text()
+pattern = re.compile(
+    r"        // iOS \d+ picked arbitrarily\n"
+    r"        \.ios => \.\{ \.semver = \.\{\n"
+    r"            \.major = \d+,\n"
+    r"            \.minor = \d+,\n"
+    r"            \.patch = \d+,\n"
+    r"        \} \},"
+)
+replacement = f"""        // iOS {target} matches app deployment target
+        .ios => .{{ .semver = .{{
+            .major = {major},
+            .minor = {minor},
+            .patch = {patch},
+        }} }},"""
+text, count = pattern.subn(replacement, text, count=1)
+if count != 1:
+    raise SystemExit("Ghostty iOS deployment target block not found; aborting.")
+path.write_text(text)
+PY
 
     log_info "Building GhosttyKit.xcframework..."
 
