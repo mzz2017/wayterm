@@ -15,7 +15,7 @@ LIBSSH2_VERSION="1.11.0"
 OPENSSL_SHA256="14c826f07c7e433706fb5c69fa9e25dab95684844b4c962a2cf1bf183eb4690e"
 LIBSSH2_SHA256="3736161e41e2693324deb38c26cfdc3efe6209d634ba4258db1cecff6a5ad461"
 MACOS_DEPLOYMENT_TARGET="13.3"
-IOS_DEPLOYMENT_TARGET="16.0"
+IOS_DEPLOYMENT_TARGET="16.1"
 
 GHOSTTY_REPO="${GHOSTTY_REPO:-https://github.com/mzz2017/ghostty.git}"
 DEFAULT_GHOSTTY_REF="b00bb2d91ecfd05fa9ce1f08b9d146b76c7d0041"
@@ -319,8 +319,8 @@ PY
     sed -i '' "s/com\\.mitchellh\\.ghostty/${BUNDLE_ID}/g" "${workdir}/ghostty/src/build_config.zig"
 
     # Lower iOS minimum to match app deployment target
-    perl -0pi -e 's@// iOS [0-9]+ picked arbitrarily@// iOS 16 matches app deployment target@' "${workdir}/ghostty/src/build/Config.zig"
-    perl -0pi -e 's/\\.ios => \\.\\{ \\.semver = \\.\\{\\n\\s*\\.major = [0-9]+,\\n\\s*\\.minor = [0-9]+,\\n\\s*\\.patch = [0-9]+,\\n\\s*\\} \\},/\\.ios => .{ .semver = .{\\n            .major = 16,\\n            .minor = 0,\\n            .patch = 0,\\n        } },/s' "${workdir}/ghostty/src/build/Config.zig"
+    perl -0pi -e 's@// iOS [0-9]+ picked arbitrarily@// iOS 16.1 matches app deployment target@' "${workdir}/ghostty/src/build/Config.zig"
+    perl -0pi -e 's/\\.ios => \\.\\{ \\.semver = \\.\\{\\n\\s*\\.major = [0-9]+,\\n\\s*\\.minor = [0-9]+,\\n\\s*\\.patch = [0-9]+,\\n\\s*\\} \\},/\\.ios => .{ .semver = .{\\n            .major = 16,\\n            .minor = 1,\\n            .patch = 0,\\n        } },/s' "${workdir}/ghostty/src/build/Config.zig"
 
     log_info "Building GhosttyKit.xcframework..."
 
