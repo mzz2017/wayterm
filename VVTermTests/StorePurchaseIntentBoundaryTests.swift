@@ -39,10 +39,23 @@ struct StorePurchaseIntentBoundaryTests {
             sources.contains("storeManager.requestRestorePurchases"),
             "Store restore UI should use the Store application-layer request API."
         )
+        #expect(
+            !containsStoreRestoreStateAssignment(in: sources),
+            "Store restore UI should ask StoreManager to dismiss restore results instead of mutating restore state directly."
+        )
+        #expect(
+            sources.contains("storeManager.dismissRestoreResult()"),
+            "Store restore UI should send restore-result dismissal intent through StoreManager."
+        )
     }
 
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func containsStoreRestoreStateAssignment(in source: String) -> Bool {
+        let pattern = #"storeManager\.restoreState\s*=(?!=)"#
+        return source.range(of: pattern, options: .regularExpression) != nil
     }
 
     private func sourceRoot() throws -> URL {

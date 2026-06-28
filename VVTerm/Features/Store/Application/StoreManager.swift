@@ -439,6 +439,15 @@ final class StoreManager: ObservableObject {
         telemetry.requestReviewAfterPurchase()
     }
 
+    func dismissRestoreResult() {
+        switch restoreState {
+        case .restored, .failed:
+            restoreState = .idle
+        case .idle, .restoring:
+            break
+        }
+    }
+
     private func scheduleReviewModeExpiry() {
         reviewModeExpiryTask?.cancel()
         guard let expiresAt = reviewModeExpiresAt else { return }

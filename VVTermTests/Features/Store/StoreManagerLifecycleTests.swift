@@ -233,6 +233,35 @@ struct StoreManagerLifecycleTests {
     }
 
     @Test
+    func dismissRestoreResultClearsOnlyCompletedPresentationState() {
+        let manager = StoreManager.makeForTesting()
+
+        // Given StoreManager owns a completed restore presentation state.
+        manager.restoreState = .restored(hasAccess: false)
+
+        // When UI dismisses the restore result presentation.
+        manager.dismissRestoreResult()
+
+        // Then StoreManager, not SwiftUI, clears the completed state.
+        #expect(
+            manager.restoreState == .idle,
+            "Restore result dismissal should return completed restore presentation state to idle."
+        )
+
+        // Given a restore operation is still in flight.
+        manager.restoreState = .restoring
+
+        // When dismissal is requested by stale UI.
+        manager.dismissRestoreResult()
+
+        // Then active StoreKit restore work is not hidden as idle.
+        #expect(
+            manager.restoreState == .restoring,
+            "Restore result dismissal must not clear an active restore operation."
+        )
+    }
+
+    @Test
     func startupRefreshTracksLoadAndEntitlementsUntilCompletion() async {
         let loadGate = StoreRequestGate()
         let entitlementGate = StoreRequestGate()
