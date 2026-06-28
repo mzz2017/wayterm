@@ -81,9 +81,7 @@ nonisolated public struct DecodingConfig {
     private let jointConfig: JointConfig
 
     public init(config: ParakeetTDTConfig) throws {
-        guard config.decoding.modelType == "tdt" else {
-            throw ParakeetError.invalidModelType("Model must be a TDT model")
-        }
+        try Self.validateConfiguration(config)
 
         self.preprocessConfig = config.preprocessor
         self.encoderConfig = config.encoder
@@ -102,6 +100,86 @@ nonisolated public struct DecodingConfig {
         self.joint = JointNetwork(config: config.joint)
 
         super.init()
+    }
+
+    static func validateConfiguration(_ config: ParakeetTDTConfig) throws {
+        guard config.decoding.modelType == "tdt" else {
+            throw ParakeetError.invalidModelType("Model must be a TDT model")
+        }
+
+        try validateEncoderConfiguration(config.encoder)
+        try validateJointConfiguration(config.joint)
+    }
+
+    private static func validateEncoderConfiguration(_ config: ConformerConfig) throws {
+        guard config.featIn > 0 else {
+            throw ParakeetError.modelLoadingError("Encoder feat_in must be positive.")
+        }
+        guard config.nLayers >= 0 else {
+            throw ParakeetError.modelLoadingError("Encoder n_layers cannot be negative.")
+        }
+        guard config.dModel > 0, config.dModel.isMultiple(of: 2) else {
+            throw ParakeetError.modelLoadingError("Encoder d_model must be positive and even.")
+        }
+        guard config.nHeads > 0, config.dModel.isMultiple(of: config.nHeads) else {
+            throw ParakeetError.modelLoadingError("Encoder d_model must be divisible by n_heads.")
+        }
+        guard config.posEmbMaxLen > 0 else {
+            throw ParakeetError.modelLoadingError("Encoder pos_emb_max_len must be positive.")
+        }
+        guard config.subsamplingFactor > 0,
+              config.subsamplingFactor & (config.subsamplingFactor - 1) == 0 else {
+            throw ParakeetError.modelLoadingError("Encoder subsampling_factor must be a positive power of two.")
+        }
+
+        if config.selfAttentionModel == "rel_pos_local_attn" {
+            guard let contextSize = config.attContextSize, contextSize.count >= 2 else {
+                throw ParakeetError.modelLoadingError("Local attention requires two att_context_size values.")
+            }
+            guard contextSize[0] > 0, contextSize[1] > 0 else {
+                throw ParakeetError.modelLoadingError("Local attention context sizes must be positive.")
+            }
+        }
+
+        if config.subsamplingFactor > 1 {
+            guard config.subsampling == "dw_striding", !config.causalDownsampling else {
+                throw ParakeetError.modelLoadingError("Only non-causal dw_striding subsampling is supported.")
+            }
+
+            let finalFrequencyDimension = finalFrequencyDimension(
+                featIn: config.featIn,
+                subsamplingFactor: config.subsamplingFactor
+            )
+            guard finalFrequencyDimension > 0 else {
+                throw ParakeetError.modelLoadingError("Encoder subsampling produces a non-positive frequency dimension.")
+            }
+        }
+    }
+
+    private static func validateJointConfiguration(_ config: JointConfig) throws {
+        switch config.jointnet.activation.lowercased() {
+        case "relu", "sigmoid", "tanh":
+            break
+        default:
+            throw ParakeetError.modelLoadingError(
+                "Unsupported joint activation: \(config.jointnet.activation)."
+            )
+        }
+    }
+
+    private static func finalFrequencyDimension(featIn: Int, subsamplingFactor: Int) -> Int {
+        let samplingCount = Int(log2(Double(subsamplingFactor)))
+        let stride = 2
+        let kernelSize = 3
+        let padding = (kernelSize - 1) / 2
+        var finalFrequencyDimension = featIn
+
+        for _ in 0..<samplingCount {
+            finalFrequencyDimension =
+                Int(floor(Double(finalFrequencyDimension + 2 * padding - kernelSize) / Double(stride))) + 1
+        }
+
+        return finalFrequencyDimension
     }
 
     public func transcribe(
