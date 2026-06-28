@@ -258,13 +258,14 @@ struct SSHClientSuperfileBoundaryTests {
         )
 
         // Given the SSH client superfile source.
-        #expect(
-            !clientSource.contains("nonisolated actor SSHSession"),
-            "SSHClient.swift should not own the libssh2 session lifecycle actor."
-        )
+        #expect(!clientSource.contains("actor SSHSession"))
 
         // Then libssh2 session lifecycle has a dedicated Core/SSH owner file.
-        #expect(sessionSource.contains("nonisolated actor SSHSession"))
+        #expect(sessionSource.contains("actor SSHSession"))
+        #expect(
+            !sessionSource.contains("nonisolated actor SSHSession"),
+            "SSHSession should keep actor isolation on the type and mark only audited synchronous members nonisolated."
+        )
         #expect(sessionSource.contains("func connect() async throws"))
         #expect(sessionSource.contains("func disconnect() async"))
         #expect(!sessionSource.contains("func startShell"))
