@@ -26,7 +26,7 @@ final class AppSyncCoordinator {
     private var serverRefreshTask: (id: UUID, task: Task<Void, Never>)?
     private var settingsSyncTask: (id: UUID, task: Task<Void, Never>)?
     private var cloudKitStatusRefreshTask: (id: UUID, task: Task<Void, Never>)?
-    private var remoteNotificationCompletionTasks: [UUID: Task<Void, Never>] = [:]
+    private var remoteNotificationCompletionTasks: [UUID: Task<Bool, Never>] = [:]
 
     private init(
         applySyncToggle: @escaping SyncToggleAction = { enabled in
@@ -109,7 +109,10 @@ final class AppSyncCoordinator {
         return task
     }
 
-    func refreshServerDataAfterRemoteNotification(onComplete: @escaping @MainActor @Sendable () async -> Void) {
+    @discardableResult
+    func refreshServerDataAfterRemoteNotification(
+        onComplete: @escaping @MainActor @Sendable () async -> Void
+    ) -> Task<Bool, Never> {
         let refreshTask = refreshServerData(reason: .remoteNotification)
         let completionID = UUID()
         let completionTask = Task {
@@ -117,10 +120,12 @@ final class AppSyncCoordinator {
                 remoteNotificationCompletionTasks[completionID] = nil
             }
             await refreshTask.value
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else { return false }
             await onComplete()
+            return true
         }
         remoteNotificationCompletionTasks[completionID] = completionTask
+        return completionTask
     }
 
     @discardableResult
@@ -166,7 +171,7 @@ final class AppSyncCoordinator {
         let tasks =
             [subscriptionTask, serverRefreshTask?.task, settingsSyncTask?.task, cloudKitStatusRefreshTask?.task]
                 .compactMap { $0 }
-            + Array(remoteNotificationCompletionTasks.values)
+        let remoteNotificationTasks = Array(remoteNotificationCompletionTasks.values)
 
         subscriptionTask?.cancel()
         serverRefreshTask?.task.cancel()
@@ -182,6 +187,9 @@ final class AppSyncCoordinator {
 
         for task in tasks {
             await task.value
+        }
+        for task in remoteNotificationTasks {
+            _ = await task.value
         }
     }
 

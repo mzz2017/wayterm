@@ -100,11 +100,7 @@ final class AppLifecycleCoordinator {
                 return false
             }
 
-            return await withCheckedContinuation { continuation in
-                AppSyncCoordinator.shared.refreshServerDataAfterRemoteNotification {
-                    continuation.resume(returning: true)
-                }
-            }
+            return await AppSyncCoordinator.shared.refreshServerDataAfterRemoteNotification {}.value
         },
         isSyncEnabled: @escaping SyncEnabledProvider = {
             SyncSettings.isEnabled

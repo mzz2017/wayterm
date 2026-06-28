@@ -299,6 +299,44 @@ struct AppSyncCoordinatorTests {
     }
 
     @Test
+    func canceledRemoteNotificationRefreshTaskCompletesFalseWithoutCallingCompletion() async throws {
+        // Given a remote-notification completion task is waiting on a tracked
+        // server refresh.
+        let probe = AppSyncProbe()
+        let releaseRefresh = AsyncGate()
+        let coordinator = AppSyncCoordinator.makeForTesting(
+            reloadServerData: {
+                await probe.record("reload-start")
+                await releaseRefresh.wait()
+                await probe.record("reload-end")
+            }
+        )
+
+        let notificationTask = coordinator.refreshServerDataAfterRemoteNotification {
+            await probe.record("completion")
+        }
+        await probe.waitForCount(1)
+
+        // When app-level sync cleanup cancels remote notification completion.
+        let cleanupTask = Task {
+            await coordinator.cancelAllAndWait()
+            await probe.record("cleanup-end")
+        }
+        try await Task.sleep(for: .milliseconds(20))
+        await releaseRefresh.open()
+        await cleanupTask.value
+        let didComplete = await notificationTask.value
+
+        // Then the returned task still completes so app lifecycle callers do
+        // not hang, but the system completion callback remains suppressed.
+        #expect(!didComplete, "Canceled remote notification refresh task should complete with false.")
+        #expect(
+            await probe.events() == ["reload-start", "reload-end", "cleanup-end"],
+            "Canceled remote notification refresh should not call completion after sync teardown wins."
+        )
+    }
+
+    @Test
     func cancelAllAndWaitAwaitsEveryTrackedSyncTask() async throws {
         let probe = AppSyncProbe()
         let releaseSubscription = AsyncGate()
