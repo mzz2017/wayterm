@@ -102,8 +102,7 @@ extension GhosttyTerminalView {
         let pos = ghosttyPoint(location)
         return surfaceOwner.quickLookWordSelection(
             at: pos,
-            layout: layout,
-            using: selectionRuntime
+            layout: layout
         )
     }
     
@@ -178,8 +177,7 @@ extension GhosttyTerminalView {
 
     private func buildNativeSelectionSnapshot() -> TerminalNativeTextSnapshot {
         surfaceOwner.nativeTextSnapshot(
-            metrics: selectionGridMetrics(),
-            using: selectionRuntime
+            metrics: selectionGridMetrics()
         )
     }
 
@@ -221,11 +219,11 @@ extension GhosttyTerminalView {
     
     private func touchSelectionText() -> String? {
         guard let touchSelection = touchSelectionState.selection else { return nil }
-        return surfaceOwner.touchSelectionText(touchSelection, using: selectionRuntime)
+        return surfaceOwner.touchSelectionText(touchSelection)
     }
 
     private func ghosttySelectionText() -> String? {
-        surfaceOwner.ghosttySelectionText(using: selectionRuntime)
+        surfaceOwner.ghosttySelectionText()
     }
     
     private func copyTextToClipboard(_ text: String) {
@@ -454,7 +452,7 @@ extension GhosttyTerminalView {
     }
     
     private func showEditMenu(at location: CGPoint) {
-        let hasGhosttySelection = surfaceOwner.hasGhosttySelection(using: selectionRuntime)
+        let hasGhosttySelection = surfaceOwner.hasGhosttySelection()
         guard touchSelectionState.hasSelection || hasGhosttySelection else {
             return
         }
@@ -471,7 +469,7 @@ extension GhosttyTerminalView {
             if touchSelectionState.hasSelection {
                 return true
             }
-            return surfaceOwner.hasGhosttySelection(using: selectionRuntime)
+            return surfaceOwner.hasGhosttySelection()
         case #selector(selectAll(_:)):
             if usesNativeTouchSelection {
                 return nativeSelectionSnapshot.length > 0 || selectionGridMetrics() != nil

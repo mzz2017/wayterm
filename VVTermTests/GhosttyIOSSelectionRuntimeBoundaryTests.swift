@@ -33,12 +33,12 @@ struct GhosttyIOSSelectionRuntimeBoundaryTests {
 
         // Given the iOS terminal view needs to decide whether selection menu
         // actions are available.
-        #expect(viewSource.contains("let selectionRuntime = TerminalIOSSelectionRuntime()"))
-        #expect(selectionSource.contains("surfaceOwner.hasGhosttySelection(using: selectionRuntime)"))
+        #expect(!viewSource.contains("let selectionRuntime = TerminalIOSSelectionRuntime()"))
+        #expect(selectionSource.contains("surfaceOwner.hasGhosttySelection()"))
         #expect(selectionSource.contains("surfaceOwner.nativeTextSnapshot("))
         #expect(selectionSource.contains("surfaceOwner.quickLookWordSelection("))
         #expect(selectionSource.contains("surfaceOwner.touchSelectionText("))
-        #expect(selectionSource.contains("surfaceOwner.ghosttySelectionText("))
+        #expect(selectionSource.contains("surfaceOwner.ghosttySelectionText()"))
         #expect(selectionSource.contains("surfaceOwner.sendMousePosition(pos)"))
         #expect(selectionSource.contains("surfaceOwner.sendMouseButton("))
 
@@ -64,7 +64,8 @@ struct GhosttyIOSSelectionRuntimeBoundaryTests {
         #expect(runtimeSource.contains("GhosttyTerminalTextReader.readText"))
         #expect(runtimeSource.contains("GhosttyTerminalTextReader.readSelection"))
 
-        #expect(ownerSource.contains("func hasGhosttySelection(using selectionRuntime: TerminalIOSSelectionRuntime)"))
+        #expect(ownerSource.contains("private let selectionRuntime: TerminalIOSSelectionRuntime"))
+        #expect(ownerSource.contains("func hasGhosttySelection()"))
         #expect(ownerSource.contains("func nativeTextSnapshot("))
         #expect(ownerSource.contains("func quickLookWordSelection("))
         #expect(ownerSource.contains("func touchSelectionText("))

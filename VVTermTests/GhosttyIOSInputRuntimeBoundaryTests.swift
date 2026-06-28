@@ -162,7 +162,7 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(ownerSource.contains("func sendModifiedKey("))
         #expect(ownerSource.contains("func syncVisiblePreedit("))
         #expect(ownerSource.contains("func imePoint(using inputRuntime: TerminalIOSInputRuntime)"))
-        #expect(ownerSource.contains("private let surfaceInputRuntime = TerminalIOSSurfaceInputRuntime()"))
+        #expect(ownerSource.contains("private let surfaceInputRuntime: TerminalIOSSurfaceInputRuntime"))
         #expect(ownerSource.contains("surfaceInputRuntime.sendText"))
         #expect(ownerSource.contains("surfaceInputRuntime.perform"))
         #expect(ownerSource.contains("surfaceInputRuntime.sendKeyPress"))

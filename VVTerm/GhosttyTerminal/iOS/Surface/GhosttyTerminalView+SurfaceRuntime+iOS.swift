@@ -36,7 +36,6 @@ extension GhosttyTerminalView {
         isShuttingDown = true
         isPaused = true
         surfaceOwner.cleanup(
-            using: surfaceLifecycleRuntime,
             surfaceRegistration: surfaceRegistration,
             stopMomentumScrolling: { [scrollRuntime] in
                 scrollRuntime.stopMomentumScrolling()
@@ -57,14 +56,14 @@ extension GhosttyTerminalView {
     func pauseRendering() {
         guard !isShuttingDown else { return }
         isPaused = true
-        surfaceOwner.pauseRendering(using: surfaceLifecycleRuntime)
+        surfaceOwner.pauseRendering()
     }
 
     /// Resume rendering/input after a pause.
     func resumeRendering() {
         guard !isShuttingDown else { return }
         isPaused = false
-        surfaceOwner.resumeRendering(using: surfaceLifecycleRuntime) { [weak self] in
+        surfaceOwner.resumeRendering { [weak self] in
             guard let self else { return }
             sizeDidChange(bounds.size)
             requestRender()
@@ -86,7 +85,7 @@ extension GhosttyTerminalView {
 
     /// Check if the terminal process has exited
     var processExited: Bool {
-        surfaceOwner.processExited(using: surfaceLifecycleRuntime)
+        surfaceOwner.processExited()
     }
 
     /// Check if closing this terminal needs confirmation
@@ -110,12 +109,12 @@ extension GhosttyTerminalView {
         configureIOSurfaceLayers(size: bounds.size)
 
         let scale = contentScaleFactor
-        guard surfaceOwner.forceResize(pointSize: bounds.size, scale: scale, using: surfaceDisplayRuntime) else { return }
+        guard surfaceOwner.forceResize(pointSize: bounds.size, scale: scale) else { return }
         if window != nil {
-            surfaceOwner.setOcclusion(true, using: surfaceDisplayRuntime)
+            surfaceOwner.setOcclusion(true)
         }
 
-        surfaceOwner.redraw(using: surfaceDisplayRuntime)
+        surfaceOwner.redraw()
         markIOSurfaceLayersForDisplay()
         requestRender()
     }
@@ -192,21 +191,21 @@ extension GhosttyTerminalView {
 
             self.updateContentScaleIfNeeded()
             self.configureIOSurfaceLayers(size: self.bounds.size)
-            self.surfaceOwner.redraw(using: self.surfaceDisplayRuntime)
+            self.surfaceOwner.redraw()
             self.markIOSurfaceLayersForDisplay()
         }
     }
 
     /// Feed data from the SSH channel into the terminal for rendering (External backend).
     func writeOutput(_ data: Data) {
-        surfaceOwner.writeOutput(data, using: surfaceDisplayRuntime)
+        surfaceOwner.writeOutput(data)
         scheduleCustomIORedraw()
         requestRender()
     }
 
     /// Notify the terminal that the SSH session ended (External backend).
     func externalExited(_ exitCode: UInt32 = 0) {
-        surfaceOwner.externalExited(exitCode, using: surfaceDisplayRuntime)
+        surfaceOwner.externalExited(exitCode)
         scheduleCustomIORedraw()
         requestRender()
     }

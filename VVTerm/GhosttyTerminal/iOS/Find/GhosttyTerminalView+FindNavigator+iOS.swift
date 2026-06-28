@@ -36,7 +36,7 @@ extension GhosttyTerminalView {
             _ = super.becomeFirstResponder()
         }
 
-        surfaceOwner.setFocus(false, using: surfaceLifecycleRuntime)
+        surfaceOwner.setFocus(false)
     }
 
     func endFindNavigatorLifecycle() -> Bool {

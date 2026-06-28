@@ -219,10 +219,7 @@ class GhosttyTerminalView: UIView {
     // MARK: - Rendering Components
 
     let renderingSetup = GhosttyRenderingSetup()
-    let surfaceDisplayRuntime = TerminalIOSSurfaceDisplayRuntime()
-    let surfaceLifecycleRuntime = TerminalIOSSurfaceLifecycleRuntime()
     let inputRuntime = TerminalIOSInputRuntime()
-    let selectionRuntime = TerminalIOSSelectionRuntime()
 
     func requestRender() {
         if isShuttingDown { return }
@@ -412,12 +409,12 @@ class GhosttyTerminalView: UIView {
         configureIOSurfaceLayers(size: size)
 
         let scale = self.contentScaleFactor
-        if surfaceOwner.resizeIfNeeded(pointSize: size, scale: scale, using: surfaceDisplayRuntime) {
+        if surfaceOwner.resizeIfNeeded(pointSize: size, scale: scale) {
             reportGridResizeIfNeeded()
         }
 
         if !isPaused {
-            surfaceOwner.redraw(using: surfaceDisplayRuntime)
+            surfaceOwner.redraw()
             if usesNativeTouchSelection {
                 refreshNativeSelectionSnapshot()
             }
@@ -436,7 +433,7 @@ class GhosttyTerminalView: UIView {
         surfacePresentationOverrides = presentationOverrides
 
         guard surfaceOwner.updateSurfaceConfig(presentationOverrides) else { return }
-        surfaceDisplayRuntime.resetSizeTracking()
+        surfaceOwner.resetDisplaySizeTracking()
         sizeDidChange(bounds.size)
         requestRender()
     }
@@ -602,7 +599,7 @@ class GhosttyTerminalView: UIView {
         if usesNativeTouchSelection,
            (prefersNativeSelectionFirstResponder || nativeSelectionInteractionActive || nativeSelectedRange != nil) {
             let result = super.becomeFirstResponder()
-            surfaceOwner.setFocus(result || super.isFirstResponder, using: surfaceLifecycleRuntime)
+            surfaceOwner.setFocus(result || super.isFirstResponder)
             return result
         }
         return imeProxyTextView.becomeFirstResponder()
@@ -626,7 +623,7 @@ class GhosttyTerminalView: UIView {
         }
         let ownResult = super.isFirstResponder ? super.resignFirstResponder() : true
         if (proxyResult && ownResult) || !isTextInputSessionEligible {
-            surfaceOwner.setFocus(false, using: surfaceLifecycleRuntime)
+            surfaceOwner.setFocus(false)
             stopKeyRepeat()
             hardwarePressState.clearPendingSystemTextInputHardwareKeys()
         }
@@ -655,7 +652,7 @@ class GhosttyTerminalView: UIView {
 
         let isVisible = (window != nil)
         isPaused = !isVisible
-        surfaceOwner.setOcclusion(isVisible, using: surfaceLifecycleRuntime)
+        surfaceOwner.setOcclusion(isVisible)
 
         if isVisible {
             updateHardwareKeyboardState(reloadInputViewsIfNeeded: true)
@@ -679,7 +676,7 @@ class GhosttyTerminalView: UIView {
         let scheme: ghostty_color_scheme_e = traitCollection.userInterfaceStyle == .dark
             ? GHOSTTY_COLOR_SCHEME_DARK
             : GHOSTTY_COLOR_SCHEME_LIGHT
-        surfaceOwner.setColorScheme(scheme, using: surfaceDisplayRuntime)
+        surfaceOwner.setColorScheme(scheme)
     }
 
     private func setupHardwareKeyboardObservation() {

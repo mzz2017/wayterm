@@ -167,7 +167,7 @@ extension GhosttyTerminalView {
     }
 
     func imeProxyFocusDidChange(isFocused: Bool) {
-        surfaceOwner.setFocus(isFocused, using: surfaceLifecycleRuntime)
+        surfaceOwner.setFocus(isFocused)
         if isFocused {
             updateHardwareKeyboardState(reloadInputViewsIfNeeded: true)
         } else {

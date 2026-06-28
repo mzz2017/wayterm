@@ -14,11 +14,25 @@ final class TerminalIOSSurfaceOwner {
     let ghosttyApp: ghostty_app_t
     weak var appWrapper: Ghostty.App?
     var surface: Ghostty.Surface?
-    private let surfaceInputRuntime = TerminalIOSSurfaceInputRuntime()
+    private let surfaceDisplayRuntime: TerminalIOSSurfaceDisplayRuntime
+    private let surfaceLifecycleRuntime: TerminalIOSSurfaceLifecycleRuntime
+    private let surfaceInputRuntime: TerminalIOSSurfaceInputRuntime
+    private let selectionRuntime: TerminalIOSSelectionRuntime
 
-    init(ghosttyApp: ghostty_app_t, appWrapper: Ghostty.App?) {
+    init(
+        ghosttyApp: ghostty_app_t,
+        appWrapper: Ghostty.App?,
+        surfaceDisplayRuntime: TerminalIOSSurfaceDisplayRuntime? = nil,
+        surfaceLifecycleRuntime: TerminalIOSSurfaceLifecycleRuntime? = nil,
+        surfaceInputRuntime: TerminalIOSSurfaceInputRuntime? = nil,
+        selectionRuntime: TerminalIOSSelectionRuntime? = nil
+    ) {
         self.ghosttyApp = ghosttyApp
         self.appWrapper = appWrapper
+        self.surfaceDisplayRuntime = surfaceDisplayRuntime ?? TerminalIOSSurfaceDisplayRuntime()
+        self.surfaceLifecycleRuntime = surfaceLifecycleRuntime ?? TerminalIOSSurfaceLifecycleRuntime()
+        self.surfaceInputRuntime = surfaceInputRuntime ?? TerminalIOSSurfaceInputRuntime()
+        self.selectionRuntime = selectionRuntime ?? TerminalIOSSelectionRuntime()
     }
 
     var hasLiveSurface: Bool {
@@ -66,14 +80,13 @@ final class TerminalIOSSurfaceOwner {
     }
 
     func cleanup(
-        using lifecycleRuntime: TerminalIOSSurfaceLifecycleRuntime,
         surfaceRegistration: GhosttySurfaceRegistration,
         stopMomentumScrolling: @escaping () -> Void,
         cancelPendingZoomIndicatorHide: @escaping () -> Void,
         invalidateLifecycleObservers: @escaping () -> Void,
         clearCallbacks: @escaping () -> Void
     ) {
-        surface = lifecycleRuntime.cleanup(
+        surface = surfaceLifecycleRuntime.cleanup(
             surface: surface,
             surfaceRegistration: surfaceRegistration,
             stopMomentumScrolling: stopMomentumScrolling,
@@ -83,27 +96,26 @@ final class TerminalIOSSurfaceOwner {
         )
     }
 
-    func pauseRendering(using lifecycleRuntime: TerminalIOSSurfaceLifecycleRuntime) {
-        lifecycleRuntime.pauseRendering(surface: surface)
+    func pauseRendering() {
+        surfaceLifecycleRuntime.pauseRendering(surface: surface)
     }
 
     func resumeRendering(
-        using lifecycleRuntime: TerminalIOSSurfaceLifecycleRuntime,
         updateSizeAndRequestRender: @escaping () -> Void
     ) {
-        lifecycleRuntime.resumeRendering(surface: surface, updateSizeAndRequestRender: updateSizeAndRequestRender)
+        surfaceLifecycleRuntime.resumeRendering(surface: surface, updateSizeAndRequestRender: updateSizeAndRequestRender)
     }
 
-    func setFocus(_ isFocused: Bool, using lifecycleRuntime: TerminalIOSSurfaceLifecycleRuntime) {
-        lifecycleRuntime.setFocus(isFocused, surface: surface)
+    func setFocus(_ isFocused: Bool) {
+        surfaceLifecycleRuntime.setFocus(isFocused, surface: surface)
     }
 
-    func setOcclusion(_ isVisible: Bool, using lifecycleRuntime: TerminalIOSSurfaceLifecycleRuntime) {
-        lifecycleRuntime.setOcclusion(isVisible, surface: surface)
+    func setOcclusion(_ isVisible: Bool) {
+        surfaceLifecycleRuntime.setOcclusion(isVisible, surface: surface)
     }
 
-    func processExited(using lifecycleRuntime: TerminalIOSSurfaceLifecycleRuntime) -> Bool {
-        lifecycleRuntime.processExited(surface: surface)
+    func processExited() -> Bool {
+        surfaceLifecycleRuntime.processExited(surface: surface)
     }
 
     var needsConfirmQuit: Bool {
@@ -116,38 +128,34 @@ final class TerminalIOSSurfaceOwner {
 
     func resizeIfNeeded(
         pointSize: CGSize,
-        scale: CGFloat,
-        using displayRuntime: TerminalIOSSurfaceDisplayRuntime
+        scale: CGFloat
     ) -> Bool {
         guard let cSurface = surface?.unsafeCValue else { return false }
-        return displayRuntime.resizeIfNeeded(surface: cSurface, pointSize: pointSize, scale: scale)
+        return surfaceDisplayRuntime.resizeIfNeeded(surface: cSurface, pointSize: pointSize, scale: scale)
     }
 
     func forceResize(
         pointSize: CGSize,
-        scale: CGFloat,
-        using displayRuntime: TerminalIOSSurfaceDisplayRuntime
+        scale: CGFloat
     ) -> Bool {
         guard let cSurface = surface?.unsafeCValue else { return false }
-        return displayRuntime.forceResize(surface: cSurface, pointSize: pointSize, scale: scale)
-    }
-
-    func setOcclusion(_ isVisible: Bool, using displayRuntime: TerminalIOSSurfaceDisplayRuntime) {
-        guard let cSurface = surface?.unsafeCValue else { return }
-        displayRuntime.setOcclusion(isVisible, surface: cSurface)
+        return surfaceDisplayRuntime.forceResize(surface: cSurface, pointSize: pointSize, scale: scale)
     }
 
     func setColorScheme(
-        _ scheme: ghostty_color_scheme_e,
-        using displayRuntime: TerminalIOSSurfaceDisplayRuntime
+        _ scheme: ghostty_color_scheme_e
     ) {
         guard let cSurface = surface?.unsafeCValue else { return }
-        displayRuntime.setColorScheme(scheme, surface: cSurface)
+        surfaceDisplayRuntime.setColorScheme(scheme, surface: cSurface)
     }
 
-    func redraw(using displayRuntime: TerminalIOSSurfaceDisplayRuntime) {
+    func redraw() {
         guard let cSurface = surface?.unsafeCValue else { return }
-        displayRuntime.redraw(surface: cSurface)
+        surfaceDisplayRuntime.redraw(surface: cSurface)
+    }
+
+    func resetDisplaySizeTracking() {
+        surfaceDisplayRuntime.resetSizeTracking()
     }
 
     @discardableResult
@@ -157,31 +165,29 @@ final class TerminalIOSSurfaceOwner {
         return true
     }
 
-    func writeOutput(_ data: Data, using displayRuntime: TerminalIOSSurfaceDisplayRuntime) {
+    func writeOutput(_ data: Data) {
         guard let cSurface = surface?.unsafeCValue else { return }
-        displayRuntime.writeOutput(data, to: cSurface)
+        surfaceDisplayRuntime.writeOutput(data, to: cSurface)
     }
 
-    func externalExited(_ exitCode: UInt32, using displayRuntime: TerminalIOSSurfaceDisplayRuntime) {
+    func externalExited(_ exitCode: UInt32) {
         guard let cSurface = surface?.unsafeCValue else { return }
-        displayRuntime.externalExited(exitCode, surface: cSurface)
+        surfaceDisplayRuntime.externalExited(exitCode, surface: cSurface)
     }
 
-    func hasGhosttySelection(using selectionRuntime: TerminalIOSSelectionRuntime) -> Bool {
+    func hasGhosttySelection() -> Bool {
         selectionRuntime.hasGhosttySelection(surface: surface?.unsafeCValue)
     }
 
     func nativeTextSnapshot(
-        metrics: TerminalSelectionGridMetrics?,
-        using selectionRuntime: TerminalIOSSelectionRuntime
+        metrics: TerminalSelectionGridMetrics?
     ) -> TerminalNativeTextSnapshot {
         selectionRuntime.nativeTextSnapshot(surface: surface?.unsafeCValue, metrics: metrics)
     }
 
     func quickLookWordSelection(
         at point: CGPoint,
-        layout: TerminalTouchSelectionLayout,
-        using selectionRuntime: TerminalIOSSelectionRuntime
+        layout: TerminalTouchSelectionLayout
     ) -> TerminalGridSelection? {
         selectionRuntime.quickLookWordSelection(
             at: point,
@@ -191,13 +197,12 @@ final class TerminalIOSSurfaceOwner {
     }
 
     func touchSelectionText(
-        _ selection: TerminalGridSelection,
-        using selectionRuntime: TerminalIOSSelectionRuntime
+        _ selection: TerminalGridSelection
     ) -> String? {
         selectionRuntime.touchSelectionText(surface: surface?.unsafeCValue, selection: selection)
     }
 
-    func ghosttySelectionText(using selectionRuntime: TerminalIOSSelectionRuntime) -> String? {
+    func ghosttySelectionText() -> String? {
         selectionRuntime.ghosttySelectionText(surface: surface?.unsafeCValue)
     }
 

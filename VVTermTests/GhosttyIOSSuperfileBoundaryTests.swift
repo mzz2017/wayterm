@@ -345,7 +345,7 @@ struct GhosttyIOSSuperfileBoundaryTests {
 
         #expect(surfaceSource.contains("func setupSurface"))
         #expect(surfaceSource.contains("surfaceOwner.cleanup"))
-        #expect(surfaceSource.contains("using: surfaceLifecycleRuntime"))
+        #expect(!surfaceSource.contains("using: surfaceLifecycleRuntime"))
         #expect(surfaceSource.contains("surfaceOwner.createAndRegisterSurface"))
         #expect(surfaceOwnerSource.contains("surfaceRegistration.register"))
         #expect(surfaceOwnerSource.contains("renderingSetup.setupSurface"))

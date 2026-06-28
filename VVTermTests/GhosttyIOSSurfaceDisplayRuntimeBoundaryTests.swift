@@ -34,13 +34,14 @@ struct GhosttyIOSSurfaceDisplayRuntimeBoundaryTests {
 
         // Given the iOS terminal view needs Ghostty resize, redraw, and
         // External backend output lifecycle.
-        #expect(viewSource.contains("let surfaceDisplayRuntime = TerminalIOSSurfaceDisplayRuntime()"))
-        #expect(displayCallSource.contains("displayRuntime.resizeIfNeeded"))
-        #expect(displayCallSource.contains("displayRuntime.forceResize"))
-        #expect(displayCallSource.contains("displayRuntime.redraw"))
-        #expect(displayCallSource.contains("displayRuntime.writeOutput"))
-        #expect(displayCallSource.contains("displayRuntime.externalExited"))
-        #expect(displayCallSource.contains("displayRuntime.setColorScheme"))
+        #expect(!viewSource.contains("let surfaceDisplayRuntime = TerminalIOSSurfaceDisplayRuntime()"))
+        #expect(ownerSource.contains("private let surfaceDisplayRuntime: TerminalIOSSurfaceDisplayRuntime"))
+        #expect(displayCallSource.contains("surfaceDisplayRuntime.resizeIfNeeded"))
+        #expect(displayCallSource.contains("surfaceDisplayRuntime.forceResize"))
+        #expect(displayCallSource.contains("surfaceDisplayRuntime.redraw"))
+        #expect(displayCallSource.contains("surfaceDisplayRuntime.writeOutput"))
+        #expect(displayCallSource.contains("surfaceDisplayRuntime.externalExited"))
+        #expect(displayCallSource.contains("surfaceDisplayRuntime.setColorScheme"))
 
         // Then the main UIKit view does not directly own those C/FFI calls or
         // Ghostty pixel-size tracking state.
