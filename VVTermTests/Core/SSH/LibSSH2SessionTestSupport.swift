@@ -52,6 +52,30 @@ extension SSHSessionConfig {
             )
         )
     }
+
+    static var libSSH2KeyboardInteractiveAuthTest: SSHSessionConfig {
+        let serverId = UUID(uuidString: "00000000-0000-0000-0000-000000000012")!
+        return SSHSessionConfig(
+            host: "ssh.example.com",
+            port: 22,
+            dialHost: "ssh.example.com",
+            dialPort: 22,
+            hostKeyHost: "ssh.example.com",
+            hostKeyPort: 22,
+            username: "root",
+            connectionMode: .standard,
+            authMethod: .password,
+            credentials: ServerCredentials(
+                serverId: serverId,
+                password: "keyboard-secret",
+                privateKey: nil,
+                publicKey: nil,
+                passphrase: nil,
+                cloudflareClientID: nil,
+                cloudflareClientSecret: nil
+            )
+        )
+    }
 }
 
 final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDriving {
@@ -160,6 +184,8 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
     private var channelWriteCallLog: [ChannelWriteCall] = []
     private var lastErrorOperationLog: [LibSSH2RawError.Operation] = []
     private var keepAliveInvocationCount = 0
+    private var sessionAbstractPointer: UnsafeMutableRawPointer?
+    private var keyboardInteractiveResponseLog: [String] = []
 
     init(
         sessionInitResult: OpaquePointer?,
@@ -253,6 +279,18 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
         lock.lock()
         defer { lock.unlock() }
         return keepAliveInvocationCount
+    }
+
+    func sessionAbstractWasProvided() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return sessionAbstractPointer != nil
+    }
+
+    func keyboardInteractiveResponses() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return keyboardInteractiveResponseLog
     }
 
     func lastErrorOperations() -> [LibSSH2RawError.Operation] {
@@ -353,7 +391,10 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
     }
 
     nonisolated func makeSession(abstract: UnsafeMutableRawPointer?) -> OpaquePointer? {
-        sessionInitResult
+        lock.lock()
+        sessionAbstractPointer = abstract
+        lock.unlock()
+        return sessionInitResult
     }
 
     nonisolated func setMethodPreference(session: OpaquePointer, method: Int32, preferences: String) {}
@@ -434,7 +475,35 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
         username: String,
         callback: LibSSH2KeyboardInteractiveCallback
     ) -> Int32 {
-        LIBSSH2_ERROR_AUTHENTICATION_FAILED
+        lock.lock()
+        var abstract = sessionAbstractPointer
+        lock.unlock()
+
+        var responses = [LIBSSH2_USERAUTH_KBDINT_RESPONSE](repeating: LIBSSH2_USERAUTH_KBDINT_RESPONSE(), count: 1)
+        withUnsafeMutablePointer(to: &abstract) { abstractPointer in
+            responses.withUnsafeMutableBufferPointer { responseBuffer in
+                callback(
+                    nil,
+                    0,
+                    nil,
+                    0,
+                    1,
+                    nil,
+                    responseBuffer.baseAddress,
+                    abstractPointer
+                )
+            }
+        }
+
+        if let responseText = responses[0].text {
+            let response = String(cString: responseText)
+            lock.lock()
+            keyboardInteractiveResponseLog.append(response)
+            lock.unlock()
+            responseText.deallocate()
+        }
+
+        return responses[0].length > 0 ? 0 : LIBSSH2_ERROR_AUTHENTICATION_FAILED
     }
 
     nonisolated func authenticateWithPublicKey(

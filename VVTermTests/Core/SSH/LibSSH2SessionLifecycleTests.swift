@@ -165,6 +165,31 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         }
     }
 
+    func testKeyboardInteractiveAuthUsesSessionOwnedContext() async throws {
+        // Given a server that falls back from password auth to
+        // keyboard-interactive prompts.
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("password,keyboard-interactive")
+        )
+        let session = SSHSession(config: .libSSH2KeyboardInteractiveAuthTest, driver: driver)
+
+        // When libssh2 asks the callback for an interactive response.
+        try await session.connect()
+
+        // Then the callback reads password state from the actor-owned session
+        // abstract context, not from a temporary stack pointer.
+        XCTAssertTrue(
+            driver.sessionAbstractWasProvided(),
+            "SSHSession should provide a stable actor-owned context as libssh2 session abstract data."
+        )
+        XCTAssertEqual(
+            driver.keyboardInteractiveResponses(),
+            ["keyboard-secret"],
+            "Keyboard-interactive auth should read the password through the session-owned abstract context."
+        )
+    }
+
     func testKeepAliveUsesDriverBoundary() async throws {
         // Given a connected session using the fake libssh2 driver.
         let driver = RecordingLibSSH2SessionDriver(

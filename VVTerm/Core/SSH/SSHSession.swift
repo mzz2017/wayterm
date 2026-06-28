@@ -61,6 +61,10 @@ nonisolated actor SSHSession {
         driver.configureInteractiveSocket(socket)
 
         // Create libssh2 session (use _ex variant since macros not available in Swift)
+        // libssh2 stores this abstract pointer on the session and passes it back
+        // synchronously during keyboard-interactive auth. SSHSession owns the
+        // context for the whole libssh2 session lifetime, then clears the
+        // password before connect() can return.
         let sessionAbstract = Unmanaged.passUnretained(keyboardInteractiveContext).toOpaque()
         libssh2Session = driver.makeSession(abstract: sessionAbstract)
         guard let session = libssh2Session else {
