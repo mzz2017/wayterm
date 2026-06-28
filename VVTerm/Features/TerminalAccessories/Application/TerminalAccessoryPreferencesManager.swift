@@ -19,7 +19,18 @@ protocol TerminalAccessoryPendingSyncCoordinating {
 }
 
 extension CloudKitManager: TerminalAccessoryCloudProfileSyncing {}
-extension CloudKitSyncCoordinator: TerminalAccessoryPendingSyncCoordinating {}
+extension CloudKitSyncCoordinator: TerminalAccessoryPendingSyncCoordinating {
+    func enqueueTerminalAccessoryProfileUpsert(_ profile: TerminalAccessoryProfile) {
+        guard let payload = try? PendingCloudKitMutation.encodedPayload(for: profile) else { return }
+        enqueuePendingMutation(
+            .upsert(
+                entity: .terminalAccessoryProfile,
+                entityKey: TerminalAccessoryProfile.recordName,
+                payload: payload
+            )
+        )
+    }
+}
 
 @MainActor
 private struct NoopTerminalAccessoryCloudProfileSync: TerminalAccessoryCloudProfileSyncing {

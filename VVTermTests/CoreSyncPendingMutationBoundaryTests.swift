@@ -35,6 +35,31 @@ struct CoreSyncPendingMutationBoundaryTests {
         }
     }
 
+    @Test
+    func cloudKitSyncCoordinatorDoesNotExposeFeatureDomainEnqueueAPI() throws {
+        let root = try sourceRoot()
+        let source = try String(
+            contentsOf: root.appendingPathComponent("VVTerm/Core/Sync/CloudKitSyncCoordinator.swift"),
+            encoding: .utf8
+        )
+        let forbiddenEnqueueSignatures = [
+            "func enqueueServerUpsert(_ server: Server)",
+            "func enqueueServerDelete(_ server: Server)",
+            "func enqueueWorkspaceUpsert(_ workspace: Workspace)",
+            "func enqueueWorkspaceDelete(_ workspace: Workspace)",
+            "func enqueueTerminalThemeUpsert(_ theme: TerminalTheme)",
+            "func enqueueTerminalThemePreferenceUpsert(_ preference: TerminalThemePreference)",
+            "func enqueueTerminalAccessoryProfileUpsert(_ profile: TerminalAccessoryProfile)"
+        ]
+
+        for forbiddenSignature in forbiddenEnqueueSignatures {
+            #expect(
+                !source.contains(forbiddenSignature),
+                "CloudKitSyncCoordinator Core surface should accept pending payload mutations, not feature domain enqueue API \(forbiddenSignature)."
+            )
+        }
+    }
+
     private func sourceRoot() throws -> URL {
         var url = URL(fileURLWithPath: #filePath)
         while url.lastPathComponent != "VVTermTests" {

@@ -69,6 +69,10 @@ struct PendingCloudKitMutation: Codable, Identifiable {
         return try JSONDecoder().decode(type, from: payload)
     }
 
+    static func encodedPayload<T: Encodable>(for value: T) throws -> Data {
+        try JSONEncoder().encode(value)
+    }
+
     var operationPriority: Int {
         switch operation {
         case .upsert: return 0

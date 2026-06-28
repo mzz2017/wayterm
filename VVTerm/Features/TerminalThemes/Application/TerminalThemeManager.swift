@@ -33,7 +33,23 @@ protocol TerminalThemeSyncCoordinating {
 
 extension CloudKitManager: TerminalThemeCloudStoring {}
 
-extension CloudKitSyncCoordinator: TerminalThemeSyncCoordinating {}
+extension CloudKitSyncCoordinator: TerminalThemeSyncCoordinating {
+    func enqueueTerminalThemeUpsert(_ theme: TerminalTheme) {
+        guard let payload = try? PendingCloudKitMutation.encodedPayload(for: theme) else { return }
+        enqueuePendingMutation(.upsert(entity: .terminalTheme, entityKey: theme.id.uuidString, payload: payload))
+    }
+
+    func enqueueTerminalThemePreferenceUpsert(_ preference: TerminalThemePreference) {
+        guard let payload = try? PendingCloudKitMutation.encodedPayload(for: preference) else { return }
+        enqueuePendingMutation(
+            .upsert(
+                entity: .terminalThemePreference,
+                entityKey: TerminalThemePreference.recordName,
+                payload: payload
+            )
+        )
+    }
+}
 
 @MainActor
 final class UserDefaultsTerminalThemeCustomThemeStore: TerminalThemeCustomThemeStoring {
