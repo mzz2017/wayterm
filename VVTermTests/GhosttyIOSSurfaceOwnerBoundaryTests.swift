@@ -22,6 +22,9 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
         let ownerSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Surface/TerminalIOSSurfaceOwner.swift")
         )
+        let appSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/Bridge/Ghostty.App.swift")
+        )
         let scrollGestureSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Scroll/GhosttyTerminalView+ScrollGesture+iOS.swift")
         )
@@ -37,12 +40,12 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
 
         #expect(viewSource.contains("let surfaceOwner: TerminalIOSSurfaceOwner"))
         #expect(viewSource.contains("TerminalIOSSurfaceOwner(ghosttyApp: ghosttyApp, appWrapper: appWrapper)"))
-        #expect(viewSource.contains("get { surfaceOwner.surface }"))
-        #expect(viewSource.contains("set { surfaceOwner.surface = newValue }"))
         #expect(surfaceRuntimeSource.contains("surfaceOwner.createAndRegisterSurface("))
         #expect(ownerSource.contains("func createAndRegisterSurface("))
         #expect(ownerSource.contains("ghosttyApp: ghosttyApp"))
         #expect(ownerSource.contains("appWrapper: appWrapper"))
+        #expect(ownerSource.contains("var liveSurfaceHandle: ghostty_surface_t?"))
+        #expect(appSource.contains("terminalView.surfaceOwner.liveSurfaceHandle"))
 
         #expect(
             !viewSource.contains("var ghosttyApp: ghostty_app_t?"),
@@ -56,11 +59,19 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
             !viewSource.contains("internal var surface: Ghostty.Surface?"),
             "GhosttyTerminalView+iOS.swift should not store the Ghostty surface directly."
         )
+        #expect(
+            !viewSource.contains("var surface: Ghostty.Surface?"),
+            "GhosttyTerminalView+iOS.swift should not expose the owned Ghostty surface wrapper."
+        )
+        #expect(
+            !appSource.contains("terminalView.surface?.unsafeCValue"),
+            "Ghostty.App callbacks should ask the owner for a narrow live surface handle instead of reading the view surface."
+        )
 
         #expect(ownerSource.contains("final class TerminalIOSSurfaceOwner"))
         #expect(ownerSource.contains("let ghosttyApp: ghostty_app_t"))
         #expect(ownerSource.contains("weak var appWrapper: Ghostty.App?"))
-        #expect(ownerSource.contains("var surface: Ghostty.Surface?"))
+        #expect(ownerSource.contains("private var surface: Ghostty.Surface?"))
         #expect(ownerSource.contains("var hasLiveSurface: Bool"))
         #expect(ownerSource.contains("var isMouseCaptured: Bool"))
         #expect(ownerSource.contains("var isInAlternateScreen: Bool"))

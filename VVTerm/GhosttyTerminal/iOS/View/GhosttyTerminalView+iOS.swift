@@ -24,10 +24,6 @@ class GhosttyTerminalView: UIView {
     // MARK: - Properties
 
     let surfaceOwner: TerminalIOSSurfaceOwner
-    var surface: Ghostty.Surface? {
-        get { surfaceOwner.surface }
-        set { surfaceOwner.surface = newValue }
-    }
     let surfaceRegistration = GhosttySurfaceRegistration()
     let worktreePath: String
     let paneId: String?

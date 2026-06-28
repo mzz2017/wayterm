@@ -722,7 +722,7 @@ extension Ghostty {
 
         static func readClipboard(_ userdata: UnsafeMutableRawPointer?, location: ghostty_clipboard_e, state: UnsafeMutableRawPointer?) -> Bool {
             guard let terminalView = GhosttySurfaceCallbackContext.terminalView(fromUserdata: userdata) else { return false }
-            guard let surface = terminalView.surface?.unsafeCValue else { return false }
+            guard let surface = terminalView.surfaceOwner.liveSurfaceHandle else { return false }
 
             // Read from macOS clipboard
             let clipboardString = Clipboard.readString() ?? ""

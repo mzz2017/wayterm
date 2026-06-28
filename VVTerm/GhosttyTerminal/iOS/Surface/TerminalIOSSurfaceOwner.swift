@@ -13,7 +13,7 @@ import UIKit
 final class TerminalIOSSurfaceOwner {
     let ghosttyApp: ghostty_app_t
     weak var appWrapper: Ghostty.App?
-    var surface: Ghostty.Surface?
+    private var surface: Ghostty.Surface?
     private let surfaceDisplayRuntime: TerminalIOSSurfaceDisplayRuntime
     private let surfaceLifecycleRuntime: TerminalIOSSurfaceLifecycleRuntime
     private let surfaceInputRuntime: TerminalIOSSurfaceInputRuntime
@@ -37,6 +37,10 @@ final class TerminalIOSSurfaceOwner {
 
     var hasLiveSurface: Bool {
         surface?.unsafeCValue != nil
+    }
+
+    var liveSurfaceHandle: ghostty_surface_t? {
+        surface?.unsafeCValue
     }
 
     var isMouseCaptured: Bool {
