@@ -22,6 +22,37 @@ final class TerminalConnectionRuntimeTests: XCTestCase {
         let events = await fake.events
         XCTAssertEqual(events, ["connect", "startShell", "closeShell", "disconnect"])
     }
+
+    func testCloseRunnerFullDisconnectCanLeaveRegisteredClientForExternalOwner() async throws {
+        // Given a runner-backed SSH client and shell whose registered lifetime
+        // will be closed by a separate owner after runtime cancellation.
+        let client = SSHClient()
+        let runtime = TerminalConnectionRuntime(
+            entityId: .pane(UUID()),
+            sshClientFactory: { client }
+        )
+        let shellId = UUID()
+
+        _ = await runtime.runnerClient()
+        await runtime.setShellId(shellId)
+
+        // When runtime cancellation is part of a full pane close, but the
+        // registered shell/client are intentionally left to the registry owner.
+        await runtime.closeRunner(
+            mode: .fullDisconnect,
+            closeShell: false,
+            disconnectClient: false
+        )
+
+        // Then the runtime releases its shell state without closing the shell
+        // or disconnecting the still-registered client.
+        let currentShellId = await runtime.currentShellId()
+        let isRunnerClient = await runtime.isRunnerClient(client)
+        let state = await runtime.state
+        XCTAssertNil(currentShellId)
+        XCTAssertTrue(isRunnerClient)
+        XCTAssertEqual(state, .disconnected)
+    }
 }
 
 private actor RecordingTerminalSSHClient: TerminalConnectionClient {

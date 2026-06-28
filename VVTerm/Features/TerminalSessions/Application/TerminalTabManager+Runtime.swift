@@ -47,21 +47,18 @@ extension TerminalTabManager {
         closeRegisteredShell: Bool
     ) async {
         let runtime = paneRuntimes[paneId]
-        await runtime?.runtime.cancelShellTask()
-        let shellId = await runtime?.runtime.clearShellId()
 
         if cleanupTerminal {
             terminalSurfaceRegistry.removeSurface(for: .pane(paneId), cleanup: true)
         }
 
         guard let runtime else { return }
-        if closeRegisteredShell, let shellId {
-            await runtime.runtime.closeRunnerShell(shellId)
-        }
+        await runtime.runtime.closeRunner(
+            mode: mode,
+            closeShell: closeRegisteredShell,
+            disconnectClient: closeRegisteredShell
+        )
         if mode == .fullDisconnect {
-            if closeRegisteredShell {
-                await runtime.runtime.disconnectRunnerClientAndClear()
-            }
             paneRuntimes.removeValue(forKey: paneId)
             terminalConnectionRegistry.discardRuntime(for: .pane(paneId))
         }

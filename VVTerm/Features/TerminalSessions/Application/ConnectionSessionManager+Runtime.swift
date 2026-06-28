@@ -198,19 +198,14 @@ extension ConnectionSessionManager {
         cleanupTerminal: Bool
     ) async {
         let runtime = sessionRuntimes[sessionId]
-        await runtime?.runtime.cancelShellTask()
-        let shellId = await runtime?.runtime.clearShellId()
 
         if cleanupTerminal {
             terminalSurfaceRegistry.removeSurface(for: .session(sessionId), cleanup: true)
         }
 
         guard let runtime else { return }
-        if let shellId {
-            await runtime.runtime.closeRunnerShell(shellId)
-        }
+        await runtime.runtime.closeRunner(mode: mode, closeShell: true)
         if mode == .fullDisconnect {
-            await runtime.runtime.disconnectRunnerClientAndClear()
             sessionRuntimes.removeValue(forKey: sessionId)
             terminalConnectionRegistry.discardRuntime(for: .session(sessionId))
         }

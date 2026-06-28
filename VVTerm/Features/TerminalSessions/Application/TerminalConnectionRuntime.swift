@@ -230,29 +230,8 @@ actor TerminalConnectionRuntime {
         shellId
     }
 
-    func clearShellId() -> UUID? {
-        defer { shellId = nil }
-        return shellId
-    }
-
     func updateLastSize(cols: Int, rows: Int) {
         lastSize = (cols, rows)
-    }
-
-    func cancelShellTask() {
-        shellTask?.cancel()
-        shellTask = nil
-    }
-
-    func disconnectRunnerClientAndClear() async {
-        guard let sshClient else { return }
-        await sshClient.disconnect()
-        self.sshClient = nil
-    }
-
-    func closeRunnerShell(_ shellId: UUID) async {
-        guard let sshClient else { return }
-        await sshClient.closeShell(shellId)
     }
 
     func markConnecting() {
@@ -276,7 +255,11 @@ actor TerminalConnectionRuntime {
         return ObjectIdentifier(sshClient) == ObjectIdentifier(client)
     }
 
-    func closeRunner(mode: ShellTeardownMode, closeShell: Bool) async {
+    func closeRunner(
+        mode: ShellTeardownMode,
+        closeShell: Bool,
+        disconnectClient: Bool? = nil
+    ) async {
         let pendingShellTask = shellTask
         shellTask = nil
         pendingShellTask?.cancel()
@@ -288,7 +271,13 @@ actor TerminalConnectionRuntime {
             await sshClient?.closeShell(shellToClose)
         }
 
-        if case .fullDisconnect = mode {
+        let shouldDisconnectClient = disconnectClient ?? {
+            if case .fullDisconnect = mode {
+                return true
+            }
+            return false
+        }()
+        if shouldDisconnectClient {
             await sshClient?.disconnect()
             sshClient = nil
         }
