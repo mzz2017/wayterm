@@ -14,8 +14,8 @@ final class TerminalAccessoryPreferencesManagerTests: XCTestCase {
     private var defaultsSuiteName: String!
     private var defaults: UserDefaults!
 
-    override func setUp() {
-        super.setUp()
+    override func setUp() async throws {
+        try await super.setUp()
         syncWasEnabledObject = UserDefaults.standard.object(forKey: SyncSettings.enabledKey)
         UserDefaults.standard.set(false, forKey: SyncSettings.enabledKey)
 
@@ -24,7 +24,7 @@ final class TerminalAccessoryPreferencesManagerTests: XCTestCase {
         defaults.removePersistentDomain(forName: defaultsSuiteName)
     }
 
-    override func tearDown() {
+    override func tearDown() async throws {
         if let syncWasEnabledObject {
             UserDefaults.standard.set(syncWasEnabledObject, forKey: SyncSettings.enabledKey)
         } else {
@@ -35,7 +35,7 @@ final class TerminalAccessoryPreferencesManagerTests: XCTestCase {
         defaults = nil
         defaultsSuiteName = nil
         syncWasEnabledObject = nil
-        super.tearDown()
+        try await super.tearDown()
     }
 
     func testCreateCustomActionPersistsAndUpdatesProfileMetadata() throws {
@@ -235,6 +235,22 @@ final class TerminalAccessoryPreferencesManagerTests: XCTestCase {
         XCTAssertTrue(
             source.contains("startCloudResolutionApply"),
             "Cloud resolution should go through a named tracked task helper."
+        )
+        XCTAssertTrue(
+            source.contains("NotificationObserverTokens"),
+            "TerminalAccessoryPreferencesManager should move NotificationCenter tokens into the shared observer owner."
+        )
+        XCTAssertFalse(
+            source.contains("foregroundObserver: NSObjectProtocol"),
+            "Foreground observer tokens should not be stored directly on the main-actor manager."
+        )
+        XCTAssertFalse(
+            source.contains("syncToggleObserver: NSObjectProtocol"),
+            "Sync-toggle observer tokens should not be stored directly on the main-actor manager."
+        )
+        XCTAssertFalse(
+            source.contains("cloudResolutionObserver: NSObjectProtocol"),
+            "Cloud-resolution observer tokens should not be stored directly on the main-actor manager."
         )
     }
 

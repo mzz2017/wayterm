@@ -83,9 +83,7 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
         category: "TerminalAccessoryPreferences"
     )
 
-    private var foregroundObserver: NSObjectProtocol?
-    private var syncToggleObserver: NSObjectProtocol?
-    private var cloudResolutionObserver: NSObjectProtocol?
+    nonisolated private let observerTokens = NotificationObserverTokens()
     private var startupCloudSyncTask: (id: UUID, task: Task<Void, Never>)?
     private var foregroundCloudSyncTask: (id: UUID, task: Task<Void, Never>)?
     private var syncToggleCloudSyncTask: (id: UUID, task: Task<Void, Never>)?
@@ -123,15 +121,7 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
     }
 
     deinit {
-        if let foregroundObserver {
-            NotificationCenter.default.removeObserver(foregroundObserver)
-        }
-        if let syncToggleObserver {
-            NotificationCenter.default.removeObserver(syncToggleObserver)
-        }
-        if let cloudResolutionObserver {
-            NotificationCenter.default.removeObserver(cloudResolutionObserver)
-        }
+        observerTokens.invalidateAll()
         startupCloudSyncTask?.task.cancel()
         foregroundCloudSyncTask?.task.cancel()
         syncToggleCloudSyncTask?.task.cancel()
@@ -568,7 +558,7 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
         return
         #endif
 
-        foregroundObserver = NotificationCenter.default.addObserver(
+        let token = NotificationCenter.default.addObserver(
             forName: name,
             object: nil,
             queue: .main
@@ -578,6 +568,7 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
                 self?.startForegroundCloudSync()
             }
         }
+        observerTokens.append(token)
     }
 
     private func syncWithCloudIfNeededForForeground() async {
@@ -593,7 +584,7 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
     }
 
     private func observeSyncToggleChanges() {
-        syncToggleObserver = NotificationCenter.default.addObserver(
+        let token = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: defaults,
             queue: .main
@@ -603,21 +594,24 @@ final class TerminalAccessoryPreferencesManager: ObservableObject {
                 self?.startSyncToggleCloudSync()
             }
         }
+        observerTokens.append(token)
     }
 
     private func observeCloudResolutionChanges() {
-        cloudResolutionObserver = NotificationCenter.default.addObserver(
+        let token = NotificationCenter.default.addObserver(
             forName: TerminalAccessoryCloudResolutionNotification.didResolve,
             object: nil,
             queue: .main
         ) { [weak self] notification in
+            let resolvedProfile = notification.userInfo?["profile"] as? TerminalAccessoryProfile
+            guard let resolvedProfile else { return }
+
             // NotificationCenter delivers this observer on `.main`; keep it as an intent handoff.
             MainActor.assumeIsolated {
-                let resolvedProfile = notification.userInfo?["profile"] as? TerminalAccessoryProfile
-                guard let resolvedProfile else { return }
                 self?.startCloudResolutionApply(resolvedProfile)
             }
         }
+        observerTokens.append(token)
     }
 }
 
