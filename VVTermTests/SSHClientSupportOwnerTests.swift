@@ -72,6 +72,37 @@ struct SSHClientSupportOwnerTests {
     }
 
     @Test
+    func moshShellStreamTerminationIsOwnedByClientTeardownRegistry() throws {
+        let source = try source(at: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift"))
+        let moshShellSource = try slice(
+            startingAt: "private func startMoshShell(",
+            endingBefore: "    nonisolated static func runWithTimeout",
+            in: source
+        )
+
+        #expect(
+            moshShellSource.contains("runtime.setStreamTask(streamTask)"),
+            "Mosh host streams should publish their stream task through the runtime owner."
+        )
+        #expect(
+            moshShellSource.contains("trackMoshTeardownTask"),
+            "Mosh stream termination should register closeShell cleanup with SSHClient."
+        )
+        #expect(
+            moshShellSource.contains("await self.closeShell(shellId)"),
+            "Mosh stream completion should retain the SSHClient owner long enough to close the shell."
+        )
+        #expect(
+            !moshShellSource.contains("Task { [weak self]"),
+            "Mosh stream completion must not rely on weak self to perform lifecycle cleanup."
+        )
+        #expect(
+            !moshShellSource.contains("await self?.closeShell(shellId)"),
+            "Mosh closeShell cleanup must not silently disappear when a weak capture is nil."
+        )
+    }
+
+    @Test
     func teardownRegistriesPublishTaskBeforeReleasingTrackLock() throws {
         for path in [
             "VVTerm/Core/SSH/SSHChannelCleanupTaskRegistry.swift",

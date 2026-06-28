@@ -141,7 +141,8 @@ extension Ghostty {
             let supportsSelectionClipboard = true
             #endif
 
-            // Create runtime config with callbacks
+            // Ghostty owns the userdata pointer only while this App owns the ghostty_app_t handle.
+            // cleanup() frees that handle before this object can disappear.
             var runtime_cfg = ghostty_runtime_config_s(
                 userdata: Unmanaged.passUnretained(self).toOpaque(),
                 supports_selection_clipboard: supportsSelectionClipboard,
@@ -727,10 +728,11 @@ extension Ghostty {
             // Read from macOS clipboard
             let clipboardString = Clipboard.readString() ?? ""
 
-            // Complete the clipboard request by providing data to Ghostty
-            clipboardString.withCString { ptr in
-                ghostty_surface_complete_clipboard_request(surface, ptr, state, false)
-            }
+            GhosttyClipboardBridge.completeReadRequest(
+                surface: surface,
+                string: clipboardString,
+                state: state
+            )
 
             Ghostty.logger.debug("Read clipboard: \(clipboardString.prefix(50))...")
             return true
@@ -760,14 +762,11 @@ extension Ghostty {
             guard location != GHOSTTY_CLIPBOARD_SELECTION else { return }
             #endif
 
-            // The runtime passes an array of clipboard entries; prefer the first
-            // textual entry. The API does not supply a byte length, so we treat
-            // the data as a null-terminated UTF-8 C string.
+            // The runtime passes an array of clipboard entries; prefer the first textual entry.
             for idx in 0..<count {
                 let entry = contents.advanced(by: idx).pointee
-                guard let dataPtr = entry.data else { continue }
+                guard var string = GhosttyClipboardBridge.string(from: entry) else { continue }
 
-                var string = String(cString: dataPtr)
                 if !string.isEmpty {
                     // Apply copy transformations from settings
                     string = TerminalTextCleaner.cleanText(string, settings: .current())

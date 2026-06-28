@@ -159,15 +159,17 @@ extension RemoteFileBrowserScreen {
         progress: Progress,
         completion: @escaping (URL?, Bool, Error?) -> Void
     ) {
-        var transferRequestID: UUID?
-        progress.cancellationHandler = { [browser] in
-            Task { @MainActor in
-                guard let transferRequestID else { return }
-                browser.cancelTransferRequest(transferRequestID)
+        let cancellationTarget = RemoteFileTransferCancellationTarget()
+        progress.cancellationHandler = { [browser, cancellationTarget] in
+            RemoteFileTransferCancellationTaskRegistry.shared.track {
+                guard let transferRequestID = cancellationTarget.requestID else { return }
+                if let task = browser.cancelTransferRequest(transferRequestID) {
+                    await task.value
+                }
             }
         }
 
-        transferRequestID = browser.requestTransfer(
+        let transferRequestID = browser.requestTransfer(
             serverId: server.id,
             operation: { _ in
                 let temporaryURL = try preparedTemporaryURL.get()
@@ -190,8 +192,13 @@ extension RemoteFileBrowserScreen {
                 }
             }
         )
-        if progress.isCancelled, let transferRequestID {
-            browser.cancelTransferRequest(transferRequestID)
+        cancellationTarget.setRequestID(transferRequestID)
+        if progress.isCancelled {
+            RemoteFileTransferCancellationTaskRegistry.shared.track {
+                if let task = browser.cancelTransferRequest(transferRequestID) {
+                    await task.value
+                }
+            }
         }
     }
 
@@ -213,5 +220,72 @@ extension RemoteFileBrowserScreen {
     func finishSharing(_ item: RemoteFileShareItem) {
         guard shareItem?.id == item.id else { return }
         cleanupShareItem()
+    }
+}
+
+private final class RemoteFileTransferCancellationTarget: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedRequestID: UUID?
+
+    var requestID: UUID? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedRequestID
+    }
+
+    func setRequestID(_ requestID: UUID) {
+        lock.lock()
+        storedRequestID = requestID
+        lock.unlock()
+    }
+}
+
+private final class RemoteFileTransferCancellationTaskRegistry: @unchecked Sendable {
+    static let shared = RemoteFileTransferCancellationTaskRegistry()
+
+    private final class Record {
+        var task: Task<Void, Never>?
+    }
+
+    private let lock = NSLock()
+    private var records: [UUID: Record] = [:]
+
+    @discardableResult
+    func track(_ operation: @escaping @MainActor @Sendable () async -> Void) -> UUID {
+        let requestID = UUID()
+        let record = Record()
+
+        lock.lock()
+        records[requestID] = record
+        let task = Task { @MainActor [self] in
+            await operation()
+            remove(requestID)
+        }
+        record.task = task
+        lock.unlock()
+
+        return requestID
+    }
+
+    func waitForAll() async {
+        while true {
+            let tasks = tasks()
+            guard !tasks.isEmpty else { return }
+            for task in tasks {
+                await task.value
+            }
+        }
+    }
+
+    private func tasks() -> [Task<Void, Never>] {
+        lock.lock()
+        defer { lock.unlock() }
+        return records.values.compactMap(\.task)
+    }
+
+    private func remove(_ requestID: UUID) {
+        lock.lock()
+        records.removeValue(forKey: requestID)
+        lock.unlock()
     }
 }

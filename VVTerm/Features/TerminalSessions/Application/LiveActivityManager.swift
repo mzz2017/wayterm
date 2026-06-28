@@ -21,7 +21,16 @@ final class LiveActivityManager {
     func refresh(with snapshots: [TerminalLiveActivitySnapshot]) {
         #if os(iOS)
         if #available(iOS 16.1, *) {
-            Task { await updateActivity(for: snapshots) }
+            refreshTask?.cancel()
+            let requestID = UUID()
+            refreshRequestID = requestID
+            refreshTask = Task { @MainActor [self] in
+                await updateActivity(for: snapshots, requestID: requestID)
+                if refreshRequestID == requestID {
+                    refreshTask = nil
+                    refreshRequestID = nil
+                }
+            }
         }
         #endif
     }
@@ -34,19 +43,28 @@ final class LiveActivityManager {
     private var lastState: VVTermActivityAttributes.ContentState?
 
     @available(iOS 16.1, *)
-    private func updateActivity(for snapshots: [TerminalLiveActivitySnapshot]) async {
+    private var refreshTask: Task<Void, Never>?
+
+    @available(iOS 16.1, *)
+    private var refreshRequestID: UUID?
+
+    @available(iOS 16.1, *)
+    private func updateActivity(for snapshots: [TerminalLiveActivitySnapshot], requestID: UUID) async {
+        guard isCurrentRefresh(requestID) else { return }
+
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
-            await endAllActivities()
+            await endAllActivities(requestID: requestID)
             return
         }
 
         let activeCount = snapshots.count
         if activeCount == 0 {
-            await endAllActivities()
+            await endAllActivities(requestID: requestID)
             return
         }
 
         await attachToExistingActivityIfNeeded()
+        guard isCurrentRefresh(requestID) else { return }
 
         let status: VVTermLiveActivityStatus
         if snapshots.contains(where: { $0.state == .reconnecting }) {
@@ -73,7 +91,13 @@ final class LiveActivityManager {
 
         guard newState != lastState else { return }
         await activity?.update(using: newState)
+        guard isCurrentRefresh(requestID) else { return }
         lastState = newState
+    }
+
+    @available(iOS 16.1, *)
+    private func isCurrentRefresh(_ requestID: UUID) -> Bool {
+        refreshRequestID == requestID && !Task.isCancelled
     }
 
     @available(iOS 16.1, *)
@@ -91,11 +115,14 @@ final class LiveActivityManager {
     }
 
     @available(iOS 16.1, *)
-    private func endAllActivities() async {
+    private func endAllActivities(requestID: UUID) async {
+        guard isCurrentRefresh(requestID) else { return }
         let existing = Activity<VVTermActivityAttributes>.activities
         for activity in existing {
+            guard isCurrentRefresh(requestID) else { return }
             await activity.end(dismissalPolicy: .immediate)
         }
+        guard isCurrentRefresh(requestID) else { return }
         self.activity = nil
         lastState = nil
     }

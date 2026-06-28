@@ -33,8 +33,10 @@ struct CloudflareOAuthFlow: OAuthFlow {
 }
 
 actor CloudflareWebAuthenticationSessionActor: OAuthWebSession {
+    private let completionTasks = CloudflareOAuthCompletionTaskRegistry()
     private var currentSession: ASWebAuthenticationSession?
-    private var ignoreNextCompletion = false
+    private var currentSessionID: UUID?
+    private var ignoredCompletionSessionIDs: Set<UUID> = []
     private var userDidCancel = false
     private var presentationContextProvider: CloudflarePresentationContextProvider?
 
@@ -44,12 +46,13 @@ actor CloudflareWebAuthenticationSessionActor: OAuthWebSession {
         }
 
         userDidCancel = false
-        ignoreNextCompletion = false
 
         let provider = await ensurePresentationContextProvider()
-        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: nil) { [weak self] _, error in
-            Task {
-                await self?.handleCompletion(error: error)
+        let sessionID = UUID()
+        let completionTasks = completionTasks
+        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: nil) { [self] _, error in
+            completionTasks.track {
+                await self.handleCompletion(sessionID: sessionID, error: error)
             }
         }
 
@@ -59,20 +62,26 @@ actor CloudflareWebAuthenticationSessionActor: OAuthWebSession {
         }
 
         currentSession = session
+        currentSessionID = sessionID
         let didStart = await MainActor.run { session.start() }
         if !didStart {
             currentSession = nil
+            currentSessionID = nil
             throw Failure.auth("Failed to start Cloudflare login session")
         }
     }
 
     func stop() async {
         guard let session = currentSession else { return }
-        ignoreNextCompletion = true
+        if let currentSessionID {
+            ignoredCompletionSessionIDs.insert(currentSessionID)
+        }
         await MainActor.run {
             session.cancel()
         }
         currentSession = nil
+        currentSessionID = nil
+        await waitForCompletionTasks()
     }
 
     func didCancelLogin() async -> Bool {
@@ -80,14 +89,18 @@ actor CloudflareWebAuthenticationSessionActor: OAuthWebSession {
     }
 
     private func resetForRestart() async {
-        ignoreNextCompletion = true
+        if let currentSessionID {
+            ignoredCompletionSessionIDs.insert(currentSessionID)
+        }
         if let session = currentSession {
             await MainActor.run {
                 session.cancel()
             }
         }
         currentSession = nil
+        currentSessionID = nil
         userDidCancel = false
+        await waitForCompletionTasks()
     }
 
     private func ensurePresentationContextProvider() async -> CloudflarePresentationContextProvider {
@@ -101,13 +114,19 @@ actor CloudflareWebAuthenticationSessionActor: OAuthWebSession {
         return provider
     }
 
-    private func handleCompletion(error: Error?) {
+    private func handleCompletion(sessionID: UUID, error: Error?) {
         defer {
-            currentSession = nil
+            if currentSessionID == sessionID {
+                currentSession = nil
+                currentSessionID = nil
+            }
         }
 
-        if ignoreNextCompletion {
-            ignoreNextCompletion = false
+        if ignoredCompletionSessionIDs.remove(sessionID) != nil {
+            return
+        }
+
+        guard currentSessionID == sessionID else {
             return
         }
 
@@ -117,6 +136,54 @@ actor CloudflareWebAuthenticationSessionActor: OAuthWebSession {
         } else if error != nil {
             userDidCancel = true
         }
+    }
+
+    private func waitForCompletionTasks() async {
+        while true {
+            let tasks = completionTasks.tasks()
+            guard !tasks.isEmpty else { return }
+            for task in tasks {
+                await task.value
+            }
+        }
+    }
+}
+
+private final class CloudflareOAuthCompletionTaskRegistry: @unchecked Sendable {
+    private final class Record {
+        var task: Task<Void, Never>?
+    }
+
+    private let lock = NSLock()
+    private var records: [UUID: Record] = [:]
+
+    @discardableResult
+    func track(_ operation: @escaping @Sendable () async -> Void) -> UUID {
+        let requestID = UUID()
+        let record = Record()
+
+        lock.lock()
+        records[requestID] = record
+        let task = Task {
+            await operation()
+            self.remove(requestID)
+        }
+        record.task = task
+        lock.unlock()
+
+        return requestID
+    }
+
+    func tasks() -> [Task<Void, Never>] {
+        lock.lock()
+        defer { lock.unlock() }
+        return records.values.compactMap(\.task)
+    }
+
+    private func remove(_ requestID: UUID) {
+        lock.lock()
+        records.removeValue(forKey: requestID)
+        lock.unlock()
     }
 }
 

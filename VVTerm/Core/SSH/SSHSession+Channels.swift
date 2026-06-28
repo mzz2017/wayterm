@@ -163,9 +163,9 @@ extension SSHSession {
             let state = SSHSessionShellChannelState(id: shellId, channel: channel, continuation: continuation)
             self.shellChannels[shellId] = state
 
-            continuation.onTermination = { [weak self] _ in
-                self?.trackChannelCleanupTask { [weak self] in
-                    await self?.closeShell(shellId)
+            continuation.onTermination = { _ in
+                self.trackChannelCleanupTask {
+                    await self.closeShell(shellId)
                 }
             }
         }
@@ -519,9 +519,9 @@ extension SSHSession {
                 execRequests[request.id] = request
                 startIOLoop()
             }
-        }, onCancel: { [weak self] in
-            self?.trackChannelCleanupTask { [weak self] in
-                await self?.cancelExecRequest(requestId, error: CancellationError())
+        }, onCancel: {
+            self.trackChannelCleanupTask {
+                await self.cancelExecRequest(requestId, error: CancellationError())
             }
         })
     }

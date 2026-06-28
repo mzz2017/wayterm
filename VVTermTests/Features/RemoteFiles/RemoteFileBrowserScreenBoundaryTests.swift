@@ -266,6 +266,31 @@ struct RemoteFileBrowserScreenBoundaryTests {
     }
 
     @Test
+    func fileRepresentationCancellationUsesTrackedTransferCancellationTask() throws {
+        let root = try sourceRoot()
+        let transferSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen+FileTransfers.swift")
+        )
+
+        #expect(
+            transferSource.contains("RemoteFileTransferCancellationTarget"),
+            "Progress cancellation should use a stable request-ID holder when cancellation can arrive before request creation."
+        )
+        #expect(
+            transferSource.contains("RemoteFileTransferCancellationTaskRegistry.shared.track"),
+            "Progress cancellation should publish cancellation work instead of dropping a bare Task."
+        )
+        #expect(
+            transferSource.contains("await task.value"),
+            "Progress cancellation should await the transfer cancellation task returned by the browser store."
+        )
+        #expect(
+            !transferSource.contains("Task { @MainActor in\n                guard let transferRequestID"),
+            "Progress cancellation must not use an untracked fire-and-forget MainActor task."
+        )
+    }
+
+    @Test
     func screenDoesNotOwnBrowserLabelFormatting() throws {
         let root = try sourceRoot()
         let screenSource = try source(

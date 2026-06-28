@@ -490,6 +490,10 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
             startShellSource.contains("\n                Task { [weak self] in\n                    await self?.closeShell(shellId)"),
             "Shell stream termination must not launch an untracked closeShell task."
         )
+        XCTAssertFalse(
+            startShellSource.contains("await self?.closeShell(shellId)"),
+            "Shell stream termination must not drop closeShell cleanup through a nil weak capture."
+        )
         XCTAssertTrue(
             executeSource.contains("trackChannelCleanupTask"),
             "Exec cancellation should register its channel cleanup task with SSHSession."
@@ -497,6 +501,10 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         XCTAssertFalse(
             executeSource.contains("Task {\n                await self?.cancelExecRequest"),
             "Exec cancellation must not launch an untracked cancelExecRequest task."
+        )
+        XCTAssertFalse(
+            executeSource.contains("self?.trackChannelCleanupTask"),
+            "Exec cancellation should retain the SSHSession owner while registering critical cleanup."
         )
         XCTAssertTrue(
             disconnectSource.contains("await waitForChannelCleanupTasks()"),

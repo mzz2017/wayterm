@@ -693,7 +693,7 @@ nonisolated actor SSHClient {
                     continuation.yield(bytes)
                 }
             }
-            let streamTask = Task { [weak self] in
+            let streamTask = Task {
                 var totalBytes = 0
                 for await hostOp in hostOpStream {
                     guard !Task.isCancelled else { break }
@@ -715,14 +715,14 @@ nonisolated actor SSHClient {
                 }
                 moshLogger.info("Mosh stream ended, total bytes delivered: \(totalBytes)")
                 continuation.finish()
-                await self?.closeShell(shellId)
+                await self.closeShell(shellId)
             }
             runtime.setStreamTask(streamTask)
 
-            continuation.onTermination = { [weak self] _ in
+            continuation.onTermination = { _ in
                 runtime.cancelStreamTask()
-                self?.trackMoshTeardownTask { [weak self] in
-                    await self?.closeShell(shellId)
+                self.trackMoshTeardownTask {
+                    await self.closeShell(shellId)
                 }
             }
         }

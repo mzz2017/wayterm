@@ -65,6 +65,12 @@ struct GhosttySurfaceRegistrationBoundaryTests {
         #expect(registrationSource.contains("func unregisterLaterFromDeinit()"))
         #expect(registrationSource.contains("appWrapper.registerSurface"))
         #expect(registrationSource.contains("appWrapper.unregisterSurface"))
+        #expect(registrationSource.contains("GhosttySurfaceDeferredUnregisterTaskRegistry"))
+        #expect(registrationSource.contains("waitForDeferredUnregisters()"))
+        #expect(
+            registrationSource.contains("return Self.deferredUnregisterTasks.track"),
+            "Deinit fallback unregister should publish a tracked task that tests and later lifecycle paths can await."
+        )
     }
 
     private func source(at url: URL) throws -> String {

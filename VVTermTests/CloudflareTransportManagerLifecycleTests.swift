@@ -54,6 +54,42 @@ struct CloudflareTransportManagerLifecycleTests {
         )
     }
 
+    @Test
+    func oauthCompletionCallbacksAreTrackedAndSessionScoped() throws {
+        let source = try source(
+            at: sourceRoot().appendingPathComponent("VVTerm/Core/Network/Cloudflare/CloudflareOAuthFlow.swift")
+        )
+
+        #expect(
+            source.contains("CloudflareOAuthCompletionTaskRegistry"),
+            "Cloudflare OAuth should own a registry for completion callbacks that hop out of ASWebAuthenticationSession."
+        )
+        #expect(
+            source.contains("completionTasks.track"),
+            "The ASWebAuthenticationSession completion should publish its lifecycle work before returning."
+        )
+        #expect(
+            source.contains("currentSessionID"),
+            "OAuth completion handling should be scoped to the session that created the callback."
+        )
+        #expect(
+            source.contains("ignoredCompletionSessionIDs"),
+            "Canceled or restarted sessions should invalidate their late completions explicitly."
+        )
+        #expect(
+            source.contains("handleCompletion(sessionID: sessionID"),
+            "The completion callback should pass the originating session ID into actor-owned state."
+        )
+        #expect(
+            !source.contains("[weak self] _, error in"),
+            "OAuth auth-state completion must not be skipped because a weak self capture became nil."
+        )
+        #expect(
+            !source.contains("ignoreNextCompletion"),
+            "A single global ignore flag is not enough to isolate overlapping OAuth sessions."
+        )
+    }
+
     private func makeCloudflareTarget() -> SSHConnectionTarget {
         SSHConnectionTarget(
             host: "ssh.example.com",
@@ -62,6 +98,26 @@ struct CloudflareTransportManagerLifecycleTests {
             cloudflareAccessMode: .serviceToken,
             cloudflareTeamDomainOverride: "team.cloudflareaccess.com"
         )
+    }
+
+    private func source(at url: URL) throws -> String {
+        try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func sourceRoot() throws -> URL {
+        var url = URL(fileURLWithPath: #filePath)
+        while url.lastPathComponent != "VVTermTests" {
+            let next = url.deletingLastPathComponent()
+            if next.path == url.path {
+                throw SourceRootError.notFound
+            }
+            url = next
+        }
+        return url.deletingLastPathComponent()
+    }
+
+    private enum SourceRootError: Error {
+        case notFound
     }
 }
 
