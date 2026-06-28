@@ -115,12 +115,8 @@ final class AudioCaptureService: ObservableObject {
         }
 
         var error: NSError?
-        let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
-            outStatus.pointee = .haveData
-            return buffer
-        }
-
-        converter.convert(to: convertedBuffer, error: &error, withInputFrom: inputBlock)
+        let inputProvider = AudioConverterInputBufferProvider(buffer: buffer)
+        converter.convert(to: convertedBuffer, error: &error, withInputFrom: inputProvider.makeInputBlock())
 
         if error != nil {
             bufferUpdateTasks.track { [weak self] in
