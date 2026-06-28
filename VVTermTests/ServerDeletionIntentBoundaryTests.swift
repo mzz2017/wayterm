@@ -75,6 +75,54 @@ struct ServerDeletionIntentBoundaryTests {
     }
 
     @Test
+    func coreSidebarRowUsesInjectedIntentClosuresInsteadOfApplicationManagers() throws {
+        // Given shared Core sidebar rows render server state and expose server
+        // actions used by the Servers feature sidebar.
+        let root = try sourceRoot()
+        let rowSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/UI/SidebarComponents.swift")
+        )
+        let sidebarSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift")
+        )
+
+        // Then Core UI must receive derived state and intent closures from the
+        // feature boundary instead of resolving application managers directly.
+        #expect(
+            !rowSource.contains("ServerManager.shared"),
+            "Core ServerRow should not resolve the Servers application manager singleton."
+        )
+        #expect(
+            !rowSource.contains("TerminalTabManager.shared"),
+            "Core ServerRow should not resolve the TerminalSessions application manager singleton."
+        )
+        #expect(
+            rowSource.contains("let isLocked: Bool"),
+            "Core ServerRow should receive lock state as view data from the Servers feature boundary."
+        )
+        #expect(
+            rowSource.contains("let tabCount: Int"),
+            "Core ServerRow should receive tab count as view data from the TerminalSessions feature boundary."
+        )
+        #expect(
+            rowSource.contains("let onDelete: (Server) -> Void"),
+            "Core ServerRow should route destructive actions through an injected intent closure."
+        )
+        #expect(
+            sidebarSource.contains("isLocked: serverManager.isServerLocked(server)"),
+            "ServerSidebarView should adapt ServerManager lock state before composing Core ServerRow."
+        )
+        #expect(
+            sidebarSource.contains("tabCount: tabManager.tabs(for: server.id).count"),
+            "ServerSidebarView should adapt TerminalTabManager tab state before composing Core ServerRow."
+        )
+        #expect(
+            sidebarSource.contains("onDelete: { serverManager.requestServerDeletion($0) }"),
+            "ServerSidebarView should keep server deletion intent at the Servers feature boundary."
+        )
+    }
+
+    @Test
     func appConfiguresDeletionTeardownThroughServerConnectionLifecycleOwner() throws {
         // Given the app root composes application-layer deletion dependencies.
         let root = try sourceRoot()

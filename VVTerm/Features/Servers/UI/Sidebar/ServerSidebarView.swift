@@ -155,10 +155,13 @@ struct ServerSidebarView: View {
                             ServerRow(
                                 server: server,
                                 isSelected: selectedServer?.id == server.id,
+                                isLocked: serverManager.isServerLocked(server),
+                                tabCount: tabManager.tabs(for: server.id).count,
                                 onSelect: { selectServer(server) },
                                 onEdit: { serverToEdit = $0 },
                                 onMove: { serverToMove = $0 },
                                 onConnect: { connectToServer($0) },
+                                onDelete: { serverManager.requestServerDeletion($0) },
                                 onLockedTap: { lockedServerAlert = server }
                             )
                             .frame(maxWidth: .infinity, alignment: .leading)

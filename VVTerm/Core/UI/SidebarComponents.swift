@@ -5,26 +5,19 @@ import SwiftUI
 struct ServerRow: View {
     let server: Server
     let isSelected: Bool
+    let isLocked: Bool
+    let tabCount: Int
     let onSelect: () -> Void
     let onEdit: (Server) -> Void
     var onMove: ((Server) -> Void)? = nil
-    var onConnect: ((Server) -> Void)? = nil
+    let onConnect: (Server) -> Void
+    let onDelete: (Server) -> Void
     var onLockedTap: (() -> Void)? = nil
 
-    @ObservedObject private var tabManager = TerminalTabManager.shared
-    @ObservedObject private var serverManager = ServerManager.shared
     @Environment(\.privacyModeEnabled) private var privacyModeEnabled
     #if os(macOS)
     @Environment(\.controlActiveState) private var controlActiveState
     #endif
-
-    private var isLocked: Bool {
-        serverManager.isServerLocked(server)
-    }
-
-    private var tabCount: Int {
-        tabManager.tabs(for: server.id).count
-    }
 
     private var selectedForegroundColor: Color {
         #if os(macOS)
@@ -76,17 +69,13 @@ struct ServerRow: View {
                         Label("Server Settings", systemImage: "slider.horizontal.3")
                     }
                     Button(role: .destructive) {
-                        serverManager.requestServerDeletion(server)
+                        onDelete(server)
                     } label: {
                         Label("Delete Server", systemImage: "trash")
                     }
                 } else {
                     Button {
-                        if let onConnect {
-                            onConnect(server)
-                        } else {
-                            tabManager.requestServerTerminalOpen(for: server, selectTerminalViewOnSuccess: true)
-                        }
+                        onConnect(server)
                     } label: {
                         Label("Open Connection", systemImage: "point.forward.to.point.capsulepath.fill")
                     }
@@ -100,7 +89,7 @@ struct ServerRow: View {
                     }
                     Divider()
                     Button(role: .destructive) {
-                        serverManager.requestServerDeletion(server)
+                        onDelete(server)
                     } label: {
                         Label("Delete Server", systemImage: "trash")
                     }
