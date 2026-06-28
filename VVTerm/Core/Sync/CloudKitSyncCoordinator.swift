@@ -4,6 +4,8 @@ import os.log
 
 @MainActor
 final class CloudKitSyncCoordinator {
+    typealias PendingMutationSyncAction = @MainActor (PendingCloudKitMutation) async throws -> Void
+
     static let shared = CloudKitSyncCoordinator()
 
     private let cloudKit = CloudKitManager.shared
@@ -11,14 +13,33 @@ final class CloudKitSyncCoordinator {
         subsystem: Bundle.main.bundleIdentifier ?? "app.vivy.vvterm",
         category: "CloudKitSyncCoordinator"
     )
-    private let queue = PendingCloudKitSyncQueue()
-    private var isDraining = false
+    private let queue: PendingCloudKitSyncQueue
+    private let syncPendingMutationOverride: PendingMutationSyncAction?
+    private var drainTask: Task<Void, Never>?
     private var shouldDrainAgain = false
     static let terminalAccessoryProfileDidResolveNotification = Notification.Name(
         "TerminalAccessoryProfileDidResolveFromCloudKit"
     )
 
-    private init() {}
+    private init(
+        queue: PendingCloudKitSyncQueue? = nil,
+        syncPendingMutation: PendingMutationSyncAction? = nil
+    ) {
+        self.queue = queue ?? PendingCloudKitSyncQueue()
+        self.syncPendingMutationOverride = syncPendingMutation
+    }
+
+    #if DEBUG
+    static func makeForTesting(
+        storageKey: String,
+        syncPendingMutation: @escaping PendingMutationSyncAction
+    ) -> CloudKitSyncCoordinator {
+        CloudKitSyncCoordinator(
+            queue: PendingCloudKitSyncQueue(storageKey: storageKey),
+            syncPendingMutation: syncPendingMutation
+        )
+    }
+    #endif
 
     func snapshot() -> [PendingCloudKitMutation] {
         queue.snapshot()
@@ -66,14 +87,24 @@ final class CloudKitSyncCoordinator {
 
     func drainPendingMutations() async {
         guard SyncSettings.isEnabled else { return }
-        guard !isDraining else {
+
+        if let drainTask {
             shouldDrainAgain = true
+            await drainTask.value
             return
         }
 
-        isDraining = true
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.runPendingMutationDrain()
+        }
+        drainTask = task
+        await task.value
+    }
+
+    private func runPendingMutationDrain() async {
         defer {
-            isDraining = false
+            drainTask = nil
             shouldDrainAgain = false
         }
 
@@ -123,6 +154,11 @@ final class CloudKitSyncCoordinator {
     }
 
     private func syncPendingMutation(_ mutation: PendingCloudKitMutation) async throws {
+        if let syncPendingMutationOverride {
+            try await syncPendingMutationOverride(mutation)
+            return
+        }
+
         switch (mutation.entity, mutation.operation) {
         case (.server, .upsert):
             if let server = mutation.server {
