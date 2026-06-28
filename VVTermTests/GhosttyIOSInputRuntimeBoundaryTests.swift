@@ -100,6 +100,8 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(runtimeSource.contains("private var isIMEProxyProgrammaticResignAllowed"))
         #expect(runtimeSource.contains("private var suppressUnexpectedIMEProxyResignUntil"))
         #expect(runtimeSource.contains("func sendDirectHardwareKeyEvent"))
+        #expect(runtimeSource.contains("func sendKeyPress("))
+        #expect(runtimeSource.contains("func sendModifiedKey("))
         #expect(runtimeSource.contains("func syncVisiblePreedit"))
         #expect(runtimeSource.contains("func syncPreedit"))
         #expect(runtimeSource.contains("func imePoint(surface: ghostty_surface_t)"))
@@ -138,6 +140,14 @@ struct GhosttyIOSInputRuntimeBoundaryTests {
         #expect(ownerSource.contains("func sendModifiedKey("))
         #expect(ownerSource.contains("func syncVisiblePreedit("))
         #expect(ownerSource.contains("func imePoint(using inputRuntime: TerminalIOSInputRuntime)"))
+        #expect(
+            !ownerSource.contains("action: .press"),
+            "TerminalIOSSurfaceOwner should delegate key-event sequencing to TerminalIOSInputRuntime."
+        )
+        #expect(
+            !ownerSource.contains("action: .release"),
+            "TerminalIOSSurfaceOwner should delegate key-event sequencing to TerminalIOSInputRuntime."
+        )
     }
 
     private func source(at url: URL) throws -> String {

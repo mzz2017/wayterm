@@ -157,7 +157,7 @@ extension GhosttyTerminalView {
     func sendKeyPress(_ key: Ghostty.Input.Key) {
         guard canRouteTerminalInput else { return }
         guard surfaceOwner.hasLiveSurface else { return }
-        surfaceOwner.sendKeyPress(key)
+        surfaceOwner.sendKeyPress(key, using: inputRuntime)
         requestRender()
     }
     
@@ -198,7 +198,8 @@ extension GhosttyTerminalView {
             key,
             mods: mods,
             text: text,
-            unshiftedCodepoint: unshiftedCodepoint
+            unshiftedCodepoint: unshiftedCodepoint,
+            using: inputRuntime
         )
         requestRender()
     }

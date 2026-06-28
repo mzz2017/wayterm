@@ -97,6 +97,45 @@ final class TerminalIOSInputRuntime {
     private var isIMEProxyProgrammaticResignAllowed = false
     private var suppressUnexpectedIMEProxyResignUntil = 0.0
 
+    func sendKeyPress(
+        _ key: Ghostty.Input.Key,
+        sendEvent: (Ghostty.Input.KeyEvent) -> Void
+    ) {
+        sendEvent(.init(key: key, action: .press))
+        sendEvent(.init(key: key, action: .release))
+    }
+
+    func sendModifiedKey(
+        _ key: Ghostty.Input.Key,
+        mods: Ghostty.Input.Mods,
+        text: String?,
+        unshiftedCodepoint: UInt32,
+        sendEvent: (Ghostty.Input.KeyEvent) -> Void
+    ) {
+        sendEvent(
+            .init(
+                key: key,
+                action: .press,
+                text: text,
+                composing: false,
+                mods: mods,
+                consumedMods: [],
+                unshiftedCodepoint: unshiftedCodepoint
+            )
+        )
+        sendEvent(
+            .init(
+                key: key,
+                action: .release,
+                text: nil,
+                composing: false,
+                mods: mods,
+                consumedMods: [],
+                unshiftedCodepoint: unshiftedCodepoint
+            )
+        )
+    }
+
     func sendDirectHardwareKeyEvent(
         _ key: UIKey,
         action: ghostty_input_action_e,

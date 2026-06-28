@@ -371,5 +371,31 @@ struct GhosttyIOSInputRuntimeRouteTests {
             "did-selection"
         ])
     }
+
+    @Test
+    func keyEventSequencingLivesInInputRuntime() {
+        let runtime = TerminalIOSInputRuntime()
+        var events: [String] = []
+
+        runtime.sendKeyPress(.enter) { event in
+            events.append("\(event.key)-\(event.action)-\(event.text ?? "nil")-\(event.unshiftedCodepoint)")
+        }
+
+        runtime.sendModifiedKey(
+            .a,
+            mods: [.ctrl],
+            text: nil,
+            unshiftedCodepoint: 97
+        ) { event in
+            events.append("\(event.key)-\(event.action)-ctrl:\(event.mods.contains(.ctrl))-\(event.text ?? "nil")-\(event.unshiftedCodepoint)")
+        }
+
+        #expect(events == [
+            "enter-press-nil-0",
+            "enter-release-nil-0",
+            "a-press-ctrl:true-nil-97",
+            "a-release-ctrl:true-nil-97"
+        ])
+    }
 }
 #endif

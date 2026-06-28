@@ -174,37 +174,30 @@ final class TerminalIOSSurfaceOwner {
         surface?.perform(action: action) ?? false
     }
 
-    func sendKeyPress(_ key: Ghostty.Input.Key) {
-        surface?.sendKeyEvent(.init(key: key, action: .press))
-        surface?.sendKeyEvent(.init(key: key, action: .release))
+    func sendKeyPress(
+        _ key: Ghostty.Input.Key,
+        using inputRuntime: TerminalIOSInputRuntime
+    ) {
+        inputRuntime.sendKeyPress(key) { [weak self] event in
+            self?.sendKeyEvent(event)
+        }
     }
 
     func sendModifiedKey(
         _ key: Ghostty.Input.Key,
         mods: Ghostty.Input.Mods,
         text: String?,
-        unshiftedCodepoint: UInt32
+        unshiftedCodepoint: UInt32,
+        using inputRuntime: TerminalIOSInputRuntime
     ) {
-        let press = Ghostty.Input.KeyEvent(
-            key: key,
-            action: .press,
+        inputRuntime.sendModifiedKey(
+            key,
+            mods: mods,
             text: text,
-            composing: false,
-            mods: mods,
-            consumedMods: [],
             unshiftedCodepoint: unshiftedCodepoint
-        )
-        surface?.sendKeyEvent(press)
-        let release = Ghostty.Input.KeyEvent(
-            key: key,
-            action: .release,
-            text: nil,
-            composing: false,
-            mods: mods,
-            consumedMods: [],
-            unshiftedCodepoint: unshiftedCodepoint
-        )
-        surface?.sendKeyEvent(release)
+        ) { [weak self] event in
+            self?.sendKeyEvent(event)
+        }
     }
 
     func sendKeyEvent(_ event: Ghostty.Input.KeyEvent) {
