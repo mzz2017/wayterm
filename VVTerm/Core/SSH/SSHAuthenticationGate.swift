@@ -1,5 +1,19 @@
 import Foundation
 
+nonisolated struct SSHAuthenticationLease: Sendable {
+    private let key: String
+    private let gate: SSHAuthenticationGate
+
+    fileprivate init(key: String, gate: SSHAuthenticationGate) {
+        self.key = key
+        self.gate = gate
+    }
+
+    func release() async {
+        await gate.releaseLease(for: key)
+    }
+}
+
 actor SSHAuthenticationGate {
     static let shared = SSHAuthenticationGate()
 
@@ -10,6 +24,16 @@ actor SSHAuthenticationGate {
 
     private var activeKeys: Set<String> = []
     private var waitersByKey: [String: [Waiter]] = [:]
+
+    func acquireLease(for key: String) async throws -> SSHAuthenticationLease {
+        try await acquire(key)
+        try Task.checkCancellation()
+        return SSHAuthenticationLease(key: key, gate: self)
+    }
+
+    fileprivate func releaseLease(for key: String) {
+        release(key)
+    }
 
     func withExclusiveAccess<T>(
         for key: String,

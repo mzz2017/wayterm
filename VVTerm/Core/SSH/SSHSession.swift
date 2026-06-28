@@ -198,16 +198,16 @@ actor SSHSession {
             let serverIdString = config.credentials.serverId.uuidString
             let authGateKey = "\(serverIdString):\(username)"
             logger.info("Waiting for publickey auth slot [serverId: \(serverIdString, privacy: .public), user: \(username, privacy: .public)]")
-            authResult = try await SSHAuthenticationGate.shared.withExclusiveAccess(for: authGateKey) {
-                logger.info("Acquired publickey auth slot [serverId: \(serverIdString, privacy: .public), user: \(username, privacy: .public)]")
-                return driver.authenticateWithPublicKey(
-                    session: session,
-                    username: username,
-                    keyData: keyData,
-                    publicKeyData: publicKeyData,
-                    passphrase: passphrase
-                )
-            }
+            let authLease = try await SSHAuthenticationGate.shared.acquireLease(for: authGateKey)
+            logger.info("Acquired publickey auth slot [serverId: \(serverIdString, privacy: .public), user: \(username, privacy: .public)]")
+            authResult = driver.authenticateWithPublicKey(
+                session: session,
+                username: username,
+                keyData: keyData,
+                publicKeyData: publicKeyData,
+                passphrase: passphrase
+            )
+            await authLease.release()
         }
 
         if authResult != 0 {

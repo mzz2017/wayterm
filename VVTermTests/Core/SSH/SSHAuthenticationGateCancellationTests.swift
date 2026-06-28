@@ -11,6 +11,40 @@ import XCTest
 // become non-cancelable.
 
 final class SSHAuthenticationGateCancellationTests: XCTestCase {
+    func testExplicitLeaseSerializesUntilReleased() async throws {
+        let gate = SSHAuthenticationGate()
+        let firstLease = try await gate.acquireLease(for: "server:user")
+        let secondAcquired = AsyncFlag()
+
+        // Given one caller owns the authentication slot through an explicit
+        // lease while the libssh2 auth call stays on its original owner.
+        let second = Task {
+            let lease = try await gate.acquireLease(for: "server:user")
+            await secondAcquired.setTrue()
+            await lease.release()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then a second caller cannot enter the key-specific auth slot before
+        // the first owner releases it.
+        let acquiredBeforeRelease = await secondAcquired.value
+        XCTAssertFalse(
+            acquiredBeforeRelease,
+            "A live auth lease must hold the key-specific slot until release"
+        )
+
+        // When the first owner releases the lease.
+        await firstLease.release()
+        try await second.value
+
+        // Then the next waiter can acquire the slot.
+        let acquiredAfterRelease = await secondAcquired.value
+        XCTAssertTrue(
+            acquiredAfterRelease,
+            "Releasing an auth lease should resume the next waiter"
+        )
+    }
+
     func testCancelledWaiterDoesNotRunOperation() async {
         // Given a holder occupying a key and a second operation waiting for it.
         let gate = SSHAuthenticationGate()
