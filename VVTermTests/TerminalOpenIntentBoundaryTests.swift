@@ -88,6 +88,7 @@ struct TerminalOpenIntentBoundaryTests {
         let paths = [
             "VVTerm/App/ContentView.swift",
             "VVTerm/Core/UI/SidebarComponents.swift",
+            "VVTerm/Features/Servers/UI/Sidebar/ServerSidebarRow.swift",
             "VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift",
             "VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift",
             "VVTerm/App/iOS/iOSContentView.swift"

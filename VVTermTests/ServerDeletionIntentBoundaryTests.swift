@@ -18,7 +18,7 @@ struct ServerDeletionIntentBoundaryTests {
         // shared, macOS, and iOS UI.
         let root = try sourceRoot()
         let sources = try [
-            "VVTerm/Core/UI/SidebarComponents.swift",
+            "VVTerm/Features/Servers/UI/Sidebar/ServerSidebarRow.swift",
             "VVTerm/Features/Servers/UI/iOS/iOSServerComponents.swift",
             "VVTerm/Features/Servers/UI/iOS/iOSServerListView.swift",
             "VVTerm/Features/Servers/UI/Workspace/WorkspaceSwitcherSheet.swift",
@@ -75,46 +75,55 @@ struct ServerDeletionIntentBoundaryTests {
     }
 
     @Test
-    func coreSidebarRowUsesInjectedIntentClosuresInsteadOfApplicationManagers() throws {
-        // Given shared Core sidebar rows render server state and expose server
+    func serverSidebarRowBelongsToServersFeatureAndUsesInjectedIntentClosures() throws {
+        // Given server sidebar rows render Servers feature state and expose
         // actions used by the Servers feature sidebar.
         let root = try sourceRoot()
-        let rowSource = try source(
-            at: root.appendingPathComponent("VVTerm/Core/UI/SidebarComponents.swift")
-        )
+        let coreSidebarSource = try source(at: root.appendingPathComponent("VVTerm/Core/UI/SidebarComponents.swift"))
+        let rowSource = try source(at: root.appendingPathComponent("VVTerm/Features/Servers/UI/Sidebar/ServerSidebarRow.swift"))
         let sidebarSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift")
         )
 
-        // Then Core UI must receive derived state and intent closures from the
-        // feature boundary instead of resolving application managers directly.
+        // Then Core UI must not own server-specific sidebar presentation, and
+        // the Servers feature row must receive derived state and intent
+        // closures from the feature boundary instead of resolving application
+        // managers directly.
+        #expect(
+            !coreSidebarSource.contains("struct ServerRow"),
+            "Core/UI should not own server-specific sidebar rows."
+        )
+        #expect(
+            !coreSidebarSource.contains("struct ServerRowDisplayModel"),
+            "Core/UI should not own server-specific sidebar row display models."
+        )
         #expect(
             !rowSource.contains("ServerManager.shared"),
-            "Core ServerRow should not resolve the Servers application manager singleton."
+            "ServerRow should not resolve the Servers application manager singleton."
         )
         #expect(
             !rowSource.contains("TerminalTabManager.shared"),
-            "Core ServerRow should not resolve the TerminalSessions application manager singleton."
+            "ServerRow should not resolve the TerminalSessions application manager singleton."
         )
         #expect(
             rowSource.contains("let isLocked: Bool"),
-            "Core ServerRow should receive lock state as view data from the Servers feature boundary."
+            "ServerRow should receive lock state as view data from the Servers feature boundary."
         )
         #expect(
             rowSource.contains("let tabCount: Int"),
-            "Core ServerRow should receive tab count as view data from the TerminalSessions feature boundary."
+            "ServerRow should receive tab count as view data from the TerminalSessions feature boundary."
         )
         #expect(
             !rowSource.contains("let server: Server"),
-            "Core ServerRow should not store Servers feature domain models."
+            "ServerRow should not store Servers feature domain models."
         )
         #expect(
             !rowSource.contains("(Server) -> Void"),
-            "Core ServerRow intent closures should not expose Servers feature domain models."
+            "ServerRow intent closures should not expose Servers feature domain models."
         )
         #expect(
             rowSource.contains("struct ServerRowDisplayModel"),
-            "Core ServerRow should render a neutral display model adapted by the Servers feature boundary."
+            "ServerRow should render a neutral display model adapted by the Servers feature boundary."
         )
         #expect(
             sidebarSource.contains("isLocked: serverManager.isServerLocked(server)"),
