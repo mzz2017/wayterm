@@ -52,18 +52,16 @@ jobs:
           IOS_TEST_DEVICE_NAME_CANDIDATES: iPhone 17,iPhone 16,iPhone 15
           IOS_TEST_ALLOW_DEVICE_FALLBACK: "1"
         run: |
-          focused_tests=(
-            "VVTermTests/AppSyncCoordinatorTests"
-            "VVTermTests/CloudKitSyncCoordinatorLifecycleTests"
-            "VVTermTests/RemoteFileBrowserRequestLifecycleTests"
-            "VVTermTests/ServerStatsCollectorLifecycleTests"
-            "VVTermTests/StoreManagerLifecycleTests"
-            "VVTermTests/TerminalVoiceInputStoreTests"
+          focused_args=(
+            "-only-testing:VVTermTests/AppSyncCoordinatorTests"
+            "-only-testing:VVTermTests/CloudKitSyncCoordinatorLifecycleTests"
+            "-only-testing:VVTermTests/RemoteFileBrowserRequestLifecycleTests"
+            "-only-testing:VVTermTests/ServerStatsCollectorLifecycleTests"
+            "-only-testing:VVTermTests/StoreManagerLifecycleTests"
+            "-only-testing:VVTermTests/TerminalVoiceInputStoreTests"
           )
 
-          for test_class in "${focused_tests[@]}"; do
-            ./scripts/test-ios.sh -only-testing:"${test_class}"
-          done
+          ./scripts/test-ios.sh "${focused_args[@]}"
 
   ios-unit:
     name: iOS unit tests
