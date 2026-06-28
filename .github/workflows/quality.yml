@@ -1,0 +1,53 @@
+name: Quality Gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spm:
+    name: SwiftPM tests
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Run SwiftPM tests
+        run: swift test
+
+  ios-unit:
+    name: iOS unit tests
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          xcrun simctl list devices available
+
+      - name: Run iOS unit tests
+        env:
+          IOS_TEST_RETRIES: "2"
+          IOS_TEST_DEVICE_NAME: iPhone 17
+          IOS_TEST_DEVICE_NAME_CANDIDATES: iPhone 17,iPhone 16,iPhone 15
+          IOS_TEST_ALLOW_DEVICE_FALLBACK: "1"
+        run: ./scripts/test-ios.sh -skip-testing:VVTermUITests
