@@ -37,13 +37,13 @@ extension ServerManager {
 
     private func applyPendingUpsertOverlay(in snapshot: [PendingCloudKitMutation]) {
         for mutation in pendingMutations(in: snapshot, entity: .workspace, operation: .upsert) {
-            if let workspace = mutation.workspace {
+            if let workspace = try? mutation.decodedPayload(as: Workspace.self) {
                 applyPendingWorkspaceUpsert(workspace)
             }
         }
 
         for mutation in pendingMutations(in: snapshot, entity: .server, operation: .upsert) {
-            if let server = mutation.server {
+            if let server = try? mutation.decodedPayload(as: Server.self) {
                 applyPendingServerUpsert(server)
             }
         }
@@ -81,7 +81,7 @@ extension ServerManager {
         fetchedServersByID: [UUID: Server]
     ) {
         for mutation in pendingMutations(in: snapshot, entity: .server, operation: .upsert) {
-            guard let pendingServer = mutation.server,
+            guard let pendingServer = try? mutation.decodedPayload(as: Server.self),
                   let fetchedServer = fetchedServersByID[pendingServer.id] else {
                 continue
             }
@@ -97,7 +97,7 @@ extension ServerManager {
         fetchedWorkspacesByID: [UUID: Workspace]
     ) {
         for mutation in pendingMutations(in: snapshot, entity: .workspace, operation: .upsert) {
-            guard let pendingWorkspace = mutation.workspace,
+            guard let pendingWorkspace = try? mutation.decodedPayload(as: Workspace.self),
                   let fetchedWorkspace = fetchedWorkspacesByID[pendingWorkspace.id] else {
                 continue
             }

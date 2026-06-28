@@ -1,0 +1,49 @@
+import Foundation
+import Testing
+
+// Test Context:
+// Core/Sync owns pending CloudKit mutation durability and drain ordering, not
+// feature domain models. These source-boundary tests should change only if the
+// pending queue is intentionally moved out of Core or the feature-owned payload
+// adapter contract is replaced.
+
+struct CoreSyncPendingMutationBoundaryTests {
+    @Test
+    func pendingCloudKitMutationDoesNotStoreFeatureDomainObjects() throws {
+        let root = try sourceRoot()
+        let source = try String(
+            contentsOf: root.appendingPathComponent("VVTerm/Core/Sync/PendingCloudKitSync.swift"),
+            encoding: .utf8
+        )
+        let forbiddenStorageShapes = [
+            "Server?",
+            "Workspace?",
+            "TerminalTheme?",
+            "TerminalThemePreference?",
+            "TerminalAccessoryProfile?",
+            "static func serverUpsert(_ server: Server)",
+            "static func workspaceUpsert(_ workspace: Workspace)",
+            "static func terminalThemeUpsert(_ theme: TerminalTheme)",
+            "static func terminalAccessoryProfileUpsert(_ profile: TerminalAccessoryProfile)"
+        ]
+
+        for forbiddenShape in forbiddenStorageShapes {
+            #expect(
+                !source.contains(forbiddenShape),
+                "PendingCloudKitMutation should store Core-owned payloads, not feature domain object shape \(forbiddenShape)."
+            )
+        }
+    }
+
+    private func sourceRoot() throws -> URL {
+        var url = URL(fileURLWithPath: #filePath)
+        while url.lastPathComponent != "VVTermTests" {
+            let parent = url.deletingLastPathComponent()
+            if parent == url {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            url = parent
+        }
+        return url.deletingLastPathComponent()
+    }
+}

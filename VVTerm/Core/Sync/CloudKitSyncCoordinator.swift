@@ -57,32 +57,57 @@ final class CloudKitSyncCoordinator {
         queue.remove(mutationID)
     }
 
+    func enqueuePendingMutation(_ mutation: PendingCloudKitMutation) {
+        queue.enqueue(mutation)
+    }
+
     func enqueueServerUpsert(_ server: Server) {
-        queue.enqueue(.serverUpsert(server))
+        guard let payload = encodePayload(server, entityDescription: "server \(server.id.uuidString)") else {
+            return
+        }
+        queue.enqueue(.upsert(entity: .server, entityKey: server.id.uuidString, payload: payload))
     }
 
     func enqueueServerDelete(_ server: Server) {
-        queue.enqueue(.serverDelete(server))
+        guard let payload = encodePayload(server, entityDescription: "server \(server.id.uuidString)") else {
+            return
+        }
+        queue.enqueue(.delete(entity: .server, entityKey: server.id.uuidString, payload: payload))
     }
 
     func enqueueWorkspaceUpsert(_ workspace: Workspace) {
-        queue.enqueue(.workspaceUpsert(workspace))
+        guard let payload = encodePayload(workspace, entityDescription: "workspace \(workspace.id.uuidString)") else {
+            return
+        }
+        queue.enqueue(.upsert(entity: .workspace, entityKey: workspace.id.uuidString, payload: payload))
     }
 
     func enqueueWorkspaceDelete(_ workspace: Workspace) {
-        queue.enqueue(.workspaceDelete(workspace))
+        guard let payload = encodePayload(workspace, entityDescription: "workspace \(workspace.id.uuidString)") else {
+            return
+        }
+        queue.enqueue(.delete(entity: .workspace, entityKey: workspace.id.uuidString, payload: payload))
     }
 
     func enqueueTerminalThemeUpsert(_ theme: TerminalTheme) {
-        queue.enqueue(.terminalThemeUpsert(theme))
+        guard let payload = encodePayload(theme, entityDescription: "terminal theme \(theme.id.uuidString)") else {
+            return
+        }
+        queue.enqueue(.upsert(entity: .terminalTheme, entityKey: theme.id.uuidString, payload: payload))
     }
 
     func enqueueTerminalThemePreferenceUpsert(_ preference: TerminalThemePreference) {
-        queue.enqueue(.terminalThemePreferenceUpsert(preference))
+        guard let payload = encodePayload(preference, entityDescription: "terminal theme preference") else {
+            return
+        }
+        queue.enqueue(.upsert(entity: .terminalThemePreference, entityKey: TerminalThemePreference.recordName, payload: payload))
     }
 
     func enqueueTerminalAccessoryProfileUpsert(_ profile: TerminalAccessoryProfile) {
-        queue.enqueue(.terminalAccessoryProfileUpsert(profile))
+        guard let payload = encodePayload(profile, entityDescription: "terminal accessory profile") else {
+            return
+        }
+        queue.enqueue(.upsert(entity: .terminalAccessoryProfile, entityKey: TerminalAccessoryProfile.recordName, payload: payload))
     }
 
     func drainPendingMutations() async {
@@ -161,33 +186,33 @@ final class CloudKitSyncCoordinator {
 
         switch (mutation.entity, mutation.operation) {
         case (.server, .upsert):
-            if let server = mutation.server {
+            if let server = try mutation.decodedPayload(as: Server.self) {
                 try await cloudKit.saveServer(server)
             }
         case (.server, .delete):
-            if let server = mutation.server {
+            if let server = try mutation.decodedPayload(as: Server.self) {
                 try await cloudKit.deleteServer(server)
             }
         case (.workspace, .upsert):
-            if let workspace = mutation.workspace {
+            if let workspace = try mutation.decodedPayload(as: Workspace.self) {
                 try await cloudKit.saveWorkspace(workspace)
             }
         case (.workspace, .delete):
-            if let workspace = mutation.workspace {
+            if let workspace = try mutation.decodedPayload(as: Workspace.self) {
                 try await cloudKit.deleteWorkspace(workspace)
             }
         case (.terminalTheme, .upsert), (.terminalTheme, .delete):
-            if let theme = mutation.terminalTheme {
+            if let theme = try mutation.decodedPayload(as: TerminalTheme.self) {
                 try await cloudKit.saveTerminalTheme(theme)
             }
         case (.terminalThemePreference, .upsert):
-            if let preference = mutation.terminalThemePreference {
+            if let preference = try mutation.decodedPayload(as: TerminalThemePreference.self) {
                 try await cloudKit.saveTerminalThemePreference(preference)
             }
         case (.terminalThemePreference, .delete):
             break
         case (.terminalAccessoryProfile, .upsert):
-            if let profile = mutation.terminalAccessoryProfile {
+            if let profile = try mutation.decodedPayload(as: TerminalAccessoryProfile.self) {
                 let resolvedProfile = try await cloudKit.syncTerminalAccessoryProfile(profile)
                 NotificationCenter.default.post(
                     name: Self.terminalAccessoryProfileDidResolveNotification,
@@ -237,6 +262,15 @@ final class CloudKitSyncCoordinator {
             return true
         default:
             return false
+        }
+    }
+
+    private func encodePayload<T: Encodable>(_ value: T, entityDescription: String) -> Data? {
+        do {
+            return try JSONEncoder().encode(value)
+        } catch {
+            logger.error("Failed to encode pending CloudKit mutation payload for \(entityDescription): \(error.localizedDescription)")
+            return nil
         }
     }
 }

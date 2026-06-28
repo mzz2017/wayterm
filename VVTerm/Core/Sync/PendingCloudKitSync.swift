@@ -19,28 +19,24 @@ struct PendingCloudKitMutation: Codable, Identifiable {
     let entity: PendingCloudKitEntity
     let operation: PendingCloudKitOperation
     let entityKey: String
-    var server: Server?
-    var workspace: Workspace?
-    var terminalTheme: TerminalTheme?
-    var terminalThemePreference: TerminalThemePreference?
-    var terminalAccessoryProfile: TerminalAccessoryProfile?
+    let payload: Data?
     let createdAt: Date
     var retryCount: Int
     var nextRetryAt: Date?
     var lastErrorCode: String?
     var lastErrorDescription: String?
 
-    static func serverUpsert(_ server: Server) -> PendingCloudKitMutation {
+    static func upsert(
+        entity: PendingCloudKitEntity,
+        entityKey: String,
+        payload: Data?
+    ) -> PendingCloudKitMutation {
         PendingCloudKitMutation(
             id: UUID(),
-            entity: .server,
+            entity: entity,
             operation: .upsert,
-            entityKey: server.id.uuidString,
-            server: server,
-            workspace: nil,
-            terminalTheme: nil,
-            terminalThemePreference: nil,
-            terminalAccessoryProfile: nil,
+            entityKey: entityKey,
+            payload: payload,
             createdAt: Date(),
             retryCount: 0,
             nextRetryAt: nil,
@@ -49,17 +45,17 @@ struct PendingCloudKitMutation: Codable, Identifiable {
         )
     }
 
-    static func serverDelete(_ server: Server) -> PendingCloudKitMutation {
+    static func delete(
+        entity: PendingCloudKitEntity,
+        entityKey: String,
+        payload: Data? = nil
+    ) -> PendingCloudKitMutation {
         PendingCloudKitMutation(
             id: UUID(),
-            entity: .server,
+            entity: entity,
             operation: .delete,
-            entityKey: server.id.uuidString,
-            server: server,
-            workspace: nil,
-            terminalTheme: nil,
-            terminalThemePreference: nil,
-            terminalAccessoryProfile: nil,
+            entityKey: entityKey,
+            payload: payload,
             createdAt: Date(),
             retryCount: 0,
             nextRetryAt: nil,
@@ -68,156 +64,9 @@ struct PendingCloudKitMutation: Codable, Identifiable {
         )
     }
 
-    static func workspaceUpsert(_ workspace: Workspace) -> PendingCloudKitMutation {
-        PendingCloudKitMutation(
-            id: UUID(),
-            entity: .workspace,
-            operation: .upsert,
-            entityKey: workspace.id.uuidString,
-            server: nil,
-            workspace: workspace,
-            terminalTheme: nil,
-            terminalThemePreference: nil,
-            terminalAccessoryProfile: nil,
-            createdAt: Date(),
-            retryCount: 0,
-            nextRetryAt: nil,
-            lastErrorCode: nil,
-            lastErrorDescription: nil
-        )
-    }
-
-    static func workspaceDelete(_ workspace: Workspace) -> PendingCloudKitMutation {
-        PendingCloudKitMutation(
-            id: UUID(),
-            entity: .workspace,
-            operation: .delete,
-            entityKey: workspace.id.uuidString,
-            server: nil,
-            workspace: workspace,
-            terminalTheme: nil,
-            terminalThemePreference: nil,
-            terminalAccessoryProfile: nil,
-            createdAt: Date(),
-            retryCount: 0,
-            nextRetryAt: nil,
-            lastErrorCode: nil,
-            lastErrorDescription: nil
-        )
-    }
-
-    static func terminalThemeUpsert(_ theme: TerminalTheme) -> PendingCloudKitMutation {
-        PendingCloudKitMutation(
-            id: UUID(),
-            entity: .terminalTheme,
-            operation: .upsert,
-            entityKey: theme.id.uuidString,
-            server: nil,
-            workspace: nil,
-            terminalTheme: theme,
-            terminalThemePreference: nil,
-            terminalAccessoryProfile: nil,
-            createdAt: Date(),
-            retryCount: 0,
-            nextRetryAt: nil,
-            lastErrorCode: nil,
-            lastErrorDescription: nil
-        )
-    }
-
-    static func terminalThemeDelete(_ theme: TerminalTheme) -> PendingCloudKitMutation {
-        PendingCloudKitMutation(
-            id: UUID(),
-            entity: .terminalTheme,
-            operation: .delete,
-            entityKey: theme.id.uuidString,
-            server: nil,
-            workspace: nil,
-            terminalTheme: theme,
-            terminalThemePreference: nil,
-            terminalAccessoryProfile: nil,
-            createdAt: Date(),
-            retryCount: 0,
-            nextRetryAt: nil,
-            lastErrorCode: nil,
-            lastErrorDescription: nil
-        )
-    }
-
-    static func terminalThemePreferenceUpsert(_ preference: TerminalThemePreference) -> PendingCloudKitMutation {
-        PendingCloudKitMutation(
-            id: UUID(),
-            entity: .terminalThemePreference,
-            operation: .upsert,
-            entityKey: TerminalThemePreference.recordName,
-            server: nil,
-            workspace: nil,
-            terminalTheme: nil,
-            terminalThemePreference: preference,
-            terminalAccessoryProfile: nil,
-            createdAt: Date(),
-            retryCount: 0,
-            nextRetryAt: nil,
-            lastErrorCode: nil,
-            lastErrorDescription: nil
-        )
-    }
-
-    static func terminalThemePreferenceDelete() -> PendingCloudKitMutation {
-        PendingCloudKitMutation(
-            id: UUID(),
-            entity: .terminalThemePreference,
-            operation: .delete,
-            entityKey: TerminalThemePreference.recordName,
-            server: nil,
-            workspace: nil,
-            terminalTheme: nil,
-            terminalThemePreference: nil,
-            terminalAccessoryProfile: nil,
-            createdAt: Date(),
-            retryCount: 0,
-            nextRetryAt: nil,
-            lastErrorCode: nil,
-            lastErrorDescription: nil
-        )
-    }
-
-    static func terminalAccessoryProfileUpsert(_ profile: TerminalAccessoryProfile) -> PendingCloudKitMutation {
-        PendingCloudKitMutation(
-            id: UUID(),
-            entity: .terminalAccessoryProfile,
-            operation: .upsert,
-            entityKey: TerminalAccessoryProfile.recordName,
-            server: nil,
-            workspace: nil,
-            terminalTheme: nil,
-            terminalThemePreference: nil,
-            terminalAccessoryProfile: profile,
-            createdAt: Date(),
-            retryCount: 0,
-            nextRetryAt: nil,
-            lastErrorCode: nil,
-            lastErrorDescription: nil
-        )
-    }
-
-    static func terminalAccessoryProfileDelete() -> PendingCloudKitMutation {
-        PendingCloudKitMutation(
-            id: UUID(),
-            entity: .terminalAccessoryProfile,
-            operation: .delete,
-            entityKey: TerminalAccessoryProfile.recordName,
-            server: nil,
-            workspace: nil,
-            terminalTheme: nil,
-            terminalThemePreference: nil,
-            terminalAccessoryProfile: nil,
-            createdAt: Date(),
-            retryCount: 0,
-            nextRetryAt: nil,
-            lastErrorCode: nil,
-            lastErrorDescription: nil
-        )
+    func decodedPayload<T: Decodable>(as type: T.Type = T.self) throws -> T? {
+        guard let payload else { return nil }
+        return try JSONDecoder().decode(type, from: payload)
     }
 
     var operationPriority: Int {
@@ -294,6 +143,125 @@ struct PendingCloudKitMutation: Codable, Identifiable {
             return description
         }
         return error.localizedDescription
+    }
+}
+
+extension PendingCloudKitMutation {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case entity
+        case operation
+        case entityKey
+        case payload
+        case createdAt
+        case retryCount
+        case nextRetryAt
+        case lastErrorCode
+        case lastErrorDescription
+        case server
+        case workspace
+        case terminalTheme
+        case terminalThemePreference
+        case terminalAccessoryProfile
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        entity = try container.decode(PendingCloudKitEntity.self, forKey: .entity)
+        operation = try container.decode(PendingCloudKitOperation.self, forKey: .operation)
+        entityKey = try container.decode(String.self, forKey: .entityKey)
+        payload = try container.decodeIfPresent(Data.self, forKey: .payload)
+            ?? Self.legacyPayload(from: container)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        retryCount = try container.decode(Int.self, forKey: .retryCount)
+        nextRetryAt = try container.decodeIfPresent(Date.self, forKey: .nextRetryAt)
+        lastErrorCode = try container.decodeIfPresent(String.self, forKey: .lastErrorCode)
+        lastErrorDescription = try container.decodeIfPresent(String.self, forKey: .lastErrorDescription)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(entity, forKey: .entity)
+        try container.encode(operation, forKey: .operation)
+        try container.encode(entityKey, forKey: .entityKey)
+        try container.encodeIfPresent(payload, forKey: .payload)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(retryCount, forKey: .retryCount)
+        try container.encodeIfPresent(nextRetryAt, forKey: .nextRetryAt)
+        try container.encodeIfPresent(lastErrorCode, forKey: .lastErrorCode)
+        try container.encodeIfPresent(lastErrorDescription, forKey: .lastErrorDescription)
+    }
+
+    private static func legacyPayload(from container: KeyedDecodingContainer<CodingKeys>) -> Data? {
+        let legacyKeys: [CodingKeys] = [
+            .server,
+            .workspace,
+            .terminalTheme,
+            .terminalThemePreference,
+            .terminalAccessoryProfile
+        ]
+
+        for key in legacyKeys {
+            guard let value = try? container.decodeIfPresent(PendingCloudKitJSONValue.self, forKey: key) else {
+                continue
+            }
+            return try? JSONEncoder().encode(value)
+        }
+
+        return nil
+    }
+}
+
+private enum PendingCloudKitJSONValue: Codable {
+    case string(String)
+    case int(Int)
+    case double(Double)
+    case bool(Bool)
+    case object([String: PendingCloudKitJSONValue])
+    case array([PendingCloudKitJSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Int.self) {
+            self = .int(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .double(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([PendingCloudKitJSONValue].self) {
+            self = .array(value)
+        } else if let value = try? container.decode([String: PendingCloudKitJSONValue].self) {
+            self = .object(value)
+        } else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported pending CloudKit JSON payload")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let value):
+            try container.encode(value)
+        case .int(let value):
+            try container.encode(value)
+        case .double(let value):
+            try container.encode(value)
+        case .bool(let value):
+            try container.encode(value)
+        case .object(let value):
+            try container.encode(value)
+        case .array(let value):
+            try container.encode(value)
+        case .null:
+            try container.encodeNil()
+        }
     }
 }
 

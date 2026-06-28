@@ -12,6 +12,68 @@ import Testing
 @MainActor
 struct CloudKitSyncCoordinatorLifecycleTests {
     @Test
+    func pendingServerMutationStoresPayloadThatCanBeDecodedForOverlay() throws {
+        let coordinator = CloudKitSyncCoordinator.makeForTesting(
+            storageKey: "CloudKitSyncCoordinatorLifecycleTests.\(UUID().uuidString)",
+            syncPendingMutation: { _ in }
+        )
+        let server = Server(
+            workspaceId: UUID(),
+            name: "Pending Payload",
+            host: "example.test",
+            username: "user"
+        )
+
+        // Given a server upsert is enqueued while CloudKit sync may be offline.
+        coordinator.enqueueServerUpsert(server)
+
+        // When feature code reads the pending queue snapshot for local overlay.
+        let mutation = try #require(coordinator.snapshot().first)
+        let decodedPayload = try mutation.decodedPayload(as: Server.self)
+        let decoded = try #require(decodedPayload)
+
+        // Then the Core pending queue stores a generic payload that preserves
+        // the feature-owned domain value for the feature adapter to decode.
+        #expect(decoded.id == server.id)
+        #expect(decoded.name == "Pending Payload")
+        #expect(mutation.entity == .server)
+        #expect(mutation.operation == .upsert)
+    }
+
+    @Test
+    func legacyPendingServerMutationDecodesServerFieldIntoPayload() throws {
+        let server = Server(
+            workspaceId: UUID(),
+            name: "Legacy Pending",
+            host: "legacy.example.test",
+            username: "user"
+        )
+        let legacy = LegacyPendingServerMutation(
+            id: UUID(),
+            entity: .server,
+            operation: .upsert,
+            entityKey: server.id.uuidString,
+            server: server,
+            createdAt: Date(),
+            retryCount: 0
+        )
+
+        // Given a pending queue item persisted before Core moved domain values
+        // into a generic payload.
+        let data = try JSONEncoder().encode(legacy)
+
+        // When the current Core queue model decodes it.
+        let mutation = try JSONDecoder().decode(PendingCloudKitMutation.self, from: data)
+        let decodedPayload = try mutation.decodedPayload(as: Server.self)
+        let decoded = try #require(decodedPayload)
+
+        // Then legacy offline writes still round-trip for sync and local overlay.
+        #expect(decoded.id == server.id)
+        #expect(decoded.host == "legacy.example.test")
+        #expect(mutation.entityKey == server.id.uuidString)
+    }
+
+    @Test
     func duplicateDrainWaitsForActiveDrainToFinish() async throws {
         let syncSettingsRestore = SyncSettingsRestore()
         syncSettingsRestore.setEnabled(true)
@@ -74,6 +136,19 @@ struct CloudKitSyncCoordinatorLifecycleTests {
             "Both pending-drain callers should resume after the active CloudKit drain exits."
         )
     }
+}
+
+private struct LegacyPendingServerMutation: Encodable {
+    let id: UUID
+    let entity: PendingCloudKitEntity
+    let operation: PendingCloudKitOperation
+    let entityKey: String
+    let server: Server
+    let createdAt: Date
+    let retryCount: Int
+    let nextRetryAt: Date? = nil
+    let lastErrorCode: String? = nil
+    let lastErrorDescription: String? = nil
 }
 
 private final class SyncSettingsRestore {
