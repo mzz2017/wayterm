@@ -60,6 +60,7 @@ final class CloudKitManager: ObservableObject {
 
     private var accountStatusChecked = false
     private var isSyncEnabled: Bool { SyncSettings.isEnabled }
+    private var accountStatusRefreshTask: (id: UUID, task: Task<Void, Never>)?
     private var fetchChangesTask: Task<CloudKitChanges, Error>?
     var ensureZoneTask: Task<Void, Error>?
     var zoneReady: Bool
@@ -68,7 +69,7 @@ final class CloudKitManager: ObservableObject {
         container = CKContainer(identifier: CloudKitSyncConstants.cloudKitContainerIdentifier)
         database = container.privateCloudDatabase
         zoneReady = UserDefaults.standard.bool(forKey: CloudKitSyncConstants.zoneReadyKey(for: recordZoneName))
-        Task { await checkAccountStatus() }
+        _ = requestAccountStatusRefresh()
     }
 
     // MARK: - Account Status
@@ -82,7 +83,28 @@ final class CloudKitManager: ObservableObject {
         }
         // Re-check when unavailable so transient account/network states can recover
         guard !accountStatusChecked || !isAvailable else { return }
-        await checkAccountStatus()
+        await requestAccountStatusRefresh().value
+    }
+
+    @discardableResult
+    private func requestAccountStatusRefresh() -> Task<Void, Never> {
+        if let accountStatusRefreshTask {
+            return accountStatusRefreshTask.task
+        }
+
+        let taskID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.checkAccountStatus()
+            self.clearAccountStatusRefreshTask(id: taskID)
+        }
+        accountStatusRefreshTask = (taskID, task)
+        return task
+    }
+
+    private func clearAccountStatusRefreshTask(id: UUID) {
+        guard accountStatusRefreshTask?.id == id else { return }
+        accountStatusRefreshTask = nil
     }
 
     private func checkAccountStatus() async {
@@ -94,6 +116,11 @@ final class CloudKitManager: ObservableObject {
 
         do {
             let status = try await container.accountStatus()
+            guard isSyncEnabled else {
+                applySyncDisabledState()
+                accountStatusChecked = true
+                return
+            }
             let statusDescription: String
             switch status {
             case .available:
@@ -142,7 +169,7 @@ final class CloudKitManager: ObservableObject {
     func handleSyncToggle(_ enabled: Bool) async {
         if enabled {
             accountStatusChecked = false
-            await checkAccountStatus()
+            await requestAccountStatusRefresh().value
             guard !Task.isCancelled else { return }
             await subscribeToChanges()
         } else {
@@ -622,7 +649,7 @@ final class CloudKitManager: ObservableObject {
         lastSyncDate = nil
         accountStatusChecked = false
         clearChangeToken()
-        await checkAccountStatus()
+        await requestAccountStatusRefresh().value
     }
 
     // MARK: - Cleanup

@@ -3,10 +3,10 @@ import Testing
 
 // Test Context:
 // These source-boundary tests protect CloudKitManager superfile control.
-// CloudKitManager.swift keeps account state and product record sync APIs, while
-// low-level CloudKit zone, token, fetch, save, and error infrastructure lives in
-// a focused Core/Sync extension. Update only when that ownership boundary
-// intentionally changes.
+// CloudKitManager.swift keeps account state, account-status refresh ownership,
+// and product record sync APIs, while low-level CloudKit zone, token, fetch,
+// save, and error infrastructure lives in a focused Core/Sync extension. Update
+// only when that ownership boundary intentionally changes.
 struct CloudKitManagerSuperfileBoundaryTests {
     @Test
     func managerRootDoesNotOwnCloudKitInfrastructureImplementation() throws {
@@ -50,6 +50,31 @@ struct CloudKitManagerSuperfileBoundaryTests {
         #expect(
             managerSource.contains("func subscribeToChanges("),
             "CloudKitManager.swift should keep subscription intent API."
+        )
+    }
+
+    @Test
+    func accountStatusRefreshIsTrackedByCloudKitManager() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/Sync/CloudKitManager.swift")
+        )
+
+        // Given CloudKit account status checks are async lifecycle work launched
+        // from initialization, settings refresh, and sync-enable paths.
+        #expect(managerSource.contains("private var accountStatusRefreshTask"))
+        #expect(managerSource.contains("func requestAccountStatusRefresh"))
+        #expect(managerSource.contains("clearAccountStatusRefreshTask"))
+
+        // Then initialization must create a manager-owned tracked task instead
+        // of an untracked fire-and-forget refresh.
+        #expect(
+            managerSource.contains("_ = requestAccountStatusRefresh()"),
+            "CloudKitManager init should route startup account status through the tracked request owner."
+        )
+        #expect(
+            !managerSource.contains("Task { await checkAccountStatus() }"),
+            "CloudKitManager should not launch an untracked startup account status Task."
         )
     }
 
