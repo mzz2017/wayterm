@@ -1,6 +1,6 @@
 import Foundation
 
-struct MLXModelOption: Identifiable, Hashable {
+nonisolated struct MLXModelOption: Identifiable, Hashable {
     let id: String
     let title: String
     let summary: String
@@ -11,7 +11,7 @@ struct MLXModelOption: Identifiable, Hashable {
     let kind: MLXModelKind
 }
 
-enum MLXModelCatalog {
+nonisolated enum MLXModelCatalog {
     static let whisperPresets: [MLXModelOption] = [
         MLXModelOption(
             id: "mlx-community/whisper-tiny-mlx",
