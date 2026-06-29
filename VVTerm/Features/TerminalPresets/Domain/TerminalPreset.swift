@@ -8,7 +8,7 @@
 import Foundation
 
 /// Preset configuration for launching terminal sessions
-struct TerminalPreset: Codable, Identifiable, Equatable {
+nonisolated struct TerminalPreset: Codable, Identifiable, Equatable {
     let id: UUID
     var name: String
     var command: String
