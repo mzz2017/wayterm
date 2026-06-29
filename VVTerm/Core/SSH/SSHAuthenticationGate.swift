@@ -27,8 +27,13 @@ actor SSHAuthenticationGate {
 
     func acquireLease(for key: String) async throws -> SSHAuthenticationLease {
         try await acquire(key)
-        try Task.checkCancellation()
-        return SSHAuthenticationLease(key: key, gate: self)
+        do {
+            try Task.checkCancellation()
+            return SSHAuthenticationLease(key: key, gate: self)
+        } catch {
+            release(key)
+            throw error
+        }
     }
 
     fileprivate func releaseLease(for key: String) {

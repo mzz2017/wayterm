@@ -45,6 +45,54 @@ final class SSHAuthenticationGateCancellationTests: XCTestCase {
         )
     }
 
+    func testCanceledExplicitLeaseAcquisitionDoesNotLeakAuthenticationSlot() async {
+        // Given a task that will enter explicit lease acquisition after it has
+        // already been canceled.
+        let gate = SSHAuthenticationGate()
+        let startAcquisition = AsyncGate()
+
+        let canceledLease = Task { () throws -> SSHAuthenticationLease in
+            await startAcquisition.wait()
+            return try await gate.acquireLease(for: "server:user")
+        }
+        canceledLease.cancel()
+
+        // When the canceled task reaches acquireLease.
+        await startAcquisition.open()
+        do {
+            _ = try await canceledLease.value
+            XCTFail("Canceled explicit lease acquisition should throw CancellationError")
+        } catch is CancellationError {
+            // Expected.
+        } catch {
+            XCTFail("Expected CancellationError, got \(error)")
+        }
+
+        let nextAcquired = AsyncFlag()
+        let nextLease = Task {
+            do {
+                let lease = try await gate.acquireLease(for: "server:user")
+                await nextAcquired.setTrue()
+                await lease.release()
+            } catch {
+                // The test asserts acquisition below; cancellation is only used
+                // to clean up if the gate leaked the canceled lease.
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(20))
+        let didAcquire = await nextAcquired.value
+        if !didAcquire {
+            nextLease.cancel()
+        }
+        await nextLease.value
+
+        // Then cancellation after acquire must not leave the key active forever.
+        XCTAssertTrue(
+            didAcquire,
+            "A canceled explicit auth lease acquisition leaked the key-specific slot"
+        )
+    }
+
     func testCancelledWaiterDoesNotRunOperation() async {
         // Given a holder occupying a key and a second operation waiting for it.
         let gate = SSHAuthenticationGate()
