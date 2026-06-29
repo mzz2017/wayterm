@@ -31,9 +31,44 @@ jobs:
         run: swift test
 
   ios-focused-runtime:
-    name: Focused runtime lifecycle tests
+    name: Focused runtime lifecycle tests (${{ matrix.shard }})
     runs-on: macos-15
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: sync-cloudflare
+            filters: |
+              -only-testing:VVTermTests/AppSyncCoordinatorTests
+              -only-testing:VVTermTests/CloudKitSyncCoordinatorLifecycleTests
+              -only-testing:VVTermTests/CloudflareTransportManagerLifecycleTests
+          - shard: terminal-ssh
+            filters: |
+              -only-testing:VVTermTests/ConnectionRuntimeRegistryLifecycleTests
+              -only-testing:VVTermTests/ConnectionRuntimeRunnerLifecycleTests
+              -only-testing:VVTermTests/LibSSH2SessionLifecycleTests
+              -only-testing:VVTermTests/SSHClientConnectionLifecycleTests
+              -only-testing:VVTermTests/TerminalConnectionRuntimeTests
+              -only-testing:VVTermTests/TerminalConnectionRunnerTests
+          - shard: remotefiles-stats-store-voice
+            filters: |
+              -only-testing:VVTermTests/RemoteFileBrowserRequestLifecycleTests
+              -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests
+              -only-testing:VVTermTests/StoreManagerLifecycleTests
+              -only-testing:VVTermTests/TerminalVoiceInputStoreTests
+    env:
+      IOS_TEST_DEVICE_NAME: iPhone 17
+      IOS_TEST_DEVICE_NAME_CANDIDATES: iPhone 17,iPhone 16,iPhone 15
+      IOS_TEST_ALLOW_DEVICE_FALLBACK: "1"
+      IOS_TEST_PROGRESS_INTERVAL: "30"
+      IOS_TEST_PROGRESS_LOG_LINES: "100"
+      IOS_TEST_FAILURE_LOG_LINES: "500"
+      IOS_TEST_DERIVED_DATA_PATH: ${{ runner.temp }}/vvterm-ios-focused-runtime-${{ matrix.shard }}-derived-data
+      IOS_TEST_KEEP_DERIVED_DATA: "1"
+      IOS_TEST_LOG_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-${{ matrix.shard }}-logs
+      IOS_FOCUSED_RUNTIME_SHARD: ${{ matrix.shard }}
+      IOS_FOCUSED_RUNTIME_FILTERS: ${{ matrix.filters }}
 
     steps:
       - name: Check out repository
@@ -45,44 +80,24 @@ jobs:
           swift --version
           xcrun simctl list devices available
 
-      - name: Run focused runtime lifecycle tests
-        env:
-          IOS_TEST_RETRIES: "2"
-          IOS_TEST_DEVICE_NAME: iPhone 17
-          IOS_TEST_DEVICE_NAME_CANDIDATES: iPhone 17,iPhone 16,iPhone 15
-          IOS_TEST_ALLOW_DEVICE_FALLBACK: "1"
-          IOS_TEST_PROGRESS_INTERVAL: "30"
-          IOS_TEST_PROGRESS_LOG_LINES: "100"
-          IOS_TEST_FAILURE_LOG_LINES: "500"
-          IOS_TEST_LOG_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs
+      - name: Show focused runtime diagnostics
         run: |
-          set -x
+          focused_args=()
+          while IFS= read -r filter; do
+            [[ -n "${filter}" ]] && focused_args+=("${filter}")
+          done <<< "${IOS_FOCUSED_RUNTIME_FILTERS}"
           mkdir -p "${IOS_TEST_LOG_DIR}"
 
-          focused_args=(
-            "-only-testing:VVTermTests/AppSyncCoordinatorTests"
-            "-only-testing:VVTermTests/CloudKitSyncCoordinatorLifecycleTests"
-            "-only-testing:VVTermTests/CloudflareTransportManagerLifecycleTests"
-            "-only-testing:VVTermTests/ConnectionRuntimeRegistryLifecycleTests"
-            "-only-testing:VVTermTests/ConnectionRuntimeRunnerLifecycleTests"
-            "-only-testing:VVTermTests/LibSSH2SessionLifecycleTests"
-            "-only-testing:VVTermTests/RemoteFileBrowserRequestLifecycleTests"
-            "-only-testing:VVTermTests/ServerStatsCollectorLifecycleTests"
-            "-only-testing:VVTermTests/SSHClientConnectionLifecycleTests"
-            "-only-testing:VVTermTests/StoreManagerLifecycleTests"
-            "-only-testing:VVTermTests/TerminalConnectionRuntimeTests"
-            "-only-testing:VVTermTests/TerminalConnectionRunnerTests"
-            "-only-testing:VVTermTests/TerminalVoiceInputStoreTests"
-          )
-
           echo "::group::Focused runtime lifecycle diagnostics"
+          echo "Focused test shard: ${IOS_FOCUSED_RUNTIME_SHARD}"
           echo "Focused test filter count: ${#focused_args[@]}"
-          echo "IOS_TEST_RETRIES=${IOS_TEST_RETRIES}"
           echo "IOS_TEST_DEVICE_NAME=${IOS_TEST_DEVICE_NAME}"
           echo "IOS_TEST_DEVICE_NAME_CANDIDATES=${IOS_TEST_DEVICE_NAME_CANDIDATES}"
           echo "IOS_TEST_PROGRESS_INTERVAL=${IOS_TEST_PROGRESS_INTERVAL}"
           echo "IOS_TEST_PROGRESS_LOG_LINES=${IOS_TEST_PROGRESS_LOG_LINES}"
           echo "IOS_TEST_FAILURE_LOG_LINES=${IOS_TEST_FAILURE_LOG_LINES}"
+          echo "IOS_TEST_DERIVED_DATA_PATH=${IOS_TEST_DERIVED_DATA_PATH}"
+          echo "IOS_TEST_KEEP_DERIVED_DATA=${IOS_TEST_KEEP_DERIVED_DATA}"
           echo "IOS_TEST_LOG_DIR=${IOS_TEST_LOG_DIR}"
           echo "IOS_TEST_NO_OUTPUT_TIMEOUT=${IOS_TEST_NO_OUTPUT_TIMEOUT:-default}"
           echo "RUNNER_TEMP=${RUNNER_TEMP}"
@@ -101,9 +116,12 @@ jobs:
             {
               echo "### Focused runtime lifecycle tests"
               echo
+              echo "- Shard: ${IOS_FOCUSED_RUNTIME_SHARD}"
               echo "- Filter count: ${#focused_args[@]}"
+              echo "- Build/test split: build-for-testing, then test-without-building"
               echo "- Device candidates: ${IOS_TEST_DEVICE_NAME_CANDIDATES}"
-              echo "- Retries: ${IOS_TEST_RETRIES}"
+              echo "- Test retries: 2"
+              echo "- DerivedData: ${IOS_TEST_DERIVED_DATA_PATH}"
               echo "- Progress interval: ${IOS_TEST_PROGRESS_INTERVAL}s"
               echo "- Progress tail: ${IOS_TEST_PROGRESS_LOG_LINES} lines"
               echo "- Failure tail: ${IOS_TEST_FAILURE_LOG_LINES} lines"
@@ -115,16 +133,42 @@ jobs:
             } >> "${GITHUB_STEP_SUMMARY}"
           fi
 
+      - name: Build focused runtime lifecycle tests
+        env:
+          IOS_TEST_XCODEBUILD_ACTION: build-for-testing
+          IOS_TEST_RETRIES: "0"
+        run: |
+          set -x
+          focused_args=()
+          while IFS= read -r filter; do
+            [[ -n "${filter}" ]] && focused_args+=("${filter}")
+          done <<< "${IOS_FOCUSED_RUNTIME_FILTERS}"
+          ./scripts/test-ios.sh "${focused_args[@]}"
+
+      - name: Run focused runtime lifecycle tests
+        env:
+          IOS_TEST_XCODEBUILD_ACTION: test-without-building
+          IOS_TEST_RETRIES: "2"
+        run: |
+          set -x
+          focused_args=()
+          while IFS= read -r filter; do
+            [[ -n "${filter}" ]] && focused_args+=("${filter}")
+          done <<< "${IOS_FOCUSED_RUNTIME_FILTERS}"
           ./scripts/test-ios.sh "${focused_args[@]}"
 
       - name: Upload focused runtime lifecycle logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: focused-runtime-lifecycle-xcodebuild-logs
-          path: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs
+          name: focused-runtime-lifecycle-${{ matrix.shard }}-xcodebuild-logs
+          path: ${{ runner.temp }}/vvterm-ios-focused-runtime-${{ matrix.shard }}-logs
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Clean focused runtime DerivedData
+        if: always()
+        run: rm -rf "${IOS_TEST_DERIVED_DATA_PATH}"
 
   ios-strict-concurrency:
     name: Strict Swift concurrency build

@@ -197,7 +197,7 @@ patch_mlx_swift_metal_warnings() {
 
 validate_xcodebuild_action() {
     case "$xcodebuild_action" in
-    test | build-for-testing)
+    test | build-for-testing | test-without-building)
         ;;
     *)
         echo "Unsupported IOS_TEST_XCODEBUILD_ACTION: ${xcodebuild_action}" >&2
@@ -273,7 +273,7 @@ preserve_xcodebuild_log() {
         status_label="timeout"
     fi
 
-    destination="${diagnostic_log_dir}/xcodebuild-attempt-${attempt}-${status_label}.log"
+    destination="${diagnostic_log_dir}/xcodebuild-${xcodebuild_action}-attempt-${attempt}-${status_label}.log"
     cp "$log_file" "$destination"
     echo "Preserved xcodebuild log: ${destination}"
 }
