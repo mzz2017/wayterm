@@ -80,7 +80,7 @@ struct TrustedHostsSettingsStoreTests {
         #expect(store.knownHostCount == 0)
     }
 
-    private func makeIsolatedDefaults() -> UserDefaults {
+    private nonisolated func makeIsolatedDefaults() -> UserDefaults {
         let suiteName = "TrustedHostsSettingsStoreTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
