@@ -1,6 +1,6 @@
 import Foundation
 
-struct RemoteFileBrowserPersistedStateStore {
+nonisolated struct RemoteFileBrowserPersistedStateStore {
     private let persistenceKey: String
     private let legacyPersistenceKey: String
     private let userDefaults: UserDefaults
