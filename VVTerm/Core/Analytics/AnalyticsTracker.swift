@@ -4,13 +4,32 @@ import Umami
 import UIKit
 #endif
 
+protocol AnalyticsTrackingClient: Sendable {
+    func track(_ event: TrackEventRequest) async throws
+}
+
+private struct UmamiAnalyticsTrackingClient: AnalyticsTrackingClient, @unchecked Sendable {
+    private let client: UmamiTrackerClient
+
+    init(configuration: UmamiConfiguration) {
+        client = UmamiTrackerClient(configuration: configuration)
+    }
+
+    func track(_ event: TrackEventRequest) async throws {
+        _ = try await client.track(event)
+    }
+}
+
 /// Anonymous product analytics sent to the self-hosted Umami instance.
 /// Every event is faceless: feature names, counts, and app context only —
 /// never commands, server addresses, usernames, or anything identifying.
 /// Fully disabled via the "Help Improve VVTerm" toggle in Settings.
 @MainActor
 final class AnalyticsTracker {
-    static let shared = AnalyticsTracker()
+    static let shared = AnalyticsTracker(
+        client: UmamiAnalyticsTrackingClient(configuration: .init(baseURL: endpoint)),
+        defaults: .standard
+    )
 
     static let enabledKey = "analytics.enabled"
 
@@ -19,12 +38,14 @@ final class AnalyticsTracker {
     /// Swap for a dedicated app website ID once created in the dashboard.
     private static let websiteId = "22711a63-9ec0-491c-ad86-71cb0b6ad4dd"
 
-    private let client: UmamiTrackerClient
-    private let defaults = UserDefaults.standard
+    private let client: any AnalyticsTrackingClient
+    private let defaults: UserDefaults
+    private let pendingEvents = AsyncCallbackTaskRegistry()
     private var hasTrackedLaunch = false
 
-    private init() {
-        client = UmamiTrackerClient(configuration: .init(baseURL: Self.endpoint))
+    init(client: any AnalyticsTrackingClient, defaults: UserDefaults) {
+        self.client = client
+        self.defaults = defaults
         defaults.register(defaults: [Self.enabledKey: true])
     }
 
@@ -72,6 +93,10 @@ final class AnalyticsTracker {
         send(name: "review_prompt_requested", url: "/app/review")
     }
 
+    func waitForPendingEvents() async {
+        await pendingEvents.waitForAll()
+    }
+
     // MARK: - Transport
 
     private func send(name: String, url: String, data: [String: JSONValue] = [:]) {
@@ -86,7 +111,7 @@ final class AnalyticsTracker {
             url: url,
             name: name
         )
-        Task.detached(priority: .utility) { [client] in
+        pendingEvents.trackDetached { [client] in
             _ = try? await client.track(event)
         }
     }
