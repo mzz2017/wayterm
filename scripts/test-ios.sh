@@ -22,6 +22,7 @@ progress_interval="${IOS_TEST_PROGRESS_INTERVAL:-0}"
 progress_log_lines="${IOS_TEST_PROGRESS_LOG_LINES:-20}"
 failure_log_lines="${IOS_TEST_FAILURE_LOG_LINES:-120}"
 diagnostic_log_dir="${IOS_TEST_LOG_DIR:-}"
+result_bundle_dir="${IOS_TEST_RESULT_BUNDLE_DIR:-}"
 lock_acquired=0
 cleanup_derived_data=0
 log_file=""
@@ -372,6 +373,7 @@ run_xcodebuild_test() {
     local status_file
     local timeout_file
     local -a xcodebuild_args
+    local result_bundle_path=""
     local last_output_at
     local now
     local started_at
@@ -384,6 +386,12 @@ run_xcodebuild_test() {
     xcodebuild_args=("$xcodebuild_action")
     if [[ "$xcodebuild_quiet" == "1" ]]; then
         xcodebuild_args+=(-quiet)
+    fi
+    if [[ -n "$result_bundle_dir" ]]; then
+        mkdir -p "$result_bundle_dir"
+        result_bundle_path="${result_bundle_dir}/xcodebuild-${xcodebuild_action}-attempt-${attempt}.xcresult"
+        rm -rf "$result_bundle_path"
+        xcodebuild_args+=(-resultBundlePath "$result_bundle_path")
     fi
 
     xcodebuild "${xcodebuild_args[@]}" \
@@ -501,6 +509,9 @@ while (( attempt <= total_attempts )); do
     echo "Failure log tail lines: ${failure_log_lines}."
     if [[ -n "$diagnostic_log_dir" ]]; then
         echo "Preserving full xcodebuild logs under ${diagnostic_log_dir}."
+    fi
+    if [[ -n "$result_bundle_dir" ]]; then
+        echo "Preserving xcodebuild result bundles under ${result_bundle_dir}."
     fi
     prepare_simulator "$udid"
 

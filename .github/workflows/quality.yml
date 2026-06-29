@@ -162,6 +162,7 @@ jobs:
         env:
           IOS_TEST_XCODEBUILD_ACTION: build-for-testing
           IOS_TEST_RETRIES: "0"
+          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/build/result-bundles
         run: |
           set -x
           ./scripts/test-ios.sh
@@ -170,7 +171,9 @@ jobs:
         env:
           IOS_TEST_XCODEBUILD_ACTION: test-without-building
           IOS_TEST_RETRIES: "2"
+          IOS_TEST_NO_OUTPUT_TIMEOUT: "300"
           IOS_TEST_LOG_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/sync-cloudflare
+          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/sync-cloudflare/result-bundles
         run: |
           set -x
           focused_args=()
@@ -183,7 +186,9 @@ jobs:
         env:
           IOS_TEST_XCODEBUILD_ACTION: test-without-building
           IOS_TEST_RETRIES: "2"
+          IOS_TEST_NO_OUTPUT_TIMEOUT: "300"
           IOS_TEST_LOG_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/terminal-ssh
+          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/terminal-ssh/result-bundles
         run: |
           set -x
           focused_args=()
@@ -196,7 +201,9 @@ jobs:
         env:
           IOS_TEST_XCODEBUILD_ACTION: test-without-building
           IOS_TEST_RETRIES: "2"
+          IOS_TEST_NO_OUTPUT_TIMEOUT: "300"
           IOS_TEST_LOG_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/remotefiles-stats-store-voice
+          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/remotefiles-stats-store-voice/result-bundles
         run: |
           set -x
           focused_args=()
