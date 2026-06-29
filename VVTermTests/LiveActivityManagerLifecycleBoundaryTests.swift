@@ -24,6 +24,18 @@ struct LiveActivityManagerLifecycleBoundaryTests {
             "Live Activity refresh should carry a request ID across ActivityKit awaits."
         )
         #expect(
+            source.contains("struct TerminalLiveActivityHandle: @unchecked Sendable"),
+            "ActivityKit handles should be wrapped before crossing async update/end calls."
+        )
+        #expect(
+            source.contains("private var activity: TerminalLiveActivityHandle?"),
+            "LiveActivityManager should store the sendable wrapper instead of raw ActivityKit state."
+        )
+        #expect(
+            !source.contains("private var activity: Activity<VVTermActivityAttributes>?"),
+            "Raw ActivityKit handles should not be stored as main actor state and sent to @concurrent methods."
+        )
+        #expect(
             source.contains("refreshTask?.cancel()"),
             "A newer refresh should cancel the previous refresh task before starting."
         )

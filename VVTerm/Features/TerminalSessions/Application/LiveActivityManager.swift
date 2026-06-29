@@ -10,6 +10,41 @@ struct TerminalLiveActivitySnapshot: Equatable, Sendable {
     let state: TerminalEntityConnectionState
 }
 
+#if os(iOS)
+@available(iOS 16.1, *)
+private struct TerminalLiveActivityHandle: @unchecked Sendable {
+    nonisolated(unsafe) private let activity: Activity<VVTermActivityAttributes>
+
+    init(_ activity: Activity<VVTermActivityAttributes>) {
+        self.activity = activity
+    }
+
+    static var existingActivities: [TerminalLiveActivityHandle] {
+        Activity<VVTermActivityAttributes>.activities.map(TerminalLiveActivityHandle.init)
+    }
+
+    static func request(
+        attributes: VVTermActivityAttributes,
+        contentState: VVTermActivityAttributes.ContentState
+    ) throws -> TerminalLiveActivityHandle {
+        let activity = try Activity.request(
+            attributes: attributes,
+            contentState: contentState,
+            pushType: nil
+        )
+        return TerminalLiveActivityHandle(activity)
+    }
+
+    func update(using state: VVTermActivityAttributes.ContentState) async {
+        await activity.update(using: state)
+    }
+
+    func endImmediately() async {
+        await activity.end(dismissalPolicy: .immediate)
+    }
+}
+#endif
+
 @MainActor
 final class LiveActivityManager {
     static let shared = LiveActivityManager()
@@ -37,7 +72,7 @@ final class LiveActivityManager {
 
     #if os(iOS)
     @available(iOS 16.1, *)
-    private var activity: Activity<VVTermActivityAttributes>?
+    private var activity: TerminalLiveActivityHandle?
 
     @available(iOS 16.1, *)
     private var lastState: VVTermActivityAttributes.ContentState?
@@ -81,7 +116,10 @@ final class LiveActivityManager {
         if activity == nil {
             do {
                 let attributes = VVTermActivityAttributes(appName: "VVTerm")
-                activity = try Activity.request(attributes: attributes, contentState: newState, pushType: nil)
+                activity = try TerminalLiveActivityHandle.request(
+                    attributes: attributes,
+                    contentState: newState
+                )
                 lastState = newState
             } catch {
                 logger.error("Failed to start Live Activity: \(String(describing: error))")
@@ -90,7 +128,8 @@ final class LiveActivityManager {
         }
 
         guard newState != lastState else { return }
-        await activity?.update(using: newState)
+        let activityToUpdate = activity
+        await activityToUpdate?.update(using: newState)
         guard isCurrentRefresh(requestID) else { return }
         lastState = newState
     }
@@ -103,13 +142,13 @@ final class LiveActivityManager {
     @available(iOS 16.1, *)
     private func attachToExistingActivityIfNeeded() async {
         guard activity == nil else { return }
-        let existing = Activity<VVTermActivityAttributes>.activities
+        let existing = TerminalLiveActivityHandle.existingActivities
         guard let current = existing.first else { return }
         activity = current
 
         if existing.count > 1 {
             for duplicate in existing.dropFirst() {
-                await duplicate.end(dismissalPolicy: .immediate)
+                await duplicate.endImmediately()
             }
         }
     }
@@ -117,10 +156,10 @@ final class LiveActivityManager {
     @available(iOS 16.1, *)
     private func endAllActivities(requestID: UUID) async {
         guard isCurrentRefresh(requestID) else { return }
-        let existing = Activity<VVTermActivityAttributes>.activities
+        let existing = TerminalLiveActivityHandle.existingActivities
         for activity in existing {
             guard isCurrentRefresh(requestID) else { return }
-            await activity.end(dismissalPolicy: .immediate)
+            await activity.endImmediately()
         }
         guard isCurrentRefresh(requestID) else { return }
         self.activity = nil
