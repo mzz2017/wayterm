@@ -78,7 +78,7 @@ nonisolated enum SSHFileTransferError: LocalizedError, Equatable, Sendable {
     case disconnected
     case notDirectory
     case linkLoop
-    case failed(operation: String, path: String?)
+    case failed(operation: String, path: String?, sftpStatusCode: UInt? = nil)
 
     var errorDescription: String? {
         switch self {
@@ -92,9 +92,10 @@ nonisolated enum SSHFileTransferError: LocalizedError, Equatable, Sendable {
             return String(localized: "The remote path is not a directory.")
         case .linkLoop:
             return String(localized: "The remote path contains a symbolic link loop.")
-        case .failed(let operation, let path):
+        case .failed(let operation, let path, let sftpStatusCode):
             let location = path.map { " (\($0))" } ?? ""
-            return String(localized: "Failed to \(operation)\(location).")
+            let status = sftpStatusCode.map { " [SFTP status \($0)]" } ?? ""
+            return String(localized: "Failed to \(operation)\(location)\(status).")
         }
     }
 }

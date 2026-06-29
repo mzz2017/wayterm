@@ -25,7 +25,7 @@ enum SSHRemoteFileErrorMapper {
         case UInt(LIBSSH2_FX_LINK_LOOP):
             return .linkLoop
         default:
-            return .failed(operation: operation, path: path)
+            return .failed(operation: operation, path: path, sftpStatusCode: lastError)
         }
     }
 }

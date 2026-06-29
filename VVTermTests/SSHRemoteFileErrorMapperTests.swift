@@ -34,7 +34,7 @@ struct SSHRemoteFileErrorMapperTests {
     }
 
     @Test
-    func unknownSFTPStatusIncludesOperationAndPath() {
+    func unknownSFTPStatusIncludesOperationPathAndRawStatusCode() {
         // When an unknown SFTP status is mapped.
         let error = SSHRemoteFileErrorMapper.remoteFileError(
             lastError: 999,
@@ -42,7 +42,8 @@ struct SSHRemoteFileErrorMapperTests {
             path: "/srv/archive.tar"
         )
 
-        // Then the fallback error preserves the requested operation and path.
-        #expect(error == .failed(operation: "download file", path: "/srv/archive.tar"))
+        // Then the fallback error preserves the requested operation, path, and
+        // raw status code from the libssh2 SFTP boundary.
+        #expect(error == .failed(operation: "download file", path: "/srv/archive.tar", sftpStatusCode: 999))
     }
 }
