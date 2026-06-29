@@ -17,6 +17,7 @@ cloned_source_packages_path="${IOS_TEST_CLONED_SOURCE_PACKAGES_DIR:-${TMPDIR:-/t
 keep_derived_data="${IOS_TEST_KEEP_DERIVED_DATA:-0}"
 no_output_timeout="${IOS_TEST_NO_OUTPUT_TIMEOUT:-900}"
 xcodebuild_quiet="${IOS_TEST_XCODEBUILD_QUIET:-0}"
+xcodebuild_action="${IOS_TEST_XCODEBUILD_ACTION:-test}"
 lock_acquired=0
 created_derived_data=0
 log_file=""
@@ -147,6 +148,17 @@ patch_mlx_swift_metal_warnings() {
     fi
 }
 
+validate_xcodebuild_action() {
+    case "$xcodebuild_action" in
+    test | build-for-testing)
+        ;;
+    *)
+        echo "Unsupported IOS_TEST_XCODEBUILD_ACTION: ${xcodebuild_action}" >&2
+        exit 5
+        ;;
+    esac
+}
+
 resolve_destination_id() {
     if [[ -n "$destination_id" ]]; then
         printf '%s\n' "$destination_id"
@@ -211,7 +223,7 @@ run_xcodebuild_test() {
     rm -f "$timeout_file"
     : > "$log_file"
 
-    xcodebuild_args=(test)
+    xcodebuild_args=("$xcodebuild_action")
     if [[ "$xcodebuild_quiet" == "1" ]]; then
         xcodebuild_args+=(-quiet)
     fi
@@ -283,6 +295,7 @@ run_xcodebuild_test() {
     return "$last_status"
 }
 
+validate_xcodebuild_action
 acquire_global_lock
 prepare_derived_data
 prepare_cloned_source_packages
