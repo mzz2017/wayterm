@@ -1,6 +1,6 @@
 import Foundation
 
-enum IOSConnectionViewSelectionPolicy {
+nonisolated enum IOSConnectionViewSelectionPolicy {
     static let terminalViewId = "terminal"
 
     static func preferredConnectViewId(
