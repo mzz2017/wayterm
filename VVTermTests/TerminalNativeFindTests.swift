@@ -1,6 +1,7 @@
 #if os(iOS)
+import CoreGraphics
+import Foundation
 import Testing
-import UIKit
 @testable import VVTerm
 
 // Test Context:
@@ -21,7 +22,7 @@ struct TerminalNativeFindTests {
             columns: 20
         )
 
-        let ranges = snapshot.searchRanges(query: "beta", options: UITextSearchOptions())
+        let ranges = snapshot.searchRanges(query: "beta")
 
         #expect(ranges == [
             NSRange(location: 6, length: 4),
@@ -38,9 +39,31 @@ struct TerminalNativeFindTests {
             columns: 20
         )
 
-        let ranges = snapshot.searchRanges(query: "  find  ", options: UITextSearchOptions())
+        let ranges = snapshot.searchRanges(query: "  find  ")
 
         #expect(ranges == [NSRange(location: 7, length: 4)])
+    }
+
+    @Test
+    func appliesPureSearchOptionsWithoutUIKitSearchObjects() {
+        let snapshot = TerminalNativeTextSnapshot(
+            lines: ["Beta alphabet beta"],
+            cellSize: CGSize(width: 10, height: 20),
+            columns: 20
+        )
+
+        let ranges = snapshot.searchRanges(
+            query: "beta",
+            options: TerminalNativeTextSearchOptions(
+                compareOptions: [.caseInsensitive],
+                wordMatchMethod: .fullWord
+            )
+        )
+
+        #expect(ranges == [
+            NSRange(location: 0, length: 4),
+            NSRange(location: 14, length: 4)
+        ])
     }
 }
 #endif

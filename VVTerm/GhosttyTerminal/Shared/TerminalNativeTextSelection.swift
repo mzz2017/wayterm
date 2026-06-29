@@ -107,56 +107,31 @@ final class TerminalNativeFindOverlayView: UIView {
     }
 }
 
-struct TerminalNativeTextSnapshot {
-    struct Line {
-        let text: String
-        let startOffset: Int
-        let utf16Length: Int
+extension TerminalNativeTextSearchOptions {
+    init(_ options: UITextSearchOptions) {
+        self.init(
+            compareOptions: options.stringCompareOptions,
+            wordMatchMethod: WordMatchMethod(options.wordMatchMethod)
+        )
     }
+}
 
-    static let empty = TerminalNativeTextSnapshot(lines: [], cellSize: CGSize(width: 1, height: 1), columns: 1)
-
-    let lines: [Line]
-    let text: String
-    let nsText: NSString
-    let cellSize: CGSize
-    let columns: Int
-
-    init(lines rawLines: [String], cellSize: CGSize, columns: Int) {
-        let sanitizedCellSize = CGSize(width: max(cellSize.width, 1), height: max(cellSize.height, 1))
-        self.cellSize = sanitizedCellSize
-        self.columns = max(columns, 1)
-
-        var runningOffset = 0
-        var builtLines: [Line] = []
-        for (index, line) in rawLines.enumerated() {
-            let utf16Length = (line as NSString).length
-            builtLines.append(Line(text: line, startOffset: runningOffset, utf16Length: utf16Length))
-            runningOffset += utf16Length
-            if index < rawLines.count - 1 {
-                runningOffset += 1
-            }
+private extension TerminalNativeTextSearchOptions.WordMatchMethod {
+    init(_ method: UITextSearchOptions.WordMatchMethod) {
+        switch method {
+        case .contains:
+            self = .contains
+        case .startsWith:
+            self = .startsWith
+        case .fullWord:
+            self = .fullWord
+        @unknown default:
+            self = .contains
         }
-
-        self.lines = builtLines
-        self.text = rawLines.joined(separator: "\n")
-        self.nsText = self.text as NSString
     }
+}
 
-    var length: Int {
-        nsText.length
-    }
-
-    func clampedOffset(_ offset: Int) -> Int {
-        min(max(offset, 0), length)
-    }
-
-    func clampedRange(_ range: NSRange) -> NSRange {
-        let location = clampedOffset(range.location)
-        let upperBound = clampedOffset(range.location + range.length)
-        return NSRange(location: location, length: max(upperBound - location, 0))
-    }
-
+extension TerminalNativeTextSnapshot {
     func nativeRange(from range: UITextRange?) -> NSRange? {
         guard let range = range as? TerminalNativeTextRange else { return nil }
         return clampedRange(range.nsRange)
@@ -168,161 +143,18 @@ struct TerminalNativeTextSnapshot {
         return TerminalNativeTextRange(start: clamped.location, end: clamped.location + clamped.length)
     }
 
-    func text(in range: NSRange) -> String? {
-        guard length > 0 else { return nil }
-        let clamped = clampedRange(range)
-        guard clamped.length > 0 else { return "" }
-        return nsText.substring(with: clamped)
-    }
-
-    func offset(for point: CGPoint) -> Int {
-        guard !lines.isEmpty else { return 0 }
-        let row = min(max(Int(floor(point.y / cellSize.height)), 0), lines.count - 1)
-        let column = min(max(Int(floor(point.x / cellSize.width)), 0), columns)
-        let line = lines[row]
-        return clampedOffset(line.startOffset + min(column, line.utf16Length))
-    }
-
-    func characterRange(at point: CGPoint) -> NSRange? {
-        guard length > 0, !lines.isEmpty else { return nil }
-        let offset = offset(for: point)
-        let (lineIndex, column) = lineAndColumn(for: offset)
-        let line = lines[lineIndex]
-        guard line.utf16Length > 0 else { return nil }
-        let clampedColumn = min(column, max(line.utf16Length - 1, 0))
-        return NSRange(location: line.startOffset + clampedColumn, length: 1)
-    }
-
-    func caretRect(for offset: Int) -> CGRect {
-        let (lineIndex, column) = lineAndColumn(for: offset)
-        let caretWidth = max(2, cellSize.width * 0.08)
-        return CGRect(
-            x: CGFloat(min(column, columns)) * cellSize.width,
-            y: CGFloat(lineIndex) * cellSize.height,
-            width: caretWidth,
-            height: cellSize.height
-        ).integral
-    }
-
-    func firstRect(for range: NSRange) -> CGRect {
-        let rects = selectionRects(for: range)
-        if let firstRect = rects.first?.rect {
-            return firstRect
-        }
-        return caretRect(for: range.location)
-    }
-
     func selectionRects(for range: NSRange) -> [TerminalNativeSelectionRect] {
-        let clamped = clampedRange(range)
-        guard clamped.length > 0, !lines.isEmpty else { return [] }
-
-        let lowerBound = clamped.location
-        let upperBound = clamped.location + clamped.length
-        var rects: [TerminalNativeSelectionRect] = []
-
-        for (lineIndex, line) in lines.enumerated() {
-            let lineStart = line.startOffset
-            let lineEnd = line.startOffset + line.utf16Length
-            let selectionStart = max(lowerBound, lineStart)
-            let selectionEnd = min(upperBound, lineEnd)
-            guard selectionEnd > selectionStart else { continue }
-
-            let startColumn = min(selectionStart - lineStart, columns)
-            let endColumn = min(selectionEnd - lineStart, columns)
-            let width = max(CGFloat(endColumn - startColumn) * cellSize.width, cellSize.width)
-            let rect = CGRect(
-                x: CGFloat(startColumn) * cellSize.width,
-                y: CGFloat(lineIndex) * cellSize.height,
-                width: width,
-                height: cellSize.height
-            ).integral
-            rects.append(
-                TerminalNativeSelectionRect(
-                    rect: rect,
-                    containsStart: selectionStart == lowerBound,
-                    containsEnd: selectionEnd == upperBound
-                )
+        selectionRectFrames(for: range).map { frame in
+            TerminalNativeSelectionRect(
+                rect: frame.rect,
+                containsStart: frame.containsStart,
+                containsEnd: frame.containsEnd
             )
         }
-
-        return rects
     }
 
     func searchRanges(query: String, options: UITextSearchOptions) -> [NSRange] {
-        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedQuery.isEmpty, length > 0 else { return [] }
-
-        let queryLength = (normalizedQuery as NSString).length
-        guard queryLength > 0 else { return [] }
-
-        var results: [NSRange] = []
-        var searchRange = NSRange(location: 0, length: length)
-
-        while searchRange.length > 0 {
-            let foundRange = nsText.range(of: normalizedQuery, options: options.stringCompareOptions, range: searchRange)
-            guard foundRange.location != NSNotFound else { break }
-
-            if matchesWordMethod(foundRange, method: options.wordMatchMethod) {
-                results.append(foundRange)
-            }
-
-            let nextLocation = foundRange.location + max(foundRange.length, 1)
-            guard nextLocation < length else { break }
-            searchRange = NSRange(location: nextLocation, length: length - nextLocation)
-        }
-
-        return results
+        searchRanges(query: query, options: TerminalNativeTextSearchOptions(options))
     }
-
-    func lineAndColumn(for offset: Int) -> (line: Int, column: Int) {
-        guard !lines.isEmpty else { return (0, 0) }
-
-        let clamped = clampedOffset(offset)
-        for (index, line) in lines.enumerated() {
-            let lineStart = line.startOffset
-            let lineEnd = line.startOffset + line.utf16Length
-
-            if clamped < lineEnd {
-                return (index, clamped - lineStart)
-            }
-
-            if clamped == lineEnd {
-                return (index, line.utf16Length)
-            }
-        }
-
-        let lastLine = lines[lines.count - 1]
-        return (lines.count - 1, lastLine.utf16Length)
-    }
-
-    private func matchesWordMethod(_ range: NSRange, method: UITextSearchOptions.WordMatchMethod) -> Bool {
-        switch method {
-        case .contains:
-            return true
-        case .startsWith:
-            return isWordBoundaryBeforeUTF16Offset(range.location)
-        case .fullWord:
-            return isWordBoundaryBeforeUTF16Offset(range.location)
-                && isWordBoundaryAfterUTF16Offset(range.location + range.length)
-        @unknown default:
-            return true
-        }
-    }
-
-    private func isWordBoundaryBeforeUTF16Offset(_ offset: Int) -> Bool {
-        guard offset > 0, offset <= length else { return true }
-        let previousCodeUnit = nsText.character(at: offset - 1)
-        guard let scalar = UnicodeScalar(previousCodeUnit) else { return true }
-        return !Self.wordScalars.contains(scalar)
-    }
-
-    private func isWordBoundaryAfterUTF16Offset(_ offset: Int) -> Bool {
-        guard offset >= 0, offset < length else { return true }
-        let nextCodeUnit = nsText.character(at: offset)
-        guard let scalar = UnicodeScalar(nextCodeUnit) else { return true }
-        return !Self.wordScalars.contains(scalar)
-    }
-
-    private static let wordScalars = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_"))
 }
 #endif
