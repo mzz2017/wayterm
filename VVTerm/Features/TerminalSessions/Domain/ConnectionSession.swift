@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Connection State
 
-nonisolated enum ConnectionState: Hashable {
+nonisolated enum ConnectionState: Hashable, Sendable {
     case disconnected
     case connecting
     case connected

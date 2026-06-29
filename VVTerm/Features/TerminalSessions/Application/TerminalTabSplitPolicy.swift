@@ -7,8 +7,8 @@
 
 import Foundation
 
-enum TerminalTabSplitPolicy {
-    struct Result {
+nonisolated enum TerminalTabSplitPolicy {
+    struct Result: Sendable {
         let updatedTab: TerminalTab
         let newPaneState: TerminalPaneState
     }

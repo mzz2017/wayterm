@@ -12,7 +12,7 @@ import Foundation
 
 /// Represents a single tab in the terminal toolbar.
 /// Each tab can contain multiple panes via splits.
-nonisolated struct TerminalTab: Identifiable, Equatable, Codable {
+nonisolated struct TerminalTab: Identifiable, Equatable, Codable, Sendable {
     let id: UUID
     let serverId: UUID
     var title: String
@@ -68,7 +68,7 @@ nonisolated struct TerminalTab: Identifiable, Equatable, Codable {
 // MARK: - Terminal Pane State
 
 /// State for a single terminal pane (leaf in split tree)
-nonisolated struct TerminalPaneState {
+nonisolated struct TerminalPaneState: Sendable {
     let paneId: UUID
     let tabId: UUID
     let serverId: UUID

@@ -1,6 +1,6 @@
 import Foundation
 
-enum TmuxStatus: String, Codable, Hashable {
+nonisolated enum TmuxStatus: String, Codable, Hashable, Sendable {
     case foreground
     case background
     case off

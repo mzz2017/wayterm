@@ -10,7 +10,7 @@ import Foundation
 
 // MARK: - Split Direction
 
-nonisolated enum TerminalSplitDirection: String, Codable, Equatable {
+nonisolated enum TerminalSplitDirection: String, Codable, Equatable, Sendable {
     case horizontal  // left | right
     case vertical    // top / bottom
 }
@@ -19,11 +19,11 @@ nonisolated enum TerminalSplitDirection: String, Codable, Equatable {
 
 /// A split node stores pane IDs, not connection objects.
 /// This allows the view hierarchy to change without losing terminal state.
-nonisolated indirect enum TerminalSplitNode: Equatable, Codable {
+nonisolated indirect enum TerminalSplitNode: Equatable, Codable, Sendable {
     case leaf(paneId: UUID)
     case split(Split)
 
-    nonisolated struct Split: Equatable, Codable {
+    nonisolated struct Split: Equatable, Codable, Sendable {
         let direction: TerminalSplitDirection
         let ratio: Double  // 0.0 to 1.0, left/top percentage
         let left: TerminalSplitNode
