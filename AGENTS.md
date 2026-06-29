@@ -247,6 +247,7 @@ Output: `Vendor/libssh2/{macos,ios,ios-simulator}/`
 
 - The wrapper defaults to the shared `VVTermUnitTests` scheme, which contains `VVTermTests` but not `VVTermUITests`. Set `IOS_TEST_SCHEME=VVTerm` when intentionally exercising the full shared scheme or UI test target.
 - The default destination is `iPhone 17`. Override with `IOS_TEST_DEVICE_NAME` or `IOS_TEST_DESTINATION_ID` when needed. Override the package clone cache with `IOS_TEST_CLONED_SOURCE_PACKAGES_DIR` when isolation from the shared package cache is required. The default no-output watchdog is 900 seconds; use `IOS_TEST_NO_OUTPUT_TIMEOUT` for shorter focused diagnostics.
+- Do not leave fixed DerivedData directories under `/private/tmp`. The wrapper auto-cleans its default DerivedData path, and explicit `IOS_TEST_DERIVED_DATA_PATH` values are auto-cleaned only when they are safe `vvterm-*` temp directories. Set `IOS_TEST_KEEP_DERIVED_DATA=1` only for intentional diagnostics, then delete the directory when finished. Use `dust -d 1 /private/tmp` when investigating local disk pressure.
 
 ### iOS simulator tests
 - On macOS 26.5.1 / Xcode 26.5, app-hosted iOS unit tests can hang before XCTest output when Xcode's debug dylib layout is enabled (`ENABLE_DEBUG_DYLIB=YES`, the default app-debug layout). The app launches, but the host process has no `XCTestConfigurationFilePath` and no `DYLD_INSERT_LIBRARIES=...libXCTestBundleInject...`, so XCTest never injects the test bundle.

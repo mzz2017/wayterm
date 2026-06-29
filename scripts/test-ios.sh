@@ -19,7 +19,7 @@ no_output_timeout="${IOS_TEST_NO_OUTPUT_TIMEOUT:-900}"
 xcodebuild_quiet="${IOS_TEST_XCODEBUILD_QUIET:-0}"
 xcodebuild_action="${IOS_TEST_XCODEBUILD_ACTION:-test}"
 lock_acquired=0
-created_derived_data=0
+cleanup_derived_data=0
 log_file=""
 tail_pid=""
 watchdog_pid=""
@@ -38,7 +38,7 @@ cleanup() {
     if [[ -n "$log_file" ]]; then
         rm -f "$log_file"
     fi
-    if [[ "$created_derived_data" -eq 1 && "$keep_derived_data" != "1" ]]; then
+    if [[ "$cleanup_derived_data" -eq 1 && "$keep_derived_data" != "1" ]]; then
         rm -rf "$derived_data_path"
     fi
     if [[ "$lock_acquired" -eq 1 ]]; then
@@ -110,12 +110,51 @@ acquire_global_lock() {
 
 prepare_derived_data() {
     if [[ -n "$derived_data_path" ]]; then
+        if [[ "$keep_derived_data" != "1" ]]; then
+            if ! is_auto_cleanup_derived_data_path "$derived_data_path"; then
+                echo "Refusing to use IOS_TEST_DERIVED_DATA_PATH without IOS_TEST_KEEP_DERIVED_DATA=1: ${derived_data_path}" >&2
+                echo "Use a vvterm-* directory directly under the system temp directory for auto-cleanup, or set IOS_TEST_KEEP_DERIVED_DATA=1 for intentional diagnostics." >&2
+                exit 6
+            fi
+            cleanup_derived_data=1
+        fi
         mkdir -p "$derived_data_path"
         return
     fi
 
     derived_data_path="$(mktemp -d -t vvterm-ios-derived-data.XXXXXX)"
-    created_derived_data=1
+    cleanup_derived_data=1
+}
+
+is_auto_cleanup_derived_data_path() {
+    local path="$1"
+    local parent
+    local canonical_parent
+    local temp_parent
+    local base
+
+    parent="$(dirname "$path")"
+    base="$(basename "$path")"
+
+    case "$base" in
+    vvterm-* | vvterm-ios-derived-data.*)
+        ;;
+    *)
+        return 1
+        ;;
+    esac
+
+    if [[ ! -d "$parent" ]]; then
+        return 1
+    fi
+
+    canonical_parent="$(cd "$parent" && pwd -P)"
+    temp_parent="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+
+    [[ "$canonical_parent" == "$temp_parent" ]] ||
+        [[ "$canonical_parent" == "/private/tmp" ]] ||
+        [[ "$canonical_parent" == /private/var/folders/*/T ]] ||
+        [[ "$canonical_parent" == /var/folders/*/T ]]
 }
 
 prepare_cloned_source_packages() {
