@@ -7,7 +7,7 @@ enum TerminalAccessoryValidationError: LocalizedError {
     case emptyCommandContent
     case customActionNotFound
 
-    var errorDescription: String? {
+    nonisolated var errorDescription: String? {
         switch self {
         case .customActionLimitReached:
             return String(

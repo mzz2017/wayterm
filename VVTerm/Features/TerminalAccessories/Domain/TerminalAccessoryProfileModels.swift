@@ -194,7 +194,7 @@ extension TerminalAccessoryProfile {
 
     static let minActiveItems = 4
     static let maxActiveItems = 28
-    static let maxCustomActions = 100
+    nonisolated static let maxCustomActions = 100
     static let maxCustomActionTitleLength = 24
     static let maxCommandContentLength = 2048
 
