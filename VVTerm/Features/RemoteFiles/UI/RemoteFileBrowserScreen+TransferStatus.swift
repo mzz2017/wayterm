@@ -126,7 +126,7 @@ extension RemoteFileBrowserScreen {
         successFileURL: URL? = nil,
         successFileName: String? = nil,
         successFilePath: String? = nil,
-        operation: @escaping @Sendable (@escaping @MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void) async throws -> Void
+        operation: @escaping @MainActor @Sendable (@escaping @MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void) async throws -> Void
     ) {
         let transferID = UUID()
 
@@ -193,7 +193,7 @@ extension RemoteFileBrowserScreen {
         successFileURL: URL? = nil,
         successFileName: String? = nil,
         successFilePath: String? = nil,
-        operation: @escaping @Sendable () async throws -> Void
+        operation: @escaping @MainActor @Sendable () async throws -> Void
     ) {
         performTransfer(
             title: title,

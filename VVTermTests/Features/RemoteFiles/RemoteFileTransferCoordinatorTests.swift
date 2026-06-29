@@ -10,6 +10,20 @@ import Testing
 @MainActor
 struct RemoteFileTransferCoordinatorTests {
     @Test
+    func conflictResolutionComputedStateRemainsNonisolatedForTransferPlanning() throws {
+        let root = try sourceRoot()
+        let conflictSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Domain/RemoteFileConflictPolicy.swift")
+        )
+
+        // Given upload planning runs off the MainActor while resolving names.
+        #expect(
+            conflictSource.contains("nonisolated var hasConflict"),
+            "RemoteFileConflictResolution is a Sendable domain value; conflict checks should not inherit MainActor isolation."
+        )
+    }
+
+    @Test
     func deleteDirectoryRecursivelyRemovesNestedContentsBeforeParent() async throws {
         let store = RemoteFileBrowserStore(persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()), serverProvider: { _ in nil })
         let service = RecordingRemoteFileService(
@@ -53,6 +67,26 @@ struct RemoteFileTransferCoordinatorTests {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
+    }
+
+    private func source(at url: URL) throws -> String {
+        try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func sourceRoot() throws -> URL {
+        var url = URL(fileURLWithPath: #filePath)
+        while url.lastPathComponent != "VVTermTests" {
+            let next = url.deletingLastPathComponent()
+            if next.path == url.path {
+                throw SourceRootError.notFound
+            }
+            url = next
+        }
+        return url.deletingLastPathComponent()
+    }
+
+    private enum SourceRootError: Error {
+        case notFound
     }
 }
 

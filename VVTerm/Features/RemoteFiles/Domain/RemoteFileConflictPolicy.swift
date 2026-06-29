@@ -10,7 +10,7 @@ struct RemoteFileConflictResolution: Equatable, Sendable {
     let resolvedName: String
     let existingEntry: RemoteFileEntry?
 
-    var hasConflict: Bool {
+    nonisolated var hasConflict: Bool {
         existingEntry != nil
     }
 }

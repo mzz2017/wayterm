@@ -1,6 +1,40 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+struct RemoteFileDropItemProviders: @unchecked Sendable {
+    private let providers: [NSItemProvider]
+
+    private init(_ providers: [NSItemProvider]) {
+        self.providers = providers
+    }
+
+    static func localFileURLs(from providers: [NSItemProvider]) -> RemoteFileDropItemProviders {
+        RemoteFileDropItemProviders(
+            providers.filter { provider in
+                provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+            }
+        )
+    }
+
+    static func remotePayloads(from providers: [NSItemProvider]) -> RemoteFileDropItemProviders {
+        RemoteFileDropItemProviders(
+            providers.filter { provider in
+                provider.hasItemConformingToTypeIdentifier(UTType.vvtermRemoteFileEntry.identifier)
+            }
+        )
+    }
+
+    var isEmpty: Bool {
+        providers.isEmpty
+    }
+
+    func forEach(_ body: (NSItemProvider) async throws -> Void) async throws {
+        for provider in providers {
+            try await body(provider)
+        }
+    }
+}
+
 extension RemoteFileBrowserScreen {
     func handleCurrentDirectoryDrop(_ providers: [NSItemProvider], to destinationPath: String) -> Bool {
         if handleRemoteDrop(providers, to: destinationPath) {
@@ -11,9 +45,7 @@ extension RemoteFileBrowserScreen {
     }
 
     func handleLocalDrop(_ providers: [NSItemProvider], to destinationPath: String) -> Bool {
-        let fileURLProviders = providers.filter { provider in
-            provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
-        }
+        let fileURLProviders = RemoteFileDropItemProviders.localFileURLs(from: providers)
         guard !fileURLProviders.isEmpty else { return false }
 
         performTransfer(
@@ -29,9 +61,7 @@ extension RemoteFileBrowserScreen {
     }
 
     func handleRemoteDrop(_ providers: [NSItemProvider], to destinationPath: String) -> Bool {
-        let remoteProviders = providers.filter { provider in
-            provider.hasItemConformingToTypeIdentifier(UTType.vvtermRemoteFileEntry.identifier)
-        }
+        let remoteProviders = RemoteFileDropItemProviders.remotePayloads(from: providers)
         guard !remoteProviders.isEmpty else { return false }
 
         performTransfer(
@@ -114,10 +144,10 @@ extension RemoteFileBrowserScreen {
         return UTType(filenameExtension: pathExtension)?.identifier ?? UTType.data.identifier
     }
 
-    func loadDroppedURLs(from providers: [NSItemProvider]) async throws -> [URL] {
+    func loadDroppedURLs(from providers: RemoteFileDropItemProviders) async throws -> [URL] {
         var urls: [URL] = []
 
-        for provider in providers {
+        try await providers.forEach { provider in
             urls.append(try await loadDroppedURL(from: provider))
         }
 
@@ -167,10 +197,10 @@ extension RemoteFileBrowserScreen {
         }
     }
 
-    func loadDroppedRemotePayloads(from providers: [NSItemProvider]) async throws -> [RemoteFileDragPayload] {
+    func loadDroppedRemotePayloads(from providers: RemoteFileDropItemProviders) async throws -> [RemoteFileDragPayload] {
         var payloads: [RemoteFileDragPayload] = []
 
-        for provider in providers {
+        try await providers.forEach { provider in
             payloads.append(try await loadDroppedRemotePayload(from: provider))
         }
 

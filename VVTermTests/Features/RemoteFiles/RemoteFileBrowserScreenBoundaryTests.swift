@@ -168,6 +168,27 @@ struct RemoteFileBrowserScreenBoundaryTests {
 
         // Given drag/drop needs platform data-provider glue but should not
         // keep inflating the root browser surface.
+        #expect(
+            dragDropSource.contains("struct RemoteFileDropItemProviders: @unchecked Sendable"),
+            "NSItemProvider arrays are non-Sendable; drag/drop transfer closures should capture an explicit drop-provider handle."
+        )
+        #expect(
+            dragDropSource.contains("RemoteFileDropItemProviders.localFileURLs(from: providers)"),
+            "Local drops should snapshot providers behind the sendable drop-provider handle before transfer execution."
+        )
+        #expect(
+            dragDropSource.contains("RemoteFileDropItemProviders.remotePayloads(from: providers)"),
+            "Remote drops should snapshot providers behind the sendable drop-provider handle before transfer execution."
+        )
+        #expect(
+            !dragDropSource.contains("let fileURLProviders = providers.filter"),
+            "Local transfer closures should not capture raw non-Sendable NSItemProvider arrays."
+        )
+        #expect(
+            !dragDropSource.contains("let remoteProviders = providers.filter"),
+            "Remote transfer closures should not capture raw non-Sendable NSItemProvider arrays."
+        )
+
         for functionName in [
             "handleCurrentDirectoryDrop",
             "handleLocalDrop",
@@ -209,6 +230,11 @@ struct RemoteFileBrowserScreenBoundaryTests {
 
         // Given transfer progress is UI presentation over application-owned
         // request lifecycle state.
+        #expect(
+            transferSource.contains("operation: @escaping @MainActor @Sendable"),
+            "Transfer operations should remain MainActor intent closures while the store owns task tracking."
+        )
+
         for functionName in [
             "beginTransferStatus",
             "updateTransferStatus",
