@@ -55,6 +55,74 @@ struct CloudflareTransportManagerLifecycleTests {
     }
 
     @Test
+    func staleOverlappingConnectCannotOverwriteActiveSession() async throws {
+        let firstSession = FakeCloudflareTransportSession(localPort: 1111)
+        let secondSession = FakeCloudflareTransportSession(localPort: 2222)
+        let sessionFactory = FakeCloudflareTransportSessionFactory([
+            firstSession,
+            secondSession
+        ])
+        let manager = CloudflareTransportManager { authProvider in
+            sessionFactory.makeSession(authProvider: authProvider)
+        }
+        let target = makeCloudflareTarget()
+        let credentials = ServerCredentials(
+            serverId: UUID(),
+            password: nil,
+            privateKey: nil,
+            publicKey: nil,
+            passphrase: nil,
+            cloudflareClientID: "client-id",
+            cloudflareClientSecret: "client-secret"
+        )
+
+        // Given one Cloudflare connect is suspended after creating its tunnel
+        // session, and a newer connect starts on the same manager.
+        let firstConnect = Task {
+            try await manager.connect(target: target, credentials: credentials)
+        }
+        await firstSession.waitForConnectStart()
+
+        let secondConnect = Task {
+            try await manager.connect(target: target, credentials: credentials)
+        }
+        await secondSession.waitForConnectStart()
+
+        // When the newer connect completes first, then the older connect
+        // completes after it has already been superseded.
+        await secondSession.releaseConnect()
+        let secondPort = try await secondConnect.value
+        await firstSession.releaseConnect()
+
+        do {
+            _ = try await firstConnect.value
+            Issue.record("Expected stale Cloudflare connect to throw CancellationError")
+        } catch is CancellationError {
+            // Expected.
+        } catch {
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+
+        // Then the stale session cleans itself up and cannot replace the newer
+        // active session owned by the manager.
+        #expect(secondPort == 2222)
+        #expect(
+            await firstSession.disconnectCallCount() == 1,
+            "A superseded Cloudflare connect should disconnect its stale tunnel."
+        )
+        #expect(
+            await secondSession.disconnectCallCount() == 0,
+            "The latest Cloudflare connect should remain active after an older connect finishes."
+        )
+
+        await manager.disconnect()
+        #expect(
+            await secondSession.disconnectCallCount() == 1,
+            "Disconnect should target the latest active Cloudflare session."
+        )
+    }
+
+    @Test
     func oauthCompletionCallbacksAreTrackedAndSessionScoped() throws {
         let source = try source(
             at: sourceRoot().appendingPathComponent("VVTerm/Core/Network/Cloudflare/CloudflareOAuthFlow.swift")
@@ -141,12 +209,32 @@ struct CloudflareTransportManagerLifecycleTests {
     }
 }
 
+private final class FakeCloudflareTransportSessionFactory: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sessions: [FakeCloudflareTransportSession]
+
+    init(_ sessions: [FakeCloudflareTransportSession]) {
+        self.sessions = sessions
+    }
+
+    func makeSession(authProvider: any AuthProviding) -> any CloudflareTransportSession {
+        lock.withLock {
+            sessions.removeFirst()
+        }
+    }
+}
+
 private actor FakeCloudflareTransportSession: CloudflareTransportSession {
+    private let localPort: UInt16
     private var connectStarted = false
     private var connectReleased = false
     private var connectStartContinuations: [CheckedContinuation<Void, Never>] = []
     private var connectReleaseContinuations: [CheckedContinuation<Void, Never>] = []
     private var disconnects = 0
+
+    init(localPort: UInt16 = 12345) {
+        self.localPort = localPort
+    }
 
     func connect(hostname: String, method: Cloudflared.AuthMethod) async throws -> UInt16 {
         connectStarted = true
@@ -160,7 +248,7 @@ private actor FakeCloudflareTransportSession: CloudflareTransportSession {
         }
 
         try Task.checkCancellation()
-        return 12345
+        return localPort
     }
 
     func disconnect() async {

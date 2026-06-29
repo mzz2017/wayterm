@@ -40,6 +40,7 @@ actor CloudflareTransportManager {
     private let metadataStorageKey = "cache.v1"
     private let makeSession: SessionFactory
     private var activeSession: (any CloudflareTransportSession)?
+    private var activeConnectRequestID: UUID?
     private var metadataCache: [String: AccessMetadata] = [:]
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "CloudflareTransport")
 
@@ -60,7 +61,10 @@ actor CloudflareTransportManager {
     }
 
     func connect(target: SSHConnectionTarget, credentials: ServerCredentials) async throws -> UInt16 {
-        await disconnect()
+        let requestID = UUID()
+        activeConnectRequestID = requestID
+        defer { clearConnectRequestIfCurrent(requestID) }
+        await disconnectActiveSession()
 
         let hostname = target.host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !hostname.isEmpty else {
@@ -111,34 +115,57 @@ actor CloudflareTransportManager {
         }
 
         let session = makeSession(authProvider)
+        var shouldCleanupSession = true
 
         do {
             let localPort = try await session.connect(hostname: hostname, method: authMethod)
-            guard !Task.isCancelled else {
+            guard activeConnectRequestID == requestID else {
                 await disconnect(session: session)
+                shouldCleanupSession = false
+                throw CancellationError()
+            }
+            guard !Task.isCancelled else {
                 throw CancellationError()
             }
             activeSession = session
+            shouldCleanupSession = false
             return localPort
         } catch is CancellationError {
-            await disconnect(session: session)
+            if shouldCleanupSession {
+                await disconnect(session: session)
+            }
             throw CancellationError()
         } catch let failure as Failure {
-            await disconnect(session: session)
+            if shouldCleanupSession {
+                await disconnect(session: session)
+            }
             throw mapFailure(failure)
         } catch {
-            await disconnect(session: session)
+            if shouldCleanupSession {
+                await disconnect(session: session)
+            }
             throw SSHError.cloudflareTunnelFailed(error.localizedDescription)
         }
     }
 
     func disconnect() async {
+        activeConnectRequestID = nil
+        await disconnectActiveSession()
+    }
+
+    private func disconnectActiveSession() async {
         guard let activeSession else { return }
         self.activeSession = nil
         do {
             try await disconnectWithTimeout(activeSession)
         } catch {
             logger.warning("Timed out while disconnecting Cloudflare transport session")
+        }
+    }
+
+    private func clearConnectRequestIfCurrent(_ requestID: UUID) {
+        if activeConnectRequestID == requestID {
+            activeConnectRequestID = nil
         }
     }
 
