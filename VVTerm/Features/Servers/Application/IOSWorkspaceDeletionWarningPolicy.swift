@@ -1,6 +1,6 @@
 import Foundation
 
-enum IOSWorkspaceDeletionWarningPolicy {
+nonisolated enum IOSWorkspaceDeletionWarningPolicy {
     static func warningText(serverCount: Int?) -> String {
         guard let serverCount else {
             return "This will delete the workspace and all servers in it. This cannot be undone."
