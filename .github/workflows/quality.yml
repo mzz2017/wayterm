@@ -235,7 +235,7 @@ jobs:
     name: Strict Swift concurrency build
     runs-on: macos-15
     needs: ios-focused-runtime
-    timeout-minutes: 45
+    timeout-minutes: 75
     env:
       IOS_TEST_XCODEBUILD_ACTION: build-for-testing
       IOS_TEST_RETRIES: "0"
@@ -295,6 +295,8 @@ jobs:
           echo "::endgroup::"
 
       - name: Build iOS unit tests with strict concurrency
+        env:
+          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/vvterm-ios-strict-logs/result-bundles
         run: |
           ./scripts/test-ios.sh SWIFT_STRICT_CONCURRENCY=complete
 
@@ -380,6 +382,8 @@ jobs:
           echo "::endgroup::"
 
       - name: Run iOS unit tests
+        env:
+          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/vvterm-ios-unit-logs/result-bundles
         run: ./scripts/test-ios.sh
 
       - name: Upload iOS unit test logs

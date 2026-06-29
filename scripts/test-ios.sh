@@ -30,6 +30,31 @@ tail_pid=""
 watchdog_pid=""
 progress_pid=""
 xcode_pid=""
+attempt=0
+
+preserve_xcodebuild_log() {
+    local status="$1"
+    local status_label
+    local destination
+
+    if [[ -z "$diagnostic_log_dir" || -z "$log_file" || ! -f "$log_file" ]]; then
+        return
+    fi
+
+    mkdir -p "$diagnostic_log_dir"
+    status_label="status-${status}"
+    if [[ "$status" == "0" ]]; then
+        status_label="passed"
+    elif [[ "$status" == "124" ]]; then
+        status_label="timeout"
+    elif [[ "$status" == "interrupted" ]]; then
+        status_label="interrupted"
+    fi
+
+    destination="${diagnostic_log_dir}/xcodebuild-${xcodebuild_action}-attempt-${attempt}-${status_label}.log"
+    cp "$log_file" "$destination"
+    echo "Preserved xcodebuild log: ${destination}"
+}
 
 cleanup() {
     if [[ -n "$tail_pid" ]]; then
@@ -45,6 +70,7 @@ cleanup() {
         kill "$xcode_pid" >/dev/null 2>&1 || true
     fi
     if [[ -n "$log_file" ]]; then
+        preserve_xcodebuild_log "interrupted" || true
         rm -f "$log_file"
     fi
     if [[ "$cleanup_derived_data" -eq 1 && "$keep_derived_data" != "1" ]]; then
@@ -255,28 +281,6 @@ print_recent_xcodebuild_log() {
     else
         echo "No xcodebuild output has been captured yet."
     fi
-}
-
-preserve_xcodebuild_log() {
-    local status="$1"
-    local status_label
-    local destination
-
-    if [[ -z "$diagnostic_log_dir" || -z "$log_file" || ! -f "$log_file" ]]; then
-        return
-    fi
-
-    mkdir -p "$diagnostic_log_dir"
-    status_label="status-${status}"
-    if [[ "$status" == "0" ]]; then
-        status_label="passed"
-    elif [[ "$status" == "124" ]]; then
-        status_label="timeout"
-    fi
-
-    destination="${diagnostic_log_dir}/xcodebuild-${xcodebuild_action}-attempt-${attempt}-${status_label}.log"
-    cp "$log_file" "$destination"
-    echo "Preserved xcodebuild log: ${destination}"
 }
 
 start_progress_reporter() {
