@@ -44,9 +44,9 @@ struct GeneratedSSHKey {
 // MARK: - SSH Key Generator
 
 enum SSHKeyGeneratorError: LocalizedError {
-    case keyGenerationFailed
+    case keyGenerationFailed(underlyingDescription: String? = nil)
     case encodingFailed
-    case rsaExportFailed
+    case rsaExportFailed(underlyingDescription: String? = nil)
     case invalidKeyData
 
     var errorDescription: String? {
@@ -56,6 +56,29 @@ enum SSHKeyGeneratorError: LocalizedError {
         case .rsaExportFailed: return String(localized: "Failed to export RSA key")
         case .invalidKeyData: return String(localized: "Invalid key data")
         }
+    }
+
+    var underlyingSecurityErrorDescription: String? {
+        switch self {
+        case let .keyGenerationFailed(underlyingDescription),
+             let .rsaExportFailed(underlyingDescription):
+            return underlyingDescription
+        case .encodingFailed, .invalidKeyData:
+            return nil
+        }
+    }
+}
+
+enum SecurityFrameworkErrorDetail {
+    static func takeRetainedDescription(_ error: inout Unmanaged<CFError>?) -> String? {
+        guard let retainedError = error else { return nil }
+        error = nil
+
+        let cfError = retainedError.takeRetainedValue()
+        let domain = CFErrorGetDomain(cfError) as String
+        let code = CFErrorGetCode(cfError)
+        let description = CFErrorCopyDescription(cfError) as String? ?? "No description"
+        return "\(domain) \(code): \(description)"
     }
 }
 
@@ -187,11 +210,13 @@ enum SSHKeyGenerator {
 
         var error: Unmanaged<CFError>?
         guard let privateSecKey = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
-            throw SSHKeyGeneratorError.keyGenerationFailed
+            throw SSHKeyGeneratorError.keyGenerationFailed(
+                underlyingDescription: SecurityFrameworkErrorDetail.takeRetainedDescription(&error)
+            )
         }
 
         guard let publicSecKey = SecKeyCopyPublicKey(privateSecKey) else {
-            throw SSHKeyGeneratorError.keyGenerationFailed
+            throw SSHKeyGeneratorError.keyGenerationFailed()
         }
 
         // Export private key in PKCS#1 PEM format
@@ -217,7 +242,9 @@ enum SSHKeyGenerator {
     private static func exportRSAPrivateKey(_ key: SecKey, comment: String) throws -> String {
         var error: Unmanaged<CFError>?
         guard let data = SecKeyCopyExternalRepresentation(key, &error) as Data? else {
-            throw SSHKeyGeneratorError.rsaExportFailed
+            throw SSHKeyGeneratorError.rsaExportFailed(
+                underlyingDescription: SecurityFrameworkErrorDetail.takeRetainedDescription(&error)
+            )
         }
 
         let base64 = data.base64EncodedString()
@@ -228,7 +255,7 @@ enum SSHKeyGenerator {
 
     private static func formatRSAPublicKey(_ key: SecKey, comment: String) throws -> String {
         guard let data = SecKeyCopyExternalRepresentation(key, nil) as Data? else {
-            throw SSHKeyGeneratorError.rsaExportFailed
+            throw SSHKeyGeneratorError.rsaExportFailed()
         }
 
         // Parse the RSA public key data (PKCS#1 format: sequence of n and e)
