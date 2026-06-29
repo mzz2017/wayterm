@@ -51,6 +51,7 @@ extension Ghostty {
         /// Track active surfaces for config propagation
         private var activeSurfaces: [Ghostty.SurfaceReference] = []
         private var surfaceConfigCache: [SurfaceConfigCacheKey: ghostty_config_t] = [:]
+        private let callbackContext = GhosttyAppCallbackContext()
         #if os(macOS)
         /// Track last known appearance to detect changes
         private var lastKnownAppearance: NSAppearance.Name?
@@ -141,10 +142,10 @@ extension Ghostty {
             let supportsSelectionClipboard = true
             #endif
 
-            // Ghostty owns the userdata pointer only while this App owns the ghostty_app_t handle.
-            // cleanup() frees that handle before this object can disappear.
+            callbackContext.bind(self)
+
             var runtime_cfg = ghostty_runtime_config_s(
-                userdata: Unmanaged.passUnretained(self).toOpaque(),
+                userdata: callbackContext.opaquePointer,
                 supports_selection_clipboard: supportsSelectionClipboard,
                 wakeup_cb: { userdata in App.wakeup(userdata) },
                 action_cb: { app, target, action in App.action(app!, target: target, action: action) },
@@ -267,6 +268,7 @@ extension Ghostty {
             }
 
             clearSurfaceConfigCache()
+            callbackContext.invalidate()
 
             if let app = self.app {
                 ghostty_app_free(app)
@@ -541,8 +543,7 @@ extension Ghostty {
         // MARK: - Callbacks (macOS)
 
         static func wakeup(_ userdata: UnsafeMutableRawPointer?) {
-            guard let userdata = userdata else { return }
-            let state = Unmanaged<App>.fromOpaque(userdata).takeUnretainedValue()
+            guard let state = GhosttyAppCallbackContext.app(fromUserdata: userdata) else { return }
             DispatchQueue.main.async {
                 state.appTick()
             }
@@ -557,9 +558,9 @@ extension Ghostty {
                 guard let surface = target.target.surface else { return nil }
                 titleTargetDescription = String(describing: surface)
                 if let appUserdata = ghostty_app_userdata(app) {
-                    let state = Unmanaged<App>.fromOpaque(appUserdata).takeUnretainedValue()
-                    activeSurfaceCount = state.activeSurfaceCount()
-                    if let registeredView = state.terminalView(for: surface) {
+                    let appOwner = GhosttyAppCallbackContext.app(fromUserdata: appUserdata)
+                    activeSurfaceCount = appOwner?.activeSurfaceCount() ?? 0
+                    if let registeredView = appOwner?.terminalView(for: surface) {
                         return registeredView
                     }
                 }

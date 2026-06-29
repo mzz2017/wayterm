@@ -65,10 +65,10 @@ struct GhosttyAppSupportBoundaryTests {
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/Bridge/Ghostty.ClipboardBridge.swift")
         )
 
-        #expect(appSource.contains("userdata: Unmanaged.passUnretained(self).toOpaque()"))
+        #expect(appSource.contains("userdata: callbackContext.opaquePointer"))
         #expect(
-            appSource.contains("Ghostty owns the userdata pointer only while this App owns the ghostty_app_t handle"),
-            "Unmanaged.passUnretained userdata needs an explicit owner/lifetime contract at the FFI boundary."
+            appSource.contains("private let callbackContext = GhosttyAppCallbackContext()"),
+            "App-level userdata should be owned by an explicit invalidatable callback context."
         )
         #expect(
             clipboardBridgeSource.contains("enum GhosttyClipboardBridge"),
