@@ -14,7 +14,7 @@ enum DiscoverySource: String, CaseIterable, Codable, Hashable, Sendable {
     }
 }
 
-struct DiscoveredSSHHost: Identifiable, Hashable, Sendable {
+nonisolated struct DiscoveredSSHHost: Identifiable, Hashable, Sendable {
     var displayName: String
     var host: String
     var port: Int
