@@ -7,6 +7,7 @@ import Testing
 // terminal paste workflows. They use isolated in-memory settings assumptions;
 // update only when the intended rich clipboard defaults or keys change.
 
+@MainActor
 struct RichClipboardSettingsTests {
     @Test
     func settingsFallbackToAskOnceWhenUnsetOrInvalid() {

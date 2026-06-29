@@ -7,6 +7,7 @@ import Foundation
 // panes to managed tmux sessions. Fakes use isolated storage and no remote tmux;
 // update only when binding persistence semantics intentionally change.
 
+@MainActor
 struct TmuxSessionBindingStoreTests {
     private func makeStore() -> (TmuxSessionBindingStore, UserDefaults) {
         let suite = UserDefaults(suiteName: "test.\(UUID().uuidString)")!
