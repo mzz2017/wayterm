@@ -8,6 +8,7 @@ import UIKit
 // constructing a live terminal surface. Fakes are in-memory search/session values;
 // update only when native find behavior intentionally changes.
 
+@MainActor
 struct GhosttyNativeFindSessionTests {
     @Test
     @MainActor
