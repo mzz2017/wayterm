@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct TerminalTabsSnapshotStore {
+nonisolated struct TerminalTabsSnapshotStore {
     private let key: String
     private let userDefaults: UserDefaults
 
