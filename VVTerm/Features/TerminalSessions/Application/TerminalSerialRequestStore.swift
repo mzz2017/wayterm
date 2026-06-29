@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct TerminalSerialRequestStore<Request> {
+nonisolated struct TerminalSerialRequestStore<Request> {
     private var requests: [UUID: Request] = [:]
     private var requestByScope: [UUID: UUID] = [:]
     private var scopeByRequest: [UUID: UUID] = [:]
