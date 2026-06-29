@@ -9,7 +9,7 @@ import UIKit
 // Test Context:
 // Protects ownership of iOS pinch-zoom presentation. GhosttyTerminalView should
 // forward pinch intent, while TerminalIOSZoomRuntime owns pinching state, scale
-// reference, zoom indicator view, and delayed hide work item.
+// reference, zoom indicator view, and delayed hide task.
 // Update this test only when zoom presentation ownership intentionally moves.
 @Suite(.serialized)
 struct GhosttyIOSZoomRuntimeBoundaryTests {
@@ -50,7 +50,14 @@ struct GhosttyIOSZoomRuntimeBoundaryTests {
         #expect(runtimeSource.contains("private var isPinching"))
         #expect(runtimeSource.contains("private var pinchReferenceScale"))
         #expect(runtimeSource.contains("private let indicatorView"))
-        #expect(runtimeSource.contains("private var indicatorHideWorkItem"))
+        #expect(
+            runtimeSource.contains("private var indicatorHideTask"),
+            "The zoom runtime should track delayed indicator hiding with a cancellable task."
+        )
+        #expect(
+            !runtimeSource.contains("DispatchWorkItem"),
+            "The zoom runtime should not store DispatchWorkItem tokens in main-actor state."
+        )
         #expect(runtimeSource.contains("func handlePinchGesture"))
     }
 

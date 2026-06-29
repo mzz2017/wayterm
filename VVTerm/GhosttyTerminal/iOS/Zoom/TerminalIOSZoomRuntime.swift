@@ -11,14 +11,14 @@ final class TerminalIOSZoomRuntime {
     private var isPinching = false
     private var pinchReferenceScale: CGFloat = 1
     private let indicatorView = TerminalZoomIndicatorView()
-    private var indicatorHideWorkItem: DispatchWorkItem?
+    private var indicatorHideTask: Task<Void, Never>?
 
     var isPinchingTerminalZoom: Bool {
         isPinching
     }
 
     deinit {
-        indicatorHideWorkItem?.cancel()
+        indicatorHideTask?.cancel()
     }
 
     func installIndicator(in containerView: UIView) {
@@ -39,8 +39,8 @@ final class TerminalIOSZoomRuntime {
     }
 
     func cancelPendingIndicatorHide() {
-        indicatorHideWorkItem?.cancel()
-        indicatorHideWorkItem = nil
+        indicatorHideTask?.cancel()
+        indicatorHideTask = nil
     }
 
     func handlePinchGesture(
@@ -109,7 +109,7 @@ final class TerminalIOSZoomRuntime {
         indicatorView.update(fontSize: fontSize)
         requestLayout()
 
-        indicatorHideWorkItem?.cancel()
+        indicatorHideTask?.cancel()
         indicatorView.isHidden = false
         UIView.animate(withDuration: TerminalZoomPresentation.indicatorFadeInDuration) { [indicatorView] in
             indicatorView.alpha = 1
@@ -118,8 +118,15 @@ final class TerminalIOSZoomRuntime {
     }
 
     private func scheduleIndicatorHide(after delay: TimeInterval) {
-        indicatorHideWorkItem?.cancel()
-        let workItem = DispatchWorkItem { [weak indicatorView] in
+        indicatorHideTask?.cancel()
+        let nanoseconds = UInt64(max(delay, 0) * 1_000_000_000)
+        indicatorHideTask = Task { @MainActor [weak indicatorView] in
+            do {
+                try await Task.sleep(nanoseconds: nanoseconds)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
             guard let indicatorView else { return }
             UIView.animate(withDuration: TerminalZoomPresentation.indicatorFadeOutDuration, animations: {
                 indicatorView.alpha = 0
@@ -127,8 +134,6 @@ final class TerminalIOSZoomRuntime {
                 indicatorView.isHidden = true
             })
         }
-        indicatorHideWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 }
 #endif
