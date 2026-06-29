@@ -1,13 +1,13 @@
 import Foundation
 
-enum RemoteFileDropPolicy {
-    struct MovePlan: Equatable, Sendable {
+nonisolated enum RemoteFileDropPolicy {
+    nonisolated struct MovePlan: Equatable, Sendable {
         let entry: RemoteFileEntry
         let sourcePath: String
         let destinationPath: String
     }
 
-    enum Plan: Sendable {
+    nonisolated enum Plan: Sendable {
         case move([MovePlan])
         case copy(sourceServerId: UUID, entries: [RemoteFileEntry])
     }

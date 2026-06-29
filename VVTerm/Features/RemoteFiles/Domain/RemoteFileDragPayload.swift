@@ -1,6 +1,6 @@
 import Foundation
 
-struct RemoteFileDragPayload: Codable, Sendable {
+nonisolated struct RemoteFileDragPayload: Codable, Sendable {
     let serverId: UUID
     let entries: [RemoteFileEntry]
 
