@@ -87,11 +87,16 @@ nonisolated final class WhisperAudioProcessor {
         }
 
         let data = try Data(contentsOf: url)
-        let (shape, offset) = try parseNpyHeader(data)
-        guard shape == [80, 201] else { throw WhisperAudioError.invalidNpy }
+        let header: WhisperNpyHeaderParser.Header
+        do {
+            header = try WhisperNpyHeaderParser.parse(data)
+        } catch {
+            throw WhisperAudioError.invalidNpy
+        }
+        guard header.shape == [80, 201] else { throw WhisperAudioError.invalidNpy }
 
-        let raw = data.subdata(in: offset ..< data.count)
-        let array = MLXArray(raw, shape, dtype: .float32)
+        let raw = data.subdata(in: header.dataOffset ..< data.count)
+        let array = MLXArray(raw, header.shape, dtype: .float32)
         melFiltersCache = array
         return array
     }
@@ -135,41 +140,6 @@ nonisolated final class WhisperAudioProcessor {
         let strides = [stride, 1]
         let framed = asStrided(paddedX, shape, strides: strides)
         return rfft(framed * window)
-    }
-
-    private static func parseNpyHeader(_ data: Data) throws -> ([Int], Int) {
-        guard data.count > 10 else { throw WhisperAudioError.invalidNpy }
-        let magic = data.prefix(6)
-        guard magic == Data([0x93, 0x4E, 0x55, 0x4D, 0x50, 0x59]) else {
-            throw WhisperAudioError.invalidNpy
-        }
-        let version = data[6]
-        let headerLengthOffset = version == 1 ? 8 : 10
-        let headerLengthSize = version == 1 ? 2 : 4
-
-        let headerLengthData = data.subdata(in: headerLengthOffset ..< headerLengthOffset + headerLengthSize)
-        let headerLength: Int
-        if version == 1 {
-            headerLength = Int(UInt16(littleEndian: headerLengthData.withUnsafeBytes { $0.load(as: UInt16.self) }))
-        } else {
-            headerLength = Int(UInt32(littleEndian: headerLengthData.withUnsafeBytes { $0.load(as: UInt32.self) }))
-        }
-
-        let headerStart = headerLengthOffset + headerLengthSize
-        let headerEnd = headerStart + headerLength
-        guard headerEnd <= data.count else { throw WhisperAudioError.invalidNpy }
-        let header = String(decoding: data.subdata(in: headerStart ..< headerEnd), as: UTF8.self)
-
-        guard header.contains("'descr': '<f4'") else { throw WhisperAudioError.invalidNpy }
-
-        let shapeStart = header.range(of: "(")
-        let shapeEnd = header.range(of: ")")
-        guard let shapeStart, let shapeEnd else { throw WhisperAudioError.invalidNpy }
-        let shapeString = header[shapeStart.upperBound..<shapeEnd.lowerBound]
-        let dims = shapeString.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-        if dims.isEmpty { throw WhisperAudioError.invalidNpy }
-
-        return (dims, headerEnd)
     }
 
     private static func resourceURL(name: String, fileExtension: String) -> URL? {
