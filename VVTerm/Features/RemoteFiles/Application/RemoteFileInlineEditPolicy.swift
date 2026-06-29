@@ -1,6 +1,6 @@
 import Foundation
 
-enum RemoteFileInlineEditPolicy {
+nonisolated enum RemoteFileInlineEditPolicy {
     static func uniqueFolderName(
         existingNames: some Sequence<String>,
         baseName: String,

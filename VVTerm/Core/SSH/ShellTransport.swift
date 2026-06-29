@@ -6,7 +6,7 @@ enum ShellTransport: String, Codable, Hashable, Sendable {
     case sshFallback
 }
 
-enum MoshFallbackReason: String, Codable, Hashable, Sendable {
+nonisolated enum MoshFallbackReason: String, Codable, Hashable, Sendable {
     case serverMissing
     case bootstrapFailed
     case sessionFailed

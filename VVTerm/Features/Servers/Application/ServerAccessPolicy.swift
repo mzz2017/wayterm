@@ -1,6 +1,6 @@
 import Foundation
 
-enum ServerAccessPolicy {
+nonisolated enum ServerAccessPolicy {
     static func canAddServer(isPro: Bool, servers: [Server]) -> Bool {
         isPro || servers.count < FreeTierLimits.maxServers
     }

@@ -1,6 +1,6 @@
 import Foundation
 
-enum TerminalContainerPresentationPolicy {
+nonisolated enum TerminalContainerPresentationPolicy {
     static func fallbackBannerMessage(
         activeTransport: ShellTransport,
         fallbackReason: MoshFallbackReason?,

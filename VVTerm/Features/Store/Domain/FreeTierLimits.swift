@@ -1,4 +1,4 @@
-enum FreeTierLimits {
+nonisolated enum FreeTierLimits {
     static let maxWorkspaces = 1
     static let maxServers = 3
     static let maxTabs = 2
