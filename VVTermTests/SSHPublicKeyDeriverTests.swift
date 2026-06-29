@@ -7,6 +7,7 @@ import Foundation
 // SSH key authentication. Fixtures contain test keys only and no secrets; update only
 // when supported key formats or derivation behavior intentionally changes.
 
+@MainActor
 struct SSHPublicKeyDeriverTests {
     @Test func derivesEd25519PublicKeyMatchingGenerator() throws {
         let key = try SSHKeyGenerator.generate(type: .ed25519, comment: "test@vvterm")
