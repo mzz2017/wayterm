@@ -69,7 +69,7 @@ enum SSHKeyGeneratorError: LocalizedError {
     }
 }
 
-enum SecurityFrameworkErrorDetail {
+nonisolated enum SecurityFrameworkErrorDetail {
     static func takeRetainedDescription(_ error: inout Unmanaged<CFError>?) -> String? {
         guard let retainedError = error else { return nil }
         error = nil
