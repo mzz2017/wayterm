@@ -10,7 +10,7 @@ import Foundation
 
 // MARK: - Terminal Key Enum
 
-indirect enum TerminalKey {
+indirect enum TerminalKey: Sendable {
     case escape, tab, enter, backspace, delete, insert
     case arrowUp, arrowDown, arrowLeft, arrowRight
     case home, end, pageUp, pageDown

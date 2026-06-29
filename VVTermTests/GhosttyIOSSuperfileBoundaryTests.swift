@@ -53,6 +53,39 @@ struct GhosttyIOSSuperfileBoundaryTests {
     }
 
     @Test
+    func inputAccessoryViewMovesObserverAndRepeatTimerOwnershipOutOfUIState() throws {
+        let root = try sourceRoot()
+        let accessorySource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/TerminalInputAccessoryView+iOS.swift")
+        )
+
+        #expect(
+            accessorySource.contains("NotificationObserverTokens"),
+            "TerminalInputAccessoryView should use the shared observer-token owner for NotificationCenter tokens."
+        )
+        #expect(
+            !accessorySource.contains("defaultsObserver: NSObjectProtocol"),
+            "UserDefaults observer tokens should not be stored as main-actor UI state."
+        )
+        #expect(
+            !accessorySource.contains("accessoryProfileObserver: NSObjectProtocol"),
+            "Accessory profile observer tokens should not be stored as main-actor UI state."
+        )
+        #expect(
+            accessorySource.contains("TerminalInputKeyRepeatOwner"),
+            "Keyboard repeat timer ownership should live in a dedicated lifecycle owner."
+        )
+        #expect(
+            !accessorySource.contains("keyRepeatTimer: DispatchSourceTimer"),
+            "DispatchSourceTimer should not be stored directly on the UIInputView."
+        )
+        #expect(
+            accessorySource.contains("MainActor.assumeIsolated"),
+            "Main-queue NotificationCenter callbacks should explicitly hand intent back to the UI actor."
+        )
+    }
+
+    @Test
     func keyboardAccessoryRoutingLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(

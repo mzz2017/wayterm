@@ -37,10 +37,8 @@ class TerminalInputAccessoryView: UIInputView {
     private weak var dynamicItemsStack: UIStackView?
     private var scrollLeadingToLeadingButtonsConstraint: NSLayoutConstraint?
     private var scrollLeadingToEdgeConstraint: NSLayoutConstraint?
-    private var defaultsObserver: NSObjectProtocol?
-    private var accessoryProfileObserver: NSObjectProtocol?
-    private var keyRepeatTimer: DispatchSourceTimer?
-    private var repeatingKey: TerminalKey?
+    nonisolated private let observerTokens = NotificationObserverTokens()
+    nonisolated private let keyRepeatOwner = TerminalInputKeyRepeatOwner()
 
     init(
         onKey: @escaping (TerminalKey) -> Void,
@@ -63,13 +61,8 @@ class TerminalInputAccessoryView: UIInputView {
     }
 
     deinit {
-        if let observer = defaultsObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = accessoryProfileObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        stopKeyRepeat()
+        observerTokens.invalidateAll()
+        keyRepeatOwner.stop()
     }
 
     private func setupView() {
@@ -243,24 +236,30 @@ class TerminalInputAccessoryView: UIInputView {
     }
 
     private func observeThemeChanges() {
-        defaultsObserver = NotificationCenter.default.addObserver(
+        let token = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.updateBackgroundEffect()
-            self?.updateLeadingButtonsState()
+            MainActor.assumeIsolated {
+                self?.updateBackgroundEffect()
+                self?.updateLeadingButtonsState()
+            }
         }
+        observerTokens.append(token)
     }
 
     private func observeAccessoryProfileChanges() {
-        accessoryProfileObserver = NotificationCenter.default.addObserver(
+        let token = NotificationCenter.default.addObserver(
             forName: .terminalAccessoryProfileDidChange,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.rebuildAccessoryItems()
+            MainActor.assumeIsolated {
+                self?.rebuildAccessoryItems()
+            }
         }
+        observerTokens.append(token)
     }
 
     private func rebuildAccessoryItems() {
@@ -633,22 +632,14 @@ class TerminalInputAccessoryView: UIInputView {
 
     private func startKeyRepeat(for key: TerminalKey) {
         stopKeyRepeat()
-        repeatingKey = key
         sendKey(key)
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 0.35, repeating: 0.05)
-        timer.setEventHandler { [weak self] in
-            guard let self = self, let repeatingKey = self.repeatingKey else { return }
-            self.sendKey(repeatingKey)
+        keyRepeatOwner.start(key: key) { [weak self] repeatingKey in
+            self?.sendKey(repeatingKey)
         }
-        keyRepeatTimer = timer
-        timer.resume()
     }
 
     private func stopKeyRepeat() {
-        keyRepeatTimer?.cancel()
-        keyRepeatTimer = nil
-        repeatingKey = nil
+        keyRepeatOwner.stop()
     }
 
     func consumeModifiers() -> (ctrl: Bool, alt: Bool, command: Bool, shift: Bool) {

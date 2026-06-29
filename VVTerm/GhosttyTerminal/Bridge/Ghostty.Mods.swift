@@ -8,7 +8,7 @@ import UIKit
 
 extension Ghostty.Input {
     /// `ghostty_input_mods_e`
-    struct Mods: OptionSet {
+    struct Mods: OptionSet, Sendable {
         let rawValue: UInt32
 
         static let none = Mods(rawValue: GHOSTTY_MODS_NONE.rawValue)
