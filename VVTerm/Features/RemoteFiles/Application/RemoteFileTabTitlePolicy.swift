@@ -3,7 +3,7 @@ import Foundation
 import VVTermRemoteFilesDomain
 #endif
 
-struct RemoteFileTabTitleInput: Equatable, Identifiable {
+nonisolated struct RemoteFileTabTitleInput: Equatable, Identifiable {
     let id: UUID
     let serverId: UUID
     let seedPath: String?
@@ -11,7 +11,7 @@ struct RemoteFileTabTitleInput: Equatable, Identifiable {
     let lastVisitedPath: String?
 }
 
-enum RemoteFileTabTitlePolicy {
+nonisolated enum RemoteFileTabTitlePolicy {
     static func baseTitle(for tab: RemoteFileTabTitleInput, serverName: String?) -> String {
         let fallbackTitle = nonEmpty(serverName) ?? "/"
         let candidatePath = tab.lastVisitedPath ?? tab.lastKnownPath ?? tab.seedPath
