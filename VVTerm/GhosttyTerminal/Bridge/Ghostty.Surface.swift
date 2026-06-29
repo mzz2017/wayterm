@@ -29,14 +29,14 @@ extension Ghostty {
     nonisolated final class Surface: @unchecked Sendable {
         nonisolated final class NativeHandle: @unchecked Sendable {
             let rawValue: ghostty_surface_t?
-            private let callbackContext: GhosttySurfaceCallbackContext?
+            private let callbackContext: GhosttySurfaceCallbackInvalidating?
             private let freeNativeSurface: () -> Void
             private let lock = NSLock()
             private var hasFreed = false
 
             init(
                 rawValue: ghostty_surface_t?,
-                callbackContext: GhosttySurfaceCallbackContext?,
+                callbackContext: GhosttySurfaceCallbackInvalidating?,
                 freeNativeSurface: (() -> Void)? = nil
             ) {
                 self.rawValue = rawValue
@@ -71,7 +71,7 @@ extension Ghostty {
         }
 
         private var surface: ghostty_surface_t?
-        private var callbackContext: GhosttySurfaceCallbackContext?
+        private var callbackContext: GhosttySurfaceCallbackInvalidating?
         private let lock = NSLock()
 
         /// Track if surface has been explicitly freed
@@ -86,7 +86,7 @@ extension Ghostty {
         }
 
         /// Initialize from the C structure.
-        init(cSurface: ghostty_surface_t, callbackContext: GhosttySurfaceCallbackContext? = nil) {
+        init(cSurface: ghostty_surface_t, callbackContext: GhosttySurfaceCallbackInvalidating? = nil) {
             self.surface = cSurface
             self.callbackContext = callbackContext
         }

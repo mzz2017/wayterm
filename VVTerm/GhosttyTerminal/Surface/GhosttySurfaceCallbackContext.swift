@@ -1,6 +1,10 @@
 import Foundation
 
-nonisolated final class GhosttySurfaceCallbackContext: @unchecked Sendable {
+protocol GhosttySurfaceCallbackInvalidating: Sendable {
+    func invalidate()
+}
+
+nonisolated final class GhosttySurfaceCallbackContext: GhosttySurfaceCallbackInvalidating, @unchecked Sendable {
     private let lock = NSLock()
     private weak var terminalView: GhosttyTerminalView?
     private var isValid = true

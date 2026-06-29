@@ -8,7 +8,9 @@ import Testing
 // preserved for reuse or cleaned up because the entity closed.
 // Target invariant: view disappearance pauses reusable surfaces without native
 // teardown, while closed entities clean up exactly once and root closed-session
-// cleanup remains tracked/awaitable through server teardown tasks.
+// cleanup remains tracked/awaitable through server teardown tasks. Detached
+// Ghostty native handles invalidate callback userdata before native free so
+// late FFI callbacks cannot resolve released UI surfaces.
 // Fakes here record surface cleanup/pause callbacks only; they do not create
 // Ghostty surfaces or open network connections. Update these tests only when the
 // intended boundary between terminal UI surfaces and SSH runtime ownership
@@ -39,6 +41,28 @@ struct TerminalSurfaceTeardownTests {
 
         recorder.operation?()
         #expect(recorder.freed == 1)
+    }
+
+    @Test
+    func nativeHandleInvalidatesCallbackContextBeforeNativeFreeAndOnlyOnce() {
+        // Given a detached Ghostty native handle with an FFI callback context.
+        let recorder = TerminalSurfaceCallbackInvalidationRecorder()
+        let handle = Ghostty.Surface.NativeHandle(
+            rawValue: nil,
+            callbackContext: recorder,
+            freeNativeSurface: { recorder.record("free") }
+        )
+
+        // When native teardown is requested more than once.
+        handle.free()
+        handle.free()
+
+        // Then the callback context is invalidated before native free and the
+        // idempotent native handle does not expose late callbacks on repeats.
+        #expect(
+            recorder.events == ["invalidate", "free"],
+            "A detached Ghostty surface must invalidate userdata before native free, exactly once."
+        )
     }
 
     @MainActor
@@ -310,6 +334,27 @@ private final class TerminalSurfaceTeardownRecorder: @unchecked Sendable {
     var enqueued = 0
     var freed = 0
     var operation: (@Sendable () -> Void)?
+}
+
+private final class TerminalSurfaceCallbackInvalidationRecorder: GhosttySurfaceCallbackInvalidating, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedEvents: [String] = []
+
+    var events: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedEvents
+    }
+
+    func invalidate() {
+        record("invalidate")
+    }
+
+    func record(_ event: String) {
+        lock.lock()
+        recordedEvents.append(event)
+        lock.unlock()
+    }
 }
 
 @MainActor
