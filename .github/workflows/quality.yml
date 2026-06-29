@@ -52,6 +52,8 @@ jobs:
           IOS_TEST_DEVICE_NAME_CANDIDATES: iPhone 17,iPhone 16,iPhone 15
           IOS_TEST_ALLOW_DEVICE_FALLBACK: "1"
           IOS_TEST_PROGRESS_INTERVAL: "60"
+          IOS_TEST_PROGRESS_LOG_LINES: "40"
+          IOS_TEST_FAILURE_LOG_LINES: "240"
         run: |
           focused_args=(
             "-only-testing:VVTermTests/AppSyncCoordinatorTests"

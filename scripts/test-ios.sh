@@ -19,6 +19,8 @@ no_output_timeout="${IOS_TEST_NO_OUTPUT_TIMEOUT:-900}"
 xcodebuild_quiet="${IOS_TEST_XCODEBUILD_QUIET:-0}"
 xcodebuild_action="${IOS_TEST_XCODEBUILD_ACTION:-test}"
 progress_interval="${IOS_TEST_PROGRESS_INTERVAL:-0}"
+progress_log_lines="${IOS_TEST_PROGRESS_LOG_LINES:-20}"
+failure_log_lines="${IOS_TEST_FAILURE_LOG_LINES:-120}"
 lock_acquired=0
 cleanup_derived_data=0
 log_file=""
@@ -203,15 +205,54 @@ validate_xcodebuild_action() {
     esac
 }
 
-validate_progress_interval() {
-    case "$progress_interval" in
+validate_unsigned_integer() {
+    local name="$1"
+    local value="$2"
+    local exit_code="$3"
+
+    case "$value" in
     '' | *[!0-9]*)
-        echo "Unsupported IOS_TEST_PROGRESS_INTERVAL: ${progress_interval}" >&2
-        exit 7
+        echo "Unsupported ${name}: ${value}" >&2
+        exit "$exit_code"
         ;;
     *)
         ;;
     esac
+}
+
+validate_test_logging_settings() {
+    validate_unsigned_integer "IOS_TEST_PROGRESS_INTERVAL" "$progress_interval" 7
+    validate_unsigned_integer "IOS_TEST_PROGRESS_LOG_LINES" "$progress_log_lines" 8
+    validate_unsigned_integer "IOS_TEST_FAILURE_LOG_LINES" "$failure_log_lines" 9
+}
+
+print_xcodebuild_process_snapshot() {
+    echo "xcodebuild PID: ${xcode_pid}"
+    ps -o pid,ppid,etime,pcpu,pmem,state,command -p "$xcode_pid" || true
+
+    local child_pids
+    child_pids="$(pgrep -P "$xcode_pid" 2>/dev/null || true)"
+    if [[ -n "$child_pids" ]]; then
+        echo "xcodebuild direct child processes:"
+        ps -o pid,ppid,etime,pcpu,pmem,state,command -p "$(printf '%s\n' "$child_pids" | paste -sd, -)" || true
+    else
+        echo "xcodebuild direct child processes: none"
+    fi
+}
+
+print_recent_xcodebuild_log() {
+    local line_count="$1"
+    local now="$2"
+    local last_output_at
+
+    if [[ -s "$log_file" ]]; then
+        last_output_at="$(stat -f %m "$log_file")"
+        echo "Seconds since last xcodebuild output: $((now - last_output_at))"
+        echo "Recent xcodebuild log (${line_count} lines):"
+        tail -n "$line_count" "$log_file" 2>/dev/null || true
+    else
+        echo "No xcodebuild output has been captured yet."
+    fi
 }
 
 start_progress_reporter() {
@@ -223,7 +264,6 @@ start_progress_reporter() {
 
     (
         local elapsed
-        local last_line
         local now
 
         while kill -0 "$xcode_pid" 2>/dev/null; do
@@ -242,15 +282,8 @@ start_progress_reporter() {
             echo "Scheme: ${scheme}"
             echo "Action: ${xcodebuild_action}"
             echo "Destination: platform=iOS Simulator,id=${udid}"
-            echo "xcodebuild PID: ${xcode_pid}"
-            ps -o pid,ppid,etime,pcpu,pmem,state,command -p "$xcode_pid" || true
-
-            if [[ -s "$log_file" ]]; then
-                last_line="$(tail -n 1 "$log_file" 2>/dev/null || true)"
-                echo "Last xcodebuild log line: ${last_line}"
-            else
-                echo "No xcodebuild output has been captured yet."
-            fi
+            print_xcodebuild_process_snapshot
+            print_recent_xcodebuild_log "$progress_log_lines" "$now"
 
             if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
                 echo "::endgroup::"
@@ -358,8 +391,8 @@ run_xcodebuild_test() {
                 if (( now - last_output_at >= no_output_timeout )); then
                     {
                         echo "xcodebuild produced no output for ${no_output_timeout}s; terminating stalled iOS test run."
-                        echo "xcodebuild PID: ${xcode_pid}"
-                        ps -o pid,ppid,etime,pcpu,pmem,state,command -p "$xcode_pid" || true
+                        print_xcodebuild_process_snapshot
+                        print_recent_xcodebuild_log "$failure_log_lines" "$now"
                     } >&2
                     touch "$timeout_file"
                     kill -TERM "$xcode_pid" >/dev/null 2>&1 || true
@@ -400,12 +433,24 @@ run_xcodebuild_test() {
     fi
 
     last_status="$(cat "$status_file")"
+    if [[ "$last_status" -ne 0 ]]; then
+        local finished_at
+        finished_at="$(date +%s)"
+        if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+            echo "::group::iOS test failure diagnostics"
+        fi
+        echo "xcodebuild exited with status ${last_status}."
+        print_recent_xcodebuild_log "$failure_log_lines" "$finished_at"
+        if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+            echo "::endgroup::"
+        fi
+    fi
     rm -f "$status_file" "$timeout_file"
     return "$last_status"
 }
 
 validate_xcodebuild_action
-validate_progress_interval
+validate_test_logging_settings
 acquire_global_lock
 prepare_derived_data
 prepare_cloned_source_packages
@@ -428,7 +473,9 @@ while (( attempt <= total_attempts )); do
     echo "Using shared cloned source packages at ${cloned_source_packages_path}."
     if [[ "$progress_interval" != "0" ]]; then
         echo "Reporting iOS test progress every ${progress_interval}s."
+        echo "Progress log tail lines: ${progress_log_lines}."
     fi
+    echo "Failure log tail lines: ${failure_log_lines}."
     prepare_simulator "$udid"
 
     log_file="$(mktemp -t vvterm-ios-test.XXXXXX)"
