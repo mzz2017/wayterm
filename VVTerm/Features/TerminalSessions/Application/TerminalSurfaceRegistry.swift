@@ -12,6 +12,77 @@ protocol TerminalConnectionSurface: AnyObject {
     func connectionSurfaceExited(_ exitCode: UInt32)
 }
 
+struct TerminalConnectionSurfaceHandle: @unchecked Sendable {
+    private let availabilityProvider: @MainActor () -> Bool
+    private let sizeProvider: @MainActor () -> TerminalConnectionSurfaceSize?
+    private let outputWriter: @MainActor (Data) -> Void
+    private let exitReporter: @MainActor (UInt32) -> Void
+
+    @MainActor
+    init(surface: any TerminalConnectionSurface) {
+        availabilityProvider = { [weak surface] in
+            surface != nil
+        }
+        sizeProvider = { [weak surface] in
+            surface?.connectionSurfaceSize()
+        }
+        outputWriter = { [weak surface] data in
+            surface?.writeConnectionOutput(data)
+        }
+        exitReporter = { [weak surface] exitCode in
+            surface?.connectionSurfaceExited(exitCode)
+        }
+    }
+
+    @MainActor
+    init(
+        sizeProvider: @escaping @MainActor () -> TerminalConnectionSurfaceSize?,
+        outputWriter: @escaping @MainActor (Data) -> Void,
+        exitReporter: @escaping @MainActor (UInt32) -> Void
+    ) {
+        self.availabilityProvider = { true }
+        self.sizeProvider = sizeProvider
+        self.outputWriter = outputWriter
+        self.exitReporter = exitReporter
+    }
+
+    @MainActor
+    func isAvailable() -> Bool {
+        availabilityProvider()
+    }
+
+    @MainActor
+    func connectionSurfaceSize() -> TerminalConnectionSurfaceSize? {
+        sizeProvider()
+    }
+
+    @MainActor
+    func writeConnectionOutput(_ data: Data) {
+        outputWriter(data)
+    }
+
+    @MainActor
+    func connectionSurfaceExited(_ exitCode: UInt32) {
+        exitReporter(exitCode)
+    }
+}
+
+struct TerminalProcessExitHandler: @unchecked Sendable {
+    private let action: @MainActor () -> Void
+
+    @MainActor
+    init(action: @escaping () -> Void) {
+        self.action = {
+            action()
+        }
+    }
+
+    @MainActor
+    func callAsFunction() {
+        action()
+    }
+}
+
 extension GhosttyTerminalView: TerminalConnectionSurface {
     func connectionSurfaceSize() -> TerminalConnectionSurfaceSize? {
         guard let size = terminalSize() else { return nil }

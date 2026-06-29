@@ -363,13 +363,14 @@ extension ConnectionSessionManager {
 
         let server = runtime.server
         let credentials = runtime.credentials
-        let onProcessExit = runtime.onProcessExit
+        let terminalHandle = TerminalConnectionSurfaceHandle(surface: terminal)
+        let processExitHandler = TerminalProcessExitHandler(action: runtime.onProcessExit)
         let logger = self.logger
         let shellGeneration = startResult.generation
 
-        let shellTask = Task.detached(priority: .userInitiated) { [weak self, weak terminal] in
+        let shellTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
-            guard let terminal else {
+            guard await terminalHandle.isAvailable() else {
                 await self.finishSessionShellTask(
                     sessionId: sessionId,
                     client: sshClient,
@@ -381,7 +382,7 @@ extension ConnectionSessionManager {
                 server: server,
                 credentials: credentials,
                 sshClient: sshClient,
-                terminal: terminal,
+                terminal: terminalHandle,
                 logger: logger,
                 onAttempt: { attempt in
                     if attempt == 1 {
@@ -445,9 +446,7 @@ extension ConnectionSessionManager {
                         return false
                     }
                 },
-                onProcessExit: {
-                    onProcessExit()
-                },
+                onProcessExit: processExitHandler,
                 onFailure: { error, terminal in
                     let errorMsg = "\r\n\u{001B}[31mSSH Error: \(error.localizedDescription)\u{001B}[0m\r\n"
                     if let data = errorMsg.data(using: .utf8) {

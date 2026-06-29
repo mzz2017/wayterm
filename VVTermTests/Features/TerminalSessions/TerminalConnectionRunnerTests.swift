@@ -45,6 +45,7 @@ final class TerminalConnectionRunnerTests: XCTestCase {
         let surface = RecordingTerminalConnectionSurface(
             size: TerminalConnectionSurfaceSize(columns: 132, rows: 43)
         )
+        let surfaceHandle = TerminalConnectionSurfaceHandle(surface: surface)
         let probe = TerminalConnectionRunnerSurfaceProbe()
         let stream = AsyncStream<Data> { continuation in
             continuation.yield(output)
@@ -52,7 +53,7 @@ final class TerminalConnectionRunnerTests: XCTestCase {
         }
 
         await TerminalConnectionRunner.run(
-            terminal: surface,
+            terminal: surfaceHandle,
             logger: nil,
             onAttempt: { attempt in
                 await probe.recordAttempt(attempt)
@@ -81,7 +82,10 @@ final class TerminalConnectionRunnerTests: XCTestCase {
                 await probe.recordBeforeShellStart(cols: cols, rows: rows)
             },
             onShellStarted: { terminal, startedShellId in
-                probe.shellStartedWithSameSurface = (surface as AnyObject) === (terminal as AnyObject)
+                probe.shellStartedWithExpectedSurfaceSize = terminal.connectionSurfaceSize() == TerminalConnectionSurfaceSize(
+                    columns: 132,
+                    rows: 43
+                )
                 probe.startedShellId = startedShellId
             },
             onTitleChange: { _ in },
@@ -114,7 +118,7 @@ final class TerminalConnectionRunnerTests: XCTestCase {
         XCTAssertEqual(snapshot.processExitCount, 1)
 
         XCTAssertEqual(probe.startedShellId, shellId)
-        XCTAssertEqual(probe.shellStartedWithSameSurface, true)
+        XCTAssertEqual(probe.shellStartedWithExpectedSurfaceSize, true)
         XCTAssertEqual(surface.writtenData, [output], "Runner should stream shell bytes through the surface protocol.")
         XCTAssertEqual(surface.exitCodes, [0], "Runner should report external process exit through the surface protocol.")
     }
@@ -189,7 +193,7 @@ private actor TerminalConnectionRunnerSurfaceProbe {
     private var processExitCount = 0
 
     @MainActor var startedShellId: UUID?
-    @MainActor var shellStartedWithSameSurface: Bool?
+    @MainActor var shellStartedWithExpectedSurfaceSize: Bool?
 
     func recordAttempt(_ attempt: Int) {
         attempts.append(attempt)

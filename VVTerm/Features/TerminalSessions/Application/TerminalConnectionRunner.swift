@@ -13,18 +13,18 @@ enum TerminalConnectionRunner {
         server: Server,
         credentials: ServerCredentials,
         sshClient: SSHClient,
-        terminal: any TerminalConnectionSurface,
+        terminal: TerminalConnectionSurfaceHandle,
         logger: Logger,
         onAttempt: @MainActor @escaping (_ attempt: Int) -> Void,
         startupPlan: @MainActor @escaping () async -> (command: String?, skipTmuxLifecycle: Bool),
         registerShell: @MainActor @escaping (_ shell: ShellHandle, _ skipTmuxLifecycle: Bool) async -> Bool,
         onBeforeShellStart: @MainActor @escaping (_ cols: Int, _ rows: Int) async -> Void,
-        onShellStarted: @MainActor @escaping (_ terminal: any TerminalConnectionSurface, _ shellId: UUID) async -> Void,
+        onShellStarted: @MainActor @escaping (_ terminal: TerminalConnectionSurfaceHandle, _ shellId: UUID) async -> Void,
         onTitleChange: @MainActor @escaping (_ title: String) -> Void,
-        shouldContinueStreaming: @MainActor @escaping (_ data: Data, _ terminal: any TerminalConnectionSurface) -> Bool,
+        shouldContinueStreaming: @MainActor @escaping (_ data: Data, _ terminal: TerminalConnectionSurfaceHandle) -> Bool,
         shouldResetClient: @escaping (_ error: SSHError) async -> Bool,
-        onProcessExit: @MainActor @escaping () -> Void,
-        onFailure: @MainActor @escaping (_ error: Error, _ terminal: any TerminalConnectionSurface) -> Void
+        onProcessExit: TerminalProcessExitHandler,
+        onFailure: @MainActor @escaping (_ error: Error, _ terminal: TerminalConnectionSurfaceHandle) -> Void
     ) async {
         await run(
             terminal: terminal,
@@ -65,7 +65,7 @@ enum TerminalConnectionRunner {
     }
 
     static func run(
-        terminal: any TerminalConnectionSurface,
+        terminal: TerminalConnectionSurfaceHandle,
         logger: Logger? = nil,
         maxAttempts: Int = 3,
         onAttempt: @MainActor @escaping (_ attempt: Int) async -> Void,
@@ -75,13 +75,13 @@ enum TerminalConnectionRunner {
         startupPlan: @MainActor @escaping () async -> (command: String?, skipTmuxLifecycle: Bool),
         registerShell: @MainActor @escaping (_ shell: ShellHandle, _ skipTmuxLifecycle: Bool) async -> Bool,
         onBeforeShellStart: @MainActor @escaping (_ cols: Int, _ rows: Int) async -> Void,
-        onShellStarted: @MainActor @escaping (_ terminal: any TerminalConnectionSurface, _ shellId: UUID) async -> Void,
+        onShellStarted: @MainActor @escaping (_ terminal: TerminalConnectionSurfaceHandle, _ shellId: UUID) async -> Void,
         onTitleChange: @MainActor @escaping (_ title: String) -> Void,
-        shouldContinueStreaming: @MainActor @escaping (_ data: Data, _ terminal: any TerminalConnectionSurface) -> Bool,
+        shouldContinueStreaming: @MainActor @escaping (_ data: Data, _ terminal: TerminalConnectionSurfaceHandle) -> Bool,
         shouldResetClient: @escaping (_ error: SSHError) async -> Bool = { _ in false },
         resetConnection: @escaping () async -> Void = {},
         onProcessExit: @MainActor @escaping () async -> Void,
-        onFailure: @MainActor @escaping (_ error: Error, _ terminal: any TerminalConnectionSurface) -> Void
+        onFailure: @MainActor @escaping (_ error: Error, _ terminal: TerminalConnectionSurfaceHandle) -> Void
     ) async {
         var titleParser = TerminalTitleSequenceParser()
 
