@@ -63,7 +63,7 @@ extension Ghostty.Input {
     ///
     /// This is a packed bitmask that contains precision and momentum information
     /// for scroll events, matching the Zig `ScrollMods` packed struct.
-    struct ScrollMods {
+    nonisolated struct ScrollMods {
         let rawValue: Int32
 
         /// True if this is a high-precision scroll event (e.g., trackpad, Magic Mouse)

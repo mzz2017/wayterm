@@ -8,11 +8,11 @@
 #if os(iOS)
 import CoreGraphics
 
-enum TerminalScrollGesturePresentation {
+nonisolated enum TerminalScrollGesturePresentation {
     static let scrollMultiplier: Double = 1.5
 }
 
-struct TerminalMomentumScrollState {
+nonisolated struct TerminalMomentumScrollState {
     private static let deceleration: Double = 0.92
     private static let minimumVelocity: Double = 50.0
     private static let minimumFrameVelocity: CGFloat = 0.5

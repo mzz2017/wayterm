@@ -72,7 +72,7 @@ extension Ghostty.Input {
     }
 
     /// Represents a mouse scroll event with scroll deltas and modifier keys.
-    struct MouseScrollEvent {
+    nonisolated struct MouseScrollEvent {
         let x: Double
         let y: Double
         let mods: ScrollMods
@@ -131,7 +131,7 @@ extension Ghostty.Input {
 
 extension Ghostty.Input {
     /// `ghostty_input_mouse_momentum_e` - Momentum phase for scroll events
-    enum Momentum: UInt8, CaseIterable {
+    nonisolated enum Momentum: UInt8, CaseIterable {
         case none = 0
         case began = 1
         case stationary = 2
