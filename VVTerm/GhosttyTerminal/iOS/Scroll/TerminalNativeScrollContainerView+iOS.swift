@@ -28,8 +28,7 @@ final class TerminalNativeScrollContainerView: UIView {
 
     private let scrollView = TerminalHostScrollView()
     private let virtualContentView = UIView()
-    private var scrollbarObserver: NSObjectProtocol?
-    private var cellSizeObserver: NSObjectProtocol?
+    nonisolated private let observerTokens = NotificationObserverTokens()
     private var lastSentRow: Int?
     private var isSynchronizingFromTerminal = false
     private var isDetachedForReuse = false
@@ -69,20 +68,30 @@ final class TerminalNativeScrollContainerView: UIView {
         scrollView.addSubview(terminalView)
         terminalView.setNativeHostScrollContainerEnabled(true)
 
-        scrollbarObserver = NotificationCenter.default.addObserver(
+        let scrollbarUserInfoKey = Notification.Name.ScrollbarKey
+        let scrollbarToken = NotificationCenter.default.addObserver(
             forName: .ghosttyDidUpdateScrollbar,
             object: terminalView,
             queue: .main
         ) { [weak self] notification in
-            self?.handleScrollbarUpdate(notification)
+            let scrollbar = notification.userInfo?[scrollbarUserInfoKey] as? Ghostty.Action.Scrollbar
+            guard let scrollbar else { return }
+            MainActor.assumeIsolated {
+                self?.handleScrollbarUpdate(scrollbar)
+            }
         }
-        cellSizeObserver = NotificationCenter.default.addObserver(
+        observerTokens.append(scrollbarToken)
+
+        let cellSizeToken = NotificationCenter.default.addObserver(
             forName: .ghosttyDidUpdateCellSize,
             object: terminalView,
             queue: .main
         ) { [weak self] _ in
-            self?.refreshNativeScrollState()
+            MainActor.assumeIsolated {
+                self?.refreshNativeScrollState()
+            }
         }
+        observerTokens.append(cellSizeToken)
     }
 
     required init?(coder: NSCoder) {
@@ -141,11 +150,7 @@ final class TerminalNativeScrollContainerView: UIView {
         return scrollView.bounds.size
     }
 
-    private func handleScrollbarUpdate(_ notification: Notification) {
-        guard let scrollbar = notification.userInfo?[Notification.Name.ScrollbarKey] as? Ghostty.Action.Scrollbar else {
-            return
-        }
-
+    private func handleScrollbarUpdate(_ scrollbar: Ghostty.Action.Scrollbar) {
         terminalView.scrollbar = scrollbar
         updateContentSize()
         synchronizeScrollPositionFromTerminalIfNeeded()
@@ -238,15 +243,8 @@ final class TerminalNativeScrollContainerView: UIView {
         terminalView.setNativeHostScrollContainerEnabled(false)
     }
 
-    private func removeObservers() {
-        if let scrollbarObserver {
-            NotificationCenter.default.removeObserver(scrollbarObserver)
-            self.scrollbarObserver = nil
-        }
-        if let cellSizeObserver {
-            NotificationCenter.default.removeObserver(cellSizeObserver)
-            self.cellSizeObserver = nil
-        }
+    nonisolated private func removeObservers() {
+        observerTokens.invalidateAll()
     }
 }
 

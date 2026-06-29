@@ -22,7 +22,7 @@ extension Ghostty.Action {
     /// - `total`: Total rows in scrollback + active area
     /// - `offset`: First visible row (0 = top of history)
     /// - `len`: Number of visible rows (viewport height)
-    struct Scrollbar {
+    struct Scrollbar: Sendable {
         let total: UInt64
         let offset: UInt64
         let len: UInt64

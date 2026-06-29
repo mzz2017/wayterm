@@ -228,6 +228,35 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
         )
     }
 
+    @Test
+    func nativeScrollContainerOwnsNotificationTokensOutsideMainActorState() throws {
+        let root = try sourceRoot()
+        let nativeScrollSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Scroll/TerminalNativeScrollContainerView+iOS.swift")
+        )
+
+        #expect(
+            nativeScrollSource.contains("NotificationObserverTokens"),
+            "TerminalNativeScrollContainerView should use the shared observer-token owner for NotificationCenter tokens."
+        )
+        #expect(
+            !nativeScrollSource.contains("scrollbarObserver: NSObjectProtocol"),
+            "Scrollbar observer tokens should not be stored as main-actor UI state."
+        )
+        #expect(
+            !nativeScrollSource.contains("cellSizeObserver: NSObjectProtocol"),
+            "Cell-size observer tokens should not be stored as main-actor UI state."
+        )
+        #expect(
+            nativeScrollSource.contains("MainActor.assumeIsolated"),
+            "Main-queue NotificationCenter callbacks should explicitly hand intent back to the UI actor."
+        )
+        #expect(
+            !nativeScrollSource.contains("handleScrollbarUpdate(notification)"),
+            "The non-Sendable Notification payload should be decoded before the main-actor handoff."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
     }
