@@ -15,7 +15,7 @@ import Testing
 struct KnownHostsManagerTests {
     @Test
     func newHostVerificationDoesNotSaveUntilPolicyApproves() async throws {
-        let store = KnownHostsStore(defaults: makeIsolatedDefaults())
+        let store = KnownHostsStore(defaults: Self.makeIsolatedDefaults())
         let verifier = KnownHostVerificationService(store: store)
 
         let result = try await verifier.verify(
@@ -86,7 +86,7 @@ struct KnownHostsManagerTests {
         #expect(manager.entries().isEmpty)
     }
 
-    private func makeIsolatedDefaults() -> UserDefaults {
+    nonisolated private static func makeIsolatedDefaults() -> UserDefaults {
         let suiteName = "KnownHostsManagerTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
