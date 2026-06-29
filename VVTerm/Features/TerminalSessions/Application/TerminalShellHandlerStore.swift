@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct TerminalShellHandlerStore {
+nonisolated struct TerminalShellHandlerStore {
     typealias CancelHandler = @MainActor (_ mode: ShellTeardownMode) async -> Void
     typealias SuspendHandler = @MainActor () async -> Void
 

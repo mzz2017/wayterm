@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct TerminalReconnectInFlightStore {
+nonisolated struct TerminalReconnectInFlightStore {
     private var entities: Set<UUID> = []
 
     var isEmpty: Bool {

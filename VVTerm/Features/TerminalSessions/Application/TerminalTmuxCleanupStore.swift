@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct TerminalTmuxCleanupStore {
+nonisolated struct TerminalTmuxCleanupStore {
     private var cleanedServerIDs: Set<UUID> = []
 
     var isEmpty: Bool {
