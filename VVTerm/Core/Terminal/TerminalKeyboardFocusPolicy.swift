@@ -1,4 +1,4 @@
-enum TerminalKeyboardFocusReason {
+nonisolated enum TerminalKeyboardFocusReason {
     case explicitUserRequest
     case initialActivation
     case reconnectRestore
@@ -7,8 +7,8 @@ enum TerminalKeyboardFocusReason {
     case hardwareKeyboard
 }
 
-struct TerminalKeyboardFocusPolicy {
-    private enum Mode {
+nonisolated struct TerminalKeyboardFocusPolicy {
+    private nonisolated enum Mode {
         case typing
         case browse
     }

@@ -1,6 +1,6 @@
 import Foundation
 
-enum TerminalHardwareTextInputRoutingPolicy {
+nonisolated enum TerminalHardwareTextInputRoutingPolicy {
     static func shouldRoutePressToSystemTextInput(
         hasControlModifier: Bool,
         hasAlternateModifier: Bool,
