@@ -7,15 +7,15 @@
 
 import Foundation
 
-struct TerminalTabsSnapshot: Codable {
-    struct ServerSnapshot: Codable {
+nonisolated struct TerminalTabsSnapshot: Codable {
+    nonisolated struct ServerSnapshot: Codable {
         let serverId: UUID
         let tabs: [TabSnapshot]
         let selectedTabId: UUID?
         let selectedView: String?
     }
 
-    struct TabSnapshot: Codable {
+    nonisolated struct TabSnapshot: Codable {
         let id: UUID
         let serverId: UUID
         let title: String

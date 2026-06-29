@@ -7,14 +7,14 @@
 
 import Foundation
 
-struct TerminalTabsSnapshotRestorePlan {
+nonisolated struct TerminalTabsSnapshotRestorePlan {
     let tabsByServer: [UUID: [TerminalTab]]
     let selectedTabByServer: [UUID: UUID]
     let selectedViewByServer: [UUID: String]
     let paneStates: [UUID: TerminalPaneState]
 }
 
-enum TerminalTabsSnapshotRestorePlanner {
+nonisolated enum TerminalTabsSnapshotRestorePlanner {
     static func plan(
         from snapshot: TerminalTabsSnapshot,
         isTmuxEnabled: (UUID) -> Bool

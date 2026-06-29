@@ -48,7 +48,7 @@ struct TerminalPresentationOverrides: Codable, Hashable, Sendable {
         self.fontSize = fontSize.map(TerminalDefaults.clampedFontSize)
     }
 
-    var isEmpty: Bool {
+    nonisolated var isEmpty: Bool {
         fontSize == nil
     }
 
