@@ -7,8 +7,8 @@
 
 import Foundation
 
-struct TerminalTeardownTaskStore {
-    struct Entry {
+nonisolated struct TerminalTeardownTaskStore {
+    nonisolated struct Entry {
         let id: UUID
         let task: Task<Void, Never>
     }
