@@ -59,7 +59,7 @@ struct ConnectionSession: Identifiable, Hashable {
     /// If set, this session is a split child of the parent session (not shown in tabs)
     var parentSessionId: UUID?
 
-    init(
+    nonisolated init(
         id: UUID = UUID(),
         serverId: UUID,
         title: String,
