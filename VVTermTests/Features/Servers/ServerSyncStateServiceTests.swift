@@ -16,7 +16,7 @@ struct ServerSyncStateServiceTests {
     func backfillCandidatesIgnoreTransientBootstrapWorkspace() {
         let bootstrapWorkspace = Workspace(
             id: UUID(),
-            name: AppLanguage.localizedString("My Servers", rawValue: AppLanguage.en.rawValue),
+            name: "My Servers",
             order: 0
         )
         let remoteWorkspace = Workspace(id: UUID(), name: "Remote", order: 1)
@@ -55,7 +55,7 @@ struct ServerSyncStateServiceTests {
     func backfillCandidatesIncludeBootstrapWorkspaceAfterPromotion() {
         let bootstrapWorkspace = Workspace(
             id: UUID(),
-            name: AppLanguage.localizedString("My Servers", rawValue: AppLanguage.en.rawValue),
+            name: "My Servers",
             order: 0
         )
 
