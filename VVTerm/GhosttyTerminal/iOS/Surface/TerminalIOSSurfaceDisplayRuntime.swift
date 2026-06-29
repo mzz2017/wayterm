@@ -2,7 +2,7 @@
 import CoreGraphics
 import Foundation
 
-struct TerminalSurfaceDisplaySizeState {
+nonisolated struct TerminalSurfaceDisplaySizeState {
     private var lastPixelSize: CGSize = .zero
     private var lastContentScale: CGFloat = 0
 
