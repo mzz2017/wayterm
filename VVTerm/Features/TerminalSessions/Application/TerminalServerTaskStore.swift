@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct TerminalServerTaskStore {
+nonisolated struct TerminalServerTaskStore {
     private var tasks: [UUID: Task<Void, Never>] = [:]
 
     var isEmpty: Bool {
