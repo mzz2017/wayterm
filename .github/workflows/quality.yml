@@ -51,9 +51,9 @@ jobs:
           IOS_TEST_DEVICE_NAME: iPhone 17
           IOS_TEST_DEVICE_NAME_CANDIDATES: iPhone 17,iPhone 16,iPhone 15
           IOS_TEST_ALLOW_DEVICE_FALLBACK: "1"
-          IOS_TEST_PROGRESS_INTERVAL: "60"
-          IOS_TEST_PROGRESS_LOG_LINES: "40"
-          IOS_TEST_FAILURE_LOG_LINES: "240"
+          IOS_TEST_PROGRESS_INTERVAL: "30"
+          IOS_TEST_PROGRESS_LOG_LINES: "100"
+          IOS_TEST_FAILURE_LOG_LINES: "500"
         run: |
           focused_args=(
             "-only-testing:VVTermTests/AppSyncCoordinatorTests"
@@ -71,9 +71,36 @@ jobs:
             "-only-testing:VVTermTests/TerminalVoiceInputStoreTests"
           )
 
+          echo "::group::Focused runtime lifecycle diagnostics"
+          echo "Focused test filter count: ${#focused_args[@]}"
+          echo "IOS_TEST_RETRIES=${IOS_TEST_RETRIES}"
+          echo "IOS_TEST_DEVICE_NAME=${IOS_TEST_DEVICE_NAME}"
+          echo "IOS_TEST_DEVICE_NAME_CANDIDATES=${IOS_TEST_DEVICE_NAME_CANDIDATES}"
+          echo "IOS_TEST_PROGRESS_INTERVAL=${IOS_TEST_PROGRESS_INTERVAL}"
+          echo "IOS_TEST_PROGRESS_LOG_LINES=${IOS_TEST_PROGRESS_LOG_LINES}"
+          echo "IOS_TEST_FAILURE_LOG_LINES=${IOS_TEST_FAILURE_LOG_LINES}"
+          echo "::endgroup::"
+
           echo "::group::Focused runtime lifecycle test filters"
           printf '%s\n' "${focused_args[@]}"
           echo "::endgroup::"
+
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            {
+              echo "### Focused runtime lifecycle tests"
+              echo
+              echo "- Filter count: ${#focused_args[@]}"
+              echo "- Device candidates: ${IOS_TEST_DEVICE_NAME_CANDIDATES}"
+              echo "- Retries: ${IOS_TEST_RETRIES}"
+              echo "- Progress interval: ${IOS_TEST_PROGRESS_INTERVAL}s"
+              echo "- Progress tail: ${IOS_TEST_PROGRESS_LOG_LINES} lines"
+              echo "- Failure tail: ${IOS_TEST_FAILURE_LOG_LINES} lines"
+              echo
+              echo "Filters:"
+              echo
+              printf -- "- \`%s\`\n" "${focused_args[@]}"
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
 
           ./scripts/test-ios.sh "${focused_args[@]}"
 
