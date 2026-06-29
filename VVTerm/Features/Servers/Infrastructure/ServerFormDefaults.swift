@@ -1,6 +1,6 @@
 import Foundation
 
-struct ServerFormDefaults {
+nonisolated struct ServerFormDefaults {
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
