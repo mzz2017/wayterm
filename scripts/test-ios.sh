@@ -21,6 +21,7 @@ xcodebuild_action="${IOS_TEST_XCODEBUILD_ACTION:-test}"
 progress_interval="${IOS_TEST_PROGRESS_INTERVAL:-0}"
 progress_log_lines="${IOS_TEST_PROGRESS_LOG_LINES:-20}"
 failure_log_lines="${IOS_TEST_FAILURE_LOG_LINES:-120}"
+diagnostic_log_dir="${IOS_TEST_LOG_DIR:-}"
 lock_acquired=0
 cleanup_derived_data=0
 log_file=""
@@ -255,6 +256,28 @@ print_recent_xcodebuild_log() {
     fi
 }
 
+preserve_xcodebuild_log() {
+    local status="$1"
+    local status_label
+    local destination
+
+    if [[ -z "$diagnostic_log_dir" || -z "$log_file" || ! -f "$log_file" ]]; then
+        return
+    fi
+
+    mkdir -p "$diagnostic_log_dir"
+    status_label="status-${status}"
+    if [[ "$status" == "0" ]]; then
+        status_label="passed"
+    elif [[ "$status" == "124" ]]; then
+        status_label="timeout"
+    fi
+
+    destination="${diagnostic_log_dir}/xcodebuild-attempt-${attempt}-${status_label}.log"
+    cp "$log_file" "$destination"
+    echo "Preserved xcodebuild log: ${destination}"
+}
+
 start_progress_reporter() {
     local started_at="$1"
 
@@ -476,6 +499,9 @@ while (( attempt <= total_attempts )); do
         echo "Progress log tail lines: ${progress_log_lines}."
     fi
     echo "Failure log tail lines: ${failure_log_lines}."
+    if [[ -n "$diagnostic_log_dir" ]]; then
+        echo "Preserving full xcodebuild logs under ${diagnostic_log_dir}."
+    fi
     prepare_simulator "$udid"
 
     log_file="$(mktemp -t vvterm-ios-test.XXXXXX)"
@@ -485,10 +511,13 @@ while (( attempt <= total_attempts )); do
     set -e
 
     if [[ "$last_status" -eq 0 ]]; then
+        preserve_xcodebuild_log "$last_status"
         rm -f "$log_file"
         log_file=""
         exit 0
     fi
+
+    preserve_xcodebuild_log "$last_status"
 
     if (( attempt <= retries )) && is_preflight_failure "$log_file"; then
         echo "xcodebuild hit a simulator preflight launch failure; retrying after simulator cleanup." >&2

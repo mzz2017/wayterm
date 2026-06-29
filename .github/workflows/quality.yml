@@ -54,7 +54,11 @@ jobs:
           IOS_TEST_PROGRESS_INTERVAL: "30"
           IOS_TEST_PROGRESS_LOG_LINES: "100"
           IOS_TEST_FAILURE_LOG_LINES: "500"
+          IOS_TEST_LOG_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs
         run: |
+          set -x
+          mkdir -p "${IOS_TEST_LOG_DIR}"
+
           focused_args=(
             "-only-testing:VVTermTests/AppSyncCoordinatorTests"
             "-only-testing:VVTermTests/CloudKitSyncCoordinatorLifecycleTests"
@@ -79,6 +83,14 @@ jobs:
           echo "IOS_TEST_PROGRESS_INTERVAL=${IOS_TEST_PROGRESS_INTERVAL}"
           echo "IOS_TEST_PROGRESS_LOG_LINES=${IOS_TEST_PROGRESS_LOG_LINES}"
           echo "IOS_TEST_FAILURE_LOG_LINES=${IOS_TEST_FAILURE_LOG_LINES}"
+          echo "IOS_TEST_LOG_DIR=${IOS_TEST_LOG_DIR}"
+          echo "IOS_TEST_NO_OUTPUT_TIMEOUT=${IOS_TEST_NO_OUTPUT_TIMEOUT:-default}"
+          echo "RUNNER_TEMP=${RUNNER_TEMP}"
+          echo "GITHUB_SHA=${GITHUB_SHA}"
+          echo "xcode-select: $(xcode-select -p)"
+          echo "disk usage:"
+          df -h .
+          df -h "${RUNNER_TEMP}"
           echo "::endgroup::"
 
           echo "::group::Focused runtime lifecycle test filters"
@@ -95,6 +107,7 @@ jobs:
               echo "- Progress interval: ${IOS_TEST_PROGRESS_INTERVAL}s"
               echo "- Progress tail: ${IOS_TEST_PROGRESS_LOG_LINES} lines"
               echo "- Failure tail: ${IOS_TEST_FAILURE_LOG_LINES} lines"
+              echo "- Full xcodebuild logs: ${IOS_TEST_LOG_DIR}"
               echo
               echo "Filters:"
               echo
@@ -103,6 +116,15 @@ jobs:
           fi
 
           ./scripts/test-ios.sh "${focused_args[@]}"
+
+      - name: Upload focused runtime lifecycle logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-runtime-lifecycle-xcodebuild-logs
+          path: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs
+          if-no-files-found: ignore
+          retention-days: 7
 
   ios-strict-concurrency:
     name: Strict Swift concurrency build
