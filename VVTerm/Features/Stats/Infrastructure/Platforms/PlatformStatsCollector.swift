@@ -109,7 +109,7 @@ extension RemotePlatform {
 
 // MARK: - Shared Parsing Utilities
 
-enum StatsParsingUtils {
+nonisolated enum StatsParsingUtils {
     /// Calculate network speed from previous and current values
     static func calculateNetworkSpeed(
         currentRx: UInt64,
