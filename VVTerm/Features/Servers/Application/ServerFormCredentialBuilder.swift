@@ -1,6 +1,6 @@
 import Foundation
 
-struct ServerFormCredentialBuilder {
+nonisolated struct ServerFormCredentialBuilder {
     static func build(
         serverId: UUID,
         connectionMode: SSHConnectionMode,

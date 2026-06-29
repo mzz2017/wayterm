@@ -7,8 +7,8 @@
 
 import Foundation
 
-struct ConnectionSessionsSnapshot: Codable {
-    struct SessionSnapshot: Codable {
+nonisolated struct ConnectionSessionsSnapshot: Codable {
+    nonisolated struct SessionSnapshot: Codable {
         let id: UUID
         let serverId: UUID
         let title: String
@@ -48,7 +48,7 @@ struct ConnectionSessionsSnapshot: Codable {
         }
     }
 
-    struct ServerSnapshot: Codable {
+    nonisolated struct ServerSnapshot: Codable {
         let serverId: UUID
         let selectedSessionId: UUID?
         let selectedView: String?

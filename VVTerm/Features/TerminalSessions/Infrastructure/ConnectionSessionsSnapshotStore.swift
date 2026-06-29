@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct ConnectionSessionsSnapshotStore {
+nonisolated struct ConnectionSessionsSnapshotStore {
     private let key: String
     private let userDefaults: UserDefaults
 

@@ -1,6 +1,6 @@
 import Foundation
 
-enum ServerTransportSelection: String, CaseIterable, Identifiable, Equatable {
+nonisolated enum ServerTransportSelection: String, CaseIterable, Identifiable, Equatable {
     case standard
     case tailscale
     case mosh

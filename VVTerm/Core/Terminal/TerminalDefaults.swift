@@ -39,7 +39,7 @@ struct TerminalZoomResult: Hashable {
     let effectiveFontSize: Double
 }
 
-struct TerminalPresentationOverrides: Codable, Hashable, Sendable {
+nonisolated struct TerminalPresentationOverrides: Codable, Hashable, Sendable {
     nonisolated static let empty = TerminalPresentationOverrides()
 
     var fontSize: Double?
@@ -52,10 +52,12 @@ struct TerminalPresentationOverrides: Codable, Hashable, Sendable {
         fontSize == nil
     }
 
+    @MainActor
     func resolvedFontSize(defaults: UserDefaults = .standard) -> Double {
         fontSize ?? TerminalDefaults.storedFontSize(defaults: defaults)
     }
 
+    @MainActor
     func applyingZoom(_ action: TerminalZoomAction, defaults: UserDefaults = .standard) -> TerminalPresentationOverrides {
         var overrides = self
         let currentFontSize = resolvedFontSize(defaults: defaults)

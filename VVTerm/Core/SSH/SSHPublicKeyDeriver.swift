@@ -10,7 +10,7 @@ import Foundation
 /// intentionally not parsed here: it returns nil so the caller falls back to letting
 /// libssh2 derive the public key itself. The sshd penalty fix does not depend on this
 /// derivation — it comes from not retrying failed auth — so the fall-through is safe.
-enum SSHPublicKeyDeriver {
+nonisolated enum SSHPublicKeyDeriver {
     static func publicKey(fromPrivateKeyPEM pem: String, passphrase: String? = nil) -> String? {
         if pem.contains("BEGIN OPENSSH PRIVATE KEY") {
             return publicKeyFromOpenSSH(pem)

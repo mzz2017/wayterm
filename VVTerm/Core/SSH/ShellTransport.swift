@@ -1,6 +1,6 @@
 import Foundation
 
-enum ShellTransport: String, Codable, Hashable, Sendable {
+nonisolated enum ShellTransport: String, Codable, Hashable, Sendable {
     case ssh
     case mosh
     case sshFallback

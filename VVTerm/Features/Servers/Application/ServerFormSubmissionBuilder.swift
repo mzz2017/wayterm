@@ -1,6 +1,6 @@
 import Foundation
 
-struct ServerFormDraft {
+nonisolated struct ServerFormDraft {
     let workspaceId: UUID
     let environment: ServerEnvironment
     let name: String
@@ -28,12 +28,12 @@ struct ServerFormDraft {
     }
 }
 
-struct ServerFormSubmission {
+nonisolated struct ServerFormSubmission {
     let server: Server
     let credentials: ServerCredentials
 }
 
-struct ServerFormSubmissionBuilder {
+nonisolated struct ServerFormSubmissionBuilder {
     static func build(
         id: UUID,
         createdAt: Date,

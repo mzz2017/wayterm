@@ -1,6 +1,6 @@
 import Foundation
 
-enum ServerPortValidator {
+nonisolated enum ServerPortValidator {
     static let validRange = 1...65535
 
     static func normalizedPort(from input: String) -> Int? {

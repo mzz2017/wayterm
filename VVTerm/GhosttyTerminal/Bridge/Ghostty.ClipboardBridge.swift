@@ -1,6 +1,6 @@
 import Foundation
 
-enum GhosttyClipboardBridge {
+nonisolated enum GhosttyClipboardBridge {
     static func completeReadRequest(
         surface: ghostty_surface_t,
         string: String,

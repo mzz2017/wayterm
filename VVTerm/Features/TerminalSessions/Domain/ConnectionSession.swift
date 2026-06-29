@@ -40,7 +40,7 @@ nonisolated enum ConnectionState: Hashable, Sendable {
 
 // MARK: - Connection Session (Tab)
 
-struct ConnectionSession: Identifiable, Hashable {
+nonisolated struct ConnectionSession: Identifiable, Hashable {
     let id: UUID
     let serverId: UUID
     var title: String

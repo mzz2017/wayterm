@@ -1,6 +1,6 @@
 import Foundation
 
-struct ServerFormConnectionTestSnapshot: Equatable {
+nonisolated struct ServerFormConnectionTestSnapshot: Equatable {
     let host: String
     let port: String
     let username: String
@@ -32,12 +32,12 @@ struct ServerFormConnectionTestSnapshot: Equatable {
     }
 }
 
-struct ServerFormConnectionTestFailure: Equatable {
+nonisolated struct ServerFormConnectionTestFailure: Equatable {
     let message: String
     let shouldShowCloudflareOverrides: Bool
 }
 
-enum ServerFormConnectionTestPolicy {
+nonisolated enum ServerFormConnectionTestPolicy {
     static let tailscaleDirectConnectionReminder = String(
         localized: "This app currently supports direct tailnet connections only (no userspace proxy fallback)."
     )
