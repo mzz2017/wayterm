@@ -170,7 +170,8 @@ struct SSHClientSuperfileBoundaryTests {
 
         // Then session cleanup task tracking has a dedicated Core/SSH file.
         #expect(registrySource.contains("final class SSHChannelCleanupTaskRegistry"))
-        #expect(registrySource.contains("Task.detached"))
+        #expect(registrySource.contains("AsyncCallbackTaskRegistry"))
+        #expect(registrySource.contains("trackDetached(operation)"))
         #expect(registrySource.contains("func tasks()"))
     }
 
@@ -214,7 +215,8 @@ struct SSHClientSuperfileBoundaryTests {
 
         // Then Mosh stream teardown tracking has a dedicated Core/SSH file.
         #expect(registrySource.contains("final class SSHMoshTeardownTaskRegistry"))
-        #expect(registrySource.contains("Task.detached"))
+        #expect(registrySource.contains("AsyncCallbackTaskRegistry"))
+        #expect(registrySource.contains("trackDetached(operation)"))
         #expect(registrySource.contains("func tasks()"))
     }
 
