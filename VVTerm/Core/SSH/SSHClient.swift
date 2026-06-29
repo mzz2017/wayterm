@@ -35,6 +35,7 @@ nonisolated actor SSHClient {
     private var keepAliveTask: Task<Void, Never>?
     private var connectTask: Task<SSHSession, Error>?
     private var pendingConnectSession: SSHSession?
+    private var activeConnectRequestID: UUID?
     private var connectionKey: String?
     private var connectedTarget: SSHConnectionTarget?
     private var resolvedRemoteEnvironment: RemoteEnvironment?
@@ -85,6 +86,10 @@ nonisolated actor SSHClient {
             return connected
         }
 
+        if connectTask != nil {
+            throw SSHError.connectionFailed("SSH client already connecting")
+        }
+
         if let session = session, await session.isConnected, connectionKey != key {
             throw SSHError.connectionFailed("SSH client already connected")
         }
@@ -92,37 +97,49 @@ nonisolated actor SSHClient {
         logger.info("Connecting to \(target.host):\(target.port) [mode: \(target.connectionMode.rawValue)]")
         logger.info("Auth method: \(String(describing: target.authMethod)), password present: \(credentials.password != nil)")
 
-        var dialHost = target.host
-        var dialPort = target.port
+        let requestID = UUID()
+        let connectTimeout = self.connectTimeout
+        let makeSession = sessionFactory
+        let cloudflareTransportManager = self.cloudflareTransportManager
+        let logger = self.logger
+        activeConnectRequestID = requestID
+        connectionKey = key
 
-        if target.connectionMode == .cloudflare {
-            let localPort = try await cloudflareTransportManager.connect(target: target, credentials: credentials)
-            dialHost = "127.0.0.1"
-            dialPort = Int(localPort)
-            logger.info("Using Cloudflare local tunnel endpoint \(dialHost):\(dialPort)")
-        } else {
-            await disconnectCloudflareTransport(reason: "pre-connect cleanup")
-        }
-
-        let config = SSHSessionConfig(
-            host: target.host,
-            port: target.port,
-            dialHost: dialHost,
-            dialPort: dialPort,
-            hostKeyHost: target.host,
-            hostKeyPort: target.port,
-            username: target.username,
-            connectionMode: target.connectionMode,
-            authMethod: target.authMethod,
-            credentials: credentials
-        )
-
-        let pendingSession = sessionFactory(config)
-        pendingConnectSession = pendingSession
-        abortState.setSessionForAbort(pendingSession)
-
-        let task = Task { [connectTimeout] () -> SSHSession in
+        let task = Task { () -> SSHSession in
             try Task.checkCancellation()
+            var dialHost = target.host
+            var dialPort = target.port
+
+            if target.connectionMode == .cloudflare {
+                let localPort = try await cloudflareTransportManager.connect(target: target, credentials: credentials)
+                dialHost = "127.0.0.1"
+                dialPort = Int(localPort)
+                logger.info("Using Cloudflare local tunnel endpoint \(dialHost):\(dialPort)")
+            } else {
+                await self.disconnectCloudflareTransport(reason: "pre-connect cleanup")
+            }
+
+            try Task.checkCancellation()
+            let config = SSHSessionConfig(
+                host: target.host,
+                port: target.port,
+                dialHost: dialHost,
+                dialPort: dialPort,
+                hostKeyHost: target.host,
+                hostKeyPort: target.port,
+                username: target.username,
+                connectionMode: target.connectionMode,
+                authMethod: target.authMethod,
+                credentials: credentials
+            )
+            let pendingSession = makeSession(config)
+            let didRegister = self.registerPendingConnectSession(pendingSession, requestID: requestID)
+            guard didRegister else {
+                pendingSession.abort()
+                await pendingSession.disconnect()
+                throw CancellationError()
+            }
+
             do {
                 try await SSHClient.runWithTimeout(
                     connectTimeout,
@@ -143,21 +160,23 @@ nonisolated actor SSHClient {
         }
 
         connectTask = task
-        connectionKey = key
 
         do {
             let session = try await task.value
-            guard isCurrentPendingConnectSession(pendingSession) else {
+            guard isCurrentConnectRequest(requestID),
+                  isCurrentPendingConnectSession(session) else {
                 session.abort()
                 await session.disconnect()
                 throw CancellationError()
             }
             pendingConnectSession = nil
+            clearConnectRequestIfCurrent(requestID)
             if abortState.isAborted || Task.isCancelled || task.isCancelled {
                 session.abort()
                 await session.disconnect()
                 connectTask = nil
                 connectionKey = nil
+                clearConnectRequestIfCurrent(requestID)
                 self.session = nil
                 abortState.setSessionForAbort(nil)
                 self.connectedTarget = nil
@@ -171,13 +190,15 @@ nonisolated actor SSHClient {
             self.resolvedRemoteTerminalType = nil
             startKeepAlive()
             connectTask = nil
+            clearConnectRequestIfCurrent(requestID)
             logger.info("Connected to \(target.host)")
             return session
         } catch {
-            if isCurrentPendingConnectSession(pendingSession) {
+            if isCurrentConnectRequest(requestID) {
                 pendingConnectSession = nil
                 connectTask = nil
                 connectionKey = nil
+                clearConnectRequestIfCurrent(requestID)
                 self.session = nil
                 abortState.setSessionForAbort(nil)
                 self.connectedTarget = nil
@@ -219,6 +240,7 @@ nonisolated actor SSHClient {
         let pendingConnectSession = pendingConnectSession
         connectTask = nil
         self.pendingConnectSession = nil
+        activeConnectRequestID = nil
         connectionKey = nil
 
         let activeSession = session
@@ -590,6 +612,25 @@ nonisolated actor SSHClient {
     private func isCurrentPendingConnectSession(_ pendingSession: SSHSession) -> Bool {
         guard let currentPendingSession = pendingConnectSession else { return false }
         return ObjectIdentifier(currentPendingSession) == ObjectIdentifier(pendingSession)
+    }
+
+    private func registerPendingConnectSession(_ pendingSession: SSHSession, requestID: UUID) -> Bool {
+        guard isCurrentConnectRequest(requestID) else {
+            return false
+        }
+        pendingConnectSession = pendingSession
+        abortState.setSessionForAbort(pendingSession)
+        return true
+    }
+
+    private func isCurrentConnectRequest(_ requestID: UUID) -> Bool {
+        activeConnectRequestID == requestID
+    }
+
+    private func clearConnectRequestIfCurrent(_ requestID: UUID) {
+        if activeConnectRequestID == requestID {
+            activeConnectRequestID = nil
+        }
     }
 
     private func disconnectSSHSession(_ activeSession: SSHSession?) async {

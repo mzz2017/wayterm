@@ -9,6 +9,79 @@ import XCTest
 // when SSHClient's pending-connect ownership contract intentionally changes.
 
 final class SSHClientConnectionLifecycleTests: XCTestCase {
+    func testConcurrentSameTargetConnectsShareInFlightPreparation() async throws {
+        // Given the first connect can suspend in pre-connect cleanup before an
+        // SSHSession is created.
+        var firstDescriptors = [Int32](repeating: -1, count: 2)
+        var secondDescriptors = [Int32](repeating: -1, count: 2)
+        XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &firstDescriptors), 0)
+        XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &secondDescriptors), 0)
+        defer {
+            Darwin.close(firstDescriptors[0])
+            Darwin.close(firstDescriptors[1])
+            Darwin.close(secondDescriptors[0])
+            Darwin.close(secondDescriptors[1])
+        }
+
+        let firstDriver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            connectedSocket: firstDescriptors[0],
+            handshakeBehavior: .waitForSocketClose
+        )
+        let secondDriver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x2),
+            connectedSocket: secondDescriptors[0],
+            handshakeBehavior: .waitForSocketClose
+        )
+        let sessionFactory = RecordingSSHSessionFactory([
+            SSHSession(config: .libSSH2AuthLifecycleTest, driver: firstDriver),
+            SSHSession(config: .libSSH2AuthLifecycleTest, driver: secondDriver)
+        ])
+        let client = SSHClient(sessionFactory: { _ in
+            sessionFactory.makeSession()
+        })
+        let target = SSHConnectionTarget(
+            host: "ssh.example.com",
+            username: "root",
+            authMethod: .sshKey
+        )
+        let credentials = ServerCredentials(
+            serverId: UUID(),
+            password: nil,
+            privateKey: Data("private-key".utf8),
+            publicKey: Data("public-key".utf8),
+            passphrase: nil,
+            cloudflareClientID: nil,
+            cloudflareClientSecret: nil
+        )
+
+        let firstConnect = Task {
+            try await client.connect(to: target, credentials: credentials)
+        }
+        await Task.yield()
+
+        // When a second caller asks for the same connection while preparation
+        // is still in flight.
+        let secondConnect = Task {
+            try await client.connect(to: target, credentials: credentials)
+        }
+        try await Task.sleep(for: .milliseconds(50))
+
+        // Then it must join the existing in-flight connect instead of creating
+        // an independent SSHSession that would have no single owner.
+        XCTAssertEqual(
+            sessionFactory.createdCount(),
+            1,
+            "Concurrent same-target connects should share the in-flight SSHClient connect task before SSHSession creation."
+        )
+
+        firstConnect.cancel()
+        secondConnect.cancel()
+        await client.disconnect()
+        _ = await firstConnect.result
+        _ = await secondConnect.result
+    }
+
     func testDisconnectWaitsForPendingConnectCleanupBeforeReturning() async throws {
         // Given SSHClient owns a pending SSHSession connect that is blocked
         // inside libssh2 handshake, and that session cleanup is deliberately
@@ -86,6 +159,29 @@ final class SSHClientConnectionLifecycleTests: XCTestCase {
         let hasReturnedAfterRelease = await marker.hasReturned
         XCTAssertTrue(hasReturnedAfterRelease)
         _ = await connectTask.result
+    }
+}
+
+private final class RecordingSSHSessionFactory: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sessions: [SSHSession]
+    private var createdSessions = 0
+
+    init(_ sessions: [SSHSession]) {
+        self.sessions = sessions
+    }
+
+    func makeSession() -> SSHSession {
+        lock.lock()
+        defer { lock.unlock() }
+        createdSessions += 1
+        return sessions.removeFirst()
+    }
+
+    func createdCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return createdSessions
     }
 }
 
