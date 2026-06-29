@@ -159,9 +159,11 @@ actor TerminalConnectionRuntime {
         openGeneration = nil
         openTask?.cancel()
         openTask = nil
-        shellTask?.cancel()
+        let pendingShellTask = shellTask
         shellTask = nil
+        pendingShellTask?.cancel()
         shellId = nil
+        await pendingShellTask?.value
         state = .suspended
     }
 
