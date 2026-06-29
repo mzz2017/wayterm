@@ -200,8 +200,6 @@ Swift package dependencies currently resolved by the Xcode project:
 
 ## License
 
-This fork is distributed under GPL-3.0 (`LICENSE`). Contributions are not
-submitted under the VVTerm CLA. No additional commercial or proprietary
+This fork is distributed under GPL-3.0 (`LICENSE`). No additional commercial or proprietary
 relicensing rights are granted.
 
-Copyright © 2026 Vivy Technologies Co., Limited
