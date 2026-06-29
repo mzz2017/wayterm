@@ -1,8 +1,9 @@
 import Foundation
 
-nonisolated final class GhosttySurfaceRegistration {
+nonisolated final class GhosttySurfaceRegistration: @unchecked Sendable {
     private static let deferredUnregisterTasks = GhosttySurfaceDeferredUnregisterTaskRegistry()
 
+    private let lock = NSLock()
     private weak var appWrapper: Ghostty.App?
     private var reference: Ghostty.SurfaceReference?
 
@@ -10,25 +11,25 @@ nonisolated final class GhosttySurfaceRegistration {
     func register(_ surface: ghostty_surface_t, appWrapper: Ghostty.App?, terminalView: GhosttyTerminalView) {
         unregister()
         guard let appWrapper else { return }
+        let reference = appWrapper.registerSurface(surface, terminalView: terminalView)
+
+        lock.lock()
         self.appWrapper = appWrapper
-        reference = appWrapper.registerSurface(surface, terminalView: terminalView)
+        self.reference = reference
+        lock.unlock()
     }
 
     @MainActor
     func unregister() {
+        let (appWrapper, reference) = takeReference()
         if let appWrapper, let reference {
             appWrapper.unregisterSurface(reference)
         }
-        appWrapper = nil
-        reference = nil
     }
 
     @discardableResult
     nonisolated func unregisterLaterFromDeinit() -> UUID? {
-        let appWrapper = appWrapper
-        let reference = reference
-        self.appWrapper = nil
-        self.reference = nil
+        let (appWrapper, reference) = takeReference()
 
         guard let appWrapper, let reference else { return nil }
         return Self.deferredUnregisterTasks.track {
@@ -38,6 +39,17 @@ nonisolated final class GhosttySurfaceRegistration {
 
     nonisolated static func waitForDeferredUnregisters() async {
         await deferredUnregisterTasks.waitForAll()
+    }
+
+    private func takeReference() -> (Ghostty.App?, Ghostty.SurfaceReference?) {
+        lock.lock()
+        let appWrapper = appWrapper
+        let reference = reference
+        self.appWrapper = nil
+        self.reference = nil
+        lock.unlock()
+
+        return (appWrapper, reference)
     }
 }
 

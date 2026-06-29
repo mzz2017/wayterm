@@ -59,7 +59,15 @@ struct GhosttySurfaceRegistrationBoundaryTests {
             "iOS surface runtime should pass the registration lease to the surface owner instead of registering raw surfaces directly."
         )
 
-        #expect(registrationSource.contains("final class GhosttySurfaceRegistration"))
+        #expect(registrationSource.contains("final class GhosttySurfaceRegistration: @unchecked Sendable"))
+        #expect(
+            registrationSource.contains("private let lock = NSLock()"),
+            "Surface registration should protect its app/reference lease state for nonisolated deinit fallback."
+        )
+        #expect(
+            registrationSource.contains("takeReference()"),
+            "Surface registration teardown should atomically take and clear the current lease before unregistering."
+        )
         #expect(registrationSource.contains("func register(_ surface: ghostty_surface_t"))
         #expect(registrationSource.contains("func unregister()"))
         #expect(registrationSource.contains("func unregisterLaterFromDeinit()"))
