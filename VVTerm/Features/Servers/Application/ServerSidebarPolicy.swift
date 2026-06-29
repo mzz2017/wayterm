@@ -1,6 +1,6 @@
 import Foundation
 
-enum ServerSidebarPolicy {
+nonisolated enum ServerSidebarPolicy {
     static func environmentFilterIds(from storedValue: String) -> Set<UUID> {
         guard !storedValue.isEmpty else { return [] }
         return Set(storedValue.split(separator: ",").compactMap { UUID(uuidString: String($0)) })

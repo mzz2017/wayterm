@@ -1,6 +1,6 @@
 import Foundation
 
-enum ServerFormValidationPolicy {
+nonisolated enum ServerFormValidationPolicy {
     static func isValid(draft: ServerFormDraft) -> Bool {
         !draft.name.isEmpty
             && !draft.host.isEmpty
