@@ -12,6 +12,9 @@ concurrency:
   group: quality-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   spm:
     name: SwiftPM tests
@@ -26,6 +29,16 @@ jobs:
         run: |
           xcodebuild -version
           swift --version
+
+      - name: Restore SwiftPM cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            .build
+            ~/.cache/org.swift.swiftpm
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.swift') }}
+          restore-keys: |
+            spm-${{ runner.os }}-
 
       - name: Run SwiftPM tests
         run: swift test
@@ -64,9 +77,7 @@ jobs:
       IOS_TEST_PROGRESS_INTERVAL: "30"
       IOS_TEST_PROGRESS_LOG_LINES: "100"
       IOS_TEST_FAILURE_LOG_LINES: "500"
-      IOS_TEST_DERIVED_DATA_PATH: ${{ runner.temp }}/vvterm-ios-focused-runtime-${{ matrix.shard }}-derived-data
       IOS_TEST_KEEP_DERIVED_DATA: "1"
-      IOS_TEST_LOG_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-${{ matrix.shard }}-logs
       IOS_FOCUSED_RUNTIME_SHARD: ${{ matrix.shard }}
       IOS_FOCUSED_RUNTIME_FILTERS: ${{ matrix.filters }}
 
@@ -79,6 +90,23 @@ jobs:
           xcodebuild -version
           swift --version
           xcrun simctl list devices available
+
+      - name: Configure focused runtime paths
+        run: |
+          {
+            echo "IOS_TEST_DERIVED_DATA_PATH=${RUNNER_TEMP}/vvterm-ios-focused-runtime-${IOS_FOCUSED_RUNTIME_SHARD}-derived-data"
+            echo "IOS_TEST_LOG_DIR=${RUNNER_TEMP}/vvterm-ios-focused-runtime-${IOS_FOCUSED_RUNTIME_SHARD}-logs"
+            echo "IOS_TEST_CLONED_SOURCE_PACKAGES_DIR=${GITHUB_WORKSPACE}/.xcode-cloned-source-packages"
+          } >> "${GITHUB_ENV}"
+
+      - name: Restore Xcode package cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.xcode-cloned-source-packages
+          key: xcode-spm-${{ runner.os }}-${{ matrix.shard }}-${{ hashFiles('VVTerm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            xcode-spm-${{ runner.os }}-${{ matrix.shard }}-
+            xcode-spm-${{ runner.os }}-
 
       - name: Show focused runtime diagnostics
         run: |
@@ -99,6 +127,7 @@ jobs:
           echo "IOS_TEST_DERIVED_DATA_PATH=${IOS_TEST_DERIVED_DATA_PATH}"
           echo "IOS_TEST_KEEP_DERIVED_DATA=${IOS_TEST_KEEP_DERIVED_DATA}"
           echo "IOS_TEST_LOG_DIR=${IOS_TEST_LOG_DIR}"
+          echo "IOS_TEST_CLONED_SOURCE_PACKAGES_DIR=${IOS_TEST_CLONED_SOURCE_PACKAGES_DIR:-default}"
           echo "IOS_TEST_NO_OUTPUT_TIMEOUT=${IOS_TEST_NO_OUTPUT_TIMEOUT:-default}"
           echo "RUNNER_TEMP=${RUNNER_TEMP}"
           echo "GITHUB_SHA=${GITHUB_SHA}"
@@ -122,6 +151,7 @@ jobs:
               echo "- Device candidates: ${IOS_TEST_DEVICE_NAME_CANDIDATES}"
               echo "- Test retries: 2"
               echo "- DerivedData: ${IOS_TEST_DERIVED_DATA_PATH}"
+              echo "- Package cache: ${IOS_TEST_CLONED_SOURCE_PACKAGES_DIR:-default}"
               echo "- Progress interval: ${IOS_TEST_PROGRESS_INTERVAL}s"
               echo "- Progress tail: ${IOS_TEST_PROGRESS_LOG_LINES} lines"
               echo "- Failure tail: ${IOS_TEST_FAILURE_LOG_LINES} lines"
@@ -175,6 +205,18 @@ jobs:
     runs-on: macos-15
     needs: ios-focused-runtime
     timeout-minutes: 45
+    env:
+      IOS_TEST_XCODEBUILD_ACTION: build-for-testing
+      IOS_TEST_RETRIES: "0"
+      IOS_TEST_DEVICE_NAME: iPhone 17
+      IOS_TEST_DEVICE_NAME_CANDIDATES: iPhone 17,iPhone 16,iPhone 15
+      IOS_TEST_ALLOW_DEVICE_FALLBACK: "1"
+      IOS_TEST_PROGRESS_INTERVAL: "30"
+      IOS_TEST_PROGRESS_LOG_LINES: "100"
+      IOS_TEST_FAILURE_LOG_LINES: "500"
+      IOS_TEST_KEEP_DERIVED_DATA: "1"
+      ENABLE_DEBUG_DYLIB: "NO"
+      SWIFT_STRICT_CONCURRENCY: complete
 
     steps:
       - name: Check out repository
@@ -186,17 +228,57 @@ jobs:
           swift --version
           xcrun simctl list devices available
 
+      - name: Configure strict build paths
+        run: |
+          {
+            echo "IOS_TEST_DERIVED_DATA_PATH=${RUNNER_TEMP}/vvterm-ios-strict-derived-data"
+            echo "IOS_TEST_LOG_DIR=${RUNNER_TEMP}/vvterm-ios-strict-logs"
+            echo "IOS_TEST_CLONED_SOURCE_PACKAGES_DIR=${GITHUB_WORKSPACE}/.xcode-cloned-source-packages"
+          } >> "${GITHUB_ENV}"
+
+      - name: Restore Xcode package cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.xcode-cloned-source-packages
+          key: xcode-spm-${{ runner.os }}-strict-${{ hashFiles('VVTerm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            xcode-spm-${{ runner.os }}-strict-
+            xcode-spm-${{ runner.os }}-
+
+      - name: Show strict build diagnostics
+        run: |
+          mkdir -p "${IOS_TEST_LOG_DIR}"
+          echo "::group::Strict Swift concurrency diagnostics"
+          echo "IOS_TEST_DERIVED_DATA_PATH=${IOS_TEST_DERIVED_DATA_PATH}"
+          echo "IOS_TEST_LOG_DIR=${IOS_TEST_LOG_DIR}"
+          echo "IOS_TEST_CLONED_SOURCE_PACKAGES_DIR=${IOS_TEST_CLONED_SOURCE_PACKAGES_DIR:-default}"
+          echo "IOS_TEST_PROGRESS_INTERVAL=${IOS_TEST_PROGRESS_INTERVAL}"
+          echo "IOS_TEST_FAILURE_LOG_LINES=${IOS_TEST_FAILURE_LOG_LINES}"
+          echo "SWIFT_STRICT_CONCURRENCY=${SWIFT_STRICT_CONCURRENCY}"
+          echo "RUNNER_TEMP=${RUNNER_TEMP}"
+          echo "GITHUB_SHA=${GITHUB_SHA}"
+          echo "xcode-select: $(xcode-select -p)"
+          echo "disk usage:"
+          df -h .
+          df -h "${RUNNER_TEMP}"
+          echo "::endgroup::"
+
       - name: Build iOS unit tests with strict concurrency
-        env:
-          IOS_TEST_XCODEBUILD_ACTION: build-for-testing
-          IOS_TEST_RETRIES: "0"
-          IOS_TEST_DEVICE_NAME: iPhone 17
-          IOS_TEST_DEVICE_NAME_CANDIDATES: iPhone 17,iPhone 16,iPhone 15
-          IOS_TEST_ALLOW_DEVICE_FALLBACK: "1"
-          ENABLE_DEBUG_DYLIB: "NO"
-          SWIFT_STRICT_CONCURRENCY: complete
         run: |
           ./scripts/test-ios.sh SWIFT_STRICT_CONCURRENCY=complete
+
+      - name: Upload strict Swift concurrency logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: strict-swift-concurrency-xcodebuild-logs
+          path: ${{ runner.temp }}/vvterm-ios-strict-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Clean strict DerivedData
+        if: always()
+        run: rm -rf "${IOS_TEST_DERIVED_DATA_PATH}"
 
   ios-unit:
     name: iOS unit tests
@@ -205,6 +287,15 @@ jobs:
       - ios-focused-runtime
       - ios-strict-concurrency
     timeout-minutes: 60
+    env:
+      IOS_TEST_RETRIES: "2"
+      IOS_TEST_DEVICE_NAME: iPhone 17
+      IOS_TEST_DEVICE_NAME_CANDIDATES: iPhone 17,iPhone 16,iPhone 15
+      IOS_TEST_ALLOW_DEVICE_FALLBACK: "1"
+      IOS_TEST_PROGRESS_INTERVAL: "30"
+      IOS_TEST_PROGRESS_LOG_LINES: "100"
+      IOS_TEST_FAILURE_LOG_LINES: "500"
+      IOS_TEST_KEEP_DERIVED_DATA: "1"
 
     steps:
       - name: Check out repository
@@ -216,13 +307,56 @@ jobs:
           swift --version
           xcrun simctl list devices available
 
+      - name: Configure iOS unit test paths
+        run: |
+          {
+            echo "IOS_TEST_DERIVED_DATA_PATH=${RUNNER_TEMP}/vvterm-ios-unit-derived-data"
+            echo "IOS_TEST_LOG_DIR=${RUNNER_TEMP}/vvterm-ios-unit-logs"
+            echo "IOS_TEST_CLONED_SOURCE_PACKAGES_DIR=${GITHUB_WORKSPACE}/.xcode-cloned-source-packages"
+          } >> "${GITHUB_ENV}"
+
+      - name: Restore Xcode package cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.xcode-cloned-source-packages
+          key: xcode-spm-${{ runner.os }}-unit-${{ hashFiles('VVTerm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            xcode-spm-${{ runner.os }}-unit-
+            xcode-spm-${{ runner.os }}-
+
+      - name: Show iOS unit test diagnostics
+        run: |
+          mkdir -p "${IOS_TEST_LOG_DIR}"
+          echo "::group::iOS unit test diagnostics"
+          echo "IOS_TEST_DERIVED_DATA_PATH=${IOS_TEST_DERIVED_DATA_PATH}"
+          echo "IOS_TEST_LOG_DIR=${IOS_TEST_LOG_DIR}"
+          echo "IOS_TEST_CLONED_SOURCE_PACKAGES_DIR=${IOS_TEST_CLONED_SOURCE_PACKAGES_DIR:-default}"
+          echo "IOS_TEST_RETRIES=${IOS_TEST_RETRIES}"
+          echo "IOS_TEST_PROGRESS_INTERVAL=${IOS_TEST_PROGRESS_INTERVAL}"
+          echo "IOS_TEST_FAILURE_LOG_LINES=${IOS_TEST_FAILURE_LOG_LINES}"
+          echo "RUNNER_TEMP=${RUNNER_TEMP}"
+          echo "GITHUB_SHA=${GITHUB_SHA}"
+          echo "xcode-select: $(xcode-select -p)"
+          echo "disk usage:"
+          df -h .
+          df -h "${RUNNER_TEMP}"
+          echo "::endgroup::"
+
       - name: Run iOS unit tests
-        env:
-          IOS_TEST_RETRIES: "2"
-          IOS_TEST_DEVICE_NAME: iPhone 17
-          IOS_TEST_DEVICE_NAME_CANDIDATES: iPhone 17,iPhone 16,iPhone 15
-          IOS_TEST_ALLOW_DEVICE_FALLBACK: "1"
         run: ./scripts/test-ios.sh
+
+      - name: Upload iOS unit test logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-unit-xcodebuild-logs
+          path: ${{ runner.temp }}/vvterm-ios-unit-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Clean iOS unit DerivedData
+        if: always()
+        run: rm -rf "${IOS_TEST_DERIVED_DATA_PATH}"
 
   native-sources:
     name: Native source checksums
