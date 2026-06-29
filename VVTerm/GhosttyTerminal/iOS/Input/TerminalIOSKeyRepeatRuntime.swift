@@ -1,7 +1,7 @@
 #if os(iOS)
 import UIKit
 
-enum TerminalHardwareKeyRepeatPolicy {
+nonisolated enum TerminalHardwareKeyRepeatPolicy {
     private static let repeatableKeyCodes: Set<UIKeyboardHIDUsage> = [
         .keyboardDeleteOrBackspace,
         .keyboardDeleteForward,
