@@ -58,9 +58,9 @@ extension ConnectionSessionManager {
             guard let self else { return }
             guard case .session(let oldestId) = entityId else { return }
             logger.info("Evicting oldest terminal to free memory (count: \(self.terminalSurfaceRegistry.count))")
+            guard let serverId = sessionWithID(oldestId)?.serverId else { return }
             let unregisterTask = scheduleSSHUnregister(for: oldestId)
             let shellTeardownTask = cancelAndClearShellHandlers(for: oldestId)
-            guard let serverId = sessionWithID(oldestId)?.serverId else { return }
             let teardownTask = Task(priority: .utility) {
                 await unregisterTask.value
                 await shellTeardownTask?.value

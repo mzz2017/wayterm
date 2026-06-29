@@ -330,6 +330,7 @@ final class ConnectionSessionManager: ObservableObject {
     var richPasteUploadOperationForTesting: TerminalRichPasteUploadOperation?
     var resizeOperationForTesting: (@MainActor (TerminalResizeRequestSize, TerminalEntityID) async -> Void)?
     var processExitOperationForTesting: (@MainActor (TerminalEntityID) async -> Void)?
+    var sshUnregisterScheduleOperationForTesting: (@MainActor (UUID) -> Void)?
     #endif
     @Published private(set) var isSuspendingForBackground = false
 

@@ -94,6 +94,7 @@ extension ConnectionSessionManager {
         richPasteUploadOperationForTesting = nil
         resizeOperationForTesting = nil
         processExitOperationForTesting = nil
+        sshUnregisterScheduleOperationForTesting = nil
         isRestoring = false
 
         snapshotStore.remove()
@@ -143,6 +144,12 @@ extension ConnectionSessionManager {
         _ operation: (@MainActor (TerminalEntityID) async -> Void)?
     ) {
         processExitOperationForTesting = operation
+    }
+
+    func setSSHUnregisterScheduleOperationForTesting(
+        _ operation: (@MainActor (UUID) -> Void)?
+    ) {
+        sshUnregisterScheduleOperationForTesting = operation
     }
 
     @discardableResult

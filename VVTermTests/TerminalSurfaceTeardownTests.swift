@@ -274,6 +274,49 @@ struct TerminalSurfaceTeardownTests {
 
     @MainActor
     @Test
+    func staleRootSurfaceEvictionDoesNotStartUnownedSSHUnregister() async {
+        let manager = ConnectionSessionManager.shared
+        await manager.resetForTesting()
+
+        let unregisterRecorder = TerminalSSHUnregisterScheduleRecorder()
+        manager.setSSHUnregisterScheduleOperationForTesting { sessionId in
+            unregisterRecorder.record(sessionId)
+        }
+
+        let oldestSessionId = UUID()
+        let oldestRecorder = TerminalSurfaceRegistryRecorder()
+        manager.terminalSurfaceRegistry.registerForTesting(
+            entityId: .session(oldestSessionId),
+            pause: { oldestRecorder.pauseCount += 1 },
+            cleanup: { oldestRecorder.cleanupCount += 1 }
+        )
+
+        for _ in 1..<20 {
+            manager.terminalSurfaceRegistry.registerForTesting(
+                entityId: .session(UUID()),
+                pause: {},
+                cleanup: {}
+            )
+        }
+
+        // Given the LRU cache contains a stale root surface whose session no
+        // longer has an application-layer owner.
+        manager.evictOldTerminalsIfNeeded()
+
+        // Then eviction releases the UI surface only and does not start an
+        // untracked SSH unregister task that no server teardown owner can await.
+        #expect(oldestRecorder.cleanupCount == 1)
+        #expect(
+            unregisterRecorder.scheduledSessionIds.isEmpty,
+            "Stale surface eviction must not start SSH unregister without a server teardown owner."
+        )
+        #expect(manager.serverTeardownTaskStore.isEmpty)
+
+        await manager.resetForTesting()
+    }
+
+    @MainActor
+    @Test
     func splitViewDisappearancePreservesLivePaneSurfaceWithoutCleanup() async {
         let manager = TerminalTabManager.shared
         await manager.resetForTesting()
@@ -362,4 +405,12 @@ private final class TerminalSurfaceRegistryRecorder {
     var pauseCount = 0
     var cleanupCount = 0
     var runtimeTeardownCount = 0
+}
+
+private final class TerminalSSHUnregisterScheduleRecorder {
+    private(set) var scheduledSessionIds: [UUID] = []
+
+    func record(_ sessionId: UUID) {
+        scheduledSessionIds.append(sessionId)
+    }
 }

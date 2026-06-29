@@ -316,7 +316,10 @@ extension ConnectionSessionManager {
         priority: TaskPriority = .utility,
         killingManagedTmuxSessionNamed tmuxSessionName: String? = nil
     ) -> Task<Void, Never> {
-        Task.detached(priority: priority) { [weak self] in
+#if DEBUG
+        sshUnregisterScheduleOperationForTesting?(sessionId)
+#endif
+        return Task.detached(priority: priority) { [weak self] in
             await self?.unregisterSSHClient(
                 for: sessionId,
                 killingManagedTmuxSessionNamed: tmuxSessionName
