@@ -1,6 +1,6 @@
 import Foundation
 
-enum TranscriptionProvider: String, CaseIterable, Identifiable {
+nonisolated enum TranscriptionProvider: String, CaseIterable, Identifiable {
     case system
     case mlxWhisper
     case mlxParakeet
@@ -19,14 +19,14 @@ enum TranscriptionProvider: String, CaseIterable, Identifiable {
     }
 }
 
-struct TranscriptionSettingsKeys {
+nonisolated struct TranscriptionSettingsKeys {
     static let provider = "transcriptionProvider"
     static let mlxWhisperModelId = "mlxWhisperModelId"
     static let mlxParakeetModelId = "mlxParakeetModelId"
     static let language = "transcriptionLanguage"
 }
 
-struct TranscriptionSettingsDefaults {
+nonisolated struct TranscriptionSettingsDefaults {
     static let provider: TranscriptionProvider = .system
     static let mlxWhisperModelId = "mlx-community/whisper-tiny-mlx"
     static let mlxParakeetModelId = "mlx-community/parakeet-tdt-0.6b-v2"
@@ -34,7 +34,7 @@ struct TranscriptionSettingsDefaults {
     static let autoLanguageCode = "auto"
 }
 
-struct TranscriptionSettingsSnapshot: Equatable {
+nonisolated struct TranscriptionSettingsSnapshot: Equatable {
     var provider: TranscriptionProvider
     var whisperModelId: String
     var parakeetModelId: String
@@ -54,7 +54,7 @@ struct TranscriptionSettingsReader {
     }
 }
 
-struct TranscriptionSettingsStore {
+nonisolated struct TranscriptionSettingsStore {
     static func currentProvider() -> TranscriptionProvider {
         guard let raw = UserDefaults.standard.string(forKey: TranscriptionSettingsKeys.provider) else {
             return TranscriptionSettingsDefaults.provider
