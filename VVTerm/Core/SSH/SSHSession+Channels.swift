@@ -317,13 +317,7 @@ extension SSHSession {
     }
 
     func waitForChannelCleanupTasks() async {
-        while true {
-            let tasks = channelCleanupTasks.tasks()
-            guard !tasks.isEmpty else { return }
-            for task in tasks {
-                await task.value
-            }
-        }
+        await channelCleanupTasks.waitForAll()
     }
 
     func closeShellInternal(_ shellId: UUID) {

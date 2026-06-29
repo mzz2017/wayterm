@@ -177,43 +177,7 @@ private struct CloudflareWebAuthenticationSessionHandle: @unchecked Sendable {
     }
 }
 
-private nonisolated final class CloudflareOAuthCompletionTaskRegistry: @unchecked Sendable {
-    private final class Record {
-        var task: Task<Void, Never>?
-    }
-
-    private let lock = NSLock()
-    private var records: [UUID: Record] = [:]
-
-    @discardableResult
-    func track(_ operation: @escaping @Sendable () async -> Void) -> UUID {
-        let requestID = UUID()
-        let record = Record()
-
-        lock.lock()
-        records[requestID] = record
-        let task = Task {
-            await operation()
-            self.remove(requestID)
-        }
-        record.task = task
-        lock.unlock()
-
-        return requestID
-    }
-
-    func tasks() -> [Task<Void, Never>] {
-        lock.lock()
-        defer { lock.unlock() }
-        return records.values.compactMap(\.task)
-    }
-
-    private func remove(_ requestID: UUID) {
-        lock.lock()
-        records.removeValue(forKey: requestID)
-        lock.unlock()
-    }
-}
+private typealias CloudflareOAuthCompletionTaskRegistry = AsyncCallbackTaskRegistry
 
 @MainActor
 private final class CloudflarePresentationContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding {

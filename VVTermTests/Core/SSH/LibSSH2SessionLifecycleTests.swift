@@ -584,8 +584,9 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
             "SSHSession should own a channel cleanup task registry."
         )
         XCTAssertTrue(
-            registrySource.contains("Task.detached"),
-            "The cleanup registry should track asynchronous cleanup tasks created from synchronous callbacks."
+            registrySource.contains("AsyncCallbackTaskRegistry")
+                && registrySource.contains("trackDetached(operation)"),
+            "The cleanup registry should delegate synchronous callback cleanup to the shared detached task registry."
         )
         XCTAssertTrue(
             startShellSource.contains("trackChannelCleanupTask"),

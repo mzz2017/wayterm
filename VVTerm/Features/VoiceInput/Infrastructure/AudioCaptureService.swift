@@ -137,13 +137,7 @@ final class AudioCaptureService: ObservableObject {
     }
 
     private func waitForBufferUpdateTasks() async {
-        while true {
-            let tasks = bufferUpdateTasks.tasks()
-            guard !tasks.isEmpty else { return }
-            for task in tasks {
-                await task.value
-            }
-        }
+        await bufferUpdateTasks.waitForAll()
     }
 
     private func updateMetrics(with samples: [Float]) {

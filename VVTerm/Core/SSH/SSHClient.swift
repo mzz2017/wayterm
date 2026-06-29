@@ -762,13 +762,7 @@ nonisolated actor SSHClient {
     }
 
     private func waitForMoshTeardownTasks() async {
-        while true {
-            let tasks = moshTeardownTasks.tasks()
-            guard !tasks.isEmpty else { return }
-            for task in tasks {
-                await task.value
-            }
-        }
+        await moshTeardownTasks.waitForAll()
     }
 
     nonisolated static func runWithTimeout<T: Sendable>(

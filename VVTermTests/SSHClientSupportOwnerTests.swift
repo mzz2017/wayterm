@@ -103,29 +103,20 @@ struct SSHClientSupportOwnerTests {
     }
 
     @Test
-    func teardownRegistriesPublishTaskBeforeReleasingTrackLock() throws {
+    func teardownRegistriesUseSharedCallbackTaskRegistryWithDetachedCleanup() throws {
         for path in [
             "VVTerm/Core/SSH/SSHChannelCleanupTaskRegistry.swift",
             "VVTerm/Core/SSH/SSHMoshTeardownTaskRegistry.swift"
         ] {
             let source = try source(at: sourceRoot().appendingPathComponent(path))
-            let trackSource = try slice(
-                startingAt: "    @discardableResult",
-                endingBefore: "\n\n    func tasks()",
-                in: source
-            )
-            guard let assignment = trackSource.range(of: "record.task = task"),
-                  let unlock = trackSource.range(of: "lock.unlock()") else {
-                Issue.record("Expected \(path) track implementation to publish the task before unlocking")
-                continue
-            }
 
-            // Then task publication stays inside the same critical section as
-            // record insertion. This guards the wait-before-publish race that
-            // can otherwise let disconnect finish before cleanup/teardown.
             #expect(
-                assignment.lowerBound < unlock.lowerBound,
-                "\(path) should assign record.task before releasing the track lock."
+                source.contains("AsyncCallbackTaskRegistry"),
+                "\(path) should delegate callback task bookkeeping to the shared lifecycle registry."
+            )
+            #expect(
+                source.contains("trackDetached(operation)"),
+                "\(path) should keep SSH cleanup detached from caller cancellation context."
             )
         }
     }

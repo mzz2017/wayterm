@@ -54,49 +54,16 @@ nonisolated final class GhosttySurfaceRegistration: @unchecked Sendable {
 }
 
 nonisolated final class GhosttySurfaceDeferredUnregisterTaskRegistry: @unchecked Sendable {
-    private final class Record {
-        var task: Task<Void, Never>?
-    }
-
-    private let lock = NSLock()
-    private var records: [UUID: Record] = [:]
+    private let registry = AsyncCallbackTaskRegistry()
 
     @discardableResult
     func track(_ operation: @escaping @MainActor @Sendable () -> Void) -> UUID {
-        let requestID = UUID()
-        let record = Record()
-
-        lock.lock()
-        records[requestID] = record
-        let task = Task { @MainActor [self] in
+        registry.trackMainActor {
             operation()
-            remove(requestID)
         }
-        record.task = task
-        lock.unlock()
-
-        return requestID
     }
 
     func waitForAll() async {
-        while true {
-            let tasks = tasks()
-            guard !tasks.isEmpty else { return }
-            for task in tasks {
-                await task.value
-            }
-        }
-    }
-
-    private func tasks() -> [Task<Void, Never>] {
-        lock.lock()
-        defer { lock.unlock() }
-        return records.values.compactMap(\.task)
-    }
-
-    private func remove(_ requestID: UUID) {
-        lock.lock()
-        records.removeValue(forKey: requestID)
-        lock.unlock()
+        await registry.waitForAll()
     }
 }
