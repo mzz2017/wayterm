@@ -15,6 +15,10 @@ enum GhosttyClipboardBridge {
     static func string(from entry: ghostty_clipboard_content_s) -> String? {
         // Ghostty provides NUL-terminated clipboard payloads for text entries.
         guard let dataPointer = entry.data else { return nil }
+        if let mimePointer = entry.mime {
+            let mime = String(cString: mimePointer).lowercased()
+            guard mime.hasPrefix("text/") else { return nil }
+        }
         return String(cString: dataPointer)
     }
 }
