@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct TerminalOpenRequestStore {
+nonisolated struct TerminalOpenRequestStore {
     private var requests: [UUID: Task<Void, Never>] = [:]
     private var scopesInFlight: Set<UUID> = []
 
