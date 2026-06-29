@@ -38,13 +38,21 @@ Applies to all Swift, SwiftUI, and Apple-platform code. Unless the user explicit
   - If the receiver may disappear before the callback fires, move the callback state into a stable owner, registry, actor, or cancellation token.
   - Late callbacks should either complete cleanup through a retained lifecycle owner, observe an explicit invalidated state, or report cancellation.
 
-- Use actors for mutable shared state.
+- Use actors for shared mutable state and resource ownership.
   - Shared mutable state accessed across concurrency domains should live in an `actor` or be isolated to `@MainActor`.
+  - Actors are a good fit for long-lived resources, callback registries, caches, gates, and external systems that need serialized access.
+  - Do not turn pure values, parsers, formatters, validators, or stateless policy helpers into actors just to satisfy concurrency warnings.
   - Do not rely on `DispatchQueue` or locks when actor isolation is a natural fit.
 
 - Be explicit about actor isolation.
   - UI state and SwiftUI observable objects should usually be `@MainActor`.
   - Non-UI work should not run on `@MainActor` unless it must touch UI state.
+  - In modules or targets with default global actor isolation, use plain `nonisolated` for pure domain values and synchronous helper APIs that have no shared mutable state, lifecycle ownership, or UI dependency.
+  - Treat `nonisolated` as a normal boundary tool; reserve `nonisolated(unsafe)` for rare cases with a documented ownership or synchronization invariant.
+
+- Actor methods are reentrant across suspension points.
+  - After `await`, re-check state, request identifiers, generation tokens, and cancellation before mutating lifecycle state.
+  - Do not assume an actor method is an uninterrupted transaction from entry to return.
 
 - Avoid mixing old and new concurrency without a boundary.
   - Wrap callback, delegate, GCD, or C async APIs behind async functions.
@@ -210,6 +218,8 @@ Applies to all Swift, SwiftUI, and Apple-platform code. Unless the user explicit
 
 - Keep main actor work small.
   - Heavy parsing, crypto, file IO, network IO, compression, and large data transforms must not run on `@MainActor`.
+  - Hot paths such as input routing, rendering, display refresh, stream processing, and FFI callback conversion should avoid unnecessary actor hops.
+  - Resource owners may be actors while pure conversion and routing helpers remain synchronous and `nonisolated`.
 
 - Avoid unnecessary SwiftUI invalidation.
   - Keep observable state scoped.
@@ -242,6 +252,9 @@ Before finishing Swift changes, verify:
 - Are `[weak self]`, `Unmanaged.passUnretained`, and temporary C string/buffer pointers backed by an explicit ownership or invalidation contract?
 - Does SwiftUI lifecycle only manage UI surfaces, not business resources?
 - Is mutable shared state actor-isolated or `@MainActor`?
+- Are pure values, parsers, validators, formatters, and policy helpers free of accidental global-actor isolation?
+- Do actor methods re-check state or cancellation after `await` before completing lifecycle transitions?
+- Do hot paths avoid unnecessary actor or `@MainActor` hops?
 - Are external C/FFI calls protected by explicit lifetime and concurrency rules?
 - Are errors internally distinguishable?
 - Are tests or build verification run and reported honestly?

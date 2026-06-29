@@ -275,8 +275,15 @@ xcodebuild test \
 - Avoid untracked `Task {}` and `Task.detached {}` for lifecycle-critical work. If a call site cannot await, store or return a `Task` and make later operations wait on it.
 - Non-trivial lifecycles should use explicit states such as `idle`, `connecting`, `connected`, `closing`, `disconnected`, and `failed`; do not infer business lifecycle from SwiftUI view existence.
 - Mutable shared state should be actor-isolated or `@MainActor`; keep heavy parsing, crypto, file IO, and network IO off the main actor.
+- VVTerm enables default MainActor isolation for app code. Before fixing Swift concurrency warnings, classify the type first:
+  - resource owners, UI state, observable stores, and lifecycle coordinators should stay actor-isolated or `@MainActor`
+  - pure domain values, policy structs/enums, parsers, formatters, validators, and synchronous conversion helpers should usually be explicit `nonisolated`
+  - do not add `@MainActor` to production or test code merely to silence a warning
+- Avoid unnecessary actor or `@MainActor` hops on terminal hot paths: keyboard/input routing, display link/rendering, stream processing, FFI callbacks, and synchronous clipboard/text conversion.
+- Actor methods are reentrant across `await`; close/reconnect/sync/auth/surface attach-detach paths must re-check request identity, state, and cancellation after suspension before publishing lifecycle results.
 - C/FFI calls must keep pointer lifetimes local, preserve raw error codes in logs, and serialize sensitive paths when thread-safety is uncertain.
 - Bug fixes need regression tests when feasible, especially async ordering tests for close/open/reconnect behavior.
+- Strict concurrency build warnings can be used as RED/GREEN evidence, but the fix must improve the actor/resource boundary. Prefer behavior lifecycle tests for close/reconnect/cleanup/auth/download/upload over source-shape tests when feasible.
 - Unit test files must include enough context for future triage: protected behavior, test target/invariant, fake assumptions, and when the test should be updated instead of treated as a regression. Individual tests should have descriptive names plus Given/When/Then comments or equivalent assertion messages.
 - Do not claim tests pass unless they ran and completed. If only `build-for-testing` passed or XCTest hung, state that explicitly.
 
