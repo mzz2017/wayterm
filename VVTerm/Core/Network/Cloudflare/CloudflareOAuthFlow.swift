@@ -32,23 +32,63 @@ struct CloudflareOAuthFlow: OAuthFlow {
     }
 }
 
+nonisolated struct CloudflareOAuthSessionLifecycleState: Sendable {
+    private(set) var currentSessionID: UUID?
+    private(set) var ignoredCompletionSessionIDs: Set<UUID> = []
+
+    var hasCurrentSession: Bool {
+        currentSessionID != nil
+    }
+
+    mutating func beginStart() -> UUID {
+        invalidateCurrentSession()
+        let sessionID = UUID()
+        currentSessionID = sessionID
+        return sessionID
+    }
+
+    mutating func invalidateCurrentSession() {
+        if let currentSessionID {
+            ignoredCompletionSessionIDs.insert(currentSessionID)
+            self.currentSessionID = nil
+        }
+    }
+
+    func isCurrent(_ sessionID: UUID) -> Bool {
+        currentSessionID == sessionID
+    }
+
+    mutating func finishIfCurrent(_ sessionID: UUID) {
+        if currentSessionID == sessionID {
+            currentSessionID = nil
+        }
+    }
+
+    mutating func consumeIgnoredCompletion(_ sessionID: UUID) -> Bool {
+        ignoredCompletionSessionIDs.remove(sessionID) != nil
+    }
+}
+
 actor CloudflareWebAuthenticationSessionActor: OAuthWebSession {
     private let completionTasks = CloudflareOAuthCompletionTaskRegistry()
     private var currentSession: CloudflareWebAuthenticationSessionHandle?
-    private var currentSessionID: UUID?
-    private var ignoredCompletionSessionIDs: Set<UUID> = []
+    private var sessionState = CloudflareOAuthSessionLifecycleState()
     private var userDidCancel = false
     private var presentationContextProvider: CloudflarePresentationContextProvider?
 
     func start(url: URL) async throws {
-        if currentSession != nil {
+        if currentSession != nil || sessionState.hasCurrentSession {
             await resetForRestart()
         }
 
         userDidCancel = false
 
+        let sessionID = sessionState.beginStart()
         let provider = await ensurePresentationContextProvider()
-        let sessionID = UUID()
+        guard sessionState.isCurrent(sessionID) else {
+            throw CancellationError()
+        }
+
         let completionTasks = completionTasks
         let session = await MainActor.run {
             CloudflareWebAuthenticationSessionHandle(url: url, callbackURLScheme: nil) { [self] _, error in
@@ -59,25 +99,32 @@ actor CloudflareWebAuthenticationSessionActor: OAuthWebSession {
         }
 
         await session.configure(presentationContextProvider: provider)
+        guard sessionState.isCurrent(sessionID) else {
+            await session.cancel()
+            throw CancellationError()
+        }
 
         currentSession = session
-        currentSessionID = sessionID
         let didStart = await session.start()
+        guard sessionState.isCurrent(sessionID) else {
+            await session.cancel()
+            throw CancellationError()
+        }
+
         if !didStart {
             currentSession = nil
-            currentSessionID = nil
+            sessionState.finishIfCurrent(sessionID)
             throw Failure.auth("Failed to start Cloudflare login session")
         }
     }
 
     func stop() async {
-        guard let session = currentSession else { return }
-        if let currentSessionID {
-            ignoredCompletionSessionIDs.insert(currentSessionID)
+        guard currentSession != nil || sessionState.hasCurrentSession else { return }
+        sessionState.invalidateCurrentSession()
+        if let session = currentSession {
+            await session.cancel()
         }
-        await session.cancel()
         currentSession = nil
-        currentSessionID = nil
         await waitForCompletionTasks()
     }
 
@@ -86,14 +133,11 @@ actor CloudflareWebAuthenticationSessionActor: OAuthWebSession {
     }
 
     private func resetForRestart() async {
-        if let currentSessionID {
-            ignoredCompletionSessionIDs.insert(currentSessionID)
-        }
+        sessionState.invalidateCurrentSession()
         if let session = currentSession {
             await session.cancel()
         }
         currentSession = nil
-        currentSessionID = nil
         userDidCancel = false
         await waitForCompletionTasks()
     }
@@ -110,18 +154,19 @@ actor CloudflareWebAuthenticationSessionActor: OAuthWebSession {
     }
 
     private func handleCompletion(sessionID: UUID, error: Error?) {
+        let isCurrentSession = sessionState.isCurrent(sessionID)
         defer {
-            if currentSessionID == sessionID {
+            if isCurrentSession {
                 currentSession = nil
-                currentSessionID = nil
+                sessionState.finishIfCurrent(sessionID)
             }
         }
 
-        if ignoredCompletionSessionIDs.remove(sessionID) != nil {
+        if sessionState.consumeIgnoredCompletion(sessionID) {
             return
         }
 
-        guard currentSessionID == sessionID else {
+        guard isCurrentSession else {
             return
         }
 

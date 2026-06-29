@@ -11,6 +11,48 @@ import Testing
 // connection infrastructure owner with awaited connect-failure cleanup.
 struct CloudflareTransportManagerLifecycleTests {
     @Test
+    func oauthSessionStateInvalidatesSupersededPendingStarts() {
+        var state = CloudflareOAuthSessionLifecycleState()
+
+        // Given an OAuth start request has reserved ownership before it creates
+        // the platform session handle.
+        let staleSessionID = state.beginStart()
+
+        // When a newer start supersedes it during an actor await boundary.
+        let currentSessionID = state.beginStart()
+
+        // Then the older start can no longer publish a session or completion
+        // result, and its late callback is explicitly ignored.
+        let didIgnoreStaleCompletion = state.consumeIgnoredCompletion(staleSessionID)
+        #expect(!state.isCurrent(staleSessionID))
+        #expect(state.isCurrent(currentSessionID))
+        #expect(
+            didIgnoreStaleCompletion,
+            "Superseded OAuth starts should ignore late ASWebAuthenticationSession completions."
+        )
+    }
+
+    @Test
+    func oauthSessionStateClearsOnlyCurrentCompletion() {
+        var state = CloudflareOAuthSessionLifecycleState()
+        let staleSessionID = state.beginStart()
+        let currentSessionID = state.beginStart()
+
+        // Given an older completion arrives after a newer session is current.
+        state.finishIfCurrent(staleSessionID)
+
+        // Then the current session remains owned until its own completion
+        // arrives.
+        #expect(state.isCurrent(currentSessionID))
+
+        // When the current completion finishes.
+        state.finishIfCurrent(currentSessionID)
+
+        // Then no session remains current.
+        #expect(!state.hasCurrentSession)
+    }
+
+    @Test
     func canceledConnectDisconnectsSessionBeforeReturning() async throws {
         let fakeSession = FakeCloudflareTransportSession()
         let manager = CloudflareTransportManager { _ in
