@@ -112,6 +112,39 @@ struct GhosttyIOSSuperfileBoundaryTests {
     }
 
     @Test
+    func lifecycleObserverBagOwnsNotificationTokensOutsideMainActorState() throws {
+        let root = try sourceRoot()
+        let observerBagSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/TerminalLifecycleObserverBag+iOS.swift")
+        )
+
+        #expect(
+            observerBagSource.contains("NotificationObserverTokens"),
+            "TerminalLifecycleObserverBag should use the shared observer-token owner for NotificationCenter tokens."
+        )
+        #expect(
+            !observerBagSource.contains("configReloadObserver: NSObjectProtocol"),
+            "Config reload observer tokens should not be stored directly on the observer bag."
+        )
+        #expect(
+            !observerBagSource.contains("inputModeObserver: NSObjectProtocol"),
+            "Input mode observer tokens should not be stored directly on the observer bag."
+        )
+        #expect(
+            !observerBagSource.contains("hardwareKeyboardObservers: [NSObjectProtocol]"),
+            "Hardware keyboard observer tokens should not be stored directly on the observer bag."
+        )
+        #expect(
+            observerBagSource.contains("MainActor.assumeIsolated"),
+            "Main-queue NotificationCenter callbacks should explicitly hand intent back to the UI actor."
+        )
+        #expect(
+            !observerBagSource.contains("Task { @MainActor"),
+            "Observer callbacks should not create untracked main-actor tasks for synchronous main-queue delivery."
+        )
+    }
+
+    @Test
     func textInputConformanceLivesOutsideMainGhosttyTerminalViewFile() throws {
         let root = try sourceRoot()
         let mainSource = try source(
