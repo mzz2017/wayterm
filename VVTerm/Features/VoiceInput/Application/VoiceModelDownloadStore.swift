@@ -120,6 +120,9 @@ final class VoiceModelDownloadStore: ObservableObject {
         for task in tasks {
             await task.value
         }
+        for kind in MLXModelKind.allCases {
+            await manager(for: kind).cleanupAndWait()
+        }
     }
 
     func removeModel(for kind: MLXModelKind) {

@@ -206,6 +206,51 @@ struct VoiceModelDownloadStoreTests {
     }
 
     @Test
+    func cancelAllAndWaitWaitsForModelManagerBackgroundTasks() async {
+        let modelSizer = BlockingMLXModelSizer()
+        let probe = VoiceModelDownloadProbe()
+        let store = VoiceModelDownloadStore(
+            settings: TranscriptionSettingsReader {
+                TranscriptionSettingsSnapshot(
+                    provider: .mlxWhisper,
+                    whisperModelId: "test/whisper-background",
+                    parakeetModelId: "test/parakeet-background",
+                    languageCode: "en"
+                )
+            },
+            modelSizeProvider: modelSizer
+        )
+
+        // Given refreshing model status has started owner-managed background
+        // repo-size tasks for both model managers.
+        store.refreshStatuses()
+        await modelSizer.waitForCallCount(2)
+
+        // When app-level cleanup asks the store to cancel all VoiceInput model work.
+        let cleanupTask = Task {
+            await store.cancelAllAndWait()
+            await probe.record("cleanup-return")
+        }
+        for _ in 0..<20 where !(await probe.events()).contains("cleanup-return") {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        // Then cleanup must remain waitable until manager-owned background
+        // tasks observe cancellation and exit.
+        #expect(
+            !(await probe.events()).contains("cleanup-return"),
+            "Voice model cleanup must wait for manager-owned background tasks, not just download tasks."
+        )
+
+        await modelSizer.release()
+        await cleanupTask.value
+        #expect(
+            await probe.events() == ["cleanup-return"],
+            "Voice model cleanup should return only after background repo-size tasks have exited."
+        )
+    }
+
+    @Test
     func modelManagerCleanupCancelsSessionAndBackgroundWork() throws {
         // Given MLXModelManager owns URLSession delegate downloads plus
         // background storage and repo-size tasks.
@@ -300,6 +345,49 @@ private actor VoiceModelDownloadGate {
         await withCheckedContinuation { continuation in
             continuations.append(continuation)
         }
+    }
+}
+
+private actor BlockingMLXModelSizer: MLXModelSizing {
+    private var callCount = 0
+    private var waiters: [(expectedCount: Int, continuation: CheckedContinuation<Void, Never>)] = []
+    private var releaseContinuations: [CheckedContinuation<Void, Never>] = []
+
+    func size(for modelId: String) async -> Int64? {
+        callCount += 1
+        resumeReadyWaiters()
+        await withCheckedContinuation { continuation in
+            releaseContinuations.append(continuation)
+        }
+        return 42
+    }
+
+    func waitForCallCount(_ expectedCount: Int) async {
+        guard callCount < expectedCount else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append((expectedCount, continuation))
+        }
+    }
+
+    func release() {
+        let continuations = releaseContinuations
+        releaseContinuations.removeAll()
+        continuations.forEach { $0.resume() }
+    }
+
+    private func resumeReadyWaiters() {
+        guard !waiters.isEmpty else { return }
+        var pending: [(expectedCount: Int, continuation: CheckedContinuation<Void, Never>)] = []
+        var ready: [CheckedContinuation<Void, Never>] = []
+        for waiter in waiters {
+            if callCount >= waiter.expectedCount {
+                ready.append(waiter.continuation)
+            } else {
+                pending.append(waiter)
+            }
+        }
+        waiters = pending
+        ready.forEach { $0.resume() }
     }
 }
 

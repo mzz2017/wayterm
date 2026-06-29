@@ -229,6 +229,14 @@ final class MLXModelManager: NSObject, ObservableObject {
         session.invalidateAndCancel()
     }
 
+    func cleanupAndWait() async {
+        let storageTask = storageTask
+        let repoSizeTask = repoSizeTask
+        cleanup()
+        await storageTask?.value
+        await repoSizeTask?.value
+    }
+
     static func isModelAvailable(kind: MLXModelKind, modelId: String) -> Bool {
         let normalized = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return false }
