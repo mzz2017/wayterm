@@ -1,6 +1,6 @@
 import Foundation
 
-enum TerminalAccessoryItemRef: Codable, Hashable {
+nonisolated enum TerminalAccessoryItemRef: Codable, Hashable {
     case system(TerminalAccessorySystemActionID)
     case custom(UUID)
 
@@ -48,7 +48,7 @@ enum TerminalAccessoryItemRef: Codable, Hashable {
     }
 }
 
-struct TerminalAccessoryCustomAction: Identifiable, Codable, Equatable {
+nonisolated struct TerminalAccessoryCustomAction: Identifiable, Codable, Equatable {
     let id: UUID
     var title: String
     var kind: TerminalAccessoryCustomActionKind
@@ -95,7 +95,7 @@ struct TerminalAccessoryCustomAction: Identifiable, Codable, Equatable {
     }
 }
 
-struct TerminalSnippet: Identifiable, Codable, Equatable {
+nonisolated struct TerminalSnippet: Identifiable, Codable, Equatable {
     let id: UUID
     var title: String
     var content: String
@@ -124,13 +124,13 @@ struct TerminalSnippet: Identifiable, Codable, Equatable {
     }
 }
 
-struct TerminalAccessoryLayout: Codable, Equatable {
+nonisolated struct TerminalAccessoryLayout: Codable, Equatable {
     var version: Int
     var activeItems: [TerminalAccessoryItemRef]
     var updatedAt: Date
 }
 
-struct TerminalAccessoryProfile: Codable, Equatable {
+nonisolated struct TerminalAccessoryProfile: Codable, Equatable {
     var schemaVersion: Int
     var layout: TerminalAccessoryLayout
     var customActions: [TerminalAccessoryCustomAction]
@@ -187,18 +187,18 @@ struct TerminalAccessoryProfile: Codable, Equatable {
 }
 
 extension TerminalAccessoryProfile {
-    static let schemaVersion = 2
-    static let recordType = "UserPreference"
-    static let recordName = "terminalAccessory.v1"
-    static let defaultsKey = CloudKitSyncConstants.terminalAccessoryProfileStorageKey
+    nonisolated static let schemaVersion = 2
+    nonisolated static let recordType = "UserPreference"
+    nonisolated static let recordName = "terminalAccessory.v1"
+    nonisolated static let defaultsKey = CloudKitSyncConstants.terminalAccessoryProfileStorageKey
 
-    static let minActiveItems = 4
-    static let maxActiveItems = 28
+    nonisolated static let minActiveItems = 4
+    nonisolated static let maxActiveItems = 28
     nonisolated static let maxCustomActions = 100
-    static let maxCustomActionTitleLength = 24
-    static let maxCommandContentLength = 2048
+    nonisolated static let maxCustomActionTitleLength = 24
+    nonisolated static let maxCommandContentLength = 2048
 
-    static let defaultActiveItems: [TerminalAccessoryItemRef] = [
+    nonisolated static let defaultActiveItems: [TerminalAccessoryItemRef] = [
         .system(.escape),
         .system(.tab),
         .system(.arrowUp),
@@ -216,7 +216,7 @@ extension TerminalAccessoryProfile {
         .system(.pageDown)
     ]
 
-    static var defaultValue: TerminalAccessoryProfile {
+    nonisolated static var defaultValue: TerminalAccessoryProfile {
         TerminalAccessoryProfile(
             schemaVersion: schemaVersion,
             layout: TerminalAccessoryLayout(
@@ -230,11 +230,11 @@ extension TerminalAccessoryProfile {
         )
     }
 
-    static var availableSystemActions: [TerminalAccessorySystemActionID] {
+    nonisolated static var availableSystemActions: [TerminalAccessorySystemActionID] {
         TerminalAccessorySystemActionID.allCases.filter { $0 != .unknown }
     }
 
-    func normalized() -> TerminalAccessoryProfile {
+    nonisolated func normalized() -> TerminalAccessoryProfile {
         var customActionsByID: [UUID: TerminalAccessoryCustomAction] = [:]
         for action in customActions {
             let normalizedAction = action.normalized()
@@ -304,7 +304,10 @@ extension TerminalAccessoryProfile {
         )
     }
 
-    static func merged(local: TerminalAccessoryProfile, remote: TerminalAccessoryProfile) -> TerminalAccessoryProfile {
+    nonisolated static func merged(
+        local: TerminalAccessoryProfile,
+        remote: TerminalAccessoryProfile
+    ) -> TerminalAccessoryProfile {
         let normalizedLocal = local.normalized()
         let normalizedRemote = remote.normalized()
 
@@ -367,7 +370,7 @@ extension TerminalAccessoryProfile {
 }
 
 private extension TerminalAccessoryCustomAction {
-    func normalized() -> TerminalAccessoryCustomAction {
+    nonisolated func normalized() -> TerminalAccessoryCustomAction {
         let sanitizedTitle: String
         let sanitizedCommandContent: String
 
@@ -399,7 +402,7 @@ private extension TerminalAccessoryCustomAction {
 }
 
 private extension TerminalSnippet {
-    var asCustomAction: TerminalAccessoryCustomAction {
+    nonisolated var asCustomAction: TerminalAccessoryCustomAction {
         TerminalAccessoryCustomAction(
             id: id,
             title: title,

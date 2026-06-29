@@ -1,6 +1,6 @@
 import Foundation
 
-enum TerminalAccessoryValidationError: LocalizedError {
+nonisolated enum TerminalAccessoryValidationError: LocalizedError {
     case customActionLimitReached
     case customActionProRequired
     case emptyTitle

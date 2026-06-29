@@ -1,6 +1,6 @@
 import Foundation
 
-enum TerminalSnippetSendMode: String, Codable, CaseIterable, Identifiable {
+nonisolated enum TerminalSnippetSendMode: String, Codable, CaseIterable, Identifiable {
     case insert
     case insertAndEnter
 
@@ -16,7 +16,7 @@ enum TerminalSnippetSendMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum TerminalAccessoryCustomActionKind: String, Codable, CaseIterable, Identifiable {
+nonisolated enum TerminalAccessoryCustomActionKind: String, Codable, CaseIterable, Identifiable {
     case command
     case shortcut
 
@@ -32,7 +32,7 @@ enum TerminalAccessoryCustomActionKind: String, Codable, CaseIterable, Identifia
     }
 }
 
-struct TerminalAccessoryShortcutModifiers: Codable, Equatable, Hashable {
+nonisolated struct TerminalAccessoryShortcutModifiers: Codable, Equatable, Hashable {
     var control: Bool = false
     var alternate: Bool = false
     var command: Bool = false
@@ -98,7 +98,7 @@ struct TerminalAccessoryShortcutModifiers: Codable, Equatable, Hashable {
     }
 }
 
-enum TerminalAccessoryShortcutKey: String, Codable, CaseIterable, Identifiable {
+nonisolated enum TerminalAccessoryShortcutKey: String, Codable, CaseIterable, Identifiable {
     case a
     case b
     case c
@@ -364,7 +364,7 @@ enum TerminalAccessoryShortcutKey: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum TerminalAccessorySystemActionID: String, Codable, CaseIterable, Hashable, Identifiable {
+nonisolated enum TerminalAccessorySystemActionID: String, Codable, CaseIterable, Hashable, Identifiable {
     case commandModifier
     case escape
     case tab
