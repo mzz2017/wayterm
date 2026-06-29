@@ -1,7 +1,7 @@
 import Foundation
 
 protocol GhosttySurfaceCallbackInvalidating: Sendable {
-    func invalidate()
+    nonisolated func invalidate()
 }
 
 nonisolated final class GhosttySurfaceCallbackContext: GhosttySurfaceCallbackInvalidating, @unchecked Sendable {
@@ -13,7 +13,7 @@ nonisolated final class GhosttySurfaceCallbackContext: GhosttySurfaceCallbackInv
         self.terminalView = terminalView
     }
 
-    func invalidate() {
+    nonisolated func invalidate() {
         lock.lock()
         isValid = false
         terminalView = nil
