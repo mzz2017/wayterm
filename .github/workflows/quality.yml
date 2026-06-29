@@ -44,32 +44,9 @@ jobs:
         run: swift test
 
   ios-focused-runtime:
-    name: Focused runtime lifecycle tests (${{ matrix.shard }})
+    name: Focused runtime lifecycle tests
     runs-on: macos-15
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - shard: sync-cloudflare
-            filters: |
-              -only-testing:VVTermTests/AppSyncCoordinatorTests
-              -only-testing:VVTermTests/CloudKitSyncCoordinatorLifecycleTests
-              -only-testing:VVTermTests/CloudflareTransportManagerLifecycleTests
-          - shard: terminal-ssh
-            filters: |
-              -only-testing:VVTermTests/ConnectionRuntimeRegistryLifecycleTests
-              -only-testing:VVTermTests/ConnectionRuntimeRunnerLifecycleTests
-              -only-testing:VVTermTests/LibSSH2SessionLifecycleTests
-              -only-testing:VVTermTests/SSHClientConnectionLifecycleTests
-              -only-testing:VVTermTests/TerminalConnectionRuntimeTests
-              -only-testing:VVTermTests/TerminalConnectionRunnerTests
-          - shard: remotefiles-stats-store-voice
-            filters: |
-              -only-testing:VVTermTests/RemoteFileBrowserRequestLifecycleTests
-              -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests
-              -only-testing:VVTermTests/StoreManagerLifecycleTests
-              -only-testing:VVTermTests/TerminalVoiceInputStoreTests
     env:
       IOS_TEST_DEVICE_NAME: iPhone 17
       IOS_TEST_DEVICE_NAME_CANDIDATES: iPhone 17,iPhone 16,iPhone 15
@@ -78,8 +55,22 @@ jobs:
       IOS_TEST_PROGRESS_LOG_LINES: "100"
       IOS_TEST_FAILURE_LOG_LINES: "500"
       IOS_TEST_KEEP_DERIVED_DATA: "1"
-      IOS_FOCUSED_RUNTIME_SHARD: ${{ matrix.shard }}
-      IOS_FOCUSED_RUNTIME_FILTERS: ${{ matrix.filters }}
+      IOS_FOCUSED_RUNTIME_SYNC_CLOUDFLARE_FILTERS: |
+        -only-testing:VVTermTests/AppSyncCoordinatorTests
+        -only-testing:VVTermTests/CloudKitSyncCoordinatorLifecycleTests
+        -only-testing:VVTermTests/CloudflareTransportManagerLifecycleTests
+      IOS_FOCUSED_RUNTIME_TERMINAL_SSH_FILTERS: |
+        -only-testing:VVTermTests/ConnectionRuntimeRegistryLifecycleTests
+        -only-testing:VVTermTests/ConnectionRuntimeRunnerLifecycleTests
+        -only-testing:VVTermTests/LibSSH2SessionLifecycleTests
+        -only-testing:VVTermTests/SSHClientConnectionLifecycleTests
+        -only-testing:VVTermTests/TerminalConnectionRuntimeTests
+        -only-testing:VVTermTests/TerminalConnectionRunnerTests
+      IOS_FOCUSED_RUNTIME_REMOTEFILES_STATS_STORE_VOICE_FILTERS: |
+        -only-testing:VVTermTests/RemoteFileBrowserRequestLifecycleTests
+        -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests
+        -only-testing:VVTermTests/StoreManagerLifecycleTests
+        -only-testing:VVTermTests/TerminalVoiceInputStoreTests
 
     steps:
       - name: Check out repository
@@ -94,8 +85,8 @@ jobs:
       - name: Configure focused runtime paths
         run: |
           {
-            echo "IOS_TEST_DERIVED_DATA_PATH=${RUNNER_TEMP}/vvterm-ios-focused-runtime-${IOS_FOCUSED_RUNTIME_SHARD}-derived-data"
-            echo "IOS_TEST_LOG_DIR=${RUNNER_TEMP}/vvterm-ios-focused-runtime-${IOS_FOCUSED_RUNTIME_SHARD}-logs"
+            echo "IOS_TEST_DERIVED_DATA_PATH=${RUNNER_TEMP}/vvterm-ios-focused-runtime-derived-data"
+            echo "IOS_TEST_LOG_DIR=${RUNNER_TEMP}/vvterm-ios-focused-runtime-logs/build"
             echo "IOS_TEST_CLONED_SOURCE_PACKAGES_DIR=${GITHUB_WORKSPACE}/.xcode-cloned-source-packages"
           } >> "${GITHUB_ENV}"
 
@@ -103,22 +94,27 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.xcode-cloned-source-packages
-          key: xcode-spm-${{ runner.os }}-${{ matrix.shard }}-${{ hashFiles('VVTerm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          key: xcode-spm-${{ runner.os }}-focused-runtime-${{ hashFiles('VVTerm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: |
-            xcode-spm-${{ runner.os }}-${{ matrix.shard }}-
+            xcode-spm-${{ runner.os }}-focused-runtime-
             xcode-spm-${{ runner.os }}-
 
       - name: Show focused runtime diagnostics
         run: |
           focused_args=()
-          while IFS= read -r filter; do
-            [[ -n "${filter}" ]] && focused_args+=("${filter}")
-          done <<< "${IOS_FOCUSED_RUNTIME_FILTERS}"
+          for filters in \
+            "${IOS_FOCUSED_RUNTIME_SYNC_CLOUDFLARE_FILTERS}" \
+            "${IOS_FOCUSED_RUNTIME_TERMINAL_SSH_FILTERS}" \
+            "${IOS_FOCUSED_RUNTIME_REMOTEFILES_STATS_STORE_VOICE_FILTERS}"; do
+            while IFS= read -r filter; do
+              [[ -n "${filter}" ]] && focused_args+=("${filter}")
+            done <<< "${filters}"
+          done
           mkdir -p "${IOS_TEST_LOG_DIR}"
 
           echo "::group::Focused runtime lifecycle diagnostics"
-          echo "Focused test shard: ${IOS_FOCUSED_RUNTIME_SHARD}"
           echo "Focused test filter count: ${#focused_args[@]}"
+          echo "Focused build strategy: one build-for-testing, three test-without-building shards"
           echo "IOS_TEST_DEVICE_NAME=${IOS_TEST_DEVICE_NAME}"
           echo "IOS_TEST_DEVICE_NAME_CANDIDATES=${IOS_TEST_DEVICE_NAME_CANDIDATES}"
           echo "IOS_TEST_PROGRESS_INTERVAL=${IOS_TEST_PROGRESS_INTERVAL}"
@@ -145,9 +141,8 @@ jobs:
             {
               echo "### Focused runtime lifecycle tests"
               echo
-              echo "- Shard: ${IOS_FOCUSED_RUNTIME_SHARD}"
               echo "- Filter count: ${#focused_args[@]}"
-              echo "- Build/test split: build-for-testing, then test-without-building"
+              echo "- Build/test split: one build-for-testing, then three test-without-building shards"
               echo "- Device candidates: ${IOS_TEST_DEVICE_NAME_CANDIDATES}"
               echo "- Test retries: 2"
               echo "- DerivedData: ${IOS_TEST_DERIVED_DATA_PATH}"
@@ -169,36 +164,65 @@ jobs:
           IOS_TEST_RETRIES: "0"
         run: |
           set -x
-          focused_args=()
-          while IFS= read -r filter; do
-            [[ -n "${filter}" ]] && focused_args+=("${filter}")
-          done <<< "${IOS_FOCUSED_RUNTIME_FILTERS}"
-          ./scripts/test-ios.sh "${focused_args[@]}"
+          ./scripts/test-ios.sh
 
-      - name: Run focused runtime lifecycle tests
+      - name: Run focused runtime lifecycle tests (sync-cloudflare)
         env:
           IOS_TEST_XCODEBUILD_ACTION: test-without-building
           IOS_TEST_RETRIES: "2"
+          IOS_TEST_LOG_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/sync-cloudflare
         run: |
           set -x
           focused_args=()
           while IFS= read -r filter; do
             [[ -n "${filter}" ]] && focused_args+=("${filter}")
-          done <<< "${IOS_FOCUSED_RUNTIME_FILTERS}"
+          done <<< "${IOS_FOCUSED_RUNTIME_SYNC_CLOUDFLARE_FILTERS}"
+          ./scripts/test-ios.sh "${focused_args[@]}"
+
+      - name: Run focused runtime lifecycle tests (terminal-ssh)
+        env:
+          IOS_TEST_XCODEBUILD_ACTION: test-without-building
+          IOS_TEST_RETRIES: "2"
+          IOS_TEST_LOG_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/terminal-ssh
+        run: |
+          set -x
+          focused_args=()
+          while IFS= read -r filter; do
+            [[ -n "${filter}" ]] && focused_args+=("${filter}")
+          done <<< "${IOS_FOCUSED_RUNTIME_TERMINAL_SSH_FILTERS}"
+          ./scripts/test-ios.sh "${focused_args[@]}"
+
+      - name: Run focused runtime lifecycle tests (remotefiles-stats-store-voice)
+        env:
+          IOS_TEST_XCODEBUILD_ACTION: test-without-building
+          IOS_TEST_RETRIES: "2"
+          IOS_TEST_LOG_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/remotefiles-stats-store-voice
+        run: |
+          set -x
+          focused_args=()
+          while IFS= read -r filter; do
+            [[ -n "${filter}" ]] && focused_args+=("${filter}")
+          done <<< "${IOS_FOCUSED_RUNTIME_REMOTEFILES_STATS_STORE_VOICE_FILTERS}"
           ./scripts/test-ios.sh "${focused_args[@]}"
 
       - name: Upload focused runtime lifecycle logs
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: focused-runtime-lifecycle-${{ matrix.shard }}-xcodebuild-logs
-          path: ${{ runner.temp }}/vvterm-ios-focused-runtime-${{ matrix.shard }}-logs
+          name: focused-runtime-lifecycle-xcodebuild-logs
+          path: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs
           if-no-files-found: ignore
           retention-days: 7
 
       - name: Clean focused runtime DerivedData
         if: always()
-        run: rm -rf "${IOS_TEST_DERIVED_DATA_PATH}"
+        run: |
+          for attempt in 1 2 3; do
+            rm -rf "${IOS_TEST_DERIVED_DATA_PATH}" && exit 0
+            echo "DerivedData cleanup attempt ${attempt} failed; retrying..."
+            sleep 5
+          done
+          echo "::warning::Unable to remove focused runtime DerivedData at ${IOS_TEST_DERIVED_DATA_PATH}"
 
   ios-strict-concurrency:
     name: Strict Swift concurrency build
@@ -278,7 +302,13 @@ jobs:
 
       - name: Clean strict DerivedData
         if: always()
-        run: rm -rf "${IOS_TEST_DERIVED_DATA_PATH}"
+        run: |
+          for attempt in 1 2 3; do
+            rm -rf "${IOS_TEST_DERIVED_DATA_PATH}" && exit 0
+            echo "DerivedData cleanup attempt ${attempt} failed; retrying..."
+            sleep 5
+          done
+          echo "::warning::Unable to remove strict DerivedData at ${IOS_TEST_DERIVED_DATA_PATH}"
 
   ios-unit:
     name: iOS unit tests
@@ -356,7 +386,13 @@ jobs:
 
       - name: Clean iOS unit DerivedData
         if: always()
-        run: rm -rf "${IOS_TEST_DERIVED_DATA_PATH}"
+        run: |
+          for attempt in 1 2 3; do
+            rm -rf "${IOS_TEST_DERIVED_DATA_PATH}" && exit 0
+            echo "DerivedData cleanup attempt ${attempt} failed; retrying..."
+            sleep 5
+          done
+          echo "::warning::Unable to remove iOS unit DerivedData at ${IOS_TEST_DERIVED_DATA_PATH}"
 
   native-sources:
     name: Native source checksums
