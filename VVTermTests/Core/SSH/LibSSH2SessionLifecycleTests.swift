@@ -265,6 +265,33 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         XCTAssertEqual(response.length, 0)
     }
 
+    func testKeyboardInteractiveAuthPublishesNullTerminatedResponseBuffer() async throws {
+        // Given a server that asks the session-owned keyboard-interactive
+        // callback for a password response.
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("password,keyboard-interactive")
+        )
+        let session = SSHSession(config: .libSSH2KeyboardInteractiveAuthTest, driver: driver)
+
+        // When authentication reaches the libssh2 callback boundary.
+        try await session.connect()
+
+        // Then the callback gives libssh2 a C-owned NUL-terminated buffer
+        // while reporting the length without the terminator.
+        XCTAssertEqual(
+            driver.keyboardInteractiveResponseBuffers(),
+            [
+                .init(
+                    text: "keyboard-secret",
+                    reportedLength: UInt32("keyboard-secret".utf8.count),
+                    terminator: 0
+                )
+            ],
+            "Keyboard-interactive response text must be NUL-terminated while length excludes the terminator."
+        )
+    }
+
     func testKeepAliveUsesDriverBoundary() async throws {
         // Given a connected session using the fake libssh2 driver.
         let driver = RecordingLibSSH2SessionDriver(

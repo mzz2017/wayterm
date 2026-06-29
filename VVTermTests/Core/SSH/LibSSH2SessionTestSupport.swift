@@ -151,6 +151,12 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
         let remaining: Int
     }
 
+    struct KeyboardInteractiveResponseBuffer: Equatable {
+        let text: String
+        let reportedLength: UInt32
+        let terminator: CChar
+    }
+
     private let sessionInitResult: OpaquePointer?
     private let connectedSocket: Int32
     private let handshakeBehavior: HandshakeBehavior
@@ -190,6 +196,7 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
     private var keepAliveInvocationCount = 0
     private var sessionAbstractPointer: UnsafeMutableRawPointer?
     private var keyboardInteractiveResponseLog: [String] = []
+    private var keyboardInteractiveResponseBufferLog: [KeyboardInteractiveResponseBuffer] = []
 
     init(
         sessionInitResult: OpaquePointer?,
@@ -307,6 +314,12 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
         lock.lock()
         defer { lock.unlock() }
         return keyboardInteractiveResponseLog
+    }
+
+    func keyboardInteractiveResponseBuffers() -> [KeyboardInteractiveResponseBuffer] {
+        lock.lock()
+        defer { lock.unlock() }
+        return keyboardInteractiveResponseBufferLog
     }
 
     func lastErrorOperations() -> [LibSSH2RawError.Operation] {
@@ -513,8 +526,17 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
 
         if let responseText = responses[0].text {
             let response = String(cString: responseText)
+            let reportedLength = responses[0].length
+            let terminator = responseText.advanced(by: Int(reportedLength)).pointee
             lock.lock()
             keyboardInteractiveResponseLog.append(response)
+            keyboardInteractiveResponseBufferLog.append(
+                KeyboardInteractiveResponseBuffer(
+                    text: response,
+                    reportedLength: reportedLength,
+                    terminator: terminator
+                )
+            )
             lock.unlock()
             Darwin.free(responseText)
         }
