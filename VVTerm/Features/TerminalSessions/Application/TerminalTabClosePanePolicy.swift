@@ -7,7 +7,7 @@
 
 import Foundation
 
-enum TerminalTabClosePanePolicy {
+nonisolated enum TerminalTabClosePanePolicy {
     enum Plan: Equatable {
         case closeTab
         case closePane(updatedTab: TerminalTab)
