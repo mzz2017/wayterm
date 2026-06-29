@@ -18,11 +18,13 @@ keep_derived_data="${IOS_TEST_KEEP_DERIVED_DATA:-0}"
 no_output_timeout="${IOS_TEST_NO_OUTPUT_TIMEOUT:-900}"
 xcodebuild_quiet="${IOS_TEST_XCODEBUILD_QUIET:-0}"
 xcodebuild_action="${IOS_TEST_XCODEBUILD_ACTION:-test}"
+progress_interval="${IOS_TEST_PROGRESS_INTERVAL:-0}"
 lock_acquired=0
 cleanup_derived_data=0
 log_file=""
 tail_pid=""
 watchdog_pid=""
+progress_pid=""
 xcode_pid=""
 
 cleanup() {
@@ -31,6 +33,9 @@ cleanup() {
     fi
     if [[ -n "$watchdog_pid" ]]; then
         kill "$watchdog_pid" >/dev/null 2>&1 || true
+    fi
+    if [[ -n "$progress_pid" ]]; then
+        kill "$progress_pid" >/dev/null 2>&1 || true
     fi
     if [[ -n "$xcode_pid" ]]; then
         kill "$xcode_pid" >/dev/null 2>&1 || true
@@ -198,6 +203,63 @@ validate_xcodebuild_action() {
     esac
 }
 
+validate_progress_interval() {
+    case "$progress_interval" in
+    '' | *[!0-9]*)
+        echo "Unsupported IOS_TEST_PROGRESS_INTERVAL: ${progress_interval}" >&2
+        exit 7
+        ;;
+    *)
+        ;;
+    esac
+}
+
+start_progress_reporter() {
+    local started_at="$1"
+
+    if [[ "$progress_interval" == "0" ]]; then
+        return
+    fi
+
+    (
+        local elapsed
+        local last_line
+        local now
+
+        while kill -0 "$xcode_pid" 2>/dev/null; do
+            sleep "$progress_interval" || exit 0
+            kill -0 "$xcode_pid" 2>/dev/null || exit 0
+
+            now="$(date +%s)"
+            elapsed=$((now - started_at))
+
+            if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+                echo "::group::iOS test progress (${elapsed}s)"
+            fi
+
+            echo "iOS test still running after ${elapsed}s."
+            echo "Project: ${project}"
+            echo "Scheme: ${scheme}"
+            echo "Action: ${xcodebuild_action}"
+            echo "Destination: platform=iOS Simulator,id=${udid}"
+            echo "xcodebuild PID: ${xcode_pid}"
+            ps -o pid,ppid,etime,pcpu,pmem,state,command -p "$xcode_pid" || true
+
+            if [[ -s "$log_file" ]]; then
+                last_line="$(tail -n 1 "$log_file" 2>/dev/null || true)"
+                echo "Last xcodebuild log line: ${last_line}"
+            else
+                echo "No xcodebuild output has been captured yet."
+            fi
+
+            if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+                echo "::endgroup::"
+            fi
+        done
+    ) &
+    progress_pid="$!"
+}
+
 resolve_destination_id() {
     if [[ -n "$destination_id" ]]; then
         printf '%s\n' "$destination_id"
@@ -256,6 +318,7 @@ run_xcodebuild_test() {
     local -a xcodebuild_args
     local last_output_at
     local now
+    local started_at
 
     status_file="$(mktemp -t vvterm-ios-test-status.XXXXXX)"
     timeout_file="$(mktemp -t vvterm-ios-test-timeout.XXXXXX)"
@@ -277,9 +340,11 @@ run_xcodebuild_test() {
         "$@" \
         ENABLE_DEBUG_DYLIB=NO >"$log_file" 2>&1 &
     xcode_pid="$!"
+    started_at="$(date +%s)"
 
     tail -n +1 -f "$log_file" &
     tail_pid="$!"
+    start_progress_reporter "$started_at"
 
     if [[ "$no_output_timeout" != "0" ]]; then
         (
@@ -318,6 +383,11 @@ run_xcodebuild_test() {
         wait "$watchdog_pid" >/dev/null 2>&1 || true
         watchdog_pid=""
     fi
+    if [[ -n "$progress_pid" ]]; then
+        kill "$progress_pid" >/dev/null 2>&1 || true
+        wait "$progress_pid" >/dev/null 2>&1 || true
+        progress_pid=""
+    fi
     if [[ -n "$tail_pid" ]]; then
         kill "$tail_pid" >/dev/null 2>&1 || true
         wait "$tail_pid" >/dev/null 2>&1 || true
@@ -335,6 +405,7 @@ run_xcodebuild_test() {
 }
 
 validate_xcodebuild_action
+validate_progress_interval
 acquire_global_lock
 prepare_derived_data
 prepare_cloned_source_packages
@@ -355,6 +426,9 @@ while (( attempt <= total_attempts )); do
     echo "Preparing iOS simulator ${device_name} (${udid}) for test attempt ${attempt}/${total_attempts}."
     echo "Using isolated DerivedData at ${derived_data_path}."
     echo "Using shared cloned source packages at ${cloned_source_packages_path}."
+    if [[ "$progress_interval" != "0" ]]; then
+        echo "Reporting iOS test progress every ${progress_interval}s."
+    fi
     prepare_simulator "$udid"
 
     log_file="$(mktemp -t vvterm-ios-test.XXXXXX)"

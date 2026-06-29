@@ -51,6 +51,7 @@ jobs:
           IOS_TEST_DEVICE_NAME: iPhone 17
           IOS_TEST_DEVICE_NAME_CANDIDATES: iPhone 17,iPhone 16,iPhone 15
           IOS_TEST_ALLOW_DEVICE_FALLBACK: "1"
+          IOS_TEST_PROGRESS_INTERVAL: "60"
         run: |
           focused_args=(
             "-only-testing:VVTermTests/AppSyncCoordinatorTests"
@@ -67,6 +68,10 @@ jobs:
             "-only-testing:VVTermTests/TerminalConnectionRunnerTests"
             "-only-testing:VVTermTests/TerminalVoiceInputStoreTests"
           )
+
+          echo "::group::Focused runtime lifecycle test filters"
+          printf '%s\n' "${focused_args[@]}"
+          echo "::endgroup::"
 
           ./scripts/test-ios.sh "${focused_args[@]}"
 
