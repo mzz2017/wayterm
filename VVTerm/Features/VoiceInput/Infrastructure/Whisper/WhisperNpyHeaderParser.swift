@@ -1,6 +1,6 @@
 import Foundation
 
-enum WhisperNpyHeaderParser {
+nonisolated enum WhisperNpyHeaderParser {
     enum ParseError: Swift.Error {
         case invalidNpy
     }
