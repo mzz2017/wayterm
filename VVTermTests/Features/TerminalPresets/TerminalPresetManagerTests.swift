@@ -8,24 +8,10 @@ import XCTest
 
 @MainActor
 final class TerminalPresetManagerTests: XCTestCase {
-    private var suiteName: String!
-    private var defaults: UserDefaults!
+    func testAddPresetPersistsPreset() throws {
+        let (defaults, suiteName) = try makeIsolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
 
-    override func setUp() {
-        super.setUp()
-        suiteName = "TerminalPresetManagerTests.\(UUID().uuidString)"
-        defaults = UserDefaults(suiteName: suiteName)
-        defaults.removePersistentDomain(forName: suiteName)
-    }
-
-    override func tearDown() {
-        defaults.removePersistentDomain(forName: suiteName)
-        defaults = nil
-        suiteName = nil
-        super.tearDown()
-    }
-
-    func testAddPresetPersistsPreset() {
         let manager = TerminalPresetManager(defaults: defaults)
 
         manager.addPreset(name: "Claude", command: "claude", icon: "sparkles")
@@ -40,6 +26,9 @@ final class TerminalPresetManagerTests: XCTestCase {
     }
 
     func testUpdatePresetReplacesMatchingPreset() throws {
+        let (defaults, suiteName) = try makeIsolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
         let manager = TerminalPresetManager(defaults: defaults)
         manager.addPreset(name: "Claude", command: "claude", icon: "terminal")
 
@@ -56,13 +45,23 @@ final class TerminalPresetManagerTests: XCTestCase {
         XCTAssertEqual(manager.presets.first?.icon, "chevron.left.forwardslash.chevron.right")
     }
 
-    func testDeletePresetRemovesPreset() {
+    func testDeletePresetRemovesPreset() throws {
+        let (defaults, suiteName) = try makeIsolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
         let manager = TerminalPresetManager(defaults: defaults)
         manager.addPreset(name: "Claude", command: "claude")
-        let presetID = try! XCTUnwrap(manager.presets.first?.id)
+        let presetID = try XCTUnwrap(manager.presets.first?.id)
 
         manager.deletePreset(id: presetID)
 
         XCTAssertTrue(manager.presets.isEmpty)
+    }
+
+    private func makeIsolatedDefaults() throws -> (defaults: UserDefaults, suiteName: String) {
+        let suiteName = "TerminalPresetManagerTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        return (defaults, suiteName)
     }
 }
