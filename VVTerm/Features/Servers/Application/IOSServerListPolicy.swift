@@ -1,6 +1,6 @@
 import Foundation
 
-struct IOSServerListServerSnapshot: Equatable, Identifiable {
+nonisolated struct IOSServerListServerSnapshot: Equatable, Identifiable {
     let id: UUID
     let workspaceId: UUID
     let environmentId: UUID
@@ -8,13 +8,13 @@ struct IOSServerListServerSnapshot: Equatable, Identifiable {
     let host: String
 }
 
-struct IOSActiveConnectionSessionSnapshot: Equatable, Identifiable {
+nonisolated struct IOSActiveConnectionSessionSnapshot: Equatable, Identifiable {
     let id: UUID
     let serverId: UUID
     let displayTitle: String
 }
 
-struct IOSActiveConnectionSnapshot: Equatable, Identifiable {
+nonisolated struct IOSActiveConnectionSnapshot: Equatable, Identifiable {
     let serverId: UUID
     let representativeSessionId: UUID
     let tabCount: Int
@@ -23,12 +23,12 @@ struct IOSActiveConnectionSnapshot: Equatable, Identifiable {
     var id: UUID { serverId }
 }
 
-struct IOSServerSavedSelectionAction: Equatable {
+nonisolated struct IOSServerSavedSelectionAction: Equatable {
     let destinationWorkspaceId: UUID?
     let shouldClearSelectedEnvironment: Bool
 }
 
-enum IOSServerListPolicy {
+nonisolated enum IOSServerListPolicy {
     static let shouldForceNewConnectionFromServerList = true
 
     static func shouldReconnectActiveConnection(sessionHasLiveRuntime: Bool) -> Bool {

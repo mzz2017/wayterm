@@ -1,6 +1,6 @@
 import Foundation
 
-struct ServerStats {
+nonisolated struct ServerStats {
     // System
     var hostname: String = ""
     var osInfo: String = ""
@@ -43,7 +43,7 @@ struct ServerStats {
     }
 }
 
-struct VolumeInfo: Identifiable {
+nonisolated struct VolumeInfo: Identifiable {
     let mountPoint: String
     let used: UInt64
     let total: UInt64
@@ -56,7 +56,7 @@ struct VolumeInfo: Identifiable {
     }
 }
 
-struct ProcessInfo: Identifiable {
+nonisolated struct ProcessInfo: Identifiable {
     var id: Int { pid }
     let pid: Int
     let name: String
@@ -64,7 +64,7 @@ struct ProcessInfo: Identifiable {
     let memoryPercent: Double
 }
 
-struct StatsPoint: Identifiable {
+nonisolated struct StatsPoint: Identifiable {
     let timestamp: Date
     let value: Double
 

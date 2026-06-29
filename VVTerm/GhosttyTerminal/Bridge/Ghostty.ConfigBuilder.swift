@@ -8,7 +8,7 @@
 import Foundation
 
 extension Ghostty {
-    enum ConfigBuilder {
+    nonisolated enum ConfigBuilder {
         static func sanitizedFontFamilies(primaryFamily: String) -> [String] {
             #if os(macOS)
             let candidates = [primaryFamily] + TerminalDefaults.macOSFallbackFontFamilies

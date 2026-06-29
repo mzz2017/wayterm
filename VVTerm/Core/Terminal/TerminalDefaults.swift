@@ -102,8 +102,8 @@ enum TerminalDefaults {
     nonisolated static let minimumFontSize = 4.0
     nonisolated static let maximumFontSize = 32.0
     nonisolated static let fontSizeStep = 1.0
-    static let defaultCursorStyle: TerminalCursorStyle = .block
-    static let defaultCursorBlink = true
+    nonisolated static let defaultCursorStyle: TerminalCursorStyle = .block
+    nonisolated static let defaultCursorBlink = true
     #if os(macOS)
     static let defaultPrimaryFontName = "Menlo"
     static let macOSFallbackFontFamilies = [
