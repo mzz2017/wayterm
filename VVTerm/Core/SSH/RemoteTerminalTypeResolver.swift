@@ -19,8 +19,8 @@ enum RemoteTerminalTypeResolver {
     #endif
     private static let probeTimeout: Duration = .seconds(5)
     private static let installTimeout: Duration = .seconds(12)
-    private static let probeMarker = "__VVTERM_XTERM_GHOSTTY_OK__"
-    private static let probeMissMarker = "__VVTERM_XTERM_GHOSTTY_NO__"
+    nonisolated private static let probeMarker = "__VVTERM_XTERM_GHOSTTY_OK__"
+    nonisolated private static let probeMissMarker = "__VVTERM_XTERM_GHOSTTY_NO__"
     private static let installMarker = "__VVTERM_XTERM_GHOSTTY_INSTALLED__"
     private static let missingTicMarker = "__VVTERM_XTERM_GHOSTTY_NO_TIC__"
     private static let installFailedMarker = "__VVTERM_XTERM_GHOSTTY_INSTALL_FAILED__"
@@ -74,7 +74,7 @@ enum RemoteTerminalTypeResolver {
         }
     }
 
-    static func probeCommand(okMarker: String = probeMarker) -> String {
+    nonisolated static func probeCommand(okMarker: String = probeMarker) -> String {
         let body = """
         \(RemoteTerminalBootstrap.shellPathExport());
         \(hasGhosttyTerminfoFunction())
@@ -150,7 +150,7 @@ enum RemoteTerminalTypeResolver {
         }
     }
 
-    private static func hasGhosttyTerminfoFunction() -> String {
+    nonisolated private static func hasGhosttyTerminfoFunction() -> String {
         """
         vvterm_has_xterm_ghostty_terminfo() {
           VVTERM_OLD_IFS=$IFS;
