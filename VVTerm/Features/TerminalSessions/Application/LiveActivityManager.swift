@@ -14,7 +14,9 @@ struct TerminalLiveActivitySnapshot: Equatable, Sendable {
 @available(iOS 16.1, *)
 @MainActor
 private struct TerminalLiveActivityHandle: @unchecked Sendable {
-    private let activity: Activity<VVTermActivityAttributes>
+    // ActivityKit's Activity handle is used only through LiveActivityManager's
+    // MainActor-owned lifecycle, but its async update/end APIs are @concurrent.
+    nonisolated(unsafe) private let activity: Activity<VVTermActivityAttributes>
 
     init(_ activity: Activity<VVTermActivityAttributes>) {
         self.activity = activity
