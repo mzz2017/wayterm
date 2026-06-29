@@ -11,7 +11,7 @@ actor ConnectionReliabilityManager {
     typealias ReconnectOperation = @MainActor @Sendable (ConnectionSession) async throws -> Void
     typealias DelayOperation = @Sendable (TimeInterval) async throws -> Void
 
-    private var reconnectAttempts = 0
+    private var reconnectAttemptsBySessionID: [ConnectionSession.ID: Int] = [:]
     private let maxAttempts: Int
     private let baseDelay: TimeInterval
     private let reconnect: ReconnectOperation
@@ -32,16 +32,18 @@ actor ConnectionReliabilityManager {
     func handleDisconnect(session: ConnectionSession) async {
         guard session.autoReconnect else { return }
 
-        while reconnectAttempts < maxAttempts {
-            reconnectAttempts += 1
-            let delay = baseDelay * pow(2, Double(reconnectAttempts - 1))
+        while reconnectAttemptsBySessionID[session.id, default: 0] < maxAttempts {
+            let attempt = reconnectAttemptsBySessionID[session.id, default: 0] + 1
+            reconnectAttemptsBySessionID[session.id] = attempt
+            let delay = baseDelay * pow(2, Double(attempt - 1))
 
             do {
                 try await self.delay(delay)
                 try await reconnect(session)
-                reconnectAttempts = 0
+                reconnectAttemptsBySessionID.removeValue(forKey: session.id)
                 return
             } catch is CancellationError {
+                reconnectAttemptsBySessionID.removeValue(forKey: session.id)
                 return
             } catch {
                 continue
@@ -50,7 +52,7 @@ actor ConnectionReliabilityManager {
     }
 
     func resetAttempts() {
-        reconnectAttempts = 0
+        reconnectAttemptsBySessionID.removeAll()
     }
 
     private static func liveDelay(_ interval: TimeInterval) async throws {

@@ -58,6 +58,43 @@ struct ConnectionReliabilityManagerTests {
     }
 
     @Test
+    func exhaustedReconnectAttemptsDoNotBlockAnotherSession() async {
+        // Given one session exhausts its retry attempts on a shared reliability
+        // manager.
+        let exhaustedSession = makeSession(id: UUID(uuidString: "00000000-0000-0000-0000-000000000101")!)
+        let nextSession = makeSession(id: UUID(uuidString: "00000000-0000-0000-0000-000000000102")!)
+        let probe = ConnectionReliabilityProbe(failuresBeforeSuccessBySession: [
+            exhaustedSession.id: 2,
+            nextSession.id: 0
+        ])
+        let manager = ConnectionReliabilityManager(
+            maxAttempts: 2,
+            baseDelay: 0.25,
+            reconnect: { session in
+                try await probe.reconnect(session: session)
+            },
+            delay: { interval in
+                await probe.recordDelay(interval)
+            }
+        )
+
+        // When a different session disconnects afterwards.
+        await manager.handleDisconnect(session: exhaustedSession)
+        await manager.handleDisconnect(session: nextSession)
+
+        // Then its reconnect budget is independent rather than polluted by the
+        // previous session's exhausted attempts.
+        #expect(
+            await probe.reconnectAttempts(for: exhaustedSession.id) == 2,
+            "The first session should consume its own retry budget."
+        )
+        #expect(
+            await probe.reconnectAttempts(for: nextSession.id) == 1,
+            "A different session should still get its own reconnect attempt."
+        )
+    }
+
+    @Test
     func handleDisconnectStopsWhenBackoffIsCancelled() async {
         // Given the backoff delay is cancelled before reconnect can run.
         let session = makeSession()
@@ -81,8 +118,9 @@ struct ConnectionReliabilityManagerTests {
         #expect(await probe.delays() == [1.0], "Cancellation should stop after the in-flight delay.")
     }
 
-    private func makeSession(autoReconnect: Bool = true) -> ConnectionSession {
+    private func makeSession(id: UUID = UUID(), autoReconnect: Bool = true) -> ConnectionSession {
         ConnectionSession(
+            id: id,
             serverId: UUID(),
             title: "Reconnect Target",
             autoReconnect: autoReconnect
@@ -92,16 +130,30 @@ struct ConnectionReliabilityManagerTests {
 
 private actor ConnectionReliabilityProbe {
     private var attemptCount = 0
+    private var attemptsBySession: [UUID: Int] = [:]
     private var recordedDelays: [TimeInterval] = []
     private let failuresBeforeSuccess: Int
+    private let failuresBeforeSuccessBySession: [UUID: Int]
 
-    init(failuresBeforeSuccess: Int = 0) {
+    init(
+        failuresBeforeSuccess: Int = 0,
+        failuresBeforeSuccessBySession: [UUID: Int] = [:]
+    ) {
         self.failuresBeforeSuccess = failuresBeforeSuccess
+        self.failuresBeforeSuccessBySession = failuresBeforeSuccessBySession
     }
 
     func reconnect() throws {
         attemptCount += 1
         if attemptCount <= failuresBeforeSuccess {
+            throw ConnectionReliabilityProbeError.reconnectFailed
+        }
+    }
+
+    func reconnect(session: ConnectionSession) throws {
+        let attempts = attemptsBySession[session.id, default: 0] + 1
+        attemptsBySession[session.id] = attempts
+        if attempts <= failuresBeforeSuccessBySession[session.id, default: 0] {
             throw ConnectionReliabilityProbeError.reconnectFailed
         }
     }
@@ -116,6 +168,10 @@ private actor ConnectionReliabilityProbe {
 
     func reconnectAttempts() -> Int {
         attemptCount
+    }
+
+    func reconnectAttempts(for sessionId: UUID) -> Int {
+        attemptsBySession[sessionId, default: 0]
     }
 
     func delays() -> [TimeInterval] {
