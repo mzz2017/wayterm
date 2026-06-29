@@ -18,6 +18,7 @@ keep_derived_data="${IOS_TEST_KEEP_DERIVED_DATA:-0}"
 no_output_timeout="${IOS_TEST_NO_OUTPUT_TIMEOUT:-900}"
 xcodebuild_quiet="${IOS_TEST_XCODEBUILD_QUIET:-0}"
 xcodebuild_action="${IOS_TEST_XCODEBUILD_ACTION:-test}"
+test_context="${IOS_TEST_CONTEXT:-${xcodebuild_action}}"
 progress_interval="${IOS_TEST_PROGRESS_INTERVAL:-0}"
 progress_log_lines="${IOS_TEST_PROGRESS_LOG_LINES:-20}"
 failure_log_lines="${IOS_TEST_FAILURE_LOG_LINES:-120}"
@@ -31,6 +32,74 @@ watchdog_pid=""
 progress_pid=""
 xcode_pid=""
 attempt=0
+
+utc_now() {
+    date -u '+%Y-%m-%dT%H:%M:%SZ'
+}
+
+ci_group_start() {
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+        echo "::group::$1"
+    else
+        echo "$1"
+    fi
+}
+
+ci_group_end() {
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+        echo "::endgroup::"
+    fi
+}
+
+write_run_metadata() {
+    local status="$1"
+    local duration="$2"
+    local result_bundle_path="$3"
+    local metadata_path=""
+    shift 3
+
+    if [[ -n "$diagnostic_log_dir" ]]; then
+        mkdir -p "$diagnostic_log_dir"
+        metadata_path="${diagnostic_log_dir}/xcodebuild-${xcodebuild_action}-attempt-${attempt}-metadata.txt"
+        {
+            echo "context=${test_context}"
+            echo "status=${status}"
+            echo "duration_seconds=${duration}"
+            echo "finished_at=$(utc_now)"
+            echo "project=${project}"
+            echo "scheme=${scheme}"
+            echo "action=${xcodebuild_action}"
+            echo "destination=platform=iOS Simulator,id=${udid}"
+            echo "derived_data_path=${derived_data_path}"
+            echo "cloned_source_packages_path=${cloned_source_packages_path}"
+            echo "log_dir=${diagnostic_log_dir}"
+            echo "result_bundle_path=${result_bundle_path:-none}"
+            echo "arguments:"
+            if [[ "$#" -eq 0 ]]; then
+                echo "  (none)"
+            else
+                printf '  %s\n' "$@"
+            fi
+        } >"$metadata_path"
+        echo "Wrote xcodebuild metadata: ${metadata_path}"
+    fi
+
+    if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+        {
+            echo "### iOS xcodebuild: ${test_context}"
+            echo
+            echo "- Status: ${status}"
+            echo "- Duration: ${duration}s"
+            echo "- Action: ${xcodebuild_action}"
+            echo "- Attempt: ${attempt}/${total_attempts}"
+            echo "- Destination: platform=iOS Simulator,id=${udid}"
+            echo "- DerivedData: ${derived_data_path}"
+            echo "- Full log dir: ${diagnostic_log_dir:-not configured}"
+            echo "- Result bundle: ${result_bundle_path:-not configured}"
+            echo
+        } >>"${GITHUB_STEP_SUMMARY}"
+    fi
+}
 
 preserve_xcodebuild_log() {
     local status="$1"
@@ -306,6 +375,7 @@ start_progress_reporter() {
             fi
 
             echo "iOS test still running after ${elapsed}s."
+            echo "Context: ${test_context}"
             echo "Project: ${project}"
             echo "Scheme: ${scheme}"
             echo "Action: ${xcodebuild_action}"
@@ -381,6 +451,9 @@ run_xcodebuild_test() {
     local last_output_at
     local now
     local started_at
+    local finished_at
+    local elapsed
+    local last_status
 
     status_file="$(mktemp -t vvterm-ios-test-status.XXXXXX)"
     timeout_file="$(mktemp -t vvterm-ios-test-timeout.XXXXXX)"
@@ -397,6 +470,26 @@ run_xcodebuild_test() {
         rm -rf "$result_bundle_path"
         xcodebuild_args+=(-resultBundlePath "$result_bundle_path")
     fi
+
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+        echo "::notice title=iOS xcodebuild started::${test_context} ${xcodebuild_action} attempt ${attempt}/${total_attempts}"
+    fi
+    ci_group_start "iOS xcodebuild invocation (${test_context}, attempt ${attempt}/${total_attempts})"
+    echo "Started at: $(utc_now)"
+    echo "Project: ${project}"
+    echo "Scheme: ${scheme}"
+    echo "Action: ${xcodebuild_action}"
+    echo "Destination: platform=iOS Simulator,id=${udid}"
+    echo "DerivedData: ${derived_data_path}"
+    echo "Cloned source packages: ${cloned_source_packages_path}"
+    echo "Result bundle: ${result_bundle_path:-not configured}"
+    echo "Arguments:"
+    if [[ "$#" -eq 0 ]]; then
+        echo "  (none)"
+    else
+        printf '  %s\n' "$@"
+    fi
+    ci_group_end
 
     xcodebuild "${xcodebuild_args[@]}" \
         -project "$project" \
@@ -425,6 +518,9 @@ run_xcodebuild_test() {
                 now="$(date +%s)"
                 if (( now - last_output_at >= no_output_timeout )); then
                     {
+                        if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+                            echo "::error title=iOS xcodebuild stalled::${test_context} produced no output for ${no_output_timeout}s"
+                        fi
                         echo "xcodebuild produced no output for ${no_output_timeout}s; terminating stalled iOS test run."
                         print_xcodebuild_process_snapshot
                         print_recent_xcodebuild_log "$failure_log_lines" "$now"
@@ -445,6 +541,8 @@ run_xcodebuild_test() {
     wait "$xcode_pid"
     printf '%s\n' "$?" > "$status_file"
     xcode_pid=""
+    finished_at="$(date +%s)"
+    elapsed=$((finished_at - started_at))
 
     if [[ -n "$watchdog_pid" ]]; then
         kill "$watchdog_pid" >/dev/null 2>&1 || true
@@ -463,15 +561,19 @@ run_xcodebuild_test() {
     fi
 
     if [[ -f "$timeout_file" ]]; then
+        write_run_metadata "timeout" "$elapsed" "$result_bundle_path" "$@"
         rm -f "$status_file" "$timeout_file"
         return 124
     fi
 
     last_status="$(cat "$status_file")"
+    write_run_metadata "$last_status" "$elapsed" "$result_bundle_path" "$@"
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+        echo "::notice title=iOS xcodebuild finished::${test_context} ${xcodebuild_action} status ${last_status} in ${elapsed}s"
+    fi
     if [[ "$last_status" -ne 0 ]]; then
-        local finished_at
-        finished_at="$(date +%s)"
         if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+            echo "::error title=iOS xcodebuild failed::${test_context} exited with status ${last_status}"
             echo "::group::iOS test failure diagnostics"
         fi
         echo "xcodebuild exited with status ${last_status}."

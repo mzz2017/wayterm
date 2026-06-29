@@ -160,6 +160,7 @@ jobs:
 
       - name: Build focused runtime lifecycle tests
         env:
+          IOS_TEST_CONTEXT: focused-runtime-build
           IOS_TEST_XCODEBUILD_ACTION: build-for-testing
           IOS_TEST_RETRIES: "0"
           IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/build/result-bundles
@@ -169,6 +170,7 @@ jobs:
 
       - name: Run focused runtime lifecycle tests (sync-cloudflare)
         env:
+          IOS_TEST_CONTEXT: focused-runtime-sync-cloudflare
           IOS_TEST_XCODEBUILD_ACTION: test-without-building
           IOS_TEST_RETRIES: "2"
           IOS_TEST_NO_OUTPUT_TIMEOUT: "300"
@@ -184,6 +186,7 @@ jobs:
 
       - name: Run focused runtime lifecycle tests (terminal-ssh)
         env:
+          IOS_TEST_CONTEXT: focused-runtime-terminal-ssh
           IOS_TEST_XCODEBUILD_ACTION: test-without-building
           IOS_TEST_RETRIES: "2"
           IOS_TEST_NO_OUTPUT_TIMEOUT: "300"
@@ -199,6 +202,7 @@ jobs:
 
       - name: Run focused runtime lifecycle tests (remotefiles-stats-store-voice)
         env:
+          IOS_TEST_CONTEXT: focused-runtime-remotefiles-stats-store-voice
           IOS_TEST_XCODEBUILD_ACTION: test-without-building
           IOS_TEST_RETRIES: "2"
           IOS_TEST_NO_OUTPUT_TIMEOUT: "300"
@@ -296,6 +300,7 @@ jobs:
 
       - name: Build iOS unit tests with strict concurrency
         env:
+          IOS_TEST_CONTEXT: strict-swift-concurrency-build
           IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/vvterm-ios-strict-logs/result-bundles
         run: |
           ./scripts/test-ios.sh SWIFT_STRICT_CONCURRENCY=complete
@@ -383,6 +388,7 @@ jobs:
 
       - name: Run iOS unit tests
         env:
+          IOS_TEST_CONTEXT: ios-unit-tests
           IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/vvterm-ios-unit-logs/result-bundles
         run: ./scripts/test-ios.sh
 

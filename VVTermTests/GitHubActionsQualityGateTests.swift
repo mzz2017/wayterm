@@ -40,9 +40,17 @@ struct GitHubActionsQualityGateTests {
 
         // And the iOS wrapper can reuse the same isolated simulator setup for build gates.
         #expect(testIOSScript.contains("xcodebuild_action=\"${IOS_TEST_XCODEBUILD_ACTION:-test}\""))
+        #expect(testIOSScript.contains("test_context=\"${IOS_TEST_CONTEXT:-${xcodebuild_action}}\""))
         #expect(testIOSScript.contains("test | build-for-testing"))
         #expect(testIOSScript.contains("xcodebuild_args=(\"$xcodebuild_action\")"))
         #expect(testIOSScript.contains("ENABLE_DEBUG_DYLIB=NO"))
+
+        // And long-running CI runs publish enough wrapper-level evidence to triage hangs.
+        #expect(workflow.contains("IOS_TEST_CONTEXT: focused-runtime-build"))
+        #expect(workflow.contains("IOS_TEST_CONTEXT: focused-runtime-sync-cloudflare"))
+        #expect(testIOSScript.contains("GITHUB_STEP_SUMMARY"))
+        #expect(testIOSScript.contains("write_run_metadata"))
+        #expect(testIOSScript.contains("::notice title=iOS xcodebuild started::"))
     }
 
     private func source(at url: URL) throws -> String {
