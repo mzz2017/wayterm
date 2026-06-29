@@ -1,6 +1,6 @@
 import Foundation
 
-enum TerminalAutoReconnectPolicy {
+nonisolated enum TerminalAutoReconnectPolicy {
     static func shouldAttemptReconnect(
         isSceneActive: Bool,
         autoReconnectEnabled: Bool,
@@ -18,7 +18,7 @@ enum TerminalAutoReconnectPolicy {
     }
 }
 
-enum TerminalManualReconnectPolicy {
+nonisolated enum TerminalManualReconnectPolicy {
     static func shouldAttemptReconnect(
         reconnectInFlight: Bool,
         snapshotState _: ConnectionState,
