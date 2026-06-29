@@ -157,12 +157,16 @@ actor TerminalConnectionRuntime {
 
     func suspend() async {
         openGeneration = nil
-        openTask?.cancel()
+        let pendingOpenTask = openTask
         openTask = nil
+        pendingOpenTask?.cancel()
         let pendingShellTask = shellTask
         shellTask = nil
         pendingShellTask?.cancel()
         shellId = nil
+        if let pendingOpenTask {
+            _ = try? await pendingOpenTask.value
+        }
         await pendingShellTask?.value
         state = .suspended
     }

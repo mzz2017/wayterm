@@ -4,8 +4,8 @@ import XCTest
 
 // Test Context:
 // These tests protect the first application-layer owner for terminal SSH
-// lifecycles. The runtime must own a client and make close operations await the
-// underlying shell close and disconnect before returning.
+// lifecycles. The runtime must own a client and make close/suspend operations
+// await underlying shell/open work before returning.
 //
 // Fakes and assumptions: RecordingTerminalSSHClient is an actor fake that
 // records method ordering only. It does not open sockets, allocate libssh2
@@ -82,14 +82,55 @@ final class TerminalConnectionRuntimeTests: XCTestCase {
         let completedAfterRelease = await suspendCompletion.isMarked()
         XCTAssertTrue(completedAfterRelease)
     }
+
+    func testSuspendWaitsForInFlightOpenTaskToExit() async throws {
+        // Given an open is blocked inside the runtime-owned client.
+        let fake = RecordingTerminalSSHClient(connectGate: TerminalConnectionRuntimeGate())
+        let runtime = TerminalConnectionRuntime(entityId: .session(UUID()), clientFactory: { fake })
+        let openTask = Task {
+            await runtime.open(configuration: .testing)
+        }
+        await fake.waitUntilConnectStarted()
+
+        // When background suspend is requested while open is still in flight.
+        let suspendCompletion = TerminalConnectionRuntimeFlag()
+        let suspendTask = Task {
+            await runtime.suspend()
+            await suspendCompletion.mark()
+        }
+
+        for _ in 0..<20 where await !suspendCompletion.isMarked() {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        let completedBeforeConnectReleased = await suspendCompletion.isMarked()
+        XCTAssertFalse(
+            completedBeforeConnectReleased,
+            "suspend() must not report completion before the in-flight open task exits."
+        )
+
+        await fake.releaseConnect()
+        await openTask.value
+        await suspendTask.value
+        let completedAfterConnectReleased = await suspendCompletion.isMarked()
+        XCTAssertTrue(completedAfterConnectReleased)
+    }
 }
 
 private actor RecordingTerminalSSHClient: TerminalConnectionClient {
     private(set) var events: [String] = []
     private let shellId = UUID()
+    private let connectGate: TerminalConnectionRuntimeGate?
+    private var connectStartedContinuations: [CheckedContinuation<Void, Never>] = []
+
+    init(connectGate: TerminalConnectionRuntimeGate? = nil) {
+        self.connectGate = connectGate
+    }
 
     func connect() async throws {
         events.append("connect")
+        connectStartedContinuations.forEach { $0.resume() }
+        connectStartedContinuations.removeAll()
+        await connectGate?.wait()
     }
 
     func startShell() async throws -> UUID {
@@ -111,6 +152,17 @@ private actor RecordingTerminalSSHClient: TerminalConnectionClient {
 
     func resize(cols: Int, rows: Int, for shellId: UUID) async throws {
         events.append("resize")
+    }
+
+    func waitUntilConnectStarted() async {
+        if events.contains("connect") { return }
+        await withCheckedContinuation { continuation in
+            connectStartedContinuations.append(continuation)
+        }
+    }
+
+    func releaseConnect() async {
+        await connectGate?.open()
     }
 }
 
