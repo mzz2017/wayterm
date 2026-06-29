@@ -33,7 +33,7 @@ enum GhosttyTerminalTextReader {
         )
 
         let rawLine = readText(surface: surface, selection: selection) ?? ""
-        return sanitizedViewportLine(rawLine, columns: columns)
+        return TerminalViewportTextSanitizer.sanitizedLine(rawLine, columns: columns)
     }
 
     static func readText(
@@ -61,26 +61,6 @@ enum GhosttyTerminalTextReader {
         guard ghostty_surface_quicklook_word(surface, &text) else { return nil }
         defer { ghostty_surface_free_text(surface, &text) }
         return layout.selection(fromViewportText: text)
-    }
-
-    static func sanitizedViewportLine(_ rawLine: String, columns: Int) -> String {
-        var line = rawLine
-        while let scalar = line.unicodeScalars.last,
-              CharacterSet.newlines.contains(scalar) {
-            line.removeLast()
-        }
-
-        while let scalar = line.unicodeScalars.last,
-              CharacterSet.whitespaces.contains(scalar) {
-            line.removeLast()
-        }
-
-        let lineNSString = line as NSString
-        if lineNSString.length > columns {
-            return lineNSString.substring(to: columns)
-        }
-
-        return line
     }
 
     private static func string(from text: ghostty_text_s) -> String {
