@@ -108,6 +108,46 @@ final class TerminalConnectionRegistryTests: XCTestCase {
     }
 
     @MainActor
+    func testRemoveRuntimeWaitsForTrackedRuntimeTeardown() async {
+        // Given a registered runtime whose disconnect path is deliberately
+        // blocked after shell close.
+        let registry = TerminalConnectionRegistry()
+        let serverId = UUID()
+        let entityId = TerminalEntityID.session(UUID())
+        let client = BlockingTerminalConnectionClient()
+        let runtime = TerminalConnectionRuntime(entityId: entityId, clientFactory: { client })
+
+        registry.register(runtime, for: entityId, serverId: serverId)
+        await runtime.open(configuration: .testing)
+
+        // When the registry removes the runtime and a caller waits for server
+        // teardown completion.
+        registry.removeRuntime(for: entityId, mode: .fullDisconnect)
+        let waitProbe = RegistryTeardownWaitProbe()
+        let waitTask = Task { @MainActor in
+            await registry.waitForServerTeardown(serverId)
+            await waitProbe.markReturned()
+        }
+
+        await client.waitUntilDisconnectStarted()
+        let returnedBeforeDisconnectFinished = await waitProbe.hasReturned()
+        XCTAssertFalse(
+            returnedBeforeDisconnectFinished,
+            "waitForServerTeardown must not return before runtime disconnect completes."
+        )
+
+        await client.releaseDisconnect()
+        await waitTask.value
+
+        // Then the wait completes only after the runtime closes and disconnects
+        // through the tracked teardown task.
+        let events = await client.events
+        XCTAssertEqual(events, ["connect", "startShell", "closeShell", "disconnect-start", "disconnect-finish"])
+        let returnedAfterDisconnectFinished = await waitProbe.hasReturned()
+        XCTAssertTrue(returnedAfterDisconnectFinished)
+    }
+
+    @MainActor
     func testClosedEntityRejectsLateShellRegistrationFromSameClient() {
         // Given an entity that began starting a shell and then closed before
         // the runner registered its shell.
@@ -179,5 +219,71 @@ final class TerminalConnectionRegistryTests: XCTestCase {
         XCTAssertFalse(rejected.accepted, "An older generation must not replace a newer shell for the same entity.")
         XCTAssert(registry.client(for: entityId) === newClient, "The registry must retain the newer client after rejecting an older generation.")
         XCTAssertEqual(registry.shellId(for: entityId), newShellId, "The registry must retain the newer shell after rejecting an older generation.")
+    }
+}
+
+private actor BlockingTerminalConnectionClient: TerminalConnectionClient {
+    private(set) var events: [String] = []
+    private let shellId = UUID()
+    private var disconnectStartedContinuations: [CheckedContinuation<Void, Never>] = []
+    private var disconnectReleaseContinuation: CheckedContinuation<Void, Never>?
+    private var hasDisconnectStarted = false
+    private var isDisconnectReleased = false
+
+    func connect() async throws {
+        events.append("connect")
+    }
+
+    func startShell() async throws -> UUID {
+        events.append("startShell")
+        return shellId
+    }
+
+    func closeShell(_ shellId: UUID) async {
+        events.append("closeShell")
+    }
+
+    func disconnect() async {
+        events.append("disconnect-start")
+        hasDisconnectStarted = true
+        disconnectStartedContinuations.forEach { $0.resume() }
+        disconnectStartedContinuations.removeAll()
+
+        if !isDisconnectReleased {
+            await withCheckedContinuation { continuation in
+                disconnectReleaseContinuation = continuation
+            }
+        }
+
+        events.append("disconnect-finish")
+    }
+
+    func write(_ data: Data, to shellId: UUID) async throws {}
+
+    func resize(cols: Int, rows: Int, for shellId: UUID) async throws {}
+
+    func waitUntilDisconnectStarted() async {
+        guard !hasDisconnectStarted else { return }
+        await withCheckedContinuation { continuation in
+            disconnectStartedContinuations.append(continuation)
+        }
+    }
+
+    func releaseDisconnect() {
+        isDisconnectReleased = true
+        disconnectReleaseContinuation?.resume()
+        disconnectReleaseContinuation = nil
+    }
+}
+
+private actor RegistryTeardownWaitProbe {
+    private var didReturn = false
+
+    func markReturned() {
+        didReturn = true
+    }
+
+    func hasReturned() -> Bool {
+        didReturn
     }
 }
