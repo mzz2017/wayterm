@@ -69,6 +69,22 @@ struct CloudflareTransportManagerLifecycleTests {
             "The completion task registry uses its own lock and should not inherit actor isolation warnings."
         )
         #expect(
+            source.contains("struct CloudflareWebAuthenticationSessionHandle: @unchecked Sendable"),
+            "ASWebAuthenticationSession should be wrapped before crossing actor/MainActor boundaries."
+        )
+        #expect(
+            source.contains("private var currentSession: CloudflareWebAuthenticationSessionHandle?"),
+            "Cloudflare OAuth actor should store the sendable session handle instead of raw ASWebAuthenticationSession."
+        )
+        #expect(
+            !source.contains("private var currentSession: ASWebAuthenticationSession?"),
+            "Raw ASWebAuthenticationSession should not be actor state sent into MainActor closures."
+        )
+        #expect(
+            !source.contains("MainActor.run {\n            session."),
+            "OAuth session start/configure/cancel should go through the session handle rather than sending actor-owned session into MainActor."
+        )
+        #expect(
             source.contains("completionTasks.track"),
             "The ASWebAuthenticationSession completion should publish its lifecycle work before returning."
         )
