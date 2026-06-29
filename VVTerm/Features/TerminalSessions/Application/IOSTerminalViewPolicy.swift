@@ -1,37 +1,37 @@
 import Foundation
 
-struct IOSTerminalSessionSnapshot: Equatable, Identifiable {
+nonisolated struct IOSTerminalSessionSnapshot: Equatable, Identifiable {
     let id: UUID
     let serverId: UUID
 }
 
-enum IOSTerminalPreparationAction: Equatable {
+nonisolated enum IOSTerminalPreparationAction: Equatable {
     case none
     case markVisible(UUID)
     case refreshExisting(UUID)
 }
 
-struct IOSTerminalForegroundReconnectAction: Equatable {
+nonisolated struct IOSTerminalForegroundReconnectAction: Equatable {
     let sessionId: UUID
     let shouldRefreshTerminal: Bool
     let shouldReconnect: Bool
     let shouldForceTerminalVisible: Bool
 }
 
-struct IOSTerminalRecoveredState: Equatable {
+nonisolated struct IOSTerminalRecoveredState: Equatable {
     let shouldShowZenPanel: Bool?
     let isZenModeEnabled: Bool?
     let requestedTerminalDismissal: Bool
     let shouldCallBack: Bool
 }
 
-struct IOSTerminalFloatingControlsVisibility: Equatable {
+nonisolated struct IOSTerminalFloatingControlsVisibility: Equatable {
     let shouldShowControls: Bool
     let shouldShowVoiceButton: Bool
     let shouldShowReturnButton: Bool
 }
 
-enum IOSTerminalViewPolicy {
+nonisolated enum IOSTerminalViewPolicy {
     static let terminalViewId = "terminal"
 
     static func resolvedServerId(
