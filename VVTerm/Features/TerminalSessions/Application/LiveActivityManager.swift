@@ -12,8 +12,9 @@ struct TerminalLiveActivitySnapshot: Equatable, Sendable {
 
 #if os(iOS)
 @available(iOS 16.1, *)
+@MainActor
 private struct TerminalLiveActivityHandle: @unchecked Sendable {
-    nonisolated(unsafe) private let activity: Activity<VVTermActivityAttributes>
+    private let activity: Activity<VVTermActivityAttributes>
 
     init(_ activity: Activity<VVTermActivityAttributes>) {
         self.activity = activity
