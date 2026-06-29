@@ -9,7 +9,7 @@ import CoreGraphics
 // Test Context:
 // Protects ownership of iOS terminal scroll gesture runtime state.
 // GhosttyTerminalView may route gesture intent, but TerminalIOSScrollRuntime
-// owns pan scrolling state, CADisplayLink momentum, and momentum end emission.
+// owns pan scrolling state, display-link momentum, and momentum end emission.
 // Update this test only when scroll runtime ownership intentionally moves.
 @Suite(.serialized)
 struct GhosttyIOSScrollRuntimeBoundaryTests {
@@ -44,7 +44,14 @@ struct GhosttyIOSScrollRuntimeBoundaryTests {
         // And the runtime remains the stable owner of extracted scroll state.
         #expect(runtimeSource.contains("final class TerminalIOSScrollRuntime"))
         #expect(runtimeSource.contains("private var isScrolling"))
-        #expect(runtimeSource.contains("private var momentumDisplayLink"))
+        #expect(
+            runtimeSource.contains("TerminalIOSDisplayLinkOwner"),
+            "Scroll runtime should delegate CADisplayLink token ownership to a nonisolated owner."
+        )
+        #expect(
+            !runtimeSource.contains("private var momentumDisplayLink: CADisplayLink?"),
+            "Scroll runtime should not store CADisplayLink directly in main-actor state."
+        )
         #expect(runtimeSource.contains("private var momentumScrollState"))
         #expect(runtimeSource.contains("func handlePanGesture"))
         #expect(runtimeSource.contains("func stopMomentumScrolling"))

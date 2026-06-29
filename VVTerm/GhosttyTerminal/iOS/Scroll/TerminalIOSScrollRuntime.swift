@@ -16,12 +16,12 @@ final class TerminalIOSScrollRuntime: NSObject {
     }
 
     private var isScrolling = false
-    private var momentumDisplayLink: CADisplayLink?
+    nonisolated private let momentumDisplayLinkOwner = TerminalIOSDisplayLinkOwner()
     private var momentumScrollState = TerminalMomentumScrollState()
     private var momentumHandlers: MomentumHandlers?
 
     deinit {
-        momentumDisplayLink?.invalidate()
+        momentumDisplayLinkOwner.invalidate()
     }
 
     func prepareForNativeHostScroll() {
@@ -72,8 +72,7 @@ final class TerminalIOSScrollRuntime: NSObject {
     }
 
     func stopMomentumScrolling() {
-        momentumDisplayLink?.invalidate()
-        momentumDisplayLink = nil
+        momentumDisplayLinkOwner.invalidate()
         momentumScrollState.reset()
         momentumHandlers = nil
     }
@@ -94,8 +93,9 @@ final class TerminalIOSScrollRuntime: NSObject {
             sendScrollEvent: sendScrollEvent,
             requestRender: requestRender
         )
-        momentumDisplayLink = CADisplayLink(target: self, selector: #selector(momentumScrollTick))
-        momentumDisplayLink?.add(to: .main, forMode: .common)
+        let displayLink = CADisplayLink(target: self, selector: #selector(momentumScrollTick))
+        momentumDisplayLinkOwner.replace(with: displayLink)
+        displayLink.add(to: .main, forMode: .common)
     }
 
     @objc private func momentumScrollTick() {
