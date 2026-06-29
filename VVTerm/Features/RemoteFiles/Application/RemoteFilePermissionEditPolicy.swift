@@ -1,13 +1,13 @@
 import Foundation
 
-struct RemoteFilePermissionEditContext: Equatable, Sendable {
+nonisolated struct RemoteFilePermissionEditContext: Equatable, Sendable {
     let draft: RemoteFilePermissionDraft
     let originalAccessBits: UInt32
     let preservedBits: UInt32
     let fileTypeBits: UInt32
 }
 
-enum RemoteFilePermissionEditPolicy {
+nonisolated enum RemoteFilePermissionEditPolicy {
     static func canEditPermissions(for entry: RemoteFileEntry) -> Bool {
         guard entry.permissions != nil else { return false }
         return entry.type != .symlink

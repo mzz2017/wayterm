@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct RemoteFileInspectorActions {
+nonisolated struct RemoteFileInspectorActions {
     let onDownload: ((RemoteFileEntry) -> Void)?
     let onShare: ((RemoteFileEntry) -> Void)?
     let onRename: ((RemoteFileEntry) -> Void)?
@@ -297,7 +297,7 @@ struct RemoteFileInspectorActionMenu: View {
     }
 }
 
-enum RemoteFileInspectorMetadataPolicy {
+nonisolated enum RemoteFileInspectorMetadataPolicy {
     static func subtitle(for entry: RemoteFileEntry) -> String {
         let kind = kindLabel(for: entry)
         let size = sizeLabel(for: entry)
