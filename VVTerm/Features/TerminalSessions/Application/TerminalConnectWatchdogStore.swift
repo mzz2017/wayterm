@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct TerminalConnectWatchdogStore {
+nonisolated struct TerminalConnectWatchdogStore {
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private var generations: [UUID: UUID] = [:]
 
