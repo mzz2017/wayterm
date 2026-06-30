@@ -408,7 +408,7 @@ extension SSHSession {
                 continue
             }
 
-            throw remoteFileError(from: nil, operation: "start SFTP session", path: nil)
+            throw SSHError.libssh2(rawError)
         }
     }
 

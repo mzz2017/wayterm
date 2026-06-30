@@ -1240,6 +1240,39 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         )
     }
 
+    func testSFTPInitFailurePreservesRawLibSSH2Error() async throws {
+        // Given libssh2 fails while creating the SFTP subsystem before any
+        // SFTP status handle exists.
+        let rawError = LibSSH2RawError(
+            operation: .sftpInit,
+            code: LIBSSH2_ERROR_SOCKET_RECV,
+            message: "socket recv failed during sftp init"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            sftpSessionResult: nil,
+            rawErrors: [rawError]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When remote file access attempts to start SFTP.
+        try await session.connect()
+        do {
+            _ = try await session.listDirectory(at: "/var/log")
+            XCTFail("Expected raw libssh2 SFTP init failure")
+        } catch SSHError.libssh2(let receivedRawError) {
+            // Then the session-level raw libssh2 diagnostics are preserved
+            // instead of being collapsed into a generic SFTP status 0 error.
+            XCTAssertEqual(receivedRawError.operation, .sftpInit)
+            XCTAssertEqual(receivedRawError.code, LIBSSH2_ERROR_SOCKET_RECV)
+            XCTAssertEqual(receivedRawError.message, "socket recv failed during sftp init")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+    }
+
     private func sshSessionSource() throws -> String {
         try String(
             contentsOf: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHSession.swift"),
