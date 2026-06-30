@@ -17,10 +17,11 @@ struct BuildScriptLifecycleBoundaryTests {
         // Given Ghostty builds allocate multi-GB temporary workdirs.
         #expect(buildScript.contains("GHOSTTY_WORKDIR=\"$(mktemp -d"))
 
-        // Then cleanup is owned by a function-exit trap so failures before the
-        // success tail do not leak /tmp or /private/tmp build directories.
+        // Then cleanup is owned by a shell-exit trap plus a success cleanup so
+        // set -e failures before the success tail do not leak /tmp build dirs.
         #expect(buildScript.contains("cleanup_ghostty_workdir()"))
-        #expect(buildScript.contains("trap cleanup_ghostty_workdir RETURN"))
+        #expect(buildScript.contains("trap cleanup_ghostty_workdir EXIT"))
+        #expect(buildScript.contains("self-test-ghostty-cleanup"))
         #expect(
             buildScript.contains("if [ \"${KEEP_WORKDIR}\" = \"1\" ]"),
             "KEEP_WORKDIR=1 should still intentionally retain the workdir for diagnostics."

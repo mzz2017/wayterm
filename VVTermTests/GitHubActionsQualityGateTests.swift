@@ -65,6 +65,11 @@ struct GitHubActionsQualityGateTests {
         #expect(testIOSScript.contains("GITHUB_STEP_SUMMARY"))
         #expect(testIOSScript.contains("write_run_metadata"))
         #expect(testIOSScript.contains("::notice title=iOS xcodebuild started::"))
+
+        // And native build cleanup has a behavior self-test in CI because the
+        // Ghostty workdir is large enough for cleanup regressions to matter.
+        #expect(workflow.contains("Verify Ghostty build cleanup"))
+        #expect(workflow.contains("./scripts/build-ghostty-cleanup-self-test.sh"))
     }
 
     private func source(at url: URL) throws -> String {

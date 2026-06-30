@@ -437,5 +437,8 @@ jobs:
       - name: Verify Ghostty vendor artifacts
         run: ./scripts/build.sh check-ghostty
 
+      - name: Verify Ghostty build cleanup
+        run: ./scripts/build-ghostty-cleanup-self-test.sh
+
       - name: Verify native vendor manifest
         run: ./scripts/build.sh check-vendor-manifest

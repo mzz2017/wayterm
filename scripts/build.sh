@@ -41,6 +41,7 @@ log_section() { echo -e "\n${BLUE}==== $1 ====${NC}\n"; }
 cleanup_ghostty_workdir() {
     local cleanup_status="$?"
     trap - RETURN
+    trap - EXIT
 
     if [ -z "${GHOSTTY_WORKDIR}" ]; then
         return "${cleanup_status}"
@@ -76,6 +77,8 @@ Commands:
             Verify checked-in Vendor native artifact checksums
   vendor-manifest
             Regenerate Vendor native artifact checksums
+  self-test-ghostty-cleanup
+            Verify Ghostty temp workdir cleanup behavior
   clean     Remove .build + Vendor libraries
   help      Show this help message
 
@@ -313,7 +316,7 @@ build_ghosttykit() {
     log_section "GhosttyKit"
 
     GHOSTTY_WORKDIR="$(mktemp -d "/tmp/ghosttykit.XXXXXX")"
-    trap cleanup_ghostty_workdir RETURN
+    trap cleanup_ghostty_workdir EXIT
     local workdir="$GHOSTTY_WORKDIR"
 
     prepare_ghostty_source "${workdir}"
@@ -485,6 +488,66 @@ PY
     log_info "  iOS: $(ls -lh "${VENDOR_GHOSTTY}/ios/lib/libghostty.a" | awk '{print $5}')"
     log_info "  iOS Simulator: $(ls -lh "${VENDOR_GHOSTTY}/ios-simulator/lib/libghostty.a" | awk '{print $5}')"
     check_ghostty_vendor
+    cleanup_ghostty_workdir
+}
+
+self_test_ghostty_cleanup_case() {
+    local keep_workdir="$1"
+    local expected="$2"
+    local path_file
+    local workdir
+    local status
+
+    path_file="$(mktemp "${TMPDIR:-/tmp}/vvterm-ghostty-cleanup.XXXXXX")"
+
+    set +e
+    (
+        set -euo pipefail
+        KEEP_WORKDIR="${keep_workdir}"
+        GHOSTTY_WORKDIR="$(mktemp -d "/tmp/ghosttykit.self-test.XXXXXX")"
+        printf "%s\n" "${GHOSTTY_WORKDIR}" > "${path_file}"
+        trap cleanup_ghostty_workdir EXIT
+        false
+    )
+    status="$?"
+    set -e
+
+    if [ "${status}" -eq 0 ]; then
+        rm -f "${path_file}"
+        log_error "Ghostty cleanup self-test did not exercise a failing command"
+        return 1
+    fi
+
+    workdir="$(cat "${path_file}")"
+    rm -f "${path_file}"
+
+    case "${expected}" in
+        removed)
+            if [ -d "${workdir}" ]; then
+                rm -rf "${workdir}"
+                log_error "Ghostty cleanup self-test leaked ${workdir}"
+                return 1
+            fi
+            ;;
+        kept)
+            if [ ! -d "${workdir}" ]; then
+                log_error "Ghostty cleanup self-test did not keep diagnostics workdir"
+                return 1
+            fi
+            rm -rf "${workdir}"
+            ;;
+        *)
+            log_error "Unknown Ghostty cleanup self-test expectation: ${expected}"
+            return 1
+            ;;
+    esac
+}
+
+self_test_ghostty_cleanup() {
+    log_section "Ghostty cleanup self-test"
+    self_test_ghostty_cleanup_case 0 removed
+    self_test_ghostty_cleanup_case 1 kept
+    log_info "Ghostty cleanup self-test passed"
 }
 
 # ---------- libssh2 / OpenSSL ----------
@@ -874,6 +937,9 @@ case "${COMMAND}" in
         require_cmd shasum
         generate_vendor_manifest > "${VENDOR_MANIFEST}"
         log_info "Regenerated ${VENDOR_MANIFEST}"
+        ;;
+    self-test-ghostty-cleanup)
+        self_test_ghostty_cleanup
         ;;
     clean)
         clean
