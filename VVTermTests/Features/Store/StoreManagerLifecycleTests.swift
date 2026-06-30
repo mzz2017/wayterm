@@ -436,6 +436,48 @@ struct StoreManagerLifecycleTests {
     }
 
     @Test
+    func subscriptionExpirationRefreshWaitsUntilExpiryAndRunsTrackedEntitlementRefresh() async {
+        let sleepGate = StoreRequestGate()
+        let entitlementGate = StoreRequestGate()
+        var entitlementRefreshCount = 0
+        let manager = StoreManager.makeForTesting(
+            checkEntitlementsAction: { _ in
+                entitlementRefreshCount += 1
+                await entitlementGate.waitForRelease()
+            },
+            sleepForEntitlementRefresh: { _ in
+                await sleepGate.waitForRelease()
+            }
+        )
+
+        // Given StoreManager knows an active subscription has an expiration
+        // point and schedules a Store-owned refresh for it.
+        manager.scheduleSubscriptionExpirationRefreshForTesting(at: Date().addingTimeInterval(60))
+        await sleepGate.waitForOperationStart()
+
+        // Then the scheduled expiry task remains tracked until the fake clock
+        // reaches that point.
+        #expect(
+            manager.hasPendingSubscriptionExpirationRefreshForTesting,
+            "Subscription expiry refresh must stay tracked while waiting for the expiration date."
+        )
+
+        // When the fake expiration delay completes.
+        await sleepGate.release()
+        await entitlementGate.waitForOperationStart()
+
+        // Then StoreManager starts a normal tracked entitlement refresh.
+        #expect(entitlementRefreshCount == 1)
+        #expect(manager.pendingEntitlementRefreshRequestIDs.count == 1)
+
+        await entitlementGate.release()
+        await manager.waitForSubscriptionExpirationRefreshForTesting()
+
+        #expect(!manager.hasPendingSubscriptionExpirationRefreshForTesting)
+        #expect(manager.pendingEntitlementRefreshRequestIDs.isEmpty)
+    }
+
+    @Test
     func transactionListenerIsTrackedUntilListenerOperationCompletes() async {
         let listenerGate = StoreRequestGate()
         let manager = StoreManager.makeForTesting(

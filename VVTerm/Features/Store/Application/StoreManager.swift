@@ -14,6 +14,7 @@ nonisolated enum StoreEntitlementRefreshReason: Sendable {
 final class StoreManager: ObservableObject {
     private typealias StoreLifecycleAction = @MainActor (StoreManager) async -> Void
     private typealias StoreTransactionListenerAction = @MainActor (StoreManager) async -> Void
+    private typealias StoreEntitlementRefreshSleepAction = @Sendable (Duration) async -> Void
 
     static let shared = StoreManager()
     static let reviewModeCode = ReviewModeCode.value
@@ -51,6 +52,8 @@ final class StoreManager: ObservableObject {
     private var reviewModeRefreshTaskID: UUID?
     private var entitlementRefreshTask: Task<Void, Never>?
     private var entitlementRefreshRequestID: UUID?
+    private var subscriptionExpirationRefreshTask: Task<Void, Never>?
+    private var subscriptionExpirationRefreshTaskID: UUID?
     private var productLoadRequestTask: Task<Void, Never>?
     private var productLoadRequestID: UUID?
     private var productLoadCompletionCallbacks: [@MainActor () -> Void] = []
@@ -62,6 +65,7 @@ final class StoreManager: ObservableObject {
     private let loadProductsAction: StoreLifecycleAction
     private let checkEntitlementsAction: StoreLifecycleAction
     private let transactionListenerAction: StoreTransactionListenerAction
+    private let sleepForEntitlementRefresh: StoreEntitlementRefreshSleepAction
     private let telemetry: any StoreTelemetry
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Store")
     private let reviewModeDuration: TimeInterval = 60 * 60 * 5
@@ -87,6 +91,7 @@ final class StoreManager: ObservableObject {
         loadProductsAction: StoreLifecycleAction? = nil,
         checkEntitlementsAction: StoreLifecycleAction? = nil,
         transactionListenerAction: StoreTransactionListenerAction? = nil,
+        sleepForEntitlementRefresh: StoreEntitlementRefreshSleepAction? = nil,
         telemetry: (any StoreTelemetry)? = nil
     ) {
         self.loadProductsAction = loadProductsAction ?? { manager in
@@ -97,6 +102,9 @@ final class StoreManager: ObservableObject {
         }
         self.transactionListenerAction = transactionListenerAction ?? { manager in
             await manager.listenForLiveTransactions()
+        }
+        self.sleepForEntitlementRefresh = sleepForEntitlementRefresh ?? { duration in
+            try? await Task.sleep(for: duration)
         }
         self.telemetry = telemetry ?? LiveStoreTelemetry.shared
 
@@ -111,6 +119,7 @@ final class StoreManager: ObservableObject {
         startupRefreshTask?.cancel()
         reviewModeRefreshTask?.cancel()
         entitlementRefreshTask?.cancel()
+        subscriptionExpirationRefreshTask?.cancel()
         reviewModeExpiryTask?.cancel()
         productLoadRequestTask?.cancel()
         purchaseRequestTasks.values.forEach { $0.cancel() }
@@ -123,6 +132,7 @@ final class StoreManager: ObservableObject {
             startupRefreshTask,
             reviewModeRefreshTask,
             entitlementRefreshTask,
+            subscriptionExpirationRefreshTask,
             reviewModeExpiryTask,
             productLoadRequestTask
         ].compactMap { $0 }
@@ -142,6 +152,8 @@ final class StoreManager: ObservableObject {
         reviewModeRefreshTaskID = nil
         entitlementRefreshTask = nil
         entitlementRefreshRequestID = nil
+        subscriptionExpirationRefreshTask = nil
+        subscriptionExpirationRefreshTaskID = nil
         reviewModeExpiryTask = nil
         productLoadRequestTask = nil
         productLoadRequestID = nil
@@ -647,8 +659,57 @@ final class StoreManager: ObservableObject {
         isPro = hasAccess || isReviewModeEnabled
         isLifetime = hasLifetime
         subscriptionStatus = status
+        updateSubscriptionExpirationRefresh(
+            hasAccess: hasAccess,
+            hasLifetime: hasLifetime,
+            expirationDate: subscriptionExpirationDate(from: status)
+        )
         telemetry.trackAppLaunched(isPro: isPro)
         logger.info("Entitlements checked: isPro=\(hasAccess), isLifetime=\(hasLifetime), reviewMode=\(self.isReviewModeEnabled)")
+    }
+
+    private func updateSubscriptionExpirationRefresh(
+        hasAccess: Bool,
+        hasLifetime: Bool,
+        expirationDate: Date?
+    ) {
+        subscriptionExpirationRefreshTask?.cancel()
+        subscriptionExpirationRefreshTask = nil
+        subscriptionExpirationRefreshTaskID = nil
+
+        guard hasAccess, !hasLifetime, let expirationDate else { return }
+        scheduleSubscriptionExpirationRefresh(at: expirationDate)
+    }
+
+    private func scheduleSubscriptionExpirationRefresh(at expirationDate: Date) {
+        subscriptionExpirationRefreshTask?.cancel()
+
+        let taskID = UUID()
+        subscriptionExpirationRefreshTaskID = taskID
+        let sleepForEntitlementRefresh = sleepForEntitlementRefresh
+        let delay = max(0, expirationDate.timeIntervalSinceNow)
+        let delayNanoseconds = Int64(delay * 1_000_000_000)
+        let task = Task { @MainActor [weak self] in
+            await sleepForEntitlementRefresh(.nanoseconds(delayNanoseconds))
+            guard !Task.isCancelled else { return }
+            guard let self, self.subscriptionExpirationRefreshTaskID == taskID else { return }
+
+            let requestID = self.requestEntitlementRefresh(reason: .subscriptionExpiration)
+            await self.waitForEntitlementRefreshRequest(requestID)
+
+            if self.subscriptionExpirationRefreshTaskID == taskID {
+                self.subscriptionExpirationRefreshTaskID = nil
+                self.subscriptionExpirationRefreshTask = nil
+            }
+        }
+
+        subscriptionExpirationRefreshTask = task
+    }
+
+    private func subscriptionExpirationDate(from status: Product.SubscriptionInfo.Status?) -> Date? {
+        guard let status else { return nil }
+        guard case .verified(let transaction) = status.transaction else { return nil }
+        return transaction.expirationDate
     }
 
     private func beginEntitlementRefresh() -> Int {
@@ -678,6 +739,7 @@ extension StoreManager {
         loadProductsAction: (@MainActor (StoreManager) async -> Void)? = nil,
         checkEntitlementsAction: (@MainActor (StoreManager) async -> Void)? = nil,
         transactionListenerAction: (@MainActor (StoreManager) async -> Void)? = nil,
+        sleepForEntitlementRefresh: (@Sendable (Duration) async -> Void)? = nil,
         telemetry: (any StoreTelemetry)? = nil
     ) -> StoreManager {
         StoreManager(
@@ -685,6 +747,7 @@ extension StoreManager {
             loadProductsAction: loadProductsAction,
             checkEntitlementsAction: checkEntitlementsAction,
             transactionListenerAction: transactionListenerAction,
+            sleepForEntitlementRefresh: sleepForEntitlementRefresh,
             telemetry: telemetry ?? NoopStoreTelemetry()
         )
     }
@@ -757,6 +820,18 @@ extension StoreManager {
             hasLifetime: hasLifetime,
             status: nil
         )
+    }
+
+    var hasPendingSubscriptionExpirationRefreshForTesting: Bool {
+        subscriptionExpirationRefreshTask != nil
+    }
+
+    func waitForSubscriptionExpirationRefreshForTesting() async {
+        await subscriptionExpirationRefreshTask?.value
+    }
+
+    func scheduleSubscriptionExpirationRefreshForTesting(at expirationDate: Date) {
+        scheduleSubscriptionExpirationRefresh(at: expirationDate)
     }
 }
 #endif
