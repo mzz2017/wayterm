@@ -101,6 +101,10 @@ final class CloudKitSyncCoordinator {
             let orderedMutations = snapshot.sorted(by: pendingSyncDrainOrder)
 
             for mutation in orderedMutations {
+                guard !queue.isBlockedByEarlierPendingMutation(mutation) else {
+                    continue
+                }
+
                 guard queue.canAttempt(mutation, at: Date()) else {
                     continue
                 }

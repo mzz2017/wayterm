@@ -159,6 +159,57 @@ struct CloudKitSyncCoordinatorLifecycleTests {
     }
 
     @Test
+    func pendingDrainStopsBeforeLaterDeleteWhenEarlierOrderedDeleteFails() async throws {
+        let syncSettingsRestore = SyncSettingsRestore()
+        syncSettingsRestore.setEnabled(true)
+        defer { syncSettingsRestore.restore() }
+
+        let storageKey = "CloudKitSyncCoordinatorLifecycleTests.\(UUID().uuidString)"
+        defer { UserDefaults.standard.removeObject(forKey: storageKey) }
+        let probe = CloudKitDrainProbe()
+        let failingServerID = UUID().uuidString
+        let workspaceID = UUID().uuidString
+        let unrelatedThemeID = UUID().uuidString
+        let coordinator = CloudKitSyncCoordinator.makeForTesting(
+            storageKey: storageKey,
+            syncPendingMutation: { mutation in
+                await probe.record("\(mutation.entity.rawValue):\(mutation.operation.rawValue):\(mutation.entityKey)")
+                if mutation.entity == .server && mutation.operation == .delete {
+                    throw CloudKitDrainTestError.transientServerDelete
+                }
+            }
+        )
+
+        // Given a child server delete must complete before the parent
+        // workspace delete can safely reach CloudKit, while unrelated pending
+        // sync work should still be allowed to make progress.
+        coordinator.enqueuePendingMutation(.delete(entity: .workspace, entityKey: workspaceID))
+        coordinator.enqueuePendingMutation(.delete(entity: .server, entityKey: failingServerID))
+        coordinator.enqueuePendingMutation(.delete(entity: .terminalTheme, entityKey: unrelatedThemeID))
+
+        // When the earlier ordered server delete fails with a retryable error.
+        await coordinator.drainPendingMutations()
+
+        // Then the later workspace delete is not attempted in the same drain,
+        // preventing remote orphan/resurrection when a child tombstone failed.
+        #expect(
+            await probe.events() == [
+                "server:delete:\(failingServerID)",
+                "terminalTheme:delete:\(unrelatedThemeID)"
+            ],
+            "Pending CloudKit drain must block dependent later work after a retryable delete failure without stalling unrelated sync groups."
+        )
+        #expect(
+            coordinator.snapshot().contains { $0.entity == .workspace && $0.entityKey == workspaceID },
+            "The parent workspace delete must remain queued until earlier child deletes have completed."
+        )
+        #expect(
+            !coordinator.snapshot().contains { $0.entity == .terminalTheme && $0.entityKey == unrelatedThemeID },
+            "Unrelated pending sync work should still complete when a server/workspace dependency group is blocked."
+        )
+    }
+
+    @Test
     func duplicateDrainWaitsForActiveDrainToFinish() async throws {
         let syncSettingsRestore = SyncSettingsRestore()
         syncSettingsRestore.setEnabled(true)
@@ -304,6 +355,17 @@ private final class SyncSettingsRestore {
             UserDefaults.standard.set(previousValue, forKey: SyncSettings.enabledKey)
         } else {
             UserDefaults.standard.removeObject(forKey: SyncSettings.enabledKey)
+        }
+    }
+}
+
+private enum CloudKitDrainTestError: LocalizedError {
+    case transientServerDelete
+
+    var errorDescription: String? {
+        switch self {
+        case .transientServerDelete:
+            return "Transient server delete failure"
         }
     }
 }

@@ -124,6 +124,23 @@ struct PendingCloudKitMutation: Codable, Identifiable {
         }
     }
 
+    var drainDependencyGroup: Int {
+        switch entity {
+        case .workspace, .server:
+            return 0
+        case .terminalTheme, .terminalThemePreference:
+            return 1
+        case .terminalAccessoryProfile:
+            return 2
+        }
+    }
+
+    func isBlockedByEarlierPendingMutation(_ other: PendingCloudKitMutation) -> Bool {
+        other.id != id &&
+            other.drainDependencyGroup == drainDependencyGroup &&
+            other.drainPriority < drainPriority
+    }
+
     func canAttempt(at date: Date) -> Bool {
         guard let nextRetryAt else { return true }
         return nextRetryAt <= date
@@ -315,6 +332,10 @@ final class PendingCloudKitSyncQueue {
 
         items[index] = items[index].withFailure(error: error)
         persist()
+    }
+
+    func isBlockedByEarlierPendingMutation(_ mutation: PendingCloudKitMutation) -> Bool {
+        items.contains { mutation.isBlockedByEarlierPendingMutation($0) }
     }
 
     private func load() {
