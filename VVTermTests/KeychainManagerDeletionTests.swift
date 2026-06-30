@@ -95,19 +95,67 @@ struct KeychainManagerDeletionTests {
             "Reusable-key index must not hide a key when its private bytes failed to delete."
         )
     }
+
+    @Test
+    func cloudflareServiceTokenWriteFailurePreservesPreviousTokenPair() throws {
+        let serverId = UUID(uuidString: "00000000-0000-0000-0000-00000000D003")!
+        let idKey = "server.\(serverId.uuidString).cloudflare.clientid"
+        let secretKey = "server.\(serverId.uuidString).cloudflare.clientsecret"
+        let store = RecordingKeychainStore(
+            storedData: [
+                idKey: Data("old-client-id".utf8),
+                secretKey: Data("old-client-secret".utf8)
+            ],
+            failingSets: [
+                .init(key: secretKey, data: Data("new-client-secret".utf8)): KeychainError.unhandled(-34018)
+            ]
+        )
+        let manager = KeychainManager(store: store)
+
+        // Given a Cloudflare service token replacement fails after the first
+        // field write has been attempted.
+        do {
+            try manager.storeCloudflareServiceToken(
+                for: serverId,
+                clientID: "new-client-id",
+                clientSecret: "new-client-secret"
+            )
+            Issue.record("Expected storeCloudflareServiceToken to propagate the Keychain set failure")
+        } catch KeychainError.unhandled(let status) {
+            #expect(status == -34018)
+        } catch {
+            Issue.record("Expected KeychainError.unhandled, got \(error)")
+        }
+
+        // Then the stored token pair must remain internally consistent.
+        #expect(
+            store.storedData[idKey] == Data("old-client-id".utf8),
+            "A failed service-token replacement must not leave a new client ID paired with an old secret."
+        )
+        #expect(store.storedData[secretKey] == Data("old-client-secret".utf8))
+    }
 }
 
 private final class RecordingKeychainStore: KeychainStoring, @unchecked Sendable {
     private(set) var storedData: [String: Data]
     private(set) var deletedKeys: [String] = []
     private let failingDeletes: [String: Error]
+    private let failingSets: [SetWrite: Error]
 
-    init(storedData: [String: Data] = [:], failingDeletes: [String: Error] = [:]) {
+    init(
+        storedData: [String: Data] = [:],
+        failingDeletes: [String: Error] = [:],
+        failingSets: [SetWrite: Error] = [:]
+    ) {
         self.storedData = storedData
         self.failingDeletes = failingDeletes
+        self.failingSets = failingSets
     }
 
     func set(_ data: Data, forKey key: String, iCloudSync: Bool) throws {
+        if let error = failingSets[SetWrite(key: key, data: data)] {
+            throw error
+        }
         storedData[key] = data
     }
 
@@ -121,5 +169,10 @@ private final class RecordingKeychainStore: KeychainStoring, @unchecked Sendable
         }
         deletedKeys.append(key)
         storedData.removeValue(forKey: key)
+    }
+
+    struct SetWrite: Hashable {
+        let key: String
+        let data: Data
     }
 }

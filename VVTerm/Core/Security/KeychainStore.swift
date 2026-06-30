@@ -30,11 +30,6 @@ final class KeychainStore: @unchecked Sendable {
             kSecAttrAccount as String: key
         ]
 
-        // Remove existing item if any
-        var deleteQuery = query
-        deleteQuery[kSecAttrSynchronizable as String] = kSecAttrSynchronizableAny
-        SecItemDelete(deleteQuery as CFDictionary)
-
         var attributes = query
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] = iCloudSync
@@ -45,9 +40,24 @@ final class KeychainStore: @unchecked Sendable {
             attributes[kSecAttrSynchronizable as String] = kCFBooleanTrue
         }
 
-        let status = SecItemAdd(attributes as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw KeychainError.unhandled(status)
+        var updateQuery = query
+        updateQuery[kSecAttrSynchronizable as String] = kSecAttrSynchronizableAny
+        var updateAttributes = attributes
+        updateAttributes.removeValue(forKey: kSecClass as String)
+        updateAttributes.removeValue(forKey: kSecAttrService as String)
+        updateAttributes.removeValue(forKey: kSecAttrAccount as String)
+
+        let updateStatus = SecItemUpdate(updateQuery as CFDictionary, updateAttributes as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return
+        }
+        guard updateStatus == errSecItemNotFound else {
+            throw KeychainError.unhandled(updateStatus)
+        }
+
+        let addStatus = SecItemAdd(attributes as CFDictionary, nil)
+        guard addStatus == errSecSuccess else {
+            throw KeychainError.unhandled(addStatus)
         }
     }
 

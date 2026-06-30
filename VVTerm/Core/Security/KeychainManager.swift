@@ -149,14 +149,26 @@ final class KeychainManager {
     func storeCloudflareServiceToken(for serverId: UUID, clientID: String, clientSecret: String) throws {
         let idKey = cloudflareClientIDKey(for: serverId)
         let secretKey = cloudflareClientSecretKey(for: serverId)
+        let previousIDData = try store.get(idKey)
+        let previousSecretData = try store.get(secretKey)
 
         guard let idData = clientID.data(using: .utf8),
               let secretData = clientSecret.data(using: .utf8) else {
             throw KeychainError.encodingFailed
         }
 
-        try store.set(idData, forKey: idKey, iCloudSync: isSyncEnabled)
-        try store.set(secretData, forKey: secretKey, iCloudSync: isSyncEnabled)
+        do {
+            try store.set(idData, forKey: idKey, iCloudSync: isSyncEnabled)
+            try store.set(secretData, forKey: secretKey, iCloudSync: isSyncEnabled)
+        } catch {
+            restoreCloudflareServiceToken(
+                idKey: idKey,
+                secretKey: secretKey,
+                previousIDData: previousIDData,
+                previousSecretData: previousSecretData
+            )
+            throw error
+        }
         logger.info("Stored Cloudflare service token for server \(serverId.uuidString)")
     }
 
@@ -174,7 +186,45 @@ final class KeychainManager {
         return (clientID: clientID, clientSecret: clientSecret)
     }
 
+    private func restoreCloudflareServiceToken(
+        idKey: String,
+        secretKey: String,
+        previousIDData: Data?,
+        previousSecretData: Data?
+    ) {
+        do {
+            if let previousIDData {
+                try store.set(previousIDData, forKey: idKey, iCloudSync: isSyncEnabled)
+            } else {
+                try store.delete(idKey)
+            }
+
+            if let previousSecretData {
+                try store.set(previousSecretData, forKey: secretKey, iCloudSync: isSyncEnabled)
+            } else {
+                try store.delete(secretKey)
+            }
+        } catch {
+            logger.error("Failed to restore Cloudflare service token after write failure: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Delete Operations
+
+    func deletePassword(for serverId: UUID) throws {
+        try store.delete(passwordKey(for: serverId))
+    }
+
+    func deleteSSHKey(for serverId: UUID) throws {
+        try store.delete(sshKeyKey(for: serverId))
+        try store.delete(sshPassphraseKey(for: serverId))
+        try store.delete(sshPublicKeyKey(for: serverId))
+    }
+
+    func deleteCloudflareServiceToken(for serverId: UUID) throws {
+        try store.delete(cloudflareClientIDKey(for: serverId))
+        try store.delete(cloudflareClientSecretKey(for: serverId))
+    }
 
     func deleteCredentials(for serverId: UUID) throws {
         let passwordKey = passwordKey(for: serverId)

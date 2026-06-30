@@ -3,6 +3,9 @@ import Foundation
 @MainActor
 protocol ServerCredentialWritingLibrary: AnyObject {
     func deleteCredentials(for serverId: UUID) throws
+    func deletePassword(for serverId: UUID) throws
+    func deleteSSHKey(for serverId: UUID) throws
+    func deleteCloudflareServiceToken(for serverId: UUID) throws
     func storePassword(for serverId: UUID, password: String) throws
     func storeSSHKey(for serverId: UUID, privateKey: Data, passphrase: String?, publicKey: Data?) throws
     func storeCloudflareServiceToken(for serverId: UUID, clientID: String, clientSecret: String) throws
@@ -21,34 +24,44 @@ final class ServerCredentialPersistence {
     }
 
     func storeCredentials(for server: Server, credentials: ServerCredentials) throws {
-        try library.deleteCredentials(for: server.id)
+        guard server.connectionMode != .tailscale else {
+            try library.deleteCredentials(for: server.id)
+            return
+        }
 
-        if server.connectionMode != .tailscale {
-            switch server.authMethod {
-            case .password:
-                if let password = credentials.password, !password.isEmpty {
-                    try library.storePassword(for: server.id, password: password)
-                }
-            case .sshKey:
-                if let sshKey = credentials.sshKey, !sshKey.isEmpty {
-                    try library.storeSSHKey(
-                        for: server.id,
-                        privateKey: sshKey,
-                        passphrase: nil,
-                        publicKey: credentials.publicKey
-                    )
-                }
-            case .sshKeyWithPassphrase:
-                if let sshKey = credentials.sshKey, !sshKey.isEmpty {
-                    let passphrase = credentials.sshPassphrase?.isEmpty == true ? nil : credentials.sshPassphrase
-                    try library.storeSSHKey(
-                        for: server.id,
-                        privateKey: sshKey,
-                        passphrase: passphrase,
-                        publicKey: credentials.publicKey
-                    )
-                }
+        var didStoreAuthCredential = false
+
+        switch server.authMethod {
+        case .password:
+            if let password = credentials.password, !password.isEmpty {
+                try library.storePassword(for: server.id, password: password)
+                didStoreAuthCredential = true
             }
+        case .sshKey:
+            if let sshKey = credentials.sshKey, !sshKey.isEmpty {
+                try library.storeSSHKey(
+                    for: server.id,
+                    privateKey: sshKey,
+                    passphrase: nil,
+                    publicKey: credentials.publicKey
+                )
+                didStoreAuthCredential = true
+            }
+        case .sshKeyWithPassphrase:
+            if let sshKey = credentials.sshKey, !sshKey.isEmpty {
+                let passphrase = credentials.sshPassphrase?.isEmpty == true ? nil : credentials.sshPassphrase
+                try library.storeSSHKey(
+                    for: server.id,
+                    privateKey: sshKey,
+                    passphrase: passphrase,
+                    publicKey: credentials.publicKey
+                )
+                didStoreAuthCredential = true
+            }
+        }
+
+        if didStoreAuthCredential {
+            try deleteSupersededAuthCredentials(for: server)
         }
 
         if server.connectionMode == .cloudflare,
@@ -60,6 +73,17 @@ final class ServerCredentialPersistence {
                 clientID: cloudflareClientID,
                 clientSecret: cloudflareClientSecret
             )
+        } else if didStoreAuthCredential {
+            try library.deleteCloudflareServiceToken(for: server.id)
+        }
+    }
+
+    private func deleteSupersededAuthCredentials(for server: Server) throws {
+        switch server.authMethod {
+        case .password:
+            try library.deleteSSHKey(for: server.id)
+        case .sshKey, .sshKeyWithPassphrase:
+            try library.deletePassword(for: server.id)
         }
     }
 }

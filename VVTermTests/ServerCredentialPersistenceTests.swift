@@ -20,9 +20,32 @@ struct ServerCredentialPersistenceTests {
         try persistence.storeCredentials(for: server, credentials: credentials)
 
         #expect(library.events == [
-            .deleteCredentials(server.id),
-            .storePassword(server.id, "secret")
+            .storePassword(server.id, "secret"),
+            .deleteSSHKey(server.id),
+            .deleteCloudflareServiceToken(server.id)
         ])
+    }
+
+    @Test
+    func failedReplacementWriteDoesNotDeleteExistingCredentialsFirst() throws {
+        let server = makeServer(authMethod: .password)
+        let library = RecordingCredentialLibrary(
+            failingEvents: [.storePassword(server.id, "rotated-secret"): FakeCredentialLibraryError.writeFailed]
+        )
+        let persistence = ServerCredentialPersistence(library: library)
+        var credentials = ServerCredentials(serverId: server.id)
+        credentials.password = "rotated-secret"
+
+        // Given a replacement password write fails before the new credential is durable.
+        #expect(throws: FakeCredentialLibraryError.writeFailed) {
+            try persistence.storeCredentials(for: server, credentials: credentials)
+        }
+
+        // Then existing credentials must not be deleted before replacement succeeds.
+        #expect(
+            library.events == [.storePassword(server.id, "rotated-secret")],
+            "Credential replacement should write the selected credential before deleting existing secrets."
+        )
     }
 
     @Test
@@ -40,8 +63,9 @@ struct ServerCredentialPersistenceTests {
         try persistence.storeCredentials(for: server, credentials: credentials)
 
         #expect(library.events == [
-            .deleteCredentials(server.id),
-            .storeSSHKey(server.id, privateKey, nil, publicKey)
+            .storeSSHKey(server.id, privateKey, nil, publicKey),
+            .deletePassword(server.id),
+            .deleteCloudflareServiceToken(server.id)
         ])
     }
 
@@ -77,8 +101,8 @@ struct ServerCredentialPersistenceTests {
         try persistence.storeCredentials(for: server, credentials: credentials)
 
         #expect(library.events == [
-            .deleteCredentials(server.id),
             .storePassword(server.id, "secret"),
+            .deleteSSHKey(server.id),
             .storeCloudflareServiceToken(server.id, "client-id", "client-secret")
         ])
     }
@@ -113,28 +137,65 @@ struct ServerCredentialPersistenceTests {
 
 @MainActor
 private final class RecordingCredentialLibrary: ServerCredentialWritingLibrary {
-    enum Event: Equatable {
+    enum Event: Hashable {
         case deleteCredentials(UUID)
+        case deletePassword(UUID)
+        case deleteSSHKey(UUID)
+        case deleteCloudflareServiceToken(UUID)
         case storePassword(UUID, String)
         case storeSSHKey(UUID, Data, String?, Data?)
         case storeCloudflareServiceToken(UUID, String, String)
     }
 
     private(set) var events: [Event] = []
+    private let failingEvents: [Event: Error]
+
+    init(failingEvents: [Event: Error] = [:]) {
+        self.failingEvents = failingEvents
+    }
 
     func deleteCredentials(for serverId: UUID) throws {
         events.append(.deleteCredentials(serverId))
+        try failIfNeeded(.deleteCredentials(serverId))
+    }
+
+    func deletePassword(for serverId: UUID) throws {
+        events.append(.deletePassword(serverId))
+        try failIfNeeded(.deletePassword(serverId))
+    }
+
+    func deleteSSHKey(for serverId: UUID) throws {
+        events.append(.deleteSSHKey(serverId))
+        try failIfNeeded(.deleteSSHKey(serverId))
+    }
+
+    func deleteCloudflareServiceToken(for serverId: UUID) throws {
+        events.append(.deleteCloudflareServiceToken(serverId))
+        try failIfNeeded(.deleteCloudflareServiceToken(serverId))
     }
 
     func storePassword(for serverId: UUID, password: String) throws {
         events.append(.storePassword(serverId, password))
+        try failIfNeeded(.storePassword(serverId, password))
     }
 
     func storeSSHKey(for serverId: UUID, privateKey: Data, passphrase: String?, publicKey: Data?) throws {
         events.append(.storeSSHKey(serverId, privateKey, passphrase, publicKey))
+        try failIfNeeded(.storeSSHKey(serverId, privateKey, passphrase, publicKey))
     }
 
     func storeCloudflareServiceToken(for serverId: UUID, clientID: String, clientSecret: String) throws {
         events.append(.storeCloudflareServiceToken(serverId, clientID, clientSecret))
+        try failIfNeeded(.storeCloudflareServiceToken(serverId, clientID, clientSecret))
     }
+
+    private func failIfNeeded(_ event: Event) throws {
+        if let error = failingEvents[event] {
+            throw error
+        }
+    }
+}
+
+private enum FakeCredentialLibraryError: Error, Equatable {
+    case writeFailed
 }
