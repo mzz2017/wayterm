@@ -37,6 +37,26 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_section() { echo -e "\n${BLUE}==== $1 ====${NC}\n"; }
 
+cleanup_ghostty_workdir() {
+    local cleanup_status="$?"
+    trap - RETURN
+
+    if [ -z "${GHOSTTY_WORKDIR}" ]; then
+        return "${cleanup_status}"
+    fi
+
+    if [ "${KEEP_WORKDIR}" = "1" ]; then
+        log_warn "Keeping workdir: ${GHOSTTY_WORKDIR}"
+        return "${cleanup_status}"
+    fi
+
+    if ! rm -rf "${GHOSTTY_WORKDIR}"; then
+        log_warn "Failed to remove Ghostty workdir: ${GHOSTTY_WORKDIR}"
+    fi
+    GHOSTTY_WORKDIR=""
+    return "${cleanup_status}"
+}
+
 print_usage() {
     cat << EOF
 VVTerm Build Script
@@ -247,6 +267,7 @@ build_ghosttykit() {
     log_section "GhosttyKit"
 
     GHOSTTY_WORKDIR="$(mktemp -d "/tmp/ghosttykit.XXXXXX")"
+    trap cleanup_ghostty_workdir RETURN
     local workdir="$GHOSTTY_WORKDIR"
 
     prepare_ghostty_source "${workdir}"
@@ -418,13 +439,6 @@ PY
     log_info "  iOS: $(ls -lh "${VENDOR_GHOSTTY}/ios/lib/libghostty.a" | awk '{print $5}')"
     log_info "  iOS Simulator: $(ls -lh "${VENDOR_GHOSTTY}/ios-simulator/lib/libghostty.a" | awk '{print $5}')"
     check_ghostty_vendor
-
-    if [ "${KEEP_WORKDIR}" = "1" ]; then
-        log_warn "Keeping workdir: ${workdir}"
-    else
-        rm -rf "${workdir}"
-        GHOSTTY_WORKDIR=""
-    fi
 }
 
 # ---------- libssh2 / OpenSSL ----------
