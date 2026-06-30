@@ -302,11 +302,97 @@ prepare_cloned_source_packages() {
 }
 
 resolve_packages() {
+    local timeout_file
+    local started_at
+    local finished_at
+    local elapsed
+    local last_output_at
+    local now
+    local status
+
+    log_file="$(mktemp -t vvterm-ios-resolve.XXXXXX)"
+    timeout_file="$(mktemp -t vvterm-ios-resolve-timeout.XXXXXX)"
+    rm -f "$timeout_file"
+    : >"$log_file"
+
+    echo "Resolving Swift packages."
+    echo "DerivedData: ${derived_data_path}"
+    echo "Cloned source packages: ${cloned_source_packages_path}"
+
     xcodebuild -resolvePackageDependencies \
         -project "$project" \
         -scheme "$scheme" \
         -derivedDataPath "$derived_data_path" \
-        -clonedSourcePackagesDirPath "$cloned_source_packages_path"
+        -clonedSourcePackagesDirPath "$cloned_source_packages_path" >"$log_file" 2>&1 &
+    xcode_pid="$!"
+    started_at="$(date +%s)"
+
+    if [[ "$no_output_timeout" != "0" ]]; then
+        (
+            last_output_at="$(date +%s)"
+            while kill -0 "$xcode_pid" 2>/dev/null; do
+                if [[ -s "$log_file" ]]; then
+                    last_output_at="$(stat -f %m "$log_file")"
+                fi
+
+                now="$(date +%s)"
+                if (( now - last_output_at >= no_output_timeout )); then
+                    {
+                        if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+                            echo "::error title=iOS package resolution stalled::${test_context} resolve produced no output for ${no_output_timeout}s"
+                        fi
+                        echo "xcodebuild produced no output for ${no_output_timeout}s; terminating stalled iOS package resolution."
+                        print_xcodebuild_process_snapshot
+                        print_recent_xcodebuild_log "$failure_log_lines" "$now"
+                    } >&2
+                    touch "$timeout_file"
+                    pkill -TERM -P "$xcode_pid" >/dev/null 2>&1 || true
+                    kill -TERM "$xcode_pid" >/dev/null 2>&1 || true
+                    sleep 2
+                    pkill -KILL -P "$xcode_pid" >/dev/null 2>&1 || true
+                    kill -KILL "$xcode_pid" >/dev/null 2>&1 || true
+                    exit 0
+                fi
+
+                sleep 1
+            done
+        ) &
+        watchdog_pid="$!"
+    fi
+
+    set +e
+    wait "$xcode_pid"
+    status="$?"
+    set -e
+    xcode_pid=""
+    finished_at="$(date +%s)"
+    elapsed=$((finished_at - started_at))
+
+    if [[ -n "$watchdog_pid" ]]; then
+        kill "$watchdog_pid" >/dev/null 2>&1 || true
+        wait "$watchdog_pid" >/dev/null 2>&1 || true
+        watchdog_pid=""
+    fi
+
+    if [[ -f "$timeout_file" ]]; then
+        preserve_xcodebuild_log "124"
+        rm -f "$log_file" "$timeout_file"
+        log_file=""
+        return 124
+    fi
+
+    if [[ "$status" -ne 0 ]]; then
+        echo "xcodebuild package resolution exited with status ${status} after ${elapsed}s." >&2
+        print_recent_xcodebuild_log "$failure_log_lines" "$finished_at" >&2
+        preserve_xcodebuild_log "$status"
+        rm -f "$log_file" "$timeout_file"
+        log_file=""
+        return "$status"
+    fi
+
+    preserve_xcodebuild_log "$status"
+    rm -f "$log_file" "$timeout_file"
+    log_file=""
 }
 
 patch_mlx_swift_metal_warnings() {

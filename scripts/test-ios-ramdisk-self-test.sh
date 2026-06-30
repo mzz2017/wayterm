@@ -60,6 +60,9 @@ write_stub_tools() {
 set -euo pipefail
 printf '%s\n' "$@" >>"${VVTERM_STUB_CAPTURE}/xcodebuild.args"
 if [[ " $* " == *" -resolvePackageDependencies "* ]]; then
+    if [[ "${VVTERM_STUB_RESOLVE_STALL:-0}" == "1" ]]; then
+        sleep "${VVTERM_STUB_RESOLVE_SLEEP:-3}"
+    fi
     exit 0
 fi
 echo "Test run started."
@@ -170,6 +173,23 @@ run_wrapper() {
     fi
 }
 
+run_wrapper_expect_failure() {
+    local capture_dir="$1"
+    local ramdisk_mount="$2"
+    local stdout_file="$3"
+    local stderr_file="$4"
+    local cloned_source_packages_dir="${5:-}"
+    local device_state="${6:-Shutdown}"
+    local status
+    shift 6
+
+    set +e
+    run_wrapper "$capture_dir" "$ramdisk_mount" "$stdout_file" "$stderr_file" "$cloned_source_packages_dir" "$device_state" "$@"
+    status="$?"
+    set -e
+    echo "$status" >"${capture_dir}/wrapper.status"
+}
+
 write_stub_tools "${tmp_root}/bin"
 
 local_capture="${tmp_root}/capture-local"
@@ -241,5 +261,20 @@ run_wrapper "$ci_capture" "$ci_mount" "${tmp_root}/ci.out" "${tmp_root}/ci.err" 
 assert_contains "${ci_capture}/xcodebuild.args" "-derivedDataPath"
 assert_not_contains "${ci_capture}/xcodebuild.args" "${ci_mount}/vvterm-ios-derived-data."
 assert_contains "${tmp_root}/ci.out" "Ignoring IOS_TEST_RAMDISK_MB on GitHub Actions."
+
+resolve_timeout_capture="${tmp_root}/capture-resolve-timeout"
+resolve_timeout_mount="${tmp_root}/ramdisk-resolve-timeout"
+run_wrapper_expect_failure "$resolve_timeout_capture" "$resolve_timeout_mount" \
+    "${tmp_root}/resolve-timeout.out" "${tmp_root}/resolve-timeout.err" "" "Shutdown" \
+    IOS_TEST_RAMDISK_MB=16 \
+    IOS_TEST_NO_OUTPUT_TIMEOUT=1 \
+    VVTERM_STUB_RESOLVE_STALL=1 \
+    VVTERM_STUB_RESOLVE_SLEEP=3
+
+assert_contains "${resolve_timeout_capture}/wrapper.status" "124"
+assert_contains "${tmp_root}/resolve-timeout.err" "xcodebuild produced no output for 1s"
+[[ ! -d "${tmp_root}/ios-test.lock" ]] || fail "resolve timeout should remove the iOS test lock"
+[[ -z "$(find "$resolve_timeout_mount" -maxdepth 1 -name 'vvterm-ios-derived-data.*' -print -quit)" ]] ||
+    fail "resolve timeout should clean auto-managed DerivedData from RAM disk"
 
 echo "test-ios RAM disk self-test passed"
