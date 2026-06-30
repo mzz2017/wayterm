@@ -52,6 +52,14 @@ struct GitHubActionsQualityGateTests {
         #expect(testIOSScript.contains("validate_swift_concurrency_warnings"))
         #expect(workflow.contains("ENABLE_DEBUG_DYLIB: \"NO\""))
 
+        // And macOS app compilation is guarded remotely instead of being
+        // inferred from SwiftPM or iOS-only Xcode gates.
+        #expect(workflow.contains("macos-app-build:"))
+        #expect(workflow.contains("macOS app build"))
+        #expect(workflow.contains("Build macOS app target"))
+        #expect(workflow.contains("-destination 'platform=macOS'"))
+        #expect(workflow.contains("CODE_SIGNING_ALLOWED=NO"))
+
         // And the iOS wrapper can reuse the same isolated simulator setup for build gates.
         #expect(testIOSScript.contains("xcodebuild_action=\"${IOS_TEST_XCODEBUILD_ACTION:-test}\""))
         #expect(testIOSScript.contains("test_context=\"${IOS_TEST_CONTEXT:-${xcodebuild_action}}\""))

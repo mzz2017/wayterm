@@ -46,6 +46,84 @@ jobs:
       - name: Run iOS wrapper self-tests
         run: ./scripts/test-ios-ramdisk-self-test.sh
 
+  macos-app-build:
+    name: macOS app build
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Configure macOS build paths
+        run: |
+          {
+            echo "MACOS_DERIVED_DATA_PATH=${RUNNER_TEMP}/vvterm-macos-derived-data"
+            echo "MACOS_XCODE_LOG_DIR=${RUNNER_TEMP}/vvterm-macos-build-logs"
+            echo "XCODE_CLONED_SOURCE_PACKAGES_DIR=${GITHUB_WORKSPACE}/.xcode-cloned-source-packages"
+          } >> "${GITHUB_ENV}"
+
+      - name: Restore Xcode package cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.xcode-cloned-source-packages
+          key: xcode-spm-${{ runner.os }}-macos-${{ hashFiles('VVTerm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            xcode-spm-${{ runner.os }}-macos-
+            xcode-spm-${{ runner.os }}-
+
+      - name: Show macOS build diagnostics
+        run: |
+          mkdir -p "${MACOS_XCODE_LOG_DIR}"
+          echo "::group::macOS app build diagnostics"
+          echo "MACOS_DERIVED_DATA_PATH=${MACOS_DERIVED_DATA_PATH}"
+          echo "MACOS_XCODE_LOG_DIR=${MACOS_XCODE_LOG_DIR}"
+          echo "XCODE_CLONED_SOURCE_PACKAGES_DIR=${XCODE_CLONED_SOURCE_PACKAGES_DIR}"
+          echo "RUNNER_TEMP=${RUNNER_TEMP}"
+          echo "GITHUB_SHA=${GITHUB_SHA}"
+          echo "xcode-select: $(xcode-select -p)"
+          echo "disk usage:"
+          df -h .
+          df -h "${RUNNER_TEMP}"
+          echo "::endgroup::"
+
+      - name: Build macOS app target
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project VVTerm.xcodeproj \
+            -scheme VVTerm \
+            -destination 'platform=macOS' \
+            -derivedDataPath "${MACOS_DERIVED_DATA_PATH}" \
+            -clonedSourcePackagesDirPath "${XCODE_CLONED_SOURCE_PACKAGES_DIR}" \
+            CODE_SIGNING_ALLOWED=NO \
+            ENABLE_DEBUG_DYLIB=NO \
+            | tee "${MACOS_XCODE_LOG_DIR}/xcodebuild-macos-build.log"
+
+      - name: Upload macOS build logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-app-build-xcodebuild-logs
+          path: ${{ runner.temp }}/vvterm-macos-build-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Clean macOS DerivedData
+        if: always()
+        run: |
+          for attempt in 1 2 3; do
+            rm -rf "${MACOS_DERIVED_DATA_PATH}" && exit 0
+            echo "DerivedData cleanup attempt ${attempt} failed; retrying..."
+            sleep 5
+          done
+          echo "::warning::Unable to remove macOS DerivedData at ${MACOS_DERIVED_DATA_PATH}"
+
   ios-focused-runtime:
     name: Focused runtime lifecycle tests
     runs-on: macos-15
