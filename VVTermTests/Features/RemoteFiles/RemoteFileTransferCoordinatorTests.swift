@@ -269,6 +269,63 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func uploadFileCancellationDoesNotWriteFinalRemotePath() async throws {
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            serverProvider: { _ in nil }
+        )
+        let localDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RemoteFileTransferCoordinatorTests-\(UUID().uuidString)", isDirectory: true)
+        let localURL = localDirectory.appendingPathComponent("report.txt")
+        try FileManager.default.createDirectory(at: localDirectory, withIntermediateDirectories: true)
+        try Data("new remote contents".utf8).write(to: localURL)
+        defer { try? FileManager.default.removeItem(at: localDirectory) }
+
+        let uploadBlocker = RemoteFileUploadBlocker()
+        let service = RecordingRemoteFileService(
+            directoryContents: [:],
+            uploadBlocker: uploadBlocker
+        )
+
+        // Given a local file upload has reached the remote write phase.
+        let task = Task {
+            try await store.uploadItem(
+                at: localURL,
+                to: "/remote",
+                using: service
+            )
+        }
+        await uploadBlocker.waitUntilStarted()
+
+        // When cancellation arrives before the upload is allowed to finish.
+        task.cancel()
+        await uploadBlocker.release()
+
+        // Then RemoteFiles never writes partial bytes to the final remote path,
+        // and the temporary upload path is cleaned without being renamed.
+        let result = await task.result
+        switch result {
+        case .success:
+            Issue.record("Expected upload cancellation before final remote replacement")
+        case .failure(is CancellationError):
+            break
+        case .failure(let error):
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+
+        let operations = service.operations
+        let uploadPaths = operations.compactMap { operation -> String? in
+            guard case .upload(let path, _) = operation else { return nil }
+            return path
+        }
+        let uploadedPath = try #require(uploadPaths.first)
+        #expect(uploadedPath != "/remote/report.txt")
+        #expect(uploadedPath.hasPrefix("/remote/.report.txt.vvterm-upload-"))
+        #expect(operations.contains(.deleteFile(uploadedPath)))
+        #expect(!operations.contains(.renameItem(source: uploadedPath, destination: "/remote/report.txt")))
+    }
+
+    @Test
     func deleteEntriesCancellationStopsBeforeNextSelectedItem() async throws {
         let server = Server(
             workspaceId: UUID(),
@@ -426,6 +483,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
     let directoryContents: [String: [RemoteFileEntry]]
     let listBlocker: RemoteFileListBlocker?
     let downloadBlocker: RemoteFileDownloadBlocker?
+    let uploadBlocker: RemoteFileUploadBlocker?
     let downloadData: Data?
     let renameBlocker: RemoteFileRenameBlocker?
     let deleteBlocker: RemoteFileDeleteBlocker?
@@ -450,6 +508,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         directoryContents: [String: [RemoteFileEntry]],
         listBlocker: RemoteFileListBlocker? = nil,
         downloadBlocker: RemoteFileDownloadBlocker? = nil,
+        uploadBlocker: RemoteFileUploadBlocker? = nil,
         downloadData: Data? = nil,
         renameBlocker: RemoteFileRenameBlocker? = nil,
         deleteBlocker: RemoteFileDeleteBlocker? = nil,
@@ -458,6 +517,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         self.directoryContents = directoryContents
         self.listBlocker = listBlocker
         self.downloadBlocker = downloadBlocker
+        self.uploadBlocker = uploadBlocker
         self.downloadData = downloadData
         self.renameBlocker = renameBlocker
         self.deleteBlocker = deleteBlocker
@@ -500,10 +560,12 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         permissions: Int32,
         strategy: SSHUploadStrategy
     ) async throws {
+        let normalizedPath = RemoteFilePath.normalize(remotePath)
         record(.upload(
-            path: RemoteFilePath.normalize(remotePath),
+            path: normalizedPath,
             text: String(data: data, encoding: .utf8) ?? "<binary>"
         ))
+        await uploadBlocker?.waitIfNeeded(path: normalizedPath)
     }
 
     func createDirectory(at path: String, permissions: Int32) async throws {}
@@ -675,6 +737,34 @@ private actor RemoteFileDownloadBlocker {
 
     func waitIfNeeded(path: String) async {
         guard path == blockedPath else { return }
+        started = true
+        startedWaiters.forEach { $0.resume() }
+        startedWaiters.removeAll()
+
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+        }
+    }
+
+    func waitUntilStarted() async {
+        if started { return }
+        await withCheckedContinuation { continuation in
+            startedWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
+private actor RemoteFileUploadBlocker {
+    private var started = false
+    private var startedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    func waitIfNeeded(path: String) async {
         started = true
         startedWaiters.forEach { $0.resume() }
         startedWaiters.removeAll()

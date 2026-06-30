@@ -507,8 +507,26 @@ extension RemoteFileBrowserStore {
         }
 
         let data = try await loadLocalFileData(from: localURL)
-        try await client.upload(data, to: remotePath, permissions: Int32(0o644), strategy: .automatic)
+        let temporaryRemotePath = makeAtomicRemoteUploadPath(
+            targetName: targetName,
+            in: remoteDirectoryPath
+        )
+        do {
+            try await client.upload(data, to: temporaryRemotePath, permissions: Int32(0o644), strategy: .automatic)
+            try Task.checkCancellation()
+            try await client.renameItem(at: temporaryRemotePath, to: remotePath)
+        } catch {
+            try? await client.deleteFile(at: temporaryRemotePath)
+            throw error
+        }
         progressTracker?.advance(currentItemName: targetName)
+    }
+
+    private func makeAtomicRemoteUploadPath(targetName: String, in remoteDirectoryPath: String) -> String {
+        RemoteFilePath.appending(
+            ".\(targetName).vvterm-upload-\(UUID().uuidString).tmp",
+            to: remoteDirectoryPath
+        )
     }
 
     func downloadItem(
