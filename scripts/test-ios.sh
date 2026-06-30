@@ -24,6 +24,7 @@ xcodebuild_quiet="${IOS_TEST_XCODEBUILD_QUIET:-0}"
 xcodebuild_action="${IOS_TEST_XCODEBUILD_ACTION:-test}"
 test_context="${IOS_TEST_CONTEXT:-${xcodebuild_action}}"
 require_executed_tests="${IOS_TEST_REQUIRE_EXECUTED_TESTS:-auto}"
+fail_on_swift_concurrency_warnings="${IOS_TEST_FAIL_ON_SWIFT_CONCURRENCY_WARNINGS:-0}"
 progress_interval="${IOS_TEST_PROGRESS_INTERVAL:-0}"
 progress_log_lines="${IOS_TEST_PROGRESS_LOG_LINES:-20}"
 failure_log_lines="${IOS_TEST_FAILURE_LOG_LINES:-120}"
@@ -616,18 +617,22 @@ should_require_executed_tests() {
 executed_test_count() {
     local log_path="$1"
     local swift_testing_count
+    local swift_testing_passed_count
     local xctest_count
 
     swift_testing_count="$(
         sed -n 's/.*Test run with \([0-9][0-9]*\) tests.*/\1/p' "$log_path" |
             awk '{ total += $1 } END { print total + 0 }'
     )"
+    swift_testing_passed_count="$(
+        awk '/Test .+ passed after [0-9.]+ seconds\./ { total += 1 } END { print total + 0 }' "$log_path"
+    )"
     xctest_count="$(
         sed -n 's/.*Executed \([0-9][0-9]*\) tests,.*/\1/p' "$log_path" |
             awk '{ total += $1 } END { print total + 0 }'
     )"
 
-    echo $((swift_testing_count + xctest_count))
+    echo $((swift_testing_count + swift_testing_passed_count + xctest_count))
 }
 
 validate_executed_tests() {
@@ -651,6 +656,32 @@ validate_executed_tests() {
     echo "xcodebuild exited successfully, but the requested test filters executed zero tests." >&2
     echo "Check -only-testing arguments for renamed, removed, or mismatched test identifiers." >&2
     return 11
+}
+
+validate_swift_concurrency_warnings() {
+    local log_path="$1"
+
+    case "$fail_on_swift_concurrency_warnings" in
+    1 | true | TRUE | yes | YES)
+        ;;
+    0 | false | FALSE | no | NO)
+        return 0
+        ;;
+    *)
+        echo "Unsupported IOS_TEST_FAIL_ON_SWIFT_CONCURRENCY_WARNINGS: ${fail_on_swift_concurrency_warnings}" >&2
+        return 12
+        ;;
+    esac
+
+    if ! grep -E "warning: .*(main actor-isolated|non-Sendable|concurrently-executing code|Swift 6 language mode)" "$log_path"; then
+        return 0
+    fi
+
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+        echo "::error title=Swift concurrency warnings found::${test_context} emitted warnings that should be fixed or explicitly baselined"
+    fi
+    echo "Strict Swift concurrency gate found Swift concurrency warnings." >&2
+    return 12
 }
 
 print_xcodebuild_process_snapshot() {
@@ -920,6 +951,14 @@ run_xcodebuild_test() {
         validation_status="$?"
         if [[ "$validation_status" -ne 0 ]]; then
             last_status="$validation_status"
+        fi
+    fi
+    if [[ "$last_status" -eq 0 ]]; then
+        local warning_validation_status
+        validate_swift_concurrency_warnings "$log_file"
+        warning_validation_status="$?"
+        if [[ "$warning_validation_status" -ne 0 ]]; then
+            last_status="$warning_validation_status"
         fi
     fi
     write_run_metadata "$last_status" "$elapsed" "$result_bundle_path" "$@"

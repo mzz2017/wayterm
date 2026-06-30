@@ -29,6 +29,14 @@ struct GitHubActionsQualityGateTests {
         #expect(workflow.contains("- ios-focused-runtime"))
         #expect(workflow.contains("- ios-strict-concurrency"))
         #expect(workflow.contains("run: ./scripts/test-ios.sh"))
+        #expect(
+            workflow.contains("IOS_TEST_REQUIRE_EXECUTED_TESTS: \"1\""),
+            "Full iOS unit CI should fail if XCTest reports zero executed tests."
+        )
+        #expect(
+            testIOSScript.contains("Test .+ passed after [0-9.]+ seconds"),
+            "The iOS wrapper should count Swift Testing per-test output as executed tests."
+        )
 
         // And strict concurrency warnings are continuously guarded remotely.
         #expect(workflow.contains("ios-strict-concurrency:"))
@@ -36,6 +44,12 @@ struct GitHubActionsQualityGateTests {
         #expect(workflow.contains("IOS_TEST_XCODEBUILD_ACTION: build-for-testing"))
         #expect(workflow.contains("./scripts/test-ios.sh SWIFT_STRICT_CONCURRENCY=complete"))
         #expect(workflow.contains("SWIFT_STRICT_CONCURRENCY=complete"))
+        #expect(
+            workflow.contains("IOS_TEST_FAIL_ON_SWIFT_CONCURRENCY_WARNINGS: \"1\""),
+            "Strict Swift concurrency CI should fail on unaccepted Swift concurrency warnings."
+        )
+        #expect(testIOSScript.contains("IOS_TEST_FAIL_ON_SWIFT_CONCURRENCY_WARNINGS"))
+        #expect(testIOSScript.contains("validate_swift_concurrency_warnings"))
         #expect(workflow.contains("ENABLE_DEBUG_DYLIB: \"NO\""))
 
         // And the iOS wrapper can reuse the same isolated simulator setup for build gates.
