@@ -296,8 +296,13 @@ extension RemoteFileBrowserScreen {
             title: String(localized: "Transferring"),
             initialMessage: String(localized: "Preparing remote items."),
             successMessage: String(localized: "Transfer complete.")
-        ) { onProgress in
-            try await transferDroppedRemoteItems([payload], to: destinationPath, onProgress: onProgress)
+        ) { onProgress, bindServerScope in
+            try await transferDroppedRemoteItems(
+                [payload],
+                to: destinationPath,
+                onProgress: onProgress,
+                bindServerScope: bindServerScope
+            )
         }
     }
 
