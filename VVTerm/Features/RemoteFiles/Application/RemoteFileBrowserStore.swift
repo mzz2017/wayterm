@@ -103,7 +103,7 @@ final class RemoteFileBrowserStore: ObservableObject {
     let persistedStateStore: RemoteFileBrowserPersistedStateStore
     let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "RemoteFiles")
     nonisolated let temporaryStorage: RemoteFileTemporaryStorage
-    nonisolated let localFileService: RemoteFileLocalFileService
+    nonisolated let localFileService: any RemoteFileLocalFileServicing
     let previewLoader: RemoteFilePreviewLoader
     let conflictResolver: RemoteFileConflictResolver
     let transferPolicy: RemoteFileTransferPolicy
@@ -149,7 +149,7 @@ final class RemoteFileBrowserStore: ObservableObject {
         remoteFileServiceAccess: (any RemoteFileServiceAccessing)? = nil,
         serviceAccessCoordinator: RemoteFileServiceAccessCoordinator? = nil,
         temporaryStorage: RemoteFileTemporaryStorage = RemoteFileTemporaryStorage(),
-        localFileService: RemoteFileLocalFileService = RemoteFileLocalFileService(),
+        localFileService: any RemoteFileLocalFileServicing = RemoteFileLocalFileService(),
         previewLoader: RemoteFilePreviewLoader = RemoteFilePreviewLoader(),
         conflictResolver: RemoteFileConflictResolver = RemoteFileConflictResolver(),
         transferPolicy: RemoteFileTransferPolicy = RemoteFileTransferPolicy(),

@@ -394,8 +394,10 @@ extension RemoteFileBrowserStore {
         to localURL: URL,
         server: Server
     ) async throws {
-        try await withRemoteFileService(for: server) { service in
-            try await service.downloadFile(at: remotePath, to: localURL)
+        try await localFileService.withSecurityScopedAccess(to: [localURL]) {
+            try await withRemoteFileService(for: server) { service in
+                try await service.downloadFile(at: remotePath, to: localURL)
+            }
         }
     }
 
@@ -404,8 +406,10 @@ extension RemoteFileBrowserStore {
         to localURL: URL,
         server: Server
     ) async throws {
-        try await withRemoteFileService(for: server) { service in
-            try await self.downloadItem(entry, to: localURL, using: service)
+        try await localFileService.withSecurityScopedAccess(to: [localURL]) {
+            try await withRemoteFileService(for: server) { service in
+                try await self.downloadItem(entry, to: localURL, using: service)
+            }
         }
     }
 

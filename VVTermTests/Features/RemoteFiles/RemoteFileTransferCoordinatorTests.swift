@@ -182,6 +182,43 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func downloadFileUsesSecurityScopedAccessForDestination() async throws {
+        let server = Server(
+            workspaceId: UUID(),
+            name: "Production",
+            host: "ssh.example.com",
+            username: "root"
+        )
+        let destinationURL = URL(fileURLWithPath: "/Users/test/Downloads/report.txt")
+        let localFileService = RecordingRemoteFileLocalFileService()
+        let service = RecordingRemoteFileService(
+            directoryContents: [:],
+            downloadAccessProbe: {
+                await localFileService.isAccessing(destinationURL)
+            }
+        )
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            remoteFileServiceAccess: DirectRemoteFileServiceAccess(service: service),
+            localFileService: localFileService,
+            serverProvider: { _ in nil }
+        )
+
+        // Given macOS NSSavePanel returns a destination outside the sandbox.
+        try await store.downloadFile(
+            at: "/remote/report.txt",
+            to: destinationURL,
+            server: server
+        )
+
+        // Then the local file service owns the scoped write access while the
+        // remote transfer writes to the destination, and releases it afterward.
+        #expect(service.downloadObservedSecurityScope == true)
+        #expect(await localFileService.accessEvents(for: destinationURL) == [.start, .stop])
+        #expect(await !localFileService.isAccessing(destinationURL))
+    }
+
+    @Test
     func deleteEntriesCancellationStopsBeforeNextSelectedItem() async throws {
         let server = Server(
             workspaceId: UUID(),
@@ -342,13 +379,21 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
     let downloadData: Data?
     let renameBlocker: RemoteFileRenameBlocker?
     let deleteBlocker: RemoteFileDeleteBlocker?
+    let downloadAccessProbe: (@Sendable () async -> Bool)?
     private let lock = NSLock()
     private var operationStorage: [Operation] = []
+    private var downloadObservedSecurityScopeStorage: Bool?
 
     var operations: [Operation] {
         lock.lock()
         defer { lock.unlock() }
         return operationStorage
+    }
+
+    var downloadObservedSecurityScope: Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        return downloadObservedSecurityScopeStorage
     }
 
     init(
@@ -357,7 +402,8 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         downloadBlocker: RemoteFileDownloadBlocker? = nil,
         downloadData: Data? = nil,
         renameBlocker: RemoteFileRenameBlocker? = nil,
-        deleteBlocker: RemoteFileDeleteBlocker? = nil
+        deleteBlocker: RemoteFileDeleteBlocker? = nil,
+        downloadAccessProbe: (@Sendable () async -> Bool)? = nil
     ) {
         self.directoryContents = directoryContents
         self.listBlocker = listBlocker
@@ -365,6 +411,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         self.downloadData = downloadData
         self.renameBlocker = renameBlocker
         self.deleteBlocker = deleteBlocker
+        self.downloadAccessProbe = downloadAccessProbe
     }
 
     func listDirectory(at path: String, maxEntries: Int?) async throws -> [RemoteFileEntry] {
@@ -388,6 +435,9 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
     func downloadFile(at path: String, to localURL: URL) async throws {
         let normalizedPath = RemoteFilePath.normalize(path)
         record(.downloadFile(normalizedPath))
+        if let downloadAccessProbe {
+            recordDownloadObservedSecurityScope(await downloadAccessProbe())
+        }
         await downloadBlocker?.waitIfNeeded(path: normalizedPath)
         if let downloadData {
             try downloadData.write(to: localURL)
@@ -439,6 +489,61 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         lock.lock()
         operationStorage.append(operation)
         lock.unlock()
+    }
+
+    private func recordDownloadObservedSecurityScope(_ isAccessing: Bool) {
+        lock.lock()
+        downloadObservedSecurityScopeStorage = isAccessing
+        lock.unlock()
+    }
+}
+
+private actor RecordingRemoteFileLocalFileService: RemoteFileLocalFileServicing {
+    enum AccessEvent: Equatable {
+        case start
+        case stop
+    }
+
+    private var eventsByURL: [URL: [AccessEvent]] = [:]
+    private var activeURLs: Set<URL> = []
+
+    func loadData(from url: URL) async throws -> Data {
+        Data()
+    }
+
+    func itemInfo(at url: URL) async throws -> RemoteFileLocalItemInfo {
+        RemoteFileLocalItemInfo(name: url.lastPathComponent, isDirectory: false)
+    }
+
+    func directoryContents(at url: URL) async throws -> [URL] {
+        []
+    }
+
+    func createDirectory(at url: URL) async throws {}
+
+    func withSecurityScopedAccess<T>(
+        to urls: [URL],
+        operation: () async throws -> T
+    ) async throws -> T {
+        for url in urls {
+            eventsByURL[url, default: []].append(.start)
+            activeURLs.insert(url)
+        }
+        defer {
+            for url in urls {
+                activeURLs.remove(url)
+                eventsByURL[url, default: []].append(.stop)
+            }
+        }
+        return try await operation()
+    }
+
+    func accessEvents(for url: URL) -> [AccessEvent] {
+        eventsByURL[url] ?? []
+    }
+
+    func isAccessing(_ url: URL) -> Bool {
+        activeURLs.contains(url)
     }
 }
 

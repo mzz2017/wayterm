@@ -5,7 +5,18 @@ nonisolated struct RemoteFileLocalItemInfo: Sendable {
     let isDirectory: Bool
 }
 
-nonisolated struct RemoteFileLocalFileService {
+protocol RemoteFileLocalFileServicing: Sendable {
+    func loadData(from url: URL) async throws -> Data
+    func itemInfo(at url: URL) async throws -> RemoteFileLocalItemInfo
+    func directoryContents(at url: URL) async throws -> [URL]
+    func createDirectory(at url: URL) async throws
+    func withSecurityScopedAccess<T>(
+        to urls: [URL],
+        operation: () async throws -> T
+    ) async throws -> T
+}
+
+nonisolated struct RemoteFileLocalFileService: RemoteFileLocalFileServicing {
     func loadData(from url: URL) async throws -> Data {
         try await Task.detached(priority: .utility) {
             try Data(contentsOf: url, options: [.mappedIfSafe])
