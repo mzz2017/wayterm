@@ -366,7 +366,7 @@ extension SSHSession {
     }
 
     func ensureExecChannelReady(_ request: SSHSessionExecRequest) -> Bool {
-        guard let session = libssh2Session else {
+        guard isConnected, let session = libssh2Session else {
             finishExecRequest(request.id, error: SSHError.notConnected)
             return false
         }
@@ -501,7 +501,7 @@ extension SSHSession {
     // MARK: - Execute Command
 
     func execute(_ command: String) async throws -> String {
-        guard libssh2Session != nil else {
+        guard isConnected else {
             throw SSHError.notConnected
         }
 

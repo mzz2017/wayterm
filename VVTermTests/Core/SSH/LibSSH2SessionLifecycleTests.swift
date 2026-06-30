@@ -499,6 +499,60 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         )
     }
 
+    func testExecuteRejectsInactiveSessionWhileDisconnectAwaitsCleanup() async throws {
+        // Given a connected session whose disconnect has marked it inactive but
+        // is still waiting for tracked channel cleanup before freeing libssh2.
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x33)
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+        let cleanupGate = AsyncGate()
+        try await session.connect()
+        session.trackChannelCleanupTask {
+            await cleanupGate.wait()
+        }
+
+        let disconnectTask = Task {
+            await session.disconnect()
+        }
+        for _ in 0..<50 where await session.isConnected {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let isConnectedDuringCleanup = await session.isConnected
+        XCTAssertFalse(
+            isConnectedDuringCleanup,
+            "Disconnect should mark the session inactive before waiting for channel cleanup."
+        )
+
+        // When a late caller tries to execute a command during that teardown
+        // window.
+        do {
+            _ = try await SSHClient.runWithTimeout(.milliseconds(200)) {
+                try await session.execute("whoami")
+            }
+            XCTFail("Expected inactive session to reject late exec startup")
+        } catch SSHError.notConnected {
+            // Then inactive state gates exec work even though the raw libssh2
+            // session pointer has not been freed yet.
+        } catch {
+            XCTFail("Expected SSHError.notConnected, got \(error)")
+        }
+
+        await cleanupGate.open()
+        await disconnectTask.value
+        XCTAssertFalse(
+            driver.channelEvents().contains(.openSession),
+            "Late exec startup must not open a libssh2 channel while disconnect is in progress."
+        )
+        XCTAssertFalse(
+            driver.channelEvents().contains(.startExec("whoami")),
+            "Late exec startup must not reach libssh2 while disconnect is in progress."
+        )
+    }
+
     func testExecuteRetriesStartupEAGAINReadsStdoutAndClosesChannel() async throws {
         // Given an exec request whose process startup would block once, then
         // produces stdout and reaches EOF.
