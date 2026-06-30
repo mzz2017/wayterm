@@ -27,30 +27,22 @@ final class ServerStatsCollectionRegistry: ObservableObject {
     }
 
     func disconnect(serverId: UUID) async {
-        guard let collector = collectorsByServer[serverId] else { return }
+        guard let collector = collectorsByServer.removeValue(forKey: serverId) else { return }
         await collector.stopCollectingAndWait()
-        if collectorsByServer[serverId] === collector {
-            collectorsByServer.removeValue(forKey: serverId)
-        }
     }
 
     func disconnectAll() async {
         let collectors = collectorsByServer
-        let stopTasks = collectors.map { serverId, collector in
-            (
-                serverId: serverId,
-                collector: collector,
-                task: Task { @MainActor in
-                    await collector.stopCollectingAndWait()
-                }
-            )
+        collectorsByServer.removeAll()
+
+        let stopTasks = collectors.values.map { collector in
+            Task { @MainActor in
+                await collector.stopCollectingAndWait()
+            }
         }
 
-        for (serverId, collector, task) in stopTasks {
+        for task in stopTasks {
             await task.value
-            if collectorsByServer[serverId] === collector {
-                collectorsByServer.removeValue(forKey: serverId)
-            }
         }
     }
 }

@@ -117,6 +117,62 @@ struct ServerStatsCollectionRegistryLifecycleTests {
         #expect(await secondClient.disconnectCount() == 1)
     }
 
+    @Test
+    func collectorRequestedDuringDisconnectRemainsRegistryOwned() async throws {
+        let server = makeServer()
+        let firstClient = BlockingRegistryStatsLeaseClient()
+        let secondClient = RecordingRegistryStatsLeaseClient()
+        let factory = RegistryStatsConnectionFactory([
+            .init(lease: RemoteConnectionLease(client: firstClient, ownership: .owned)),
+            .init(lease: RemoteConnectionLease(client: secondClient, ownership: .owned))
+        ])
+        var madeCollectorCount = 0
+        let registry = ServerStatsCollectionRegistry(
+            collectorFactory: {
+                madeCollectorCount += 1
+                return makeCollector(ownedConnectionFactory: factory)
+            }
+        )
+
+        // Given registry-owned Stats cleanup is waiting for the old collector's
+        // owned lease to close.
+        let oldCollector = registry.collector(for: server.id)
+        await oldCollector.startCollecting(for: server)
+        let disconnectTask = Task {
+            await registry.disconnect(serverId: server.id)
+        }
+        await firstClient.waitUntilDisconnectStarted()
+
+        // When UI asks for the same server collector during that teardown and
+        // sends a fresh visible/retry start intent.
+        let replacementDuringDisconnect = registry.collector(for: server.id)
+        let restartTask = Task {
+            await replacementDuringDisconnect.startCollecting(for: server)
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then the replacement must already be the registry-owned collector
+        // rather than a restart queued on the old tearing-down owner.
+        #expect(replacementDuringDisconnect !== oldCollector)
+        #expect(registry.collector(for: server.id) === replacementDuringDisconnect)
+        #expect(factory.callCount == 2)
+
+        await firstClient.releaseDisconnect()
+        await restartTask.value
+        await disconnectTask.value
+
+        #expect(
+            registry.collector(for: server.id) === replacementDuringDisconnect,
+            "Registry disconnect must not orphan a collector that was requested while the old owner was tearing down."
+        )
+        #expect(madeCollectorCount == 2)
+        #expect(await firstClient.disconnectCount() == 1)
+        #expect(
+            await secondClient.disconnectCount() == 0,
+            "Fresh Stats collection created during old-owner teardown should remain active and registry-owned."
+        )
+    }
+
     private func makeCollector(
         ownedConnectionFactory: RegistryStatsConnectionFactory
     ) -> ServerStatsCollector {
@@ -184,7 +240,15 @@ private final class RegistryStatsConnectionFactory {
 }
 
 private actor RecordingRegistryStatsLeaseClient: RemoteConnectionLeaseClient {
-    func disconnect() async {}
+    private var disconnects = 0
+
+    func disconnect() async {
+        disconnects += 1
+    }
+
+    func disconnectCount() -> Int {
+        disconnects
+    }
 
     func execute(_ command: String, timeout: Duration?) async throws -> String {
         ""
