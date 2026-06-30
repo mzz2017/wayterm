@@ -318,12 +318,19 @@ final class PendingCloudKitSyncQueue {
     }
 
     private func load() {
-        guard let data = UserDefaults.standard.data(forKey: storageKey),
-              let decoded = try? JSONDecoder().decode([PendingCloudKitMutation].self, from: data) else {
+        guard let data = UserDefaults.standard.data(forKey: storageKey) else {
             return
         }
 
-        items = decoded
+        let decoder = JSONDecoder()
+        if let decoded = try? decoder.decode([PendingCloudKitMutation].self, from: data) {
+            items = decoded
+            return
+        }
+
+        if let decoded = try? decoder.decode([LossyPendingCloudKitMutation].self, from: data) {
+            items = decoded.compactMap(\.mutation)
+        }
     }
 
     private func persist() {
@@ -332,5 +339,13 @@ final class PendingCloudKitSyncQueue {
         }
 
         UserDefaults.standard.set(data, forKey: storageKey)
+    }
+}
+
+private struct LossyPendingCloudKitMutation: Decodable {
+    let mutation: PendingCloudKitMutation?
+
+    init(from decoder: Decoder) throws {
+        mutation = try? PendingCloudKitMutation(from: decoder)
     }
 }

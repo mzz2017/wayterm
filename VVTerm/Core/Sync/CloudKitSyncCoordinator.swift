@@ -150,11 +150,20 @@ final class CloudKitSyncCoordinator {
 
     private func isIgnorableDeleteSyncError(_ error: Error, for mutation: PendingCloudKitMutation) -> Bool {
         guard mutation.operation == .delete else { return false }
+        return isCloudKitMissingRecordError(error)
+    }
+
+    private func isCloudKitMissingRecordError(_ error: Error) -> Bool {
         guard let ckError = error as? CKError else { return false }
 
         switch ckError.code {
         case .unknownItem, .zoneNotFound:
             return true
+        case .partialFailure:
+            guard let partialErrors = ckError.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: Error] else {
+                return false
+            }
+            return partialErrors.values.contains { isCloudKitMissingRecordError($0) }
         default:
             return false
         }

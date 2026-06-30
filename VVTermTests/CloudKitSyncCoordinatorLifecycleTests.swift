@@ -1,4 +1,5 @@
 import Foundation
+import CloudKit
 import Testing
 @testable import VVTerm
 
@@ -71,6 +72,90 @@ struct CloudKitSyncCoordinatorLifecycleTests {
         #expect(decoded.id == server.id)
         #expect(decoded.host == "legacy.example.test")
         #expect(mutation.entityKey == server.id.uuidString)
+    }
+
+    @Test
+    func pendingQueueLoadKeepsValidMutationsWhenOnePersistedItemIsCorrupt() throws {
+        let storageKey = "CloudKitSyncCoordinatorLifecycleTests.\(UUID().uuidString)"
+        defer { UserDefaults.standard.removeObject(forKey: storageKey) }
+        let firstID = UUID()
+        let corruptID = UUID()
+        let secondID = UUID()
+        let persistedJSON = """
+        [
+          {
+            "id": "\(firstID.uuidString)",
+            "entity": "server",
+            "operation": "delete",
+            "entityKey": "server-one",
+            "createdAt": 0,
+            "retryCount": 0
+          },
+          {
+            "id": "\(corruptID.uuidString)",
+            "entity": "unknown-future-entity",
+            "operation": "delete",
+            "entityKey": "corrupt",
+            "createdAt": 0,
+            "retryCount": 0
+          },
+          {
+            "id": "\(secondID.uuidString)",
+            "entity": "workspace",
+            "operation": "delete",
+            "entityKey": "workspace-two",
+            "createdAt": 0,
+            "retryCount": 0
+          }
+        ]
+        """
+        UserDefaults.standard.set(Data(persistedJSON.utf8), forKey: storageKey)
+
+        // Given one persisted pending mutation cannot decode, while surrounding
+        // mutations are still valid local offline work.
+        let queue = PendingCloudKitSyncQueue(storageKey: storageKey)
+
+        // When the queue restores from UserDefaults.
+        let snapshot = queue.snapshot()
+
+        // Then the corrupt item is quarantined instead of dropping the whole
+        // pending sync queue and losing unrelated offline user changes.
+        #expect(snapshot.map(\.entityKey) == ["server-one", "workspace-two"])
+        #expect(snapshot.map(\.id) == [firstID, secondID])
+    }
+
+    @Test
+    func pendingDeleteIsRemovedWhenCloudKitPartialFailureReportsMissingRecord() async throws {
+        let syncSettingsRestore = SyncSettingsRestore()
+        syncSettingsRestore.setEnabled(true)
+        defer { syncSettingsRestore.restore() }
+
+        let storageKey = "CloudKitSyncCoordinatorLifecycleTests.\(UUID().uuidString)"
+        defer { UserDefaults.standard.removeObject(forKey: storageKey) }
+        let entityKey = UUID().uuidString
+        let missingRecordID = CKRecord.ID(recordName: entityKey)
+        let missingRecordError = CKError(.unknownItem)
+        let partialFailure = CKError(
+            .partialFailure,
+            userInfo: [
+                CKPartialErrorsByItemIDKey: [missingRecordID: missingRecordError]
+            ]
+        )
+        let coordinator = CloudKitSyncCoordinator.makeForTesting(
+            storageKey: storageKey,
+            syncPendingMutation: { _ in throw partialFailure }
+        )
+
+        // Given a pending delete races with CloudKit state that already removed
+        // the record and reports the miss as a nested partial failure.
+        coordinator.enqueuePendingMutation(.delete(entity: .server, entityKey: entityKey))
+
+        // When the pending mutation drain reaches that delete.
+        await coordinator.drainPendingMutations()
+
+        // Then the delete is treated as idempotently complete instead of being
+        // retried forever and blocking later offline sync work.
+        #expect(coordinator.snapshot().isEmpty)
     }
 
     @Test
