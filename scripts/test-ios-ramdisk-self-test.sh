@@ -174,13 +174,15 @@ write_stub_tools "${tmp_root}/bin"
 
 local_capture="${tmp_root}/capture-local"
 local_mount="${tmp_root}/ramdisk-local"
-mkdir -p "${local_mount}/vvterm-ios-source-packages/checkouts/mlx-swift/Source/Cmlx/mlx-generated/metal/steel/attn/kernels"
-cat >"${local_mount}/vvterm-ios-source-packages/checkouts/mlx-swift/Source/Cmlx/mlx-generated/metal/steel/attn/kernels/steel_attention.h" <<'HEADER'
+local_packages="${tmp_root}/persistent-ios-source-packages"
+mkdir -p "${local_packages}/checkouts/mlx-swift/Source/Cmlx/mlx-generated/metal/steel/attn/kernels"
+cat >"${local_packages}/checkouts/mlx-swift/Source/Cmlx/mlx-generated/metal/steel/attn/kernels/steel_attention.h" <<'HEADER'
 if (is_bool) {}
 if (BD == 128) {}
 HEADER
 run_wrapper "$local_capture" "$local_mount" "${tmp_root}/local.out" "${tmp_root}/local.err" "" "Booted" \
-    IOS_TEST_RAMDISK_MB=16
+    IOS_TEST_RAMDISK_MB=16 \
+    IOS_TEST_SOURCE_PACKAGES_CACHE_DIR="$local_packages"
 
 assert_contains "${local_capture}/hdiutil.calls" "attach"
 assert_contains "${local_capture}/hdiutil.calls" "detach"
@@ -188,7 +190,8 @@ assert_contains "${local_capture}/diskutil.calls" "erasevolume"
 assert_contains "${local_capture}/diskutil.calls" "unmountDisk"
 assert_contains "${local_capture}/xcodebuild.args" "-derivedDataPath"
 assert_contains "${local_capture}/xcodebuild.args" "${local_mount}/vvterm-ios-derived-data."
-assert_contains "${local_capture}/xcodebuild.args" "${local_mount}/vvterm-ios-source-packages"
+assert_contains "${local_capture}/xcodebuild.args" "$local_packages"
+assert_not_contains "${local_capture}/xcodebuild.args" "${local_mount}/vvterm-ios-source-packages"
 assert_not_contains "${local_capture}/xcodebuild.args" "${tmp_root}/tmp/vvterm-ios-source-packages"
 resolve_args_line="$(grep -n -- '-resolvePackageDependencies' "${local_capture}/xcodebuild.args" | head -n 1 | cut -d: -f1)"
 [[ -n "$resolve_args_line" ]] || fail "missing resolvePackageDependencies invocation"

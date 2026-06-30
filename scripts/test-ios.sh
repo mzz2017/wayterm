@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+repo_root="$(cd "${script_dir}/.." && pwd -P)"
+
 project="${IOS_TEST_PROJECT:-VVTerm.xcodeproj}"
 scheme="${IOS_TEST_SCHEME:-VVTermUnitTests}"
 device_name="${IOS_TEST_DEVICE_NAME:-iPhone 17}"
@@ -14,6 +17,7 @@ lock_timeout="${IOS_TEST_LOCK_TIMEOUT:-600}"
 lock_owner_metadata_grace="${IOS_TEST_LOCK_OWNER_METADATA_GRACE:-10}"
 derived_data_path="${IOS_TEST_DERIVED_DATA_PATH:-}"
 cloned_source_packages_path="${IOS_TEST_CLONED_SOURCE_PACKAGES_DIR:-}"
+source_packages_cache_dir="${IOS_TEST_SOURCE_PACKAGES_CACHE_DIR:-${repo_root}/.build/vvterm-ios-source-packages}"
 keep_derived_data="${IOS_TEST_KEEP_DERIVED_DATA:-0}"
 no_output_timeout="${IOS_TEST_NO_OUTPUT_TIMEOUT:-900}"
 xcodebuild_quiet="${IOS_TEST_XCODEBUILD_QUIET:-0}"
@@ -292,11 +296,7 @@ is_auto_cleanup_derived_data_path() {
 
 prepare_cloned_source_packages() {
     if [[ -z "$cloned_source_packages_path" ]]; then
-        if [[ -n "$ramdisk_mount_path" ]]; then
-            cloned_source_packages_path="${ramdisk_mount_path}/vvterm-ios-source-packages"
-        else
-            cloned_source_packages_path="${TMPDIR:-/tmp}/vvterm-ios-source-packages"
-        fi
+        cloned_source_packages_path="$source_packages_cache_dir"
     fi
     mkdir -p "$cloned_source_packages_path"
 }
