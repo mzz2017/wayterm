@@ -93,6 +93,10 @@ if [[ "${1:-}" == "test" && "${VVTERM_STUB_TEST_STALL:-0}" == "1" ]]; then
     sleep "${VVTERM_STUB_TEST_SLEEP:-30}"
     exit 0
 fi
+if [[ "${VVTERM_STUB_ZERO_TESTS:-0}" == "1" ]]; then
+    echo "Test run started."
+    exit 0
+fi
 echo "Test run started."
 echo "Test run with 1 tests in 1 suite passed after 0.001 seconds."
 exit 0
@@ -166,9 +170,27 @@ run_wrapper() {
     local stderr_file="$4"
     local cloned_source_packages_dir="${5:-}"
     local device_state="${6:-Shutdown}"
+    local env_overrides=()
+    local script_args=()
+    local parsing_script_args=0
     shift 6
 
+    while [[ "$#" -gt 0 ]]; do
+        if [[ "$1" == "--" && "$parsing_script_args" -eq 0 ]]; then
+            parsing_script_args=1
+            shift
+            continue
+        fi
+        if [[ "$parsing_script_args" -eq 1 ]]; then
+            script_args+=("$1")
+        else
+            env_overrides+=("$1")
+        fi
+        shift
+    done
+
     mkdir -p "$capture_dir" "$ramdisk_mount" "$tmp_root/tmp" "$tmp_root/logs"
+    set +u
     if [[ -n "$cloned_source_packages_dir" ]]; then
         env -i \
             PATH="${tmp_root}/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
@@ -182,8 +204,9 @@ run_wrapper() {
             IOS_TEST_NO_OUTPUT_TIMEOUT=0 \
             IOS_TEST_FAILURE_LOG_LINES=20 \
             IOS_TEST_CLONED_SOURCE_PACKAGES_DIR="$cloned_source_packages_dir" \
-            "$@" \
-            "${repo_root}/scripts/test-ios.sh" >"$stdout_file" 2>"$stderr_file"
+            "${env_overrides[@]}" \
+            "${repo_root}/scripts/test-ios.sh" \
+            "${script_args[@]}" >"$stdout_file" 2>"$stderr_file"
     else
         env -i \
             PATH="${tmp_root}/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
@@ -196,9 +219,13 @@ run_wrapper() {
             IOS_TEST_RETRIES=0 \
             IOS_TEST_NO_OUTPUT_TIMEOUT=0 \
             IOS_TEST_FAILURE_LOG_LINES=20 \
-            "$@" \
-            "${repo_root}/scripts/test-ios.sh" >"$stdout_file" 2>"$stderr_file"
+            "${env_overrides[@]}" \
+            "${repo_root}/scripts/test-ios.sh" \
+            "${script_args[@]}" >"$stdout_file" 2>"$stderr_file"
     fi
+    local status="$?"
+    set -u
+    return "$status"
 }
 
 run_wrapper_expect_failure() {
@@ -374,5 +401,28 @@ assert_pid_not_running "${test_term_capture}/xcodebuild-test-grandchild.pid" "te
 [[ ! -d "${tmp_root}/ios-test.lock" ]] || fail "test trap termination should remove the iOS test lock"
 [[ -z "$(find "$test_term_mount" -maxdepth 1 -name 'vvterm-ios-derived-data.*' -print -quit)" ]] ||
     fail "test trap termination should clean auto-managed DerivedData from RAM disk"
+
+zero_tests_required_capture="${tmp_root}/capture-zero-tests-required"
+zero_tests_required_mount="${tmp_root}/ramdisk-zero-tests-required"
+run_wrapper_expect_failure "$zero_tests_required_capture" "$zero_tests_required_mount" \
+    "${tmp_root}/zero-tests-required.out" "${tmp_root}/zero-tests-required.err" "" "Shutdown" \
+    IOS_TEST_RAMDISK_MB=16 \
+    IOS_TEST_REQUIRE_EXECUTED_TESTS=1 \
+    VVTERM_STUB_ZERO_TESTS=1
+
+assert_contains "${zero_tests_required_capture}/wrapper.status" "11"
+assert_contains "${tmp_root}/zero-tests-required.err" "executed zero tests"
+
+zero_tests_filter_capture="${tmp_root}/capture-zero-tests-filter"
+zero_tests_filter_mount="${tmp_root}/ramdisk-zero-tests-filter"
+run_wrapper_expect_failure "$zero_tests_filter_capture" "$zero_tests_filter_mount" \
+    "${tmp_root}/zero-tests-filter.out" "${tmp_root}/zero-tests-filter.err" "" "Shutdown" \
+    IOS_TEST_RAMDISK_MB=16 \
+    VVTERM_STUB_ZERO_TESTS=1 \
+    -- \
+    -only-testing:VVTermTests/MissingRenamedTest
+
+assert_contains "${zero_tests_filter_capture}/wrapper.status" "11"
+assert_contains "${tmp_root}/zero-tests-filter.err" "Check -only-testing arguments"
 
 echo "test-ios RAM disk self-test passed"
