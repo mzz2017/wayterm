@@ -408,7 +408,7 @@ struct StoreManagerLifecycleTests {
     }
 
     @Test
-    func duplicateEntitlementRefreshRequestsCoalesceUntilCompletion() async {
+    func duplicateForegroundEntitlementRefreshRequestsCoalesceUntilCompletion() async {
         let entitlementGate = StoreRequestGate()
         var entitlementRefreshCount = 0
         let manager = StoreManager.makeForTesting(
@@ -418,18 +418,63 @@ struct StoreManagerLifecycleTests {
             }
         )
 
-        // Given foreground and expiry refresh intent arrive while the first
+        // Given duplicate foreground refresh intents arrive while the first
         // StoreKit entitlement check is still pending.
         let foregroundID = manager.requestEntitlementRefresh(reason: .foreground)
-        let expiryID = manager.requestEntitlementRefresh(reason: .subscriptionExpiration)
+        let duplicateID = manager.requestEntitlementRefresh(reason: .foreground)
         await entitlementGate.waitForOperationStart()
 
         // Then StoreManager keeps a single entitlement refresh owner.
-        #expect(foregroundID == expiryID)
+        #expect(foregroundID == duplicateID)
         #expect(entitlementRefreshCount == 1)
         #expect(manager.pendingEntitlementRefreshRequestIDs == [foregroundID])
 
         await entitlementGate.release()
+        await manager.waitForEntitlementRefreshRequest(foregroundID)
+
+        #expect(manager.pendingEntitlementRefreshRequestIDs.isEmpty)
+    }
+
+    @Test
+    func subscriptionExpirationRefreshQueuesAfterInFlightForegroundRefresh() async {
+        let firstRefreshGate = StoreRequestGate()
+        let expiryRefreshGate = StoreRequestGate()
+        var entitlementRefreshCount = 0
+        let manager = StoreManager.makeForTesting(
+            checkEntitlementsAction: { _ in
+                entitlementRefreshCount += 1
+                if entitlementRefreshCount == 1 {
+                    await firstRefreshGate.waitForRelease()
+                } else {
+                    await expiryRefreshGate.waitForRelease()
+                }
+            }
+        )
+
+        // Given foreground entitlement refresh is already reading StoreKit when
+        // the subscription expiration timer fires.
+        let foregroundID = manager.requestEntitlementRefresh(reason: .foreground)
+        await firstRefreshGate.waitForOperationStart()
+
+        let expiryID = manager.requestEntitlementRefresh(reason: .subscriptionExpiration)
+
+        // Then the expiry intent stays owned by the same tracked task, but it
+        // must not be dropped into the stale in-flight read.
+        #expect(expiryID == foregroundID)
+        #expect(entitlementRefreshCount == 1)
+
+        await firstRefreshGate.release()
+        for _ in 0..<50 where entitlementRefreshCount < 2 {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(
+            entitlementRefreshCount == 2,
+            "Subscription expiration should force a fresh entitlement read after the in-flight foreground refresh finishes."
+        )
+        #expect(manager.pendingEntitlementRefreshRequestIDs == [foregroundID])
+
+        await expiryRefreshGate.release()
         await manager.waitForEntitlementRefreshRequest(foregroundID)
 
         #expect(manager.pendingEntitlementRefreshRequestIDs.isEmpty)

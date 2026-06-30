@@ -62,6 +62,7 @@ final class StoreManager: ObservableObject {
     private var reviewModeExpiryTask: Task<Void, Never>?
     private var reviewModeExpiresAt: Date?
     private var entitlementRefreshGeneration = 0
+    private var shouldRefreshEntitlementsAfterCurrent = false
     private let loadProductsAction: StoreLifecycleAction
     private let checkEntitlementsAction: StoreLifecycleAction
     private let transactionListenerAction: StoreTransactionListenerAction
@@ -152,6 +153,7 @@ final class StoreManager: ObservableObject {
         reviewModeRefreshTaskID = nil
         entitlementRefreshTask = nil
         entitlementRefreshRequestID = nil
+        shouldRefreshEntitlementsAfterCurrent = false
         subscriptionExpirationRefreshTask = nil
         subscriptionExpirationRefreshTaskID = nil
         reviewModeExpiryTask = nil
@@ -254,6 +256,9 @@ final class StoreManager: ObservableObject {
     @discardableResult
     func requestEntitlementRefresh(reason: StoreEntitlementRefreshReason) -> UUID {
         if let entitlementRefreshRequestID {
+            if reason == .subscriptionExpiration {
+                shouldRefreshEntitlementsAfterCurrent = true
+            }
             return entitlementRefreshRequestID
         }
 
@@ -266,11 +271,16 @@ final class StoreManager: ObservableObject {
                 if self.entitlementRefreshRequestID == requestID {
                     self.entitlementRefreshRequestID = nil
                     self.entitlementRefreshTask = nil
+                    self.shouldRefreshEntitlementsAfterCurrent = false
                 }
             }
 
-            guard !Task.isCancelled else { return }
-            await self.checkEntitlementsAction(self)
+            repeat {
+                self.shouldRefreshEntitlementsAfterCurrent = false
+                guard !Task.isCancelled else { return }
+                await self.checkEntitlementsAction(self)
+                guard !Task.isCancelled else { return }
+            } while self.shouldRefreshEntitlementsAfterCurrent
         }
 
         if entitlementRefreshRequestID == requestID {
