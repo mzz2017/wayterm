@@ -144,35 +144,52 @@ preserve_xcodebuild_log() {
 
 terminate_xcodebuild_tree() {
     local pid="${1:-}"
-    local child_pids=""
-    local late_child_pids=""
+    local descendant_pids=""
+    local late_descendant_pids=""
 
     [[ -n "$pid" ]] || return
 
-    child_pids="$(pgrep -P "$pid" 2>/dev/null || true)"
-    if [[ -n "$child_pids" ]]; then
-        while IFS= read -r child_pid; do
-            [[ -n "$child_pid" ]] || continue
-            kill -TERM "$child_pid" >/dev/null 2>&1 || true
-        done <<<"$child_pids"
+    descendant_pids="$(collect_process_descendants "$pid")"
+    if [[ -n "$descendant_pids" ]]; then
+        while IFS= read -r descendant_pid; do
+            [[ -n "$descendant_pid" ]] || continue
+            kill -TERM "$descendant_pid" >/dev/null 2>&1 || true
+        done <<<"$descendant_pids"
     fi
 
     kill -TERM "$pid" >/dev/null 2>&1 || true
     sleep 2
 
-    late_child_pids="$(pgrep -P "$pid" 2>/dev/null || true)"
-    if [[ -n "$late_child_pids" ]]; then
-        child_pids="${child_pids}"$'\n'"${late_child_pids}"
+    late_descendant_pids="$(collect_process_descendants "$pid")"
+    if [[ -n "$late_descendant_pids" ]]; then
+        descendant_pids="${descendant_pids}"$'\n'"${late_descendant_pids}"
     fi
 
-    if [[ -n "$child_pids" ]]; then
-        while IFS= read -r child_pid; do
-            [[ -n "$child_pid" ]] || continue
-            kill -KILL "$child_pid" >/dev/null 2>&1 || true
-        done <<<"$child_pids"
+    if [[ -n "$descendant_pids" ]]; then
+        while IFS= read -r descendant_pid; do
+            [[ -n "$descendant_pid" ]] || continue
+            kill -KILL "$descendant_pid" >/dev/null 2>&1 || true
+        done <<<"$(printf '%s\n' "$descendant_pids" | awk 'NF && !seen[$0]++')"
     fi
 
     kill -KILL "$pid" >/dev/null 2>&1 || true
+}
+
+collect_process_descendants() {
+    local root_pid="${1:-}"
+    local child_pid
+    local child_pids
+
+    [[ -n "$root_pid" ]] || return
+
+    child_pids="$(pgrep -P "$root_pid" 2>/dev/null || true)"
+    [[ -n "$child_pids" ]] || return
+
+    while IFS= read -r child_pid; do
+        [[ -n "$child_pid" ]] || continue
+        collect_process_descendants "$child_pid"
+        printf '%s\n' "$child_pid"
+    done <<<"$child_pids"
 }
 
 cleanup() {

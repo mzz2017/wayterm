@@ -84,7 +84,11 @@ if [[ " $* " == *" -resolvePackageDependencies "* ]]; then
     exit 0
 fi
 if [[ "${1:-}" == "test" && "${VVTERM_STUB_TEST_STALL:-0}" == "1" ]]; then
-    sleep "${VVTERM_STUB_TEST_CHILD_SLEEP:-30}" &
+    (
+        sleep "${VVTERM_STUB_TEST_GRANDCHILD_SLEEP:-30}" &
+        echo "$!" >"${VVTERM_STUB_CAPTURE}/xcodebuild-test-grandchild.pid"
+        sleep "${VVTERM_STUB_TEST_CHILD_SLEEP:-30}"
+    ) &
     echo "$!" >"${VVTERM_STUB_CAPTURE}/xcodebuild-test-child.pid"
     sleep "${VVTERM_STUB_TEST_SLEEP:-30}"
     exit 0
@@ -349,6 +353,7 @@ run_wrapper_expect_failure "$test_timeout_capture" "$test_timeout_mount" \
 assert_contains "${test_timeout_capture}/wrapper.status" "124"
 assert_contains "${tmp_root}/test-timeout.err" "xcodebuild produced no output for 1s"
 assert_pid_not_running "${test_timeout_capture}/xcodebuild-test-child.pid" "test timeout"
+assert_pid_not_running "${test_timeout_capture}/xcodebuild-test-grandchild.pid" "test timeout grandchild"
 [[ ! -d "${tmp_root}/ios-test.lock" ]] || fail "test timeout should remove the iOS test lock"
 [[ -z "$(find "$test_timeout_mount" -maxdepth 1 -name 'vvterm-ios-derived-data.*' -print -quit)" ]] ||
     fail "test timeout should clean auto-managed DerivedData from RAM disk"
@@ -365,6 +370,7 @@ run_wrapper_and_terminate "$test_term_capture" "$test_term_mount" \
 
 assert_contains "${test_term_capture}/wrapper.status" "143"
 assert_pid_not_running "${test_term_capture}/xcodebuild-test-child.pid" "test trap termination"
+assert_pid_not_running "${test_term_capture}/xcodebuild-test-grandchild.pid" "test trap termination grandchild"
 [[ ! -d "${tmp_root}/ios-test.lock" ]] || fail "test trap termination should remove the iOS test lock"
 [[ -z "$(find "$test_term_mount" -maxdepth 1 -name 'vvterm-ios-derived-data.*' -print -quit)" ]] ||
     fail "test trap termination should clean auto-managed DerivedData from RAM disk"
