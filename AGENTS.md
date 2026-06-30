@@ -331,8 +331,8 @@ struct Server: Identifiable, Codable {
 ```
 
 Credential material may live in local Keychain or sync through iCloud Keychain,
-but credential material and Keychain sync identity are not part of the CloudKit
-`Server` model.
+but credential secrets must never be serialized into CloudKit `Server` records.
+CloudKit may carry only non-secret server metadata.
 
 ### Workspace
 ```swift
@@ -379,6 +379,6 @@ struct ConnectionSession: Identifiable {
 1. **Never apply glass to terminal content** - only navigation/toolbars
 2. **Deduplicate by ID** when syncing from CloudKit
 3. **Pro limits enforced in**: `ServerManager.canAddServer`, `canAddWorkspace`, `ConnectionSessionManager.canOpenNewTab`
-4. **Keychain credentials** may sync via iCloud Keychain, but must never be stored in CloudKit; CloudKit syncs server metadata only
+4. **Keychain credentials** may sync via iCloud Keychain, but credential secrets must never be stored in CloudKit; CloudKit syncs server metadata only
 5. **iOS keyboard toolbar** provides Esc, Tab, Ctrl, arrows, function keys
 6. **Voice-to-command** uses MLX Whisper/Parakeet on-device or Apple Speech fallback
