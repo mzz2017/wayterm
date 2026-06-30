@@ -9,6 +9,7 @@ extension TerminalTabManager {
 
         updatePaneState(paneId, connectionState: .reconnecting(attempt: 1))
         await unregisterSSHClient(for: paneId)
+        await clearRuntimeShellForReconnect(paneId: paneId)
     }
 
     func retryPaneConnection(

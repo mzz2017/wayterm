@@ -16,6 +16,7 @@ extension ConnectionSessionManager {
 
         await shellHandlerStore.suspendHandler(for: session.id)?()
         await unregisterSSHClient(for: session.id)
+        await clearRuntimeShellForReconnect(sessionId: session.id)
     }
 
     func reconnectSessionIfRuntimeInactive(_ session: ConnectionSession) async -> Bool {

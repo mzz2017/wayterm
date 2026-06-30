@@ -64,6 +64,17 @@ extension TerminalTabManager {
         }
     }
 
+    func clearRuntimeShellForReconnect(paneId: UUID) async {
+        guard let runtime = paneRuntimes[paneId] else { return }
+        let runtimeClient = await runtime.runtime.runnerClientIfCreated()
+        let shouldDisconnectRuntimeClient = runtimeClient.map { !shellRegistry.hasClientReferences($0) } ?? false
+        await runtime.runtime.closeRunner(
+            mode: .closeShellOnly,
+            closeShell: false,
+            disconnectClient: shouldDisconnectRuntimeClient
+        )
+    }
+
     func closeTestingRuntimeIfNeeded(forPane paneId: UUID) async -> Bool {
         guard let runtime = terminalConnectionRegistry.runtime(for: .pane(paneId)) else {
             return false

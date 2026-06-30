@@ -211,6 +211,17 @@ extension ConnectionSessionManager {
         }
     }
 
+    func clearRuntimeShellForReconnect(sessionId: UUID) async {
+        guard let runtime = sessionRuntimes[sessionId] else { return }
+        let runtimeClient = await runtime.runtime.runnerClientIfCreated()
+        let shouldDisconnectRuntimeClient = runtimeClient.map { !shellRegistry.hasClientReferences($0) } ?? false
+        await runtime.runtime.closeRunner(
+            mode: .closeShellOnly,
+            closeShell: false,
+            disconnectClient: shouldDisconnectRuntimeClient
+        )
+    }
+
     private func sshClient(forSessionId sessionId: UUID) -> SSHClient? {
         shellRegistry.client(for: sessionId)
     }

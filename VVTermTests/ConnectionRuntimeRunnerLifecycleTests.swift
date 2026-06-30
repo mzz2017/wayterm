@@ -330,6 +330,93 @@ struct ConnectionRuntimeRunnerLifecycleTests {
     }
 
     @Test
+    func tabManagerReconnectClearsRuntimeShellIdBeforeNextStart() async {
+        await withCleanTabManager { manager in
+            // Given a pane whose shell registry and manager-owned runtime both
+            // still point at the shell that is about to be reconnected.
+            let server = makeServer(connectionMode: .standard)
+            let tab = TerminalTab(serverId: server.id, title: server.name)
+            let staleClient = SSHClient()
+            let staleShellId = UUID()
+            manager.tabsByServer[server.id] = [tab]
+            manager.selectedTabByServer[server.id] = tab.id
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+            manager.configureRuntime(
+                forPane: tab.rootPaneId,
+                server: server,
+                credentials: makeCredentials(serverId: server.id),
+                onProcessExit: {}
+            )
+            manager.registerSSHClient(
+                staleClient,
+                shellId: staleShellId,
+                for: tab.rootPaneId,
+                serverId: server.id,
+                skipTmuxLifecycle: true
+            )
+            await manager.paneRuntimes[tab.rootPaneId]?.runtime.setShellId(staleShellId)
+
+            // When reconnect tears down the old pane shell.
+            await manager.reconnectPane(tab.rootPaneId)
+
+            // Then neither shell registry nor runtime currentShellId may keep
+            // the stale shell, or the next surface attach can skip starting a
+            // fresh shell and mark the pane connected too early.
+            #expect(manager.shellId(for: tab.rootPaneId) == nil)
+            #expect(await manager.paneRuntimes[tab.rootPaneId]?.runtime.currentShellId() == nil)
+            #expect(manager.paneStates[tab.rootPaneId]?.connectionState == .reconnecting(attempt: 1))
+        }
+    }
+
+    @Test
+    func connectionManagerReconnectClearsRuntimeShellIdBeforeNextStart() async throws {
+        try await withCleanConnectionManager { manager in
+            // Given a session whose shell registry and manager-owned runtime
+            // both still point at the shell that is about to be reconnected.
+            let server = makeServer(connectionMode: .standard)
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .connected
+            )
+            let staleClient = SSHClient()
+            let staleShellId = UUID()
+            manager.sessions = [session]
+            manager.setServerProviderForTesting { requestedId in
+                requestedId == server.id ? server : nil
+            }
+            manager.configureRuntime(
+                for: session.id,
+                server: server,
+                credentials: makeCredentials(serverId: server.id),
+                onProcessExit: {}
+            )
+            manager.registerSSHClient(
+                staleClient,
+                shellId: staleShellId,
+                for: session.id,
+                serverId: server.id,
+                skipTmuxLifecycle: true
+            )
+            await manager.sessionRuntimes[session.id]?.runtime.setShellId(staleShellId)
+
+            // When reconnect tears down the old session shell.
+            try await manager.reconnect(session: session)
+
+            // Then neither shell registry nor runtime currentShellId may keep
+            // the stale shell, or the next surface attach can skip starting a
+            // fresh shell and mark the session connected too early.
+            #expect(manager.shellId(for: session.id) == nil)
+            #expect(await manager.sessionRuntimes[session.id]?.runtime.currentShellId() == nil)
+            #expect(manager.sessionState(for: session.id) == .reconnecting(attempt: 1))
+        }
+    }
+
+    @Test
     func tabManagerLateRuntimeShellCallbackCannotUpdateClosedGeneration() async {
         await withCleanTabManager { manager in
             // Given a shell start that belongs to an older pane generation.
