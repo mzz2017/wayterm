@@ -172,11 +172,6 @@ final class KeychainManager {
         return (clientID: clientID, clientSecret: clientSecret)
     }
 
-    func deleteCloudflareServiceToken(for serverId: UUID) {
-        try? store.delete(cloudflareClientIDKey(for: serverId))
-        try? store.delete(cloudflareClientSecretKey(for: serverId))
-    }
-
     // MARK: - Delete Operations
 
     func deleteCredentials(for serverId: UUID) throws {

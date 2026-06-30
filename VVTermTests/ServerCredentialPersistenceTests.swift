@@ -3,14 +3,14 @@ import Testing
 @testable import VVTerm
 
 // Test Context:
-// Protects Servers' credential persistence policy while Keychain operations are
+// Protects Servers' credential replacement policy while Keychain operations are
 // hidden behind a feature-owned service boundary. Fakes record requested writes
 // only; update these tests when the app intentionally changes which credentials
-// are stored for each connection/authentication mode.
+// survive each connection/authentication mode.
 @MainActor
 struct ServerCredentialPersistenceTests {
     @Test
-    func storesAuthCredentialForSelectedAuthMethodAndClearsCloudflareTokenByDefault() throws {
+    func replacesStoredCredentialsBeforeWritingSelectedAuthCredential() throws {
         let library = RecordingCredentialLibrary()
         let persistence = ServerCredentialPersistence(library: library)
         let server = makeServer(authMethod: .password)
@@ -20,13 +20,13 @@ struct ServerCredentialPersistenceTests {
         try persistence.storeCredentials(for: server, credentials: credentials)
 
         #expect(library.events == [
-            .storePassword(server.id, "secret"),
-            .deleteCloudflareServiceToken(server.id)
+            .deleteCredentials(server.id),
+            .storePassword(server.id, "secret")
         ])
     }
 
     @Test
-    func storesSSHKeyWithNilPassphraseWhenSubmittedPassphraseIsEmpty() throws {
+    func clearsOldPassphraseBeforeWritingKeyWithoutSubmittedPassphrase() throws {
         let library = RecordingCredentialLibrary()
         let persistence = ServerCredentialPersistence(library: library)
         let server = makeServer(authMethod: .sshKeyWithPassphrase)
@@ -40,13 +40,13 @@ struct ServerCredentialPersistenceTests {
         try persistence.storeCredentials(for: server, credentials: credentials)
 
         #expect(library.events == [
-            .storeSSHKey(server.id, privateKey, nil, publicKey),
-            .deleteCloudflareServiceToken(server.id)
+            .deleteCredentials(server.id),
+            .storeSSHKey(server.id, privateKey, nil, publicKey)
         ])
     }
 
     @Test
-    func tailscaleSkipsAuthCredentialWritesButStillClearsCloudflareToken() throws {
+    func tailscaleDeletesStoredCredentialsWithoutWritingAuthMaterial() throws {
         let library = RecordingCredentialLibrary()
         let persistence = ServerCredentialPersistence(library: library)
         let server = makeServer(connectionMode: .tailscale, authMethod: .password)
@@ -56,12 +56,12 @@ struct ServerCredentialPersistenceTests {
         try persistence.storeCredentials(for: server, credentials: credentials)
 
         #expect(library.events == [
-            .deleteCloudflareServiceToken(server.id)
+            .deleteCredentials(server.id)
         ])
     }
 
     @Test
-    func storesCloudflareServiceTokenWhenServerUsesServiceTokenMode() throws {
+    func replacesCredentialsBeforeWritingCloudflareServiceToken() throws {
         let library = RecordingCredentialLibrary()
         let persistence = ServerCredentialPersistence(library: library)
         let server = makeServer(
@@ -77,6 +77,7 @@ struct ServerCredentialPersistenceTests {
         try persistence.storeCredentials(for: server, credentials: credentials)
 
         #expect(library.events == [
+            .deleteCredentials(server.id),
             .storePassword(server.id, "secret"),
             .storeCloudflareServiceToken(server.id, "client-id", "client-secret")
         ])
@@ -117,7 +118,6 @@ private final class RecordingCredentialLibrary: ServerCredentialWritingLibrary {
         case storePassword(UUID, String)
         case storeSSHKey(UUID, Data, String?, Data?)
         case storeCloudflareServiceToken(UUID, String, String)
-        case deleteCloudflareServiceToken(UUID)
     }
 
     private(set) var events: [Event] = []
@@ -136,9 +136,5 @@ private final class RecordingCredentialLibrary: ServerCredentialWritingLibrary {
 
     func storeCloudflareServiceToken(for serverId: UUID, clientID: String, clientSecret: String) throws {
         events.append(.storeCloudflareServiceToken(serverId, clientID, clientSecret))
-    }
-
-    func deleteCloudflareServiceToken(for serverId: UUID) {
-        events.append(.deleteCloudflareServiceToken(serverId))
     }
 }

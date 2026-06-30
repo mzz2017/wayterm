@@ -6,7 +6,6 @@ protocol ServerCredentialWritingLibrary: AnyObject {
     func storePassword(for serverId: UUID, password: String) throws
     func storeSSHKey(for serverId: UUID, privateKey: Data, passphrase: String?, publicKey: Data?) throws
     func storeCloudflareServiceToken(for serverId: UUID, clientID: String, clientSecret: String) throws
-    func deleteCloudflareServiceToken(for serverId: UUID)
 }
 
 @MainActor
@@ -22,6 +21,8 @@ final class ServerCredentialPersistence {
     }
 
     func storeCredentials(for server: Server, credentials: ServerCredentials) throws {
+        try library.deleteCredentials(for: server.id)
+
         if server.connectionMode != .tailscale {
             switch server.authMethod {
             case .password:
@@ -59,8 +60,6 @@ final class ServerCredentialPersistence {
                 clientID: cloudflareClientID,
                 clientSecret: cloudflareClientSecret
             )
-        } else {
-            library.deleteCloudflareServiceToken(for: server.id)
         }
     }
 }
