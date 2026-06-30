@@ -339,6 +339,79 @@ final class SSHClientConnectionLifecycleTests: XCTestCase {
         )
     }
 
+    func testConnectTimeoutBoundsBlockedPendingSessionCleanup() async throws {
+        // Given SSHClient has created a pending SSHSession whose libssh2
+        // handshake times out, and whose disconnect cleanup ignores
+        // cancellation until explicitly released.
+        var descriptors = [Int32](repeating: -1, count: 2)
+        XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors), 0)
+        defer {
+            Darwin.close(descriptors[0])
+            Darwin.close(descriptors[1])
+        }
+
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            connectedSocket: descriptors[0],
+            handshakeBehavior: .waitForSocketClose,
+            shouldBlockDisconnect: true
+        )
+        let pendingSession = SSHSession(config: .libSSH2LifecycleTest, driver: driver)
+        let client = SSHClient(
+            sessionFactory: { _ in pendingSession },
+            connectTimeout: .milliseconds(80),
+            disconnectTimeout: .milliseconds(80)
+        )
+        let target = SSHConnectionTarget(host: "ssh.example.com", username: "root")
+        let credentials = ServerCredentials(
+            serverId: UUID(),
+            password: "secret",
+            privateKey: nil,
+            publicKey: nil,
+            passphrase: nil,
+            cloudflareClientID: nil,
+            cloudflareClientSecret: nil
+        )
+        let startedAt = ContinuousClock.now
+        let connectTask = Task {
+            try await client.connect(to: target, credentials: credentials)
+        }
+
+        // When the connect timeout fires while pending session cleanup is
+        // blocked.
+        do {
+            try await AsyncTimeoutGate.waitForTask(
+                connectTask,
+                timeout: .milliseconds(700),
+                timeoutError: { SSHClientConnectionLifecycleTestError.connectTimeoutWaitedForCleanup }
+            )
+            XCTFail("Expected SSHClient.connect to throw its configured timeout")
+        } catch SSHError.timeout {
+            // Then the timeout path is bounded by SSHClient instead of waiting
+            // forever for pending session cleanup to return.
+        } catch SSHClientConnectionLifecycleTestError.connectTimeoutWaitedForCleanup {
+            XCTFail("SSHClient.connect waited unboundedly for pending session cleanup after timeout")
+        } catch {
+            XCTFail("Expected SSHError.timeout, got \(error)")
+        }
+
+        let elapsed = startedAt.duration(to: .now)
+        XCTAssertLessThan(
+            elapsed,
+            .milliseconds(500),
+            "SSHClient.connect timeout should not be trapped behind blocked pending session cleanup."
+        )
+        XCTAssertEqual(
+            driver.disconnectCount(),
+            1,
+            "Timed-out pending SSHSession should still enter cleanup exactly once."
+        )
+
+        driver.releaseDisconnect()
+        _ = await connectTask.result
+        await client.disconnect()
+    }
+
     func testRunWithTimeoutReturnsWithoutWaitingForBlockedOperation() async throws {
         // Given a timeout-wrapped operation has entered a blocking subsystem
         // that does not observe Swift task cancellation.
@@ -502,26 +575,6 @@ final class SSHClientConnectionLifecycleTests: XCTestCase {
         await client.disconnect()
     }
 
-    func testPendingConnectCleanupUsesBoundedTimeoutGate() throws {
-        let source = try String(
-            contentsOf: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift"),
-            encoding: .utf8
-        )
-        let cleanupMethod = try sourceSlice(
-            in: source,
-            from: "    private func waitForPendingConnectCleanup",
-            to: "    private func disconnectCloudflareTransport"
-        )
-
-        XCTAssertTrue(
-            cleanupMethod.contains("SSHClient.waitForTaskCompletion(task, timeout: disconnectTimeout)"),
-            "SSHClient pending connect cleanup should be bounded by the client disconnect timeout."
-        )
-        XCTAssertFalse(
-            cleanupMethod.contains("await pendingConnectTask?.result"),
-            "SSHClient.disconnect must not wait unboundedly on pending connect cleanup."
-        )
-    }
 }
 
 private final class RecordingSSHSessionFactory: @unchecked Sendable {
@@ -628,32 +681,10 @@ private actor BlockingCloudflareTransportManager: CloudflareTransportManaging {
     }
 }
 
-private func sourceSlice(in source: String, from start: String, to end: String) throws -> String {
-    guard let startRange = source.range(of: start) else {
-        throw SSHClientConnectionLifecycleTestError.sourceSliceNotFound
-    }
-    guard let endRange = source[startRange.lowerBound...].range(of: end) else {
-        throw SSHClientConnectionLifecycleTestError.sourceSliceNotFound
-    }
-    return String(source[startRange.lowerBound..<endRange.lowerBound])
-}
-
-private func sourceRoot() throws -> URL {
-    var url = URL(fileURLWithPath: #filePath)
-    while url.lastPathComponent != "VVTermTests" {
-        let next = url.deletingLastPathComponent()
-        if next.path == url.path {
-            throw SSHClientConnectionLifecycleTestError.sourceSliceNotFound
-        }
-        url = next
-    }
-    return url.deletingLastPathComponent()
-}
-
 private enum SSHClientConnectionLifecycleTestError: Error {
-    case sourceSliceNotFound
     case timeoutGateWaitedForBlockedOperation
     case cloudflareConnectEscapedTimeout
+    case connectTimeoutWaitedForCleanup
 }
 
 private func blockCurrentThreadIgnoringCancellation() {

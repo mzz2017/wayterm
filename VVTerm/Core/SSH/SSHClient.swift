@@ -166,7 +166,7 @@ nonisolated actor SSHClient {
                 return pendingSession
             } catch {
                 pendingSession.abort()
-                await pendingSession.disconnect()
+                await disconnectPendingConnectSession(pendingSession)
                 throw error
             }
         }
@@ -706,6 +706,23 @@ nonisolated actor SSHClient {
             try await SSHClient.waitForTaskCompletion(task, timeout: disconnectTimeout)
         } catch {
             logger.warning("Timed out while waiting for pending SSH connect cleanup")
+        }
+    }
+
+    private func disconnectPendingConnectSession(_ pendingSession: SSHSession) async {
+        do {
+            try await SSHClient.runWithTimeout(
+                disconnectTimeout,
+                operation: {
+                    await pendingSession.disconnect()
+                },
+                onTimeout: {
+                    pendingSession.abort()
+                }
+            )
+        } catch {
+            logger.warning("Timed out while disconnecting pending SSH connect session")
+            pendingSession.abort()
         }
     }
 
