@@ -73,13 +73,15 @@ final class KeychainManager {
                 throw KeychainError.encodingFailed
             }
             try store.set(passphraseData, forKey: passphraseKey, iCloudSync: isSyncEnabled)
+        } else {
+            try store.delete(sshPassphraseKey(for: serverId))
         }
 
         let publicKeyKey = sshPublicKeyKey(for: serverId)
         if let publicKey, !publicKey.isEmpty {
             try store.set(publicKey, forKey: publicKeyKey, iCloudSync: isSyncEnabled)
         } else {
-            try? store.delete(publicKeyKey)
+            try store.delete(publicKeyKey)
         }
 
         logger.info("Stored SSH key for server \(serverId.uuidString)")

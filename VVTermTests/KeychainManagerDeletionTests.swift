@@ -4,11 +4,47 @@ import Testing
 
 // Test Context:
 // These tests protect destructive Keychain deletion behavior. The fake store
-// models Security.framework failures so server and reusable-key metadata cannot
-// report success while private credential bytes remain in Keychain.
+// models Security.framework failures and credential replacement so server and
+// reusable-key metadata cannot report success while private credential bytes
+// remain in Keychain. Update these tests only when KeychainManager intentionally
+// changes whether omitted credential parts are retained or removed.
 @Suite(.serialized)
 @MainActor
 struct KeychainManagerDeletionTests {
+    @Test
+    func storingSSHKeyWithoutOptionalMetadataClearsPreviouslyStoredMetadata() throws {
+        let serverId = UUID(uuidString: "00000000-0000-0000-0000-00000000D000")!
+        let store = RecordingKeychainStore()
+        let manager = KeychainManager(store: store)
+
+        // Given an existing server SSH key with saved optional metadata.
+        try manager.storeSSHKey(
+            for: serverId,
+            privateKey: Data("old-private-key".utf8),
+            passphrase: "old-passphrase",
+            publicKey: Data("old-public-key".utf8)
+        )
+
+        // When the same server key is replaced without optional metadata.
+        try manager.storeSSHKey(
+            for: serverId,
+            privateKey: Data("new-private-key".utf8),
+            passphrase: nil
+        )
+
+        // Then later credential lookup must not revive the old secret.
+        let storedKey = try #require(try manager.getSSHKey(for: serverId))
+        #expect(storedKey.key == Data("new-private-key".utf8))
+        #expect(
+            storedKey.passphrase == nil,
+            "Replacing an SSH key without a passphrase must delete any previous passphrase for that server."
+        )
+        #expect(
+            storedKey.publicKey == nil,
+            "Replacing an SSH key without a public key must delete any previous public key for that server."
+        )
+    }
+
     @Test
     func deleteCredentialsPropagatesKeychainDeleteFailure() throws {
         let serverId = UUID(uuidString: "00000000-0000-0000-0000-00000000D001")!
