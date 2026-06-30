@@ -1240,6 +1240,91 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         )
     }
 
+    func testSFTPDirectoryReadFailurePreservesRawLibSSH2TransportError() async throws {
+        // Given SFTP directory reading fails because the underlying SSH
+        // transport closed and SFTP status is unset.
+        let rawError = LibSSH2RawError(
+            operation: .sftpReadDirectory,
+            code: LIBSSH2_ERROR_SOCKET_RECV,
+            message: "socket recv failed during sftp readdir"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            sftpSessionResult: OpaquePointer(bitPattern: 0x55),
+            sftpOpenResult: OpaquePointer(bitPattern: 0x66),
+            sftpReadDirectoryResults: [
+                .error(Int(LIBSSH2_ERROR_SOCKET_RECV))
+            ],
+            sftpLastErrorResult: 0,
+            rawErrors: [rawError]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When directory listing fails during readdir.
+        try await session.connect()
+        do {
+            _ = try await session.listDirectory(at: "/var/log")
+            XCTFail("Expected raw libssh2 SFTP readdir failure")
+        } catch SSHError.libssh2(let receivedRawError) {
+            // Then transport diagnostics remain distinguishable from generic
+            // SFTP status 0 mapping.
+            XCTAssertEqual(receivedRawError.operation, .sftpReadDirectory)
+            XCTAssertEqual(receivedRawError.code, LIBSSH2_ERROR_SOCKET_RECV)
+            XCTAssertEqual(receivedRawError.message, "socket recv failed during sftp readdir")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+
+        XCTAssertEqual(
+            driver.sftpEvents(),
+            [.initSession, .open(path: "/var/log"), .readDirectory, .closeHandle],
+            "Raw SFTP readdir failures must still close the opened handle exactly once."
+        )
+    }
+
+    func testSFTPProtocolDirectoryReadFailureKeepsSFTPStatusMapping() async throws {
+        // Given libssh2 reports the SFTP protocol sentinel and the SFTP layer
+        // records a permission status for the failed directory read.
+        let protocolError = LibSSH2RawError(
+            operation: .sftpReadDirectory,
+            code: LIBSSH2_ERROR_SFTP_PROTOCOL,
+            message: "sftp protocol status available"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            sftpSessionResult: OpaquePointer(bitPattern: 0x55),
+            sftpOpenResult: OpaquePointer(bitPattern: 0x66),
+            sftpReadDirectoryResults: [
+                .error(Int(LIBSSH2_ERROR_SFTP_PROTOCOL))
+            ],
+            sftpLastErrorResult: UInt(LIBSSH2_FX_PERMISSION_DENIED),
+            rawErrors: [protocolError]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When directory listing fails with an SFTP status error.
+        try await session.connect()
+        do {
+            _ = try await session.listDirectory(at: "/root")
+            XCTFail("Expected SFTP permission error")
+        } catch SSHFileTransferError.permissionDenied {
+            // Then RemoteFiles receives the domain-level status instead of a
+            // misleading raw libssh2 transport error.
+        } catch {
+            XCTFail("Expected SSHFileTransferError.permissionDenied, got \(error)")
+        }
+
+        XCTAssertEqual(
+            driver.sftpEvents(),
+            [.initSession, .open(path: "/root"), .readDirectory, .closeHandle],
+            "SFTP status failures must still close the opened handle exactly once."
+        )
+    }
+
     func testSFTPInitFailurePreservesRawLibSSH2Error() async throws {
         // Given libssh2 fails while creating the SFTP subsystem before any
         // SFTP status handle exists.
@@ -1271,6 +1356,129 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         } catch {
             XCTFail("Expected SSHError.libssh2, got \(error)")
         }
+    }
+
+    func testSFTPOpenFailurePreservesRawLibSSH2TransportError() async throws {
+        // Given SFTP has started, but opening a remote handle fails because the
+        // underlying SSH transport closed before libssh2 produced an SFTP status.
+        let rawError = LibSSH2RawError(
+            operation: .sftpOpen,
+            code: LIBSSH2_ERROR_SOCKET_RECV,
+            message: "socket recv failed during sftp open"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            sftpSessionResult: OpaquePointer(bitPattern: 0x55),
+            sftpOpenResult: nil,
+            sftpLastErrorResult: 0,
+            rawErrors: [rawError]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When remote file access opens a directory handle.
+        try await session.connect()
+        do {
+            _ = try await session.listDirectory(at: "/var/log")
+            XCTFail("Expected raw libssh2 SFTP open failure")
+        } catch SSHError.libssh2(let receivedRawError) {
+            // Then transport diagnostics remain distinguishable from generic
+            // SFTP status 0 mapping.
+            XCTAssertEqual(receivedRawError.operation, .sftpOpen)
+            XCTAssertEqual(receivedRawError.code, LIBSSH2_ERROR_SOCKET_RECV)
+            XCTAssertEqual(receivedRawError.message, "socket recv failed during sftp open")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+    }
+
+    func testSFTPFileReadFailurePreservesRawLibSSH2TransportError() async throws {
+        // Given reading an opened SFTP file fails because the underlying SSH
+        // transport closes before an SFTP status is available.
+        let rawError = LibSSH2RawError(
+            operation: .sftpRead,
+            code: LIBSSH2_ERROR_SOCKET_RECV,
+            message: "socket recv failed during sftp read"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            sftpSessionResult: OpaquePointer(bitPattern: 0x55),
+            sftpOpenResult: OpaquePointer(bitPattern: 0x66),
+            sftpReadFileResults: [
+                Int(LIBSSH2_ERROR_SOCKET_RECV)
+            ],
+            sftpLastErrorResult: 0,
+            rawErrors: [rawError]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When a remote file preview reads from the opened handle.
+        try await session.connect()
+        do {
+            _ = try await session.readFile(at: "/var/log/system.log", maxBytes: 1024)
+            XCTFail("Expected raw libssh2 SFTP read failure")
+        } catch SSHError.libssh2(let receivedRawError) {
+            // Then transport diagnostics remain distinguishable from generic
+            // SFTP status 0 mapping.
+            XCTAssertEqual(receivedRawError.operation, .sftpRead)
+            XCTAssertEqual(receivedRawError.code, LIBSSH2_ERROR_SOCKET_RECV)
+            XCTAssertEqual(receivedRawError.message, "socket recv failed during sftp read")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+
+        XCTAssertEqual(
+            driver.sftpEvents(),
+            [.initSession, .open(path: "/var/log/system.log"), .readFile, .closeHandle],
+            "Raw SFTP file read failures must still close the opened handle exactly once."
+        )
+    }
+
+    func testSFTPFileWriteFailurePreservesRawLibSSH2TransportError() async throws {
+        // Given writing an opened SFTP file fails because the underlying SSH
+        // transport closes before an SFTP status is available.
+        let rawError = LibSSH2RawError(
+            operation: .sftpWrite,
+            code: LIBSSH2_ERROR_SOCKET_SEND,
+            message: "socket send failed during sftp write"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            sftpSessionResult: OpaquePointer(bitPattern: 0x55),
+            sftpOpenResult: OpaquePointer(bitPattern: 0x66),
+            sftpWriteFileResults: [
+                Int(LIBSSH2_ERROR_SOCKET_SEND)
+            ],
+            sftpLastErrorResult: 0,
+            rawErrors: [rawError]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When a remote upload writes through SFTP.
+        try await session.connect()
+        do {
+            try await session.writeFile(Data("payload".utf8), to: "/tmp/payload")
+            XCTFail("Expected raw libssh2 SFTP write failure")
+        } catch SSHError.libssh2(let receivedRawError) {
+            // Then send-side transport diagnostics remain distinguishable from
+            // generic SFTP status 0 mapping.
+            XCTAssertEqual(receivedRawError.operation, .sftpWrite)
+            XCTAssertEqual(receivedRawError.code, LIBSSH2_ERROR_SOCKET_SEND)
+            XCTAssertEqual(receivedRawError.message, "socket send failed during sftp write")
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+
+        XCTAssertEqual(
+            driver.sftpEvents(),
+            [.initSession, .open(path: "/tmp/payload"), .writeFile, .closeHandle],
+            "Raw SFTP file write failures must still close the opened handle exactly once."
+        )
     }
 
     private func sshSessionSource() throws -> String {

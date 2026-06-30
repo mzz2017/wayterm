@@ -139,6 +139,8 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
         case shutdownSession
         case open(path: String)
         case readDirectory
+        case readFile
+        case writeFile
         case closeHandle
     }
 
@@ -197,6 +199,8 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
     private var channelEOFResultQueue: [Bool]
     private var channelWriteResultQueue: [Int]
     private var sftpReadDirectoryResultQueue: [SFTPReadDirectoryResult]
+    private var sftpReadFileResultQueue: [Int]
+    private var sftpWriteFileResultQueue: [Int]
     private var channelWriteCallLog: [ChannelWriteCall] = []
     private var lastErrorOperationLog: [LibSSH2RawError.Operation] = []
     private var keepAliveInvocationCount = 0
@@ -225,6 +229,8 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
         sftpSessionResult: OpaquePointer? = nil,
         sftpOpenResult: OpaquePointer? = nil,
         sftpReadDirectoryResults: [SFTPReadDirectoryResult] = [],
+        sftpReadFileResults: [Int] = [],
+        sftpWriteFileResults: [Int] = [],
         sftpLastErrorResult: UInt = 0,
         sessionBlockDirectionsResult: Int32 = 0,
         channelWriteDelayMicroseconds: useconds_t = 0,
@@ -263,6 +269,8 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
         self.channelEOFResultQueue = channelEOFResults
         self.channelWriteResultQueue = channelWriteResults
         self.sftpReadDirectoryResultQueue = sftpReadDirectoryResults
+        self.sftpReadFileResultQueue = sftpReadFileResults
+        self.sftpWriteFileResultQueue = sftpWriteFileResults
     }
 
     func closedSockets() -> [Int32] {
@@ -404,6 +412,24 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
             return .end
         }
         return sftpReadDirectoryResultQueue.removeFirst()
+    }
+
+    private func nextSFTPReadFileResult() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        if sftpReadFileResultQueue.isEmpty {
+            return 0
+        }
+        return sftpReadFileResultQueue.removeFirst()
+    }
+
+    private func nextSFTPWriteFileResult(default defaultResult: Int) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        if sftpWriteFileResultQueue.isEmpty {
+            return defaultResult
+        }
+        return sftpWriteFileResultQueue.removeFirst()
     }
 
     func waitForObservedSocketAbort(timeout: Duration) -> Bool {
@@ -745,11 +771,13 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
     nonisolated func seekSFTPFile(handle: OpaquePointer, offset: UInt64) {}
 
     nonisolated func readSFTPFile(handle: OpaquePointer, into buffer: inout [CChar]) -> Int {
-        0
+        recordSFTPEvent(.readFile)
+        return nextSFTPReadFileResult()
     }
 
     nonisolated func writeSFTPFile(handle: OpaquePointer, data: Data, offset: Int, maxLength: Int) -> Int {
-        maxLength
+        recordSFTPEvent(.writeFile)
+        return nextSFTPWriteFileResult(default: maxLength)
     }
 
     nonisolated func statSFTPPath(

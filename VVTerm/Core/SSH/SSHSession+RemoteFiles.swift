@@ -62,7 +62,12 @@ extension SSHSession {
                 continue
             }
 
-            throw remoteFileError(from: sftp, operation: "read directory", path: normalizedPath)
+            throw sftpFailure(
+                from: sftp,
+                rawOperation: .sftpReadDirectory,
+                operation: "read directory",
+                path: normalizedPath
+            )
         }
 
         return entries
@@ -126,7 +131,12 @@ extension SSHSession {
                 continue
             }
 
-            throw remoteFileError(from: sftp, operation: "read file", path: normalizedPath)
+            throw sftpFailure(
+                from: sftp,
+                rawOperation: .sftpRead,
+                operation: "read file",
+                path: normalizedPath
+            )
         }
 
         return data
@@ -175,7 +185,12 @@ extension SSHSession {
                     continue
                 }
 
-                throw remoteFileError(from: sftp, operation: "download file", path: normalizedPath)
+                throw sftpFailure(
+                    from: sftp,
+                    rawOperation: .sftpRead,
+                    operation: "download file",
+                    path: normalizedPath
+                )
             }
         } catch {
             try? localFileHandle.close()
@@ -219,7 +234,12 @@ extension SSHSession {
                 continue
             }
 
-            throw remoteFileError(from: sftp, operation: "write file", path: normalizedPath)
+            throw sftpFailure(
+                from: sftp,
+                rawOperation: .sftpWrite,
+                operation: "write file",
+                path: normalizedPath
+            )
         }
     }
 
@@ -275,7 +295,12 @@ extension SSHSession {
                 continue
             }
 
-            throw remoteFileError(from: sftp, operation: "read filesystem status", path: normalizedPath)
+            throw sftpFailure(
+                from: sftp,
+                rawOperation: .sftpStatVFS,
+                operation: "read filesystem status",
+                path: normalizedPath
+            )
         }
     }
 
@@ -285,7 +310,8 @@ extension SSHSession {
         try await performSFTPMutation(
             at: normalizedPath,
             sftp: sftp,
-            operation: "create directory"
+            operation: "create directory",
+            rawOperation: .sftpMakeDirectory
         ) { sftpHandle, mutationPath in
             driver.makeSFTPDirectory(sftp: sftpHandle, path: mutationPath, permissions: permissions)
         }
@@ -317,7 +343,12 @@ extension SSHSession {
                 continue
             }
 
-            throw remoteFileError(from: sftp, operation: "set permissions", path: normalizedPath)
+            throw sftpFailure(
+                from: sftp,
+                rawOperation: .sftpSetStat,
+                operation: "set permissions",
+                path: normalizedPath
+            )
         }
     }
 
@@ -342,7 +373,8 @@ extension SSHSession {
                 try await performSFTPMutation(
                     at: normalizedSource,
                     sftp: sftp,
-                    operation: "rename"
+                    operation: "rename",
+                    rawOperation: .sftpRename
                 ) { sftpHandle, sourcePath in
                     driver.renameSFTPPath(
                         sftp: sftpHandle,
@@ -366,7 +398,8 @@ extension SSHSession {
         try await performSFTPMutation(
             at: normalizedPath,
             sftp: sftp,
-            operation: "delete file"
+            operation: "delete file",
+            rawOperation: .sftpUnlink
         ) { sftpHandle, mutationPath in
             driver.unlinkSFTPFile(sftp: sftpHandle, path: mutationPath)
         }
@@ -378,7 +411,8 @@ extension SSHSession {
         try await performSFTPMutation(
             at: normalizedPath,
             sftp: sftp,
-            operation: "delete directory"
+            operation: "delete directory",
+            rawOperation: .sftpRemoveDirectory
         ) { sftpHandle, mutationPath in
             driver.removeSFTPDirectory(sftp: sftpHandle, path: mutationPath)
         }
@@ -470,6 +504,9 @@ extension SSHSession {
                 await waitForSocket()
                 continue
             }
+            if let rawError = sftpTransportError(rawError) {
+                throw SSHError.libssh2(rawError)
+            }
 
             throw remoteFileError(from: sftp, operation: operation, path: path)
         }
@@ -479,6 +516,7 @@ extension SSHSession {
         at path: String,
         sftp: OpaquePointer,
         operation: String,
+        rawOperation: LibSSH2RawError.Operation,
         mutation: (OpaquePointer, String) -> Int
     ) async throws {
         guard libssh2Session != nil else {
@@ -499,7 +537,12 @@ extension SSHSession {
                 continue
             }
 
-            throw remoteFileError(from: sftp, operation: operation, path: path)
+            throw sftpFailure(
+                from: sftp,
+                rawOperation: rawOperation,
+                operation: operation,
+                path: path
+            )
         }
     }
 
@@ -538,8 +581,9 @@ extension SSHSession {
                 continue
             }
 
-            throw remoteFileError(
+            throw sftpFailure(
                 from: sftp,
+                rawOperation: .sftpStat,
                 operation: statType == Int32(LIBSSH2_SFTP_LSTAT) ? "lstat" : "stat",
                 path: normalizedPath
             )
@@ -577,6 +621,9 @@ extension SSHSession {
             if rawError.code == LIBSSH2_ERROR_EAGAIN {
                 await waitForSocket()
                 continue
+            }
+            if let rawError = sftpTransportError(rawError) {
+                throw SSHError.libssh2(rawError)
             }
 
             throw remoteFileError(
@@ -667,5 +714,33 @@ extension SSHSession {
             operation: operation,
             path: path
         )
+    }
+
+    private func sftpFailure(
+        from sftp: OpaquePointer?,
+        rawOperation: LibSSH2RawError.Operation,
+        operation: String,
+        path: String?
+    ) -> Error {
+        if let rawError = sftpTransportError(operation: rawOperation) {
+            return SSHError.libssh2(rawError)
+        }
+
+        return remoteFileError(from: sftp, operation: operation, path: path)
+    }
+
+    private func sftpTransportError(operation: LibSSH2RawError.Operation) -> LibSSH2RawError? {
+        guard let session = libssh2Session else { return nil }
+        let rawError = driver.lastError(session: session, operation: operation, fallbackCode: 0)
+        return sftpTransportError(rawError)
+    }
+
+    private func sftpTransportError(_ rawError: LibSSH2RawError) -> LibSSH2RawError? {
+        switch rawError.code {
+        case 0, LIBSSH2_ERROR_EAGAIN, LIBSSH2_ERROR_SFTP_PROTOCOL:
+            return nil
+        default:
+            return rawError
+        }
     }
 }
