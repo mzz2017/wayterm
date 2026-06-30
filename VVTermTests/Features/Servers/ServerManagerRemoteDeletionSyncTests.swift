@@ -32,7 +32,8 @@ struct ServerManagerRemoteDeletionSyncTests {
             workspaces: [],
             deletedServerIDs: [server.id],
             deletedWorkspaceIDs: [],
-            isFullFetch: false
+            isFullFetch: false,
+            commitFetchedChanges: nil
         ))
         let probe = RemoteDeletionOrderProbe()
         let managerHolder = RemoteDeletionManagerHolder()
@@ -102,7 +103,8 @@ struct ServerManagerRemoteDeletionSyncTests {
             workspaces: [],
             deletedServerIDs: [],
             deletedWorkspaceIDs: [workspace.id],
-            isFullFetch: false
+            isFullFetch: false,
+            commitFetchedChanges: nil
         ))
         let probe = RemoteDeletionOrderProbe()
         let managerHolder = RemoteDeletionManagerHolder()
@@ -168,7 +170,8 @@ struct ServerManagerRemoteDeletionSyncTests {
             workspaces: [],
             deletedServerIDs: [server.id],
             deletedWorkspaceIDs: [],
-            isFullFetch: false
+            isFullFetch: false,
+            commitFetchedChanges: nil
         ))
         let manager = ServerManager.makeForTesting(
             servers: [server],
@@ -206,7 +209,8 @@ struct ServerManagerRemoteDeletionSyncTests {
             workspaces: [],
             deletedServerIDs: [server.id],
             deletedWorkspaceIDs: [],
-            isFullFetch: false
+            isFullFetch: false,
+            commitFetchedChanges: nil
         ))
         let manager = ServerManager.makeForTesting(
             servers: [server],

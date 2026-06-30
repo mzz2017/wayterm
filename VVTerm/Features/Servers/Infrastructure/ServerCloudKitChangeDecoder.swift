@@ -20,7 +20,7 @@ nonisolated enum ServerCloudKitChangeDecoder {
 
     static func decode(
         _ changes: CloudKitRecordChanges,
-        commitFetchedChanges: (@MainActor () async -> Void)? = nil
+        commitFetchedChanges: (@MainActor () async -> Void)?
     ) throws -> CloudKitChanges {
         var servers: [Server] = []
         var workspaces: [Workspace] = []

@@ -5,7 +5,7 @@ import os.log
 // MARK: - CloudKit Serialization
 
 extension Server {
-    init?(from record: CKRecord) {
+    nonisolated init?(from record: CKRecord) {
         let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Server.CloudKit")
 
         guard let idString = record.recordID.recordName as String?,
@@ -107,7 +107,7 @@ extension Server {
         }
     }
 
-    func toRecord(in zoneID: CKRecordZone.ID? = nil) -> CKRecord {
+    nonisolated func toRecord(in zoneID: CKRecordZone.ID? = nil) -> CKRecord {
         let recordID = CKRecord.ID(recordName: id.uuidString, zoneID: zoneID ?? CKRecordZone.default().zoneID)
         let record = CKRecord(recordType: "Server", recordID: recordID)
 

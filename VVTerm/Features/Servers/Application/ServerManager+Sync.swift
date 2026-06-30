@@ -310,7 +310,8 @@ extension ServerManager {
                 workspaces: changes.workspaces + uploadedWorkspaces,
                 deletedServerIDs: changes.deletedServerIDs,
                 deletedWorkspaceIDs: changes.deletedWorkspaceIDs,
-                isFullFetch: changes.isFullFetch
+                isFullFetch: changes.isFullFetch,
+                commitFetchedChanges: nil
             ),
             canReplaceLocalState: backfillCompleted
         )

@@ -33,7 +33,8 @@ struct ServerManagerBootstrapTests {
             workspaces: [workspace],
             deletedServerIDs: [],
             deletedWorkspaceIDs: [],
-            isFullFetch: true
+            isFullFetch: true,
+            commitFetchedChanges: nil
         ))
         let syncCoordinator = RecordingServerPendingCloudSyncCoordinator()
         let manager = ServerManager.makeForTesting(

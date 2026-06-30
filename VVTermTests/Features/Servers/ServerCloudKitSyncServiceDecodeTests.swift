@@ -31,7 +31,7 @@ struct ServerCloudKitSyncServiceDecodeTests {
                 recordName: recordID.recordName
             )
         ) {
-            _ = try ServerCloudKitChangeDecoder.decode(fetched)
+            _ = try ServerCloudKitChangeDecoder.decode(fetched, commitFetchedChanges: nil)
         }
     }
 
@@ -56,7 +56,7 @@ struct ServerCloudKitSyncServiceDecodeTests {
         )
 
         // When all supported records are semantically valid.
-        let changes = try ServerCloudKitChangeDecoder.decode(fetched)
+        let changes = try ServerCloudKitChangeDecoder.decode(fetched, commitFetchedChanges: nil)
 
         // Then the decoded payload is passed through to ServerManager apply.
         #expect(changes.workspaces.map(\.id) == [workspace.id])

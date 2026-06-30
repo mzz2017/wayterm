@@ -4,7 +4,7 @@ import CloudKit
 // MARK: - CloudKit Serialization
 
 extension Workspace {
-    init?(from record: CKRecord) {
+    nonisolated init?(from record: CKRecord) {
         guard
             let idString = record.recordID.recordName as String?,
             let id = UUID(uuidString: idString),
@@ -43,7 +43,7 @@ extension Workspace {
         }
     }
 
-    func toRecord(in zoneID: CKRecordZone.ID? = nil) -> CKRecord {
+    nonisolated func toRecord(in zoneID: CKRecordZone.ID? = nil) -> CKRecord {
         let recordID = CKRecord.ID(recordName: id.uuidString, zoneID: zoneID ?? CKRecordZone.default().zoneID)
         let record = CKRecord(recordType: "Workspace", recordID: recordID)
 

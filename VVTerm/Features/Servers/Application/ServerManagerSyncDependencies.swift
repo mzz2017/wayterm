@@ -1,6 +1,6 @@
 import Foundation
 
-struct CloudKitChanges {
+nonisolated struct CloudKitChanges {
     let servers: [Server]
     let workspaces: [Workspace]
     let deletedServerIDs: [UUID]
@@ -14,7 +14,7 @@ struct CloudKitChanges {
         deletedServerIDs: [UUID],
         deletedWorkspaceIDs: [UUID],
         isFullFetch: Bool,
-        commitFetchedChanges: (@MainActor () async -> Void)? = nil
+        commitFetchedChanges: (@MainActor () async -> Void)?
     ) {
         self.servers = servers
         self.workspaces = workspaces

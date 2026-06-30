@@ -3,14 +3,14 @@ import Foundation
 import os.log
 
 extension CloudKitManager {
-    struct ZoneChangeBatch {
+    nonisolated struct ZoneChangeBatch {
         let records: [CKRecord]
         let deletions: [Deletion]
         let serverChangeToken: CKServerChangeToken?
         let moreComing: Bool
     }
 
-    struct Deletion {
+    nonisolated struct Deletion {
         let recordID: CKRecord.ID
         let recordType: CKRecord.RecordType
     }
