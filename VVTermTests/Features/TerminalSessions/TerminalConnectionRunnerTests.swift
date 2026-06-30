@@ -198,6 +198,7 @@ final class TerminalConnectionRunnerTests: XCTestCase {
         XCTAssertEqual(snapshot.beforeShellStartSizes, [], "Runner must not publish shell-start sizing for a closed surface.")
         XCTAssertEqual(snapshot.registeredShellIds, [], "Runner must not register shell ownership after surface close.")
         XCTAssertEqual(snapshot.closedShellIds, [], "No shell should exist to close when surface disappears before start.")
+        XCTAssertEqual(snapshot.resetCount, 1, "Runner must disconnect a client that connected before surface close.")
         XCTAssertEqual(snapshot.processExitCount, 0, "Closed surface should not receive a synthetic process exit.")
         XCTAssertNil(probe.startedShellId)
     }
