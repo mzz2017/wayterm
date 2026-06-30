@@ -51,6 +51,24 @@ assert_file_missing_or_empty() {
     }
 }
 
+assert_pid_not_running() {
+    local pid_file="$1"
+    local label="$2"
+
+    [[ -f "$pid_file" ]] || fail "missing pid file for ${label}: $pid_file"
+    local pid
+    pid="$(cat "$pid_file")"
+    for _ in 1 2 3 4 5; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            return
+        fi
+        sleep 1
+    done
+
+    kill "$pid" >/dev/null 2>&1 || true
+    fail "${label} child process was still running after wrapper timeout: ${pid}"
+}
+
 write_stub_tools() {
     local bin_dir="$1"
     mkdir -p "$bin_dir"
@@ -63,6 +81,12 @@ if [[ " $* " == *" -resolvePackageDependencies "* ]]; then
     if [[ "${VVTERM_STUB_RESOLVE_STALL:-0}" == "1" ]]; then
         sleep "${VVTERM_STUB_RESOLVE_SLEEP:-3}"
     fi
+    exit 0
+fi
+if [[ "${1:-}" == "test" && "${VVTERM_STUB_TEST_STALL:-0}" == "1" ]]; then
+    sleep "${VVTERM_STUB_TEST_CHILD_SLEEP:-30}" &
+    echo "$!" >"${VVTERM_STUB_CAPTURE}/xcodebuild-test-child.pid"
+    sleep "${VVTERM_STUB_TEST_SLEEP:-30}"
     exit 0
 fi
 echo "Test run started."
@@ -276,5 +300,22 @@ assert_contains "${tmp_root}/resolve-timeout.err" "xcodebuild produced no output
 [[ ! -d "${tmp_root}/ios-test.lock" ]] || fail "resolve timeout should remove the iOS test lock"
 [[ -z "$(find "$resolve_timeout_mount" -maxdepth 1 -name 'vvterm-ios-derived-data.*' -print -quit)" ]] ||
     fail "resolve timeout should clean auto-managed DerivedData from RAM disk"
+
+test_timeout_capture="${tmp_root}/capture-test-timeout"
+test_timeout_mount="${tmp_root}/ramdisk-test-timeout"
+run_wrapper_expect_failure "$test_timeout_capture" "$test_timeout_mount" \
+    "${tmp_root}/test-timeout.out" "${tmp_root}/test-timeout.err" "" "Shutdown" \
+    IOS_TEST_RAMDISK_MB=16 \
+    IOS_TEST_NO_OUTPUT_TIMEOUT=1 \
+    VVTERM_STUB_TEST_STALL=1 \
+    VVTERM_STUB_TEST_SLEEP=30 \
+    VVTERM_STUB_TEST_CHILD_SLEEP=30
+
+assert_contains "${test_timeout_capture}/wrapper.status" "124"
+assert_contains "${tmp_root}/test-timeout.err" "xcodebuild produced no output for 1s"
+assert_pid_not_running "${test_timeout_capture}/xcodebuild-test-child.pid" "test timeout"
+[[ ! -d "${tmp_root}/ios-test.lock" ]] || fail "test timeout should remove the iOS test lock"
+[[ -z "$(find "$test_timeout_mount" -maxdepth 1 -name 'vvterm-ios-derived-data.*' -print -quit)" ]] ||
+    fail "test timeout should clean auto-managed DerivedData from RAM disk"
 
 echo "test-ios RAM disk self-test passed"

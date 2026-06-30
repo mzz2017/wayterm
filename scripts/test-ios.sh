@@ -828,8 +828,10 @@ run_xcodebuild_test() {
                         print_recent_xcodebuild_log "$failure_log_lines" "$now"
                     } >&2
                     touch "$timeout_file"
+                    pkill -TERM -P "$xcode_pid" >/dev/null 2>&1 || true
                     kill -TERM "$xcode_pid" >/dev/null 2>&1 || true
                     sleep 5
+                    pkill -KILL -P "$xcode_pid" >/dev/null 2>&1 || true
                     kill -KILL "$xcode_pid" >/dev/null 2>&1 || true
                     exit 0
                 fi
