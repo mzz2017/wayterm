@@ -327,9 +327,10 @@ struct Server: Identifiable, Codable {
     var port: Int
     var username: String
     var authMethod: AuthMethod
-    var keychainCredentialId: String
 }
 ```
+
+Credential material and Keychain sync identity are not part of the CloudKit `Server` model.
 
 ### Workspace
 ```swift
