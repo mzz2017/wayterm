@@ -2,6 +2,11 @@ import Foundation
 
 extension ServerManager {
     func deleteServer(_ server: Server) async throws {
+        try await deleteLocalServer(server, recordsCloudKitDelete: true)
+        await persistLocalMutations(logMessage: "Deleted server: \(server.name)")
+    }
+
+    func deleteLocalServer(_ server: Server, recordsCloudKitDelete: Bool) async throws {
         await deletionTeardown(server)
         try await deleteCredentials(server.id)
 
@@ -11,8 +16,9 @@ extension ServerManager {
             remainingServers: servers
         )
         await removeKnownHosts(for: candidates)
-        enqueuePendingServerDelete(server)
-        await persistLocalMutations(logMessage: "Deleted server: \(server.name)")
+        if recordsCloudKitDelete {
+            enqueuePendingServerDelete(server)
+        }
     }
 
     func deleteWorkspace(_ workspace: Workspace) async throws {

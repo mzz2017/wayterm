@@ -202,7 +202,7 @@ extension ServerManager {
                 "CloudKit returned \(changes.workspaces.count) workspaces, \(changes.servers.count) servers (full fetch: \(changes.isFullFetch))"
             )
 
-            await applyCloudKitChanges(changes, canReplaceLocalState: backfillResult.canReplaceLocalState)
+            try await applyCloudKitChanges(changes, canReplaceLocalState: backfillResult.canReplaceLocalState)
             reconcilePendingServerAndWorkspaceUpsertsAgainstCloudKit(changes)
             applyPendingSyncOverlay()
             _ = reconcilePendingBootstrapWorkspaceState()
@@ -319,13 +319,13 @@ extension ServerManager {
         await removeKnownHostEntries(candidates)
     }
 
-    private func applyCloudKitChanges(_ changes: CloudKitChanges, canReplaceLocalState: Bool = true) async {
+    private func applyCloudKitChanges(_ changes: CloudKitChanges, canReplaceLocalState: Bool = true) async throws {
         if changes.isFullFetch && canReplaceLocalState {
             applyFullFetchCloudKitChanges(changes)
             return
         }
 
-        await applyIncrementalCloudKitChanges(changes)
+        try await applyIncrementalCloudKitChanges(changes)
     }
 
     private func applyFullFetchCloudKitChanges(_ changes: CloudKitChanges) {
@@ -341,18 +341,18 @@ extension ServerManager {
         servers = state.servers
     }
 
-    private func applyIncrementalCloudKitChanges(_ changes: CloudKitChanges) async {
+    private func applyIncrementalCloudKitChanges(_ changes: CloudKitChanges) async throws {
         if !changes.workspaces.isEmpty {
             upsertWorkspaces(changes.workspaces)
         }
         if !changes.deletedWorkspaceIDs.isEmpty {
-            removeWorkspaces(withIDs: changes.deletedWorkspaceIDs)
+            try await removeWorkspaces(withIDs: changes.deletedWorkspaceIDs)
         }
         if !changes.servers.isEmpty {
             upsertServers(changes.servers)
         }
         if !changes.deletedServerIDs.isEmpty {
-            await removeServers(withIDs: changes.deletedServerIDs)
+            try await removeServers(withIDs: changes.deletedServerIDs)
         }
     }
 
@@ -370,20 +370,24 @@ extension ServerManager {
         servers = syncStateService.upsertingServers(current: servers, updates: updates)
     }
 
-    private func removeWorkspaces(withIDs ids: [UUID]) {
+    private func removeWorkspaces(withIDs ids: [UUID]) async throws {
         let idSet = Set(ids)
+        let removedWorkspaces = workspaces.filter { idSet.contains($0.id) }
+        for workspace in removedWorkspaces {
+            let workspaceServers = servers.filter { $0.workspaceId == workspace.id }
+            for server in workspaceServers {
+                try await deleteLocalServer(server, recordsCloudKitDelete: false)
+            }
+        }
         workspaces.removeAll { idSet.contains($0.id) }
     }
 
-    private func removeServers(withIDs ids: [UUID]) async {
+    private func removeServers(withIDs ids: [UUID]) async throws {
         let idSet = Set(ids)
         let removedServers = servers.filter { idSet.contains($0.id) }
-        servers.removeAll { idSet.contains($0.id) }
-        let candidates = syncStateService.knownHostRemovalCandidates(
-            removedServers: removedServers,
-            remainingServers: servers
-        )
-        await removeKnownHosts(for: candidates)
+        for server in removedServers {
+            try await deleteLocalServer(server, recordsCloudKitDelete: false)
+        }
     }
 
     /// Repairs servers that reference non-existent workspaces by reassigning them to the first available workspace
