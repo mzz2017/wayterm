@@ -330,7 +330,9 @@ struct Server: Identifiable, Codable {
 }
 ```
 
-Credential material and Keychain sync identity are not part of the CloudKit `Server` model.
+Credential material may live in local Keychain or sync through iCloud Keychain,
+but credential material and Keychain sync identity are not part of the CloudKit
+`Server` model.
 
 ### Workspace
 ```swift
