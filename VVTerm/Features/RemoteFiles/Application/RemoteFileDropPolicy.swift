@@ -1,6 +1,11 @@
 import Foundation
 
 nonisolated enum RemoteFileDropPolicy {
+    private nonisolated struct PayloadEntryIdentity: Hashable {
+        let serverId: UUID
+        let path: String
+    }
+
     nonisolated struct MovePlan: Equatable, Sendable {
         let entry: RemoteFileEntry
         let sourcePath: String
@@ -13,10 +18,10 @@ nonisolated enum RemoteFileDropPolicy {
     }
 
     static func uniquePayloads(from payloads: [RemoteFileDragPayload]) throws -> [RemoteFileDragPayload] {
-        var seenPaths: Set<String> = []
+        var seenEntries: Set<PayloadEntryIdentity> = []
         let uniquePayloads: [RemoteFileDragPayload] = payloads.compactMap { payload in
             let uniqueEntries = payload.entries.filter { entry in
-                seenPaths.insert(entry.path).inserted
+                seenEntries.insert(PayloadEntryIdentity(serverId: payload.serverId, path: entry.path)).inserted
             }
             guard !uniqueEntries.isEmpty else { return nil }
             return RemoteFileDragPayload(serverId: payload.serverId, entries: uniqueEntries)

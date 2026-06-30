@@ -89,6 +89,28 @@ struct RemoteFileDropPolicyTests {
     }
 
     @Test
+    func planRejectsMixedSourceServersWithDuplicatePaths() {
+        let destinationServerId = UUID()
+
+        #expect(throws: RemoteFileBrowserError.self) {
+            try RemoteFileDropPolicy.plan(
+                payloads: [
+                    RemoteFileDragPayload(
+                        serverId: UUID(),
+                        entries: [makeEntry(name: "a.txt", path: "/root/a.txt")]
+                    ),
+                    RemoteFileDragPayload(
+                        serverId: UUID(),
+                        entries: [makeEntry(name: "a.txt", path: "/root/a.txt")]
+                    )
+                ],
+                to: "/dest",
+                destinationServerId: destinationServerId
+            )
+        }
+    }
+
+    @Test
     func planRejectsMovingDirectoryIntoDescendant() {
         let serverId = UUID()
 
