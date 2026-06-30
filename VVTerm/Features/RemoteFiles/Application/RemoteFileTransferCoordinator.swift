@@ -217,6 +217,7 @@ extension RemoteFileBrowserStore {
             )
             try await withRemoteFileService(for: server) { [self] service in
                 for plan in plans {
+                    try Task.checkCancellation()
                     try await self.uploadItem(
                         at: plan.sourceURL,
                         to: destinationDirectory,
@@ -244,6 +245,7 @@ extension RemoteFileBrowserStore {
                 var candidates: [LocalUploadPlanCandidate] = []
 
                 for url in urls {
+                    try Task.checkCancellation()
                     let itemInfo = try await self.localItemInfo(at: url)
                     let originalName = itemInfo.name
                     let resolution = try await self.conflictResolver.resolveName(
@@ -296,6 +298,7 @@ extension RemoteFileBrowserStore {
         try await withRemoteFileService(for: sourceServer) { sourceService in
             try await self.withRemoteFileService(for: destinationServer) { destinationService in
                 for entry in uniqueEntries {
+                    try Task.checkCancellation()
                     try await self.copyRemoteEntry(
                         entry,
                         to: destinationDirectory,
@@ -412,6 +415,7 @@ extension RemoteFileBrowserStore {
             progressTracker?.advance(currentItemName: targetName)
             let children = try await localDirectoryContents(at: localURL)
             for child in children {
+                try Task.checkCancellation()
                 try await uploadItem(
                     at: child,
                     to: remotePath,
@@ -438,6 +442,7 @@ extension RemoteFileBrowserStore {
             try await createLocalDirectory(at: localURL)
             let children = try await service.listDirectory(at: entry.path, maxEntries: nil)
             for child in children {
+                try Task.checkCancellation()
                 let childURL = localURL.appendingPathComponent(
                     child.name,
                     isDirectory: child.type == .directory
@@ -469,6 +474,7 @@ extension RemoteFileBrowserStore {
             progressTracker?.advance(currentItemName: entry.name)
             let children = try await sourceService.listDirectory(at: entry.path, maxEntries: nil)
             for child in children {
+                try Task.checkCancellation()
                 try await copyRemoteEntry(
                     child,
                     to: remotePath,
@@ -498,6 +504,7 @@ extension RemoteFileBrowserStore {
         var totalUnitCount = 0
 
         for url in urls {
+            try Task.checkCancellation()
             totalUnitCount += try await countLocalTransferUnits(at: url)
         }
 
@@ -512,6 +519,7 @@ extension RemoteFileBrowserStore {
         var totalUnitCount = 1
 
         for child in children {
+            try Task.checkCancellation()
             totalUnitCount += try await countLocalTransferUnits(at: child)
         }
 
@@ -525,6 +533,7 @@ extension RemoteFileBrowserStore {
         var totalUnitCount = 0
 
         for entry in entries {
+            try Task.checkCancellation()
             totalUnitCount += try await countRemoteTransferUnits(for: entry, using: client)
         }
 
@@ -542,6 +551,7 @@ extension RemoteFileBrowserStore {
         var totalUnitCount = 1
 
         for child in children {
+            try Task.checkCancellation()
             totalUnitCount += try await countRemoteTransferUnits(for: child, using: client)
         }
 

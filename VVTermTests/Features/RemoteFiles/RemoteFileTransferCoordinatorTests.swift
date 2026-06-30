@@ -50,6 +50,53 @@ struct RemoteFileTransferCoordinatorTests {
         ])
     }
 
+    @Test
+    func downloadDirectoryCancellationStopsBeforeNextChild() async throws {
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            serverProvider: { _ in nil }
+        )
+        let downloadBlocker = RemoteFileDownloadBlocker(blockedPath: "/remote/first.txt")
+        let service = RecordingRemoteFileService(
+            directoryContents: [
+                "/remote": [
+                    makeEntry(name: "first.txt", path: "/remote/first.txt", type: .file),
+                    makeEntry(name: "second.txt", path: "/remote/second.txt", type: .file)
+                ]
+            ],
+            downloadBlocker: downloadBlocker
+        )
+        let destinationURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RemoteFileTransferCoordinatorTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: destinationURL) }
+
+        // Given recursive download is blocked inside the first child transfer.
+        let task = Task {
+            try await store.downloadItem(
+                makeEntry(name: "remote", path: "/remote", type: .directory),
+                to: destinationURL,
+                using: service
+            )
+        }
+        await downloadBlocker.waitUntilStarted()
+
+        // When the transfer task is canceled before the first child returns.
+        task.cancel()
+        await downloadBlocker.release()
+
+        // Then cancellation is observed before the next sibling transfer.
+        do {
+            try await task.value
+            Issue.record("Expected recursive directory download to stop after cancellation")
+        } catch is CancellationError {
+            #expect(service.operations == [
+                .downloadFile("/remote/first.txt")
+            ])
+        } catch {
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+    }
+
     private func makeEntry(name: String, path: String, type: RemoteFileType = .file) -> RemoteFileEntry {
         RemoteFileEntry(
             name: name,
@@ -92,11 +139,13 @@ struct RemoteFileTransferCoordinatorTests {
 
 private final class RecordingRemoteFileService: RemoteFileService, @unchecked Sendable {
     enum Operation: Equatable, Sendable {
+        case downloadFile(String)
         case deleteFile(String)
         case deleteDirectory(String)
     }
 
     let directoryContents: [String: [RemoteFileEntry]]
+    let downloadBlocker: RemoteFileDownloadBlocker?
     private let lock = NSLock()
     private var operationStorage: [Operation] = []
 
@@ -106,8 +155,12 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         return operationStorage
     }
 
-    init(directoryContents: [String: [RemoteFileEntry]]) {
+    init(
+        directoryContents: [String: [RemoteFileEntry]],
+        downloadBlocker: RemoteFileDownloadBlocker? = nil
+    ) {
         self.directoryContents = directoryContents
+        self.downloadBlocker = downloadBlocker
     }
 
     func listDirectory(at path: String, maxEntries: Int?) async throws -> [RemoteFileEntry] {
@@ -126,7 +179,11 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         Data()
     }
 
-    func downloadFile(at path: String, to localURL: URL) async throws {}
+    func downloadFile(at path: String, to localURL: URL) async throws {
+        let normalizedPath = RemoteFilePath.normalize(path)
+        record(.downloadFile(normalizedPath))
+        await downloadBlocker?.waitIfNeeded(path: normalizedPath)
+    }
 
     func upload(
         _ data: Data,
@@ -161,5 +218,39 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         lock.lock()
         operationStorage.append(operation)
         lock.unlock()
+    }
+}
+
+private actor RemoteFileDownloadBlocker {
+    let blockedPath: String
+    private var started = false
+    private var startedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    init(blockedPath: String) {
+        self.blockedPath = blockedPath
+    }
+
+    func waitIfNeeded(path: String) async {
+        guard path == blockedPath else { return }
+        started = true
+        startedWaiters.forEach { $0.resume() }
+        startedWaiters.removeAll()
+
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+        }
+    }
+
+    func waitUntilStarted() async {
+        if started { return }
+        await withCheckedContinuation { continuation in
+            startedWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
     }
 }
