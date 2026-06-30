@@ -28,6 +28,29 @@ struct RemoteConnectionLeaseTests {
     }
 
     @Test
+    func borrowedLeaseCloseDoesNotPoisonLaterBorrowedLeasesForSameClient() async throws {
+        let client = RecordingRemoteConnectionClient()
+        let firstLease = RemoteConnectionLease(client: client, ownership: .borrowed)
+
+        // Given a feature temporarily borrows a stable SSH client and then
+        // stops, closing only its borrowed lease.
+        await firstLease.close()
+
+        // When another feature later borrows the same stable client.
+        let secondLease = RemoteConnectionLease(client: client, ownership: .borrowed)
+        var didRunOperation = false
+        try await secondLease.withExclusiveClient { _ in
+            didRunOperation = true
+        }
+
+        // Then the first borrowed close must not poison shared operation state
+        // or force the stable owner to reconnect before reuse.
+        #expect(didRunOperation, "Later borrowed leases for the same client should remain usable after a borrowed close.")
+        let disconnectCount = await client.disconnectCount()
+        #expect(disconnectCount == 0, "Borrowed lease reuse must not disconnect the stable client owner.")
+    }
+
+    @Test
     func ownedLeaseCloseDisconnectsClient() async {
         let client = RecordingRemoteConnectionClient()
         let lease = RemoteConnectionLease(client: client, ownership: .owned)

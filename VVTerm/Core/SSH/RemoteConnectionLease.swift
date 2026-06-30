@@ -135,6 +135,11 @@ private actor RemoteConnectionLeaseState {
         client: any RemoteConnectionLeaseClient,
         ownership: RemoteConnectionLeaseOwnership
     ) async {
+        guard case .owned = ownership else {
+            await waitForExclusiveOperationsToFinish()
+            return
+        }
+
         switch closeState {
         case .open:
             closeState = .closing
@@ -147,11 +152,7 @@ private actor RemoteConnectionLeaseState {
 
         cancelQueuedOperationWaiters()
         await waitForExclusiveOperationsToFinish()
-
-        if case .owned = ownership {
-            await client.disconnect()
-        }
-
+        await client.disconnect()
         finishClose()
     }
 
