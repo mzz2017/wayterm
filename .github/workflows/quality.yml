@@ -418,7 +418,7 @@ jobs:
           echo "::warning::Unable to remove iOS unit DerivedData at ${IOS_TEST_DERIVED_DATA_PATH}"
 
   native-sources:
-    name: Native source checksums
+    name: Native source and vendor checks
     runs-on: macos-15
     timeout-minutes: 10
 
@@ -428,3 +428,6 @@ jobs:
 
       - name: Verify native source archives
         run: ./scripts/build.sh check-ssh-sources
+
+      - name: Verify Ghostty vendor artifacts
+        run: ./scripts/build.sh check-ghostty
