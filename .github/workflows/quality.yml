@@ -436,3 +436,6 @@ jobs:
 
       - name: Verify Ghostty vendor artifacts
         run: ./scripts/build.sh check-ghostty
+
+      - name: Verify native vendor manifest
+        run: ./scripts/build.sh check-vendor-manifest

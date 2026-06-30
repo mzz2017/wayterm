@@ -8,6 +8,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 VENDOR_GHOSTTY="$PROJECT_ROOT/Vendor/libghostty"
 VENDOR_SSH="$PROJECT_ROOT/Vendor/libssh2"
+VENDOR_MANIFEST="$PROJECT_ROOT/Vendor/native-artifacts.sha256"
 BUILD_DIR_SSH="$PROJECT_ROOT/.build/ssh"
 
 OPENSSL_VERSION="3.2.0"
@@ -71,6 +72,10 @@ Commands:
   ssh       Build libssh2 + OpenSSL (macOS + iOS + simulator)
   check-ssh-sources
             Download and verify OpenSSL/libssh2 source archives
+  check-vendor-manifest
+            Verify checked-in Vendor native artifact checksums
+  vendor-manifest
+            Regenerate Vendor native artifact checksums
   clean     Remove .build + Vendor libraries
   help      Show this help message
 
@@ -106,6 +111,47 @@ check_deps_ssh() {
     require_cmd cmake
     require_cmd make
     require_cmd xcrun
+}
+
+generate_vendor_manifest() {
+    (
+        cd "${PROJECT_ROOT}"
+        git ls-files Vendor |
+            grep -v '^Vendor/native-artifacts\.sha256$' |
+            LC_ALL=C sort |
+            while IFS= read -r path; do
+                shasum -a 256 "${path}"
+            done
+    )
+}
+
+check_vendor_manifest() {
+    log_section "Vendor native artifact manifest"
+
+    if [ ! -f "${VENDOR_MANIFEST}" ]; then
+        log_error "${VENDOR_MANIFEST} not found"
+        exit 1
+    fi
+
+    local ghostty_version
+    ghostty_version="$(tr -d '\n' < "${VENDOR_GHOSTTY}/VERSION")"
+    if [ "${ghostty_version}" != "${DEFAULT_GHOSTTY_REF}" ]; then
+        log_error "Vendor libghostty VERSION ${ghostty_version} does not match DEFAULT_GHOSTTY_REF ${DEFAULT_GHOSTTY_REF}"
+        exit 1
+    fi
+
+    local generated_manifest
+    generated_manifest="$(mktemp "${TMPDIR:-/tmp}/vvterm-vendor-manifest.XXXXXX")"
+    trap 'rm -f "${generated_manifest}"' RETURN
+    generate_vendor_manifest > "${generated_manifest}"
+
+    if ! cmp -s "${VENDOR_MANIFEST}" "${generated_manifest}"; then
+        log_error "Vendor native artifact manifest is out of date"
+        diff -u "${VENDOR_MANIFEST}" "${generated_manifest}" || true
+        exit 1
+    fi
+
+    log_info "Vendor native artifact manifest verified"
 }
 
 find_ghostty_xcframework_library() {
@@ -817,6 +863,17 @@ case "${COMMAND}" in
     check-ssh-sources)
         check_deps_ssh
         download_sources
+        ;;
+    check-vendor-manifest)
+        require_cmd git
+        require_cmd shasum
+        check_vendor_manifest
+        ;;
+    vendor-manifest)
+        require_cmd git
+        require_cmd shasum
+        generate_vendor_manifest > "${VENDOR_MANIFEST}"
+        log_info "Regenerated ${VENDOR_MANIFEST}"
         ;;
     clean)
         clean
