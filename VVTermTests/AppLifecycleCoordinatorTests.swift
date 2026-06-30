@@ -125,6 +125,43 @@ struct AppLifecycleCoordinatorTests {
     }
 
     @Test
+    func backgroundSuspensionHoldsBackgroundLeaseUntilSuspendAndLockComplete() async {
+        // Given iOS grants a finite background execution lease while the app
+        // suspends terminal resources.
+        let probe = AppLifecycleProbe()
+        let backgroundLeaser = RecordingAppBackgroundTaskLeaser()
+        let releaseSuspend = AsyncLifecycleGate()
+        let coordinator = AppLifecycleCoordinator.makeForTesting(
+            suspendTerminalSessionsForBackground: {
+                await probe.record("suspend-start")
+                await releaseSuspend.wait()
+                await probe.record("suspend-end")
+            },
+            lockAppIfNeededForBackground: {
+                await probe.record("lock")
+            },
+            backgroundTaskLeaser: backgroundLeaser
+        )
+
+        // When the platform delegate sends background intent.
+        let requestID = coordinator.requestBackgroundSuspension()
+        await probe.waitForCount(1)
+
+        // Then the application lifecycle owner has acquired a background lease
+        // before async suspension work is allowed to remain pending.
+        #expect(backgroundLeaser.events == ["begin:background-suspension"])
+        #expect(backgroundLeaser.activeLeaseCount == 1)
+
+        await releaseSuspend.open()
+        await coordinator.waitForBackgroundSuspensionRequest(requestID)
+
+        // And the lease is ended only after suspension and app lock complete.
+        #expect(await probe.events() == ["suspend-start", "suspend-end", "lock"])
+        #expect(backgroundLeaser.events == ["begin:background-suspension", "end:background-suspension"])
+        #expect(backgroundLeaser.activeLeaseCount == 0)
+    }
+
+    @Test
     func terminationTeardownRequestTracksBothTerminalManagersUntilCompletion() async {
         // Given terminal teardown dependencies are injected into the app
         // lifecycle owner.
@@ -433,6 +470,50 @@ struct AppLifecycleCoordinatorTests {
     }
 
     @Test
+    func terminationTeardownHoldsBackgroundLeaseUntilTimeoutCompletes() async {
+        // Given termination teardown is protected by an iOS background lease
+        // while terminal disconnect work races the app-level timeout.
+        let probe = AppLifecycleProbe()
+        let backgroundLeaser = RecordingAppBackgroundTaskLeaser()
+        let releaseDisconnect = AsyncLifecycleGate()
+        let releaseTimeout = AsyncLifecycleGate()
+        let coordinator = AppLifecycleCoordinator.makeForTesting(
+            disconnectConnectionSessionsBeforeExit: {
+                await probe.record("sessions-start")
+                await releaseDisconnect.wait()
+                await probe.record("sessions-end")
+            },
+            disconnectTerminalTabsBeforeExit: {
+                await probe.record("tabs")
+            },
+            backgroundTaskLeaser: backgroundLeaser,
+            terminationTeardownTimeout: .milliseconds(20),
+            sleepForTerminationTimeout: { _ in
+                await releaseTimeout.wait()
+            }
+        )
+
+        // When termination intent starts and teardown has not yet completed.
+        let requestID = coordinator.requestTerminationTeardown()
+        await probe.waitForCount(1)
+
+        // Then the background lease remains open while the timeout race is
+        // still pending.
+        #expect(backgroundLeaser.events == ["begin:termination-teardown"])
+        #expect(backgroundLeaser.activeLeaseCount == 1)
+
+        await releaseTimeout.open()
+        await coordinator.waitForTerminationTeardownRequest(requestID)
+
+        // And the lease is ended when the timeout releases the tracked request.
+        #expect(await probe.events() == ["sessions-start"])
+        #expect(backgroundLeaser.events == ["begin:termination-teardown", "end:termination-teardown"])
+        #expect(backgroundLeaser.activeLeaseCount == 0)
+
+        await releaseDisconnect.open()
+    }
+
+    @Test
     func foregroundRefreshRespectsSyncDisabledAndMinimumInterval() async {
         // Given foreground refresh policy is owned by the app lifecycle
         // coordinator.
@@ -569,5 +650,60 @@ private actor AsyncLifecycleGate {
         await withCheckedContinuation { continuation in
             continuations.append(continuation)
         }
+    }
+}
+
+@MainActor
+private final class RecordingAppBackgroundTaskLeaser: AppBackgroundTaskLeasing {
+    private(set) var events: [String] = []
+    private var leases: [RecordingAppBackgroundTaskLease] = []
+
+    var activeLeaseCount: Int {
+        leases.filter { !$0.didEnd }.count
+    }
+
+    func beginTask(
+        named name: String,
+        expirationHandler: @escaping @MainActor @Sendable () -> Void
+    ) -> any AppBackgroundTaskLease {
+        events.append("begin:\(name)")
+        let lease = RecordingAppBackgroundTaskLease(
+            name: name,
+            expirationHandler: expirationHandler,
+            onEnd: { [weak self] leaseName in
+                self?.events.append("end:\(leaseName)")
+            }
+        )
+        leases.append(lease)
+        return lease
+    }
+}
+
+@MainActor
+private final class RecordingAppBackgroundTaskLease: AppBackgroundTaskLease {
+    let name: String
+    private let expirationHandler: @MainActor @Sendable () -> Void
+    private let onEnd: @MainActor (String) -> Void
+    private(set) var didEnd = false
+
+    init(
+        name: String,
+        expirationHandler: @escaping @MainActor @Sendable () -> Void,
+        onEnd: @escaping @MainActor (String) -> Void
+    ) {
+        self.name = name
+        self.expirationHandler = expirationHandler
+        self.onEnd = onEnd
+    }
+
+    func expire() {
+        expirationHandler()
+        end()
+    }
+
+    func end() {
+        guard !didEnd else { return }
+        didEnd = true
+        onEnd(name)
     }
 }

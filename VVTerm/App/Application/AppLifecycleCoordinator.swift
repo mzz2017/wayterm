@@ -36,6 +36,7 @@ final class AppLifecycleCoordinator {
     private let isSyncEnabled: SyncEnabledProvider
     private let now: DateProvider
     private let handleAppLanguageChangeAction: LanguageChangeAction
+    private let backgroundTaskLeaser: any AppBackgroundTaskLeasing
     private let foregroundSyncMinimumInterval: TimeInterval
     private let terminationTeardownTimeout: Duration
     private let sleepForTerminationTimeout: SleepAction
@@ -111,6 +112,7 @@ final class AppLifecycleCoordinator {
         handleAppLanguageChange: @escaping LanguageChangeAction = { _ in
             ServerManager.shared.handleAppLanguageChange()
         },
+        backgroundTaskLeaser: (any AppBackgroundTaskLeasing)? = nil,
         foregroundSyncMinimumInterval: TimeInterval = 20,
         terminationTeardownTimeout: Duration = .seconds(2),
         sleepForTerminationTimeout: @escaping SleepAction = { duration in
@@ -133,6 +135,11 @@ final class AppLifecycleCoordinator {
         self.isSyncEnabled = isSyncEnabled
         self.now = now
         self.handleAppLanguageChangeAction = handleAppLanguageChange
+        #if os(iOS)
+        self.backgroundTaskLeaser = backgroundTaskLeaser ?? UIKitAppBackgroundTaskLeaser()
+        #else
+        self.backgroundTaskLeaser = backgroundTaskLeaser ?? NoopAppBackgroundTaskLeaser()
+        #endif
         self.foregroundSyncMinimumInterval = foregroundSyncMinimumInterval
         self.terminationTeardownTimeout = terminationTeardownTimeout
         self.sleepForTerminationTimeout = sleepForTerminationTimeout
@@ -156,6 +163,7 @@ final class AppLifecycleCoordinator {
         isSyncEnabled: @escaping SyncEnabledProvider = { true },
         now: @escaping DateProvider = { Date() },
         handleAppLanguageChange: @escaping LanguageChangeAction = { _ in },
+        backgroundTaskLeaser: (any AppBackgroundTaskLeasing)? = nil,
         foregroundSyncMinimumInterval: TimeInterval = 20,
         terminationTeardownTimeout: Duration = .seconds(2),
         sleepForTerminationTimeout: @escaping SleepAction = { duration in
@@ -179,6 +187,7 @@ final class AppLifecycleCoordinator {
             isSyncEnabled: isSyncEnabled,
             now: now,
             handleAppLanguageChange: handleAppLanguageChange,
+            backgroundTaskLeaser: backgroundTaskLeaser,
             foregroundSyncMinimumInterval: foregroundSyncMinimumInterval,
             terminationTeardownTimeout: terminationTeardownTimeout,
             sleepForTerminationTimeout: sleepForTerminationTimeout
@@ -240,7 +249,14 @@ final class AppLifecycleCoordinator {
     @discardableResult
     func requestBackgroundSuspension() -> UUID {
         let requestID = UUID()
+        let cancellation = AppLifecycleBackgroundTaskCancellation()
+        let lease = backgroundTaskLeaser.beginTask(named: "background-suspension") {
+            cancellation.cancel()
+        }
         let task = Task { @MainActor [weak self] in
+            defer {
+                lease.end()
+            }
             guard let self else { return }
             defer {
                 backgroundSuspensionRequestTasks.removeValue(forKey: requestID)
@@ -250,6 +266,7 @@ final class AppLifecycleCoordinator {
             guard !Task.isCancelled else { return }
             await lockAppIfNeededForBackground()
         }
+        cancellation.task = task
         backgroundSuspensionRequestTasks[requestID] = task
         return requestID
     }
@@ -269,7 +286,14 @@ final class AppLifecycleCoordinator {
     @discardableResult
     func requestTerminationTeardown(onCompleted: (@MainActor @Sendable () -> Void)? = nil) -> UUID {
         let requestID = UUID()
+        let cancellation = AppLifecycleBackgroundTaskCancellation()
+        let lease = backgroundTaskLeaser.beginTask(named: "termination-teardown") {
+            cancellation.cancel()
+        }
         let task = Task { @MainActor [weak self] in
+            defer {
+                lease.end()
+            }
             guard let self else { return }
             defer {
                 terminationTeardownRequestTasks.removeValue(forKey: requestID)
@@ -278,6 +302,7 @@ final class AppLifecycleCoordinator {
             await runTerminationTeardownOrTimeout()
             onCompleted?()
         }
+        cancellation.task = task
         terminationTeardownRequestTasks[requestID] = task
         return requestID
     }
@@ -345,6 +370,15 @@ final class AppLifecycleCoordinator {
         timeoutTask.cancel()
         teardownWaiter.cancel()
         timeoutWaiter.cancel()
+    }
+}
+
+@MainActor
+private final class AppLifecycleBackgroundTaskCancellation {
+    var task: Task<Void, Never>?
+
+    func cancel() {
+        task?.cancel()
     }
 }
 
