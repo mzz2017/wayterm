@@ -12,6 +12,44 @@ import Testing
 @MainActor
 struct SpeechRecognitionServiceLifecycleTests {
     @Test
+    func cancelRecognitionIgnoresLateLiveAudioCallbacks() async throws {
+        let runner = ScriptedSpeechAudioRecognitionRunner()
+        let service = SpeechRecognitionService(
+            settings: TranscriptionSettingsReader {
+                TranscriptionSettingsSnapshot(
+                    provider: .system,
+                    whisperModelId: "",
+                    parakeetModelId: "",
+                    languageCode: "en"
+                )
+            },
+            audioRecognitionRunner: runner
+        )
+
+        // Given live Apple Speech recognition starts, publishes a partial, and
+        // is then canceled before the system finishes delivering callbacks.
+        try await service.startRecognition()
+        let firstRequest = try #require(runner.requests.first)
+        await runner.emitPartial("old command", for: firstRequest)
+        #expect(service.partialTranscription == "old command")
+
+        service.cancelRecognition()
+        #expect(service.partialTranscription.isEmpty)
+
+        // When a new recognition lifecycle starts and the old system callback
+        // arrives late.
+        try await service.startRecognition()
+        await runner.emitPartial("stale command", for: firstRequest)
+
+        // Then the canceled lifecycle cannot republish stale command text into
+        // the active recording state.
+        #expect(
+            service.partialTranscription.isEmpty,
+            "Late callbacks from a canceled live Speech request must not publish stale partial transcription."
+        )
+    }
+
+    @Test
     func cancelRecognitionCompletesPendingURLTranscriptionAndRemovesTemporaryFile() async throws {
         let runner = HangingSpeechURLRecognitionRunner()
         let service = SpeechRecognitionService(
@@ -57,6 +95,29 @@ struct SpeechRecognitionServiceLifecycleTests {
             !FileManager.default.fileExists(atPath: temporaryURL.path),
             "cancelRecognition should remove the temporary CAF file even when Speech never calls back."
         )
+    }
+}
+
+@MainActor
+private final class ScriptedSpeechAudioRecognitionRunner: SpeechAudioRecognitionRunning {
+    let task = FakeSpeechRecognitionTask()
+    private(set) var requests: [SFSpeechAudioBufferRecognitionRequest] = []
+    private var handlers: [ObjectIdentifier: (SpeechRecognitionTextResult?, Error?) -> Void] = [:]
+
+    var isAvailable: Bool { true }
+
+    func startRecognition(
+        with request: SFSpeechAudioBufferRecognitionRequest,
+        resultHandler: @escaping (SpeechRecognitionTextResult?, Error?) -> Void
+    ) -> any SpeechRecognitionTaskCancellable {
+        requests.append(request)
+        handlers[ObjectIdentifier(request)] = resultHandler
+        return task
+    }
+
+    func emitPartial(_ text: String, for request: SFSpeechAudioBufferRecognitionRequest) async {
+        handlers[ObjectIdentifier(request)]?(SpeechRecognitionTextResult(text: text, isFinal: false), nil)
+        await Task.yield()
     }
 }
 

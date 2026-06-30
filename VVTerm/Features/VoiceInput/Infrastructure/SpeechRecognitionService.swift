@@ -10,6 +10,51 @@ protocol SpeechRecognitionTaskCancellable: AnyObject {
 
 extension SFSpeechRecognitionTask: SpeechRecognitionTaskCancellable {}
 
+struct SpeechRecognitionTextResult: Sendable {
+    let text: String
+    let isFinal: Bool
+}
+
+@MainActor
+protocol SpeechAudioRecognitionRunning: AnyObject {
+    var isAvailable: Bool { get }
+
+    func startRecognition(
+        with request: SFSpeechAudioBufferRecognitionRequest,
+        resultHandler: @escaping (SpeechRecognitionTextResult?, Error?) -> Void
+    ) -> any SpeechRecognitionTaskCancellable
+}
+
+@MainActor
+private final class LiveSpeechAudioRecognitionRunner: SpeechAudioRecognitionRunning {
+    private let recognizer: SFSpeechRecognizer
+
+    init(recognizer: SFSpeechRecognizer) {
+        self.recognizer = recognizer
+    }
+
+    var isAvailable: Bool {
+        recognizer.isAvailable
+    }
+
+    func startRecognition(
+        with request: SFSpeechAudioBufferRecognitionRequest,
+        resultHandler: @escaping (SpeechRecognitionTextResult?, Error?) -> Void
+    ) -> any SpeechRecognitionTaskCancellable {
+        recognizer.recognitionTask(with: request) { result, error in
+            resultHandler(
+                result.map {
+                    SpeechRecognitionTextResult(
+                        text: $0.bestTranscription.formattedString,
+                        isFinal: $0.isFinal
+                    )
+                },
+                error
+            )
+        }
+    }
+}
+
 @MainActor
 protocol SpeechURLRecognitionRunning: AnyObject {
     var isAvailable: Bool { get }
@@ -50,18 +95,22 @@ class SpeechRecognitionService: ObservableObject {
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: (any SpeechRecognitionTaskCancellable)?
     private var urlRecognitionContinuation: URLRecognitionContinuation?
+    private var audioRecognitionGeneration: UInt64 = 0
     private let settings: TranscriptionSettingsReader
+    private let injectedAudioRecognitionRunner: (any SpeechAudioRecognitionRunning)?
     private let injectedURLRecognitionRunner: (any SpeechURLRecognitionRunning)?
 
     var isAvailable: Bool {
-        resolvedURLRecognitionRunner()?.isAvailable ?? false
+        resolvedAudioRecognitionRunner()?.isAvailable ?? false
     }
 
     init(
         settings: TranscriptionSettingsReader,
+        audioRecognitionRunner: (any SpeechAudioRecognitionRunning)? = nil,
         urlRecognitionRunner: (any SpeechURLRecognitionRunning)? = nil
     ) {
         self.settings = settings
+        self.injectedAudioRecognitionRunner = audioRecognitionRunner
         self.injectedURLRecognitionRunner = urlRecognitionRunner
     }
 
@@ -107,6 +156,14 @@ class SpeechRecognitionService: ObservableObject {
         return LiveSpeechURLRecognitionRunner(recognizer: recognizer)
     }
 
+    private func resolvedAudioRecognitionRunner() -> (any SpeechAudioRecognitionRunning)? {
+        if let injectedAudioRecognitionRunner {
+            return injectedAudioRecognitionRunner
+        }
+        guard let recognizer = resolvedRecognizer() else { return nil }
+        return LiveSpeechAudioRecognitionRunner(recognizer: recognizer)
+    }
+
     private static func candidateLocales(languageCode: String) -> [Locale] {
         guard languageCode != TranscriptionSettingsDefaults.autoLanguageCode else {
             return [Locale.current]
@@ -133,7 +190,7 @@ class SpeechRecognitionService: ObservableObject {
     // MARK: - Recognition Control
 
     func startRecognition() async throws {
-        guard let speechRecognizer = resolvedRecognizer(), speechRecognizer.isAvailable else {
+        guard let audioRecognitionRunner = resolvedAudioRecognitionRunner(), audioRecognitionRunner.isAvailable else {
             throw SpeechRecognitionError.recognitionUnavailable
         }
 
@@ -143,22 +200,25 @@ class SpeechRecognitionService: ObservableObject {
         recognitionTask?.cancel()
         recognitionTask = nil
 
+        audioRecognitionGeneration &+= 1
+        let recognitionGeneration = audioRecognitionGeneration
         let recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         self.recognitionRequest = recognitionRequest
         recognitionRequest.shouldReportPartialResults = true
         recognitionRequest.requiresOnDeviceRecognition = false
 
-        recognitionTask = speechRecognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            guard let self = self else { return }
-
+        recognitionTask = audioRecognitionRunner.startRecognition(with: recognitionRequest) { [weak self, weak recognitionRequest] result, error in
             if let result = result {
-                let transcription = result.bestTranscription.formattedString
-
                 Task { @MainActor in
+                    guard let self,
+                          let recognitionRequest,
+                          self.audioRecognitionGeneration == recognitionGeneration,
+                          self.recognitionRequest === recognitionRequest else { return }
+
                     if result.isFinal {
-                        self.transcribedText = transcription
+                        self.transcribedText = result.text
                     } else {
-                        self.partialTranscription = transcription
+                        self.partialTranscription = result.text
                     }
                 }
             }
@@ -243,6 +303,7 @@ class SpeechRecognitionService: ObservableObject {
     }
 
     func cancelRecognition() {
+        audioRecognitionGeneration &+= 1
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
         finishURLRecognitionContinuation(.failure(CancellationError()))
