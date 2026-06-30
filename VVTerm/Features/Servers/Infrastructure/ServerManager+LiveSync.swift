@@ -3,11 +3,6 @@ import Foundation
 
 @MainActor
 final class ServerCloudKitSyncService: ServerCloudSyncing {
-    private enum ServerRecordType {
-        static let server = "Server"
-        static let workspace = "Workspace"
-    }
-
     private let cloudKit: CloudKitManager
 
     init(cloudKit: CloudKitManager) {
@@ -20,47 +15,8 @@ final class ServerCloudKitSyncService: ServerCloudSyncing {
 
     func fetchChanges(forceFullFetch: Bool) async throws -> CloudKitChanges {
         let changes = try await cloudKit.fetchRecordChanges(forceFullFetch: forceFullFetch)
-        var servers: [Server] = []
-        var workspaces: [Workspace] = []
-        var deletedServerIDs: [UUID] = []
-        var deletedWorkspaceIDs: [UUID] = []
-
-        for record in changes.records {
-            switch record.recordType {
-            case ServerRecordType.server:
-                if let server = Server(from: record) {
-                    servers.append(server)
-                }
-            case ServerRecordType.workspace:
-                if let workspace = Workspace(from: record) {
-                    workspaces.append(workspace)
-                }
-            default:
-                break
-            }
-        }
-
-        for deletion in changes.deletions {
-            switch deletion.recordType {
-            case ServerRecordType.server:
-                if let id = UUID(uuidString: deletion.recordID.recordName) {
-                    deletedServerIDs.append(id)
-                }
-            case ServerRecordType.workspace:
-                if let id = UUID(uuidString: deletion.recordID.recordName) {
-                    deletedWorkspaceIDs.append(id)
-                }
-            default:
-                break
-            }
-        }
-
-        return CloudKitChanges(
-            servers: servers,
-            workspaces: workspaces,
-            deletedServerIDs: deletedServerIDs,
-            deletedWorkspaceIDs: deletedWorkspaceIDs,
-            isFullFetch: changes.isFullFetch,
+        return try ServerCloudKitChangeDecoder.decode(
+            changes,
             commitFetchedChanges: { [cloudKit, token = changes.changeToken] in
                 cloudKit.commitChangeToken(token)
             }
