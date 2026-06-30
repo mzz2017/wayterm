@@ -8,6 +8,12 @@
 import Foundation
 import Security
 
+protocol KeychainStoring: Sendable {
+    func set(_ data: Data, forKey key: String, iCloudSync: Bool) throws
+    func get(_ key: String) throws -> Data?
+    func delete(_ key: String) throws
+}
+
 final class KeychainStore: @unchecked Sendable {
     private let service: String
 
@@ -102,6 +108,8 @@ final class KeychainStore: @unchecked Sendable {
         return string
     }
 }
+
+extension KeychainStore: KeychainStoring {}
 
 // MARK: - Keychain Error
 

@@ -27,12 +27,12 @@ nonisolated struct KeychainCredentialLookupRequest: Sendable {
 final class KeychainManager {
     static let shared = KeychainManager()
 
-    private let store: KeychainStore
+    private let store: any KeychainStoring
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Keychain")
     private var isSyncEnabled: Bool { SyncSettings.isEnabled }
 
-    private init() {
-        store = KeychainStore(service: "app.vivy.vvterm")
+    init(store: any KeychainStoring = KeychainStore(service: "app.vivy.vvterm")) {
+        self.store = store
     }
 
     // MARK: - Password Operations
@@ -182,12 +182,12 @@ final class KeychainManager {
         let cloudflareIDKey = cloudflareClientIDKey(for: serverId)
         let cloudflareSecretKey = cloudflareClientSecretKey(for: serverId)
 
-        try? store.delete(passwordKey)
-        try? store.delete(keyKey)
-        try? store.delete(passphraseKey)
-        try? store.delete(publicKeyKey)
-        try? store.delete(cloudflareIDKey)
-        try? store.delete(cloudflareSecretKey)
+        try store.delete(passwordKey)
+        try store.delete(keyKey)
+        try store.delete(passphraseKey)
+        try store.delete(publicKeyKey)
+        try store.delete(cloudflareIDKey)
+        try store.delete(cloudflareSecretKey)
 
         logger.info("Deleted credentials for server \(serverId.uuidString)")
     }
@@ -294,9 +294,9 @@ final class KeychainManager {
 
     /// Delete a stored SSH key from the library
     func deleteStoredSSHKey(_ keyId: UUID) throws {
-        // Delete key data
-        try? store.delete(storedKeyDataKey(for: keyId))
-        try? store.delete(storedKeyPassphraseKey(for: keyId))
+        // Delete key data before hiding the entry from the visible index.
+        try store.delete(storedKeyDataKey(for: keyId))
+        try store.delete(storedKeyPassphraseKey(for: keyId))
 
         // Update index
         var keys = getStoredSSHKeys()
