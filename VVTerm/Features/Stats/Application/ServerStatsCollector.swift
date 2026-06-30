@@ -178,6 +178,11 @@ final class ServerStatsCollector: ObservableObject {
             guard !Task.isCancelled else { return }
         }
 
+        if shouldReplaceActiveCollection(using: borrowedLease) {
+            await stopCollectingAndWait()
+            guard !Task.isCancelled else { return }
+        }
+
         guard !Task.isCancelled else { return }
         guard !isCollecting else { return }
         isCollecting = true
@@ -201,6 +206,21 @@ final class ServerStatsCollector: ObservableObject {
         configureConnectionState(lease: connection.lease)
 
         collectTask = collectionTaskFactory(self, server, credentials, connection)
+    }
+
+    private func shouldReplaceActiveCollection(using borrowedLease: RemoteConnectionLease?) -> Bool {
+        guard isCollecting, let connectionLease else { return false }
+
+        switch (connectionLease.ownership, borrowedLease) {
+        case (.borrowed, .some(let borrowedLease)):
+            return !connectionLease.sharesClient(with: borrowedLease)
+        case (.borrowed, .none):
+            return true
+        case (.owned, .some):
+            return true
+        case (.owned, .none):
+            return false
+        }
     }
 
     @discardableResult

@@ -156,8 +156,12 @@ struct ServerStatsView: View {
         }
     }
 
-    private func makeTaskKey() -> String {
-        "\(server.id.uuidString)-\(isVisible)"
+    private func makeTaskKey() -> ServerStatsCollectionTaskKey {
+        ServerStatsCollectionTaskKey(
+            serverId: server.id,
+            isVisible: isVisible,
+            borrowedLease: borrowedLeaseProvider()
+        )
     }
 
     private func requestCollectionForCurrentVisibility() {

@@ -42,6 +42,10 @@ nonisolated struct RemoteConnectionLease: Sendable {
         await state.close(client: client, ownership: ownership)
     }
 
+    func sharesClient(with other: RemoteConnectionLease) -> Bool {
+        ObjectIdentifier(client) == ObjectIdentifier(other.client)
+    }
+
     func withExclusiveClient<T: Sendable>(
         _ operation: @Sendable (any RemoteConnectionLeaseClient) async throws -> T
     ) async throws -> T {

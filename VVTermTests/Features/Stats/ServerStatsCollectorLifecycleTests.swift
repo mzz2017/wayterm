@@ -218,6 +218,58 @@ struct ServerStatsCollectorLifecycleTests {
     }
 
     @Test
+    func startCollectingReplacesBorrowedLeaseWhenVisibleClientChanges() async throws {
+        let server = makeServer()
+        let firstClient = RecordingStatsLeaseClient()
+        let secondClient = RecordingStatsLeaseClient()
+        let firstLease = RemoteConnectionLease(client: firstClient, ownership: .borrowed)
+        let secondLease = RemoteConnectionLease(client: secondClient, ownership: .borrowed)
+        let lifecycle = StatsCollectionLifecycleEventLog()
+        let collector = ServerStatsCollector(
+            connectionProvider: StatsConnectionProvider { server, credentials in
+                Issue.record("Unexpected owned Stats connection for \(server.name) with \(credentials.serverId)")
+                return .init(lease: RemoteConnectionLease(client: RecordingStatsLeaseClient(), ownership: .owned))
+            },
+            credentialsProvider: { server in
+                makeCredentials(serverId: server.id)
+            },
+            collectionTaskFactory: { _, _, _, connection in
+                let label = ObjectIdentifier(connection.lease.client) == ObjectIdentifier(firstClient)
+                    ? "first"
+                    : "second"
+                return Task {
+                    await lifecycle.record("start-\(label)")
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .milliseconds(10))
+                    }
+                    await lifecycle.record("cancel-\(label)")
+                }
+            }
+        )
+
+        // Given Stats is collecting through the currently visible terminal
+        // client's borrowed lease.
+        await collector.startCollecting(for: server, using: firstLease)
+        await lifecycle.waitUntilEventCount(1)
+
+        // When visibility stays on the same server but the visible terminal
+        // client changes.
+        await collector.startCollecting(for: server, using: secondLease)
+        try await lifecycle.waitUntilEventCount(3, timeout: .milliseconds(200))
+
+        // Then the collector must close the old borrowed runtime and restart
+        // with the newly visible borrowed lease instead of silently keeping the
+        // hidden client.
+        let events = await lifecycle.events()
+        #expect(
+            events == ["start-first", "cancel-first", "start-second"],
+            "Stats should replace collection when the visible borrowed SSH client changes."
+        )
+
+        await collector.stopCollectingAndWait()
+    }
+
+    @Test
     func startCollectingWaitsForFailedCollectionLeaseCloseBeforeRetry() async throws {
         let server = makeServer()
         let failedClient = BlockingStatsLeaseClient()
@@ -359,6 +411,7 @@ struct ServerStatsCollectorLifecycleTests {
 
 private enum StatsCollectorLifecycleTestError: Error {
     case expectedFailure
+    case timedOutWaitingForStatsEvents
 }
 
 @MainActor
@@ -562,5 +615,46 @@ private actor AsyncFlag {
 
     func isMarked() -> Bool {
         marked
+    }
+}
+
+private actor StatsCollectionLifecycleEventLog {
+    private var recordedEvents: [String] = []
+    private var countWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+
+    func record(_ event: String) {
+        recordedEvents.append(event)
+
+        let waiters = countWaiters
+        countWaiters.removeAll()
+        var remainingWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+        for waiter in waiters {
+            if recordedEvents.count >= waiter.count {
+                waiter.continuation.resume()
+            } else {
+                remainingWaiters.append(waiter)
+            }
+        }
+        countWaiters = remainingWaiters
+    }
+
+    func waitUntilEventCount(_ count: Int) async {
+        guard recordedEvents.count < count else { return }
+        await withCheckedContinuation { continuation in
+            countWaiters.append((count: count, continuation: continuation))
+        }
+    }
+
+    func waitUntilEventCount(_ count: Int, timeout: Duration) async throws {
+        try await AsyncTimeoutGate.run(
+            timeout: timeout,
+            timeoutError: { StatsCollectorLifecycleTestError.timedOutWaitingForStatsEvents }
+        ) {
+            await self.waitUntilEventCount(count)
+        }
+    }
+
+    func events() -> [String] {
+        recordedEvents
     }
 }
