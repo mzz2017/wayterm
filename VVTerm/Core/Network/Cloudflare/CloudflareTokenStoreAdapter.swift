@@ -12,7 +12,7 @@ actor CloudflareTokenStoreAdapter: TokenStore {
         try store.setString(
             token,
             forKey: namespacedKey(for: key),
-            iCloudSync: SyncSettings.isEnabled
+            iCloudSync: KeychainSyncPolicy.usesICloudKeychainSync
         )
     }
 

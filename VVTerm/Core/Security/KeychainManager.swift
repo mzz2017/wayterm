@@ -29,7 +29,7 @@ final class KeychainManager {
 
     private let store: any KeychainStoring
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Keychain")
-    private var isSyncEnabled: Bool { SyncSettings.isEnabled }
+    private var usesICloudKeychainSync: Bool { KeychainSyncPolicy.usesICloudKeychainSync }
 
     init(store: any KeychainStoring = KeychainStore(service: "app.vivy.vvterm")) {
         self.store = store
@@ -42,7 +42,7 @@ final class KeychainManager {
         guard let data = password.data(using: .utf8) else {
             throw KeychainError.encodingFailed
         }
-        try store.set(data, forKey: key, iCloudSync: isSyncEnabled)
+        try store.set(data, forKey: key, iCloudSync: usesICloudKeychainSync)
         logger.info("Stored password for server \(serverId.uuidString)")
     }
 
@@ -65,21 +65,21 @@ final class KeychainManager {
 
     func storeSSHKey(for serverId: UUID, privateKey: Data, passphrase: String?, publicKey: Data? = nil) throws {
         let keyKey = sshKeyKey(for: serverId)
-        try store.set(privateKey, forKey: keyKey, iCloudSync: isSyncEnabled)
+        try store.set(privateKey, forKey: keyKey, iCloudSync: usesICloudKeychainSync)
 
         if let passphrase = passphrase {
             let passphraseKey = sshPassphraseKey(for: serverId)
             guard let passphraseData = passphrase.data(using: .utf8) else {
                 throw KeychainError.encodingFailed
             }
-            try store.set(passphraseData, forKey: passphraseKey, iCloudSync: isSyncEnabled)
+            try store.set(passphraseData, forKey: passphraseKey, iCloudSync: usesICloudKeychainSync)
         } else {
             try store.delete(sshPassphraseKey(for: serverId))
         }
 
         let publicKeyKey = sshPublicKeyKey(for: serverId)
         if let publicKey, !publicKey.isEmpty {
-            try store.set(publicKey, forKey: publicKeyKey, iCloudSync: isSyncEnabled)
+            try store.set(publicKey, forKey: publicKeyKey, iCloudSync: usesICloudKeychainSync)
         } else {
             try store.delete(publicKeyKey)
         }
@@ -158,8 +158,8 @@ final class KeychainManager {
         }
 
         do {
-            try store.set(idData, forKey: idKey, iCloudSync: isSyncEnabled)
-            try store.set(secretData, forKey: secretKey, iCloudSync: isSyncEnabled)
+            try store.set(idData, forKey: idKey, iCloudSync: usesICloudKeychainSync)
+            try store.set(secretData, forKey: secretKey, iCloudSync: usesICloudKeychainSync)
         } catch {
             restoreCloudflareServiceToken(
                 idKey: idKey,
@@ -194,13 +194,13 @@ final class KeychainManager {
     ) {
         do {
             if let previousIDData {
-                try store.set(previousIDData, forKey: idKey, iCloudSync: isSyncEnabled)
+                try store.set(previousIDData, forKey: idKey, iCloudSync: usesICloudKeychainSync)
             } else {
                 try store.delete(idKey)
             }
 
             if let previousSecretData {
-                try store.set(previousSecretData, forKey: secretKey, iCloudSync: isSyncEnabled)
+                try store.set(previousSecretData, forKey: secretKey, iCloudSync: usesICloudKeychainSync)
             } else {
                 try store.delete(secretKey)
             }
@@ -293,7 +293,7 @@ final class KeychainManager {
     /// Save the SSH key index
     private func saveSSHKeysIndex(_ keys: [SSHKeyEntry]) throws {
         let data = try JSONEncoder().encode(keys)
-        try store.set(data, forKey: sshKeysIndexKey, iCloudSync: isSyncEnabled)
+        try store.set(data, forKey: sshKeysIndexKey, iCloudSync: usesICloudKeychainSync)
     }
 
     /// Store a new SSH key in the keychain library
@@ -313,12 +313,12 @@ final class KeychainManager {
         )
 
         // Store the actual key data
-        try store.set(privateKey, forKey: storedKeyDataKey(for: entry.id), iCloudSync: isSyncEnabled)
+        try store.set(privateKey, forKey: storedKeyDataKey(for: entry.id), iCloudSync: usesICloudKeychainSync)
 
         // Store passphrase if provided
         if let passphrase = passphrase, !passphrase.isEmpty,
            let passphraseData = passphrase.data(using: .utf8) {
-            try store.set(passphraseData, forKey: storedKeyPassphraseKey(for: entry.id), iCloudSync: isSyncEnabled)
+            try store.set(passphraseData, forKey: storedKeyPassphraseKey(for: entry.id), iCloudSync: usesICloudKeychainSync)
         }
 
         // Update index

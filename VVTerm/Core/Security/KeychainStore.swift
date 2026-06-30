@@ -14,6 +14,12 @@ protocol KeychainStoring: Sendable {
     func delete(_ key: String) throws
 }
 
+nonisolated enum KeychainSyncPolicy {
+    // CloudKit sync controls metadata records only. Credential secrets may use
+    // iCloud Keychain without being serialized into CloudKit.
+    static let usesICloudKeychainSync = true
+}
+
 final class KeychainStore: @unchecked Sendable {
     private let service: String
 

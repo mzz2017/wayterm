@@ -134,9 +134,56 @@ struct KeychainManagerDeletionTests {
         )
         #expect(store.storedData[secretKey] == Data("old-client-secret".utf8))
     }
+
+    @Test
+    func serverCredentialWritesUseICloudKeychainIndependentlyOfCloudKitSyncSetting() throws {
+        let previousSyncSetting = UserDefaults.standard.object(forKey: SyncSettings.enabledKey)
+        UserDefaults.standard.set(false, forKey: SyncSettings.enabledKey)
+        defer {
+            if let previousSyncSetting {
+                UserDefaults.standard.set(previousSyncSetting, forKey: SyncSettings.enabledKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: SyncSettings.enabledKey)
+            }
+        }
+
+        let serverId = UUID(uuidString: "00000000-0000-0000-0000-00000000D004")!
+        let store = RecordingKeychainStore()
+        let manager = KeychainManager(store: store)
+
+        // Given CloudKit metadata sync is disabled for the app.
+        #expect(SyncSettings.isEnabled == false)
+
+        // When server credential secrets are written.
+        try manager.storePassword(for: serverId, password: "secret-password")
+        try manager.storeSSHKey(
+            for: serverId,
+            privateKey: Data("private-key".utf8),
+            passphrase: "key-passphrase",
+            publicKey: Data("public-key".utf8)
+        )
+        try manager.storeCloudflareServiceToken(
+            for: serverId,
+            clientID: "client-id",
+            clientSecret: "client-secret"
+        )
+
+        // Then the Keychain write policy is still iCloud Keychain capable; the
+        // CloudKit toggle must not silently downgrade secret storage to
+        // device-only or conflate credentials with CloudKit record sync.
+        let credentialWrites = store.setCalls.filter { call in
+            call.key.hasPrefix("server.\(serverId.uuidString).")
+        }
+        #expect(!credentialWrites.isEmpty)
+        #expect(
+            credentialWrites.filter { !$0.iCloudSync }.isEmpty,
+            "Server credential secrets may sync via iCloud Keychain even when CloudKit metadata sync is disabled."
+        )
+    }
 }
 
 private final class RecordingKeychainStore: KeychainStoring, @unchecked Sendable {
+    private(set) var setCalls: [SetCall] = []
     private(set) var storedData: [String: Data]
     private(set) var deletedKeys: [String] = []
     private let failingDeletes: [String: Error]
@@ -156,6 +203,7 @@ private final class RecordingKeychainStore: KeychainStoring, @unchecked Sendable
         if let error = failingSets[SetWrite(key: key, data: data)] {
             throw error
         }
+        setCalls.append(SetCall(key: key, data: data, iCloudSync: iCloudSync))
         storedData[key] = data
     }
 
@@ -174,5 +222,11 @@ private final class RecordingKeychainStore: KeychainStoring, @unchecked Sendable
     struct SetWrite: Hashable {
         let key: String
         let data: Data
+    }
+
+    struct SetCall: Equatable {
+        let key: String
+        let data: Data
+        let iCloudSync: Bool
     }
 }
