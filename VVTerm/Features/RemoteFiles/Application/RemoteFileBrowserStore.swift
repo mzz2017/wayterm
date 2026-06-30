@@ -27,6 +27,9 @@ final class RemoteFileBrowserStore: ObservableObject {
         let currentItemName: String
     }
 
+    typealias TransferProgressCallback = @MainActor @Sendable (TransferProgress) -> Void
+    typealias TransferServerScopeBinder = @MainActor @Sendable (Set<UUID>) -> Void
+
     typealias LocalUploadPlanItem = RemoteFileLocalUploadPlanItem
 
     struct LocalUploadPlanCandidate: Identifiable, Sendable {
@@ -241,14 +244,36 @@ final class RemoteFileBrowserStore: ObservableObject {
     @discardableResult
     func requestTransfer<Result>(
         serverId: UUID? = nil,
-        operation: @escaping @MainActor @Sendable (@escaping @MainActor @Sendable (TransferProgress) -> Void) async throws -> Result,
-        onProgress: @escaping @MainActor @Sendable (TransferProgress) -> Void = { _ in },
+        operation: @escaping @MainActor @Sendable (@escaping TransferProgressCallback) async throws -> Result,
+        onProgress: @escaping TransferProgressCallback = { _ in },
         onSuccess: @escaping @MainActor @Sendable (Result) -> Void,
         onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in },
         onCancel: @escaping @MainActor @Sendable () -> Void = {}
     ) -> UUID {
         requestLifecycleCoordinator.requestTransfer(
             serverId: serverId,
+            operation: operation,
+            onProgress: onProgress,
+            onSuccess: onSuccess,
+            onFailure: onFailure,
+            onCancel: onCancel
+        )
+    }
+
+    @discardableResult
+    func requestTransfer<Result>(
+        serverIds: Set<UUID>,
+        operation: @escaping @MainActor @Sendable (
+            @escaping TransferProgressCallback,
+            @escaping TransferServerScopeBinder
+        ) async throws -> Result,
+        onProgress: @escaping TransferProgressCallback = { _ in },
+        onSuccess: @escaping @MainActor @Sendable (Result) -> Void,
+        onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in },
+        onCancel: @escaping @MainActor @Sendable () -> Void = {}
+    ) -> UUID {
+        requestLifecycleCoordinator.requestTransfer(
+            serverIds: serverIds,
             operation: operation,
             onProgress: onProgress,
             onSuccess: onSuccess,

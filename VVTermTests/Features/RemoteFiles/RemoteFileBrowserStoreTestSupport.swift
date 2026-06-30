@@ -76,6 +76,28 @@ actor RemoteFileBrowserOperationProbe {
     }
 }
 
+actor RemoteFileLifecycleEventProbe {
+    private(set) var didOccur = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func markOccurred() {
+        guard !didOccur else { return }
+        didOccur = true
+        let waiters = waiters
+        self.waiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func waitUntilOccurred() async {
+        guard !didOccur else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+}
+
 struct RemoteFileMutationIntentFailure: Error {}
 
 struct RemoteFileMoveDestinationLoadFailure: Error {}

@@ -345,6 +345,142 @@ struct RemoteFileBrowserRequestLifecycleTests {
     }
 
     @Test
+    func disconnectCancelsTransferWhenOperationBindsSourceServerScope() async throws {
+        let sourceServer = makeRemoteFileBrowserServer()
+        let destinationServer = makeRemoteFileBrowserServer()
+        let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
+        let gate = RemoteFileMutationGate()
+        let waitProbe = RemoteFileWaitProbe()
+        let sourceBoundProbe = RemoteFileLifecycleEventProbe()
+        var operationEvents: [String] = []
+        var callbackEvents: [String] = []
+
+        // Given a cross-server transfer starts from destination UI intent, then
+        // decodes the source server while its remote work is still in flight.
+        let requestID = store.requestTransfer(
+            serverIds: [destinationServer.id],
+            operation: { onProgress, bindServerScope in
+                operationEvents.append("operation-started")
+                bindServerScope([sourceServer.id])
+                await sourceBoundProbe.markOccurred()
+                await gate.wait()
+                onProgress(RemoteFileBrowserStore.TransferProgress(
+                    completedUnitCount: 1,
+                    totalUnitCount: 1,
+                    currentItemName: "copied.txt"
+                ))
+                operationEvents.append("operation-finished")
+                return "copied"
+            },
+            onProgress: { progress in
+                callbackEvents.append("progress-\(progress.currentItemName)")
+            },
+            onSuccess: { result in
+                callbackEvents.append("success-\(result)")
+            },
+            onFailure: { _ in
+                callbackEvents.append("failure")
+            }
+        )
+        await sourceBoundProbe.waitUntilOccurred()
+        #expect(store.pendingTransferRequestIDs.contains(requestID))
+
+        // When the source server disconnects before the transfer exits.
+        _ = store.disconnect(serverId: sourceServer.id)
+        let waitTask = Task {
+            await store.waitForTransferRequest(requestID)
+            await waitProbe.markReturned()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then the transfer is canceled by either server owner, remains
+        // awaitable until remote work exits, and suppresses late callbacks.
+        #expect(!store.pendingTransferRequestIDs.contains(requestID))
+        #expect(
+            await !waitProbe.didReturn,
+            "Cross-server transfer cancellation should wait for source remote work to exit."
+        )
+
+        await gate.release()
+        await waitTask.value
+
+        #expect(await waitProbe.didReturn)
+        #expect(operationEvents == ["operation-started", "operation-finished"])
+        #expect(callbackEvents.isEmpty)
+    }
+
+    @Test
+    func disconnectBeforeDynamicSourceBindingCancelsTransferWhenSourceScopeIsBound() async throws {
+        let sourceServer = makeRemoteFileBrowserServer()
+        let destinationServer = makeRemoteFileBrowserServer()
+        let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
+        let bindGate = RemoteFileMutationGate()
+        let workGate = RemoteFileMutationGate()
+        let waitProbe = RemoteFileWaitProbe()
+        let operationStartedProbe = RemoteFileLifecycleEventProbe()
+        let sourceBoundProbe = RemoteFileLifecycleEventProbe()
+        var operationEvents: [String] = []
+        var callbackEvents: [String] = []
+
+        // Given a remote drop transfer is registered for the destination UI
+        // before item-provider decoding reveals the source server.
+        let requestID = store.requestTransfer(
+            serverIds: [destinationServer.id],
+            operation: { _, bindServerScope in
+                operationEvents.append("operation-started")
+                await operationStartedProbe.markOccurred()
+                await bindGate.wait()
+                bindServerScope([sourceServer.id])
+                operationEvents.append("source-bound")
+                await sourceBoundProbe.markOccurred()
+                await workGate.wait()
+                operationEvents.append("operation-finished")
+                return "copied"
+            },
+            onSuccess: { result in
+                callbackEvents.append("success-\(result)")
+            },
+            onFailure: { _ in
+                callbackEvents.append("failure")
+            }
+        )
+        await operationStartedProbe.waitUntilOccurred()
+        #expect(store.pendingTransferRequestIDs.contains(requestID))
+
+        // When the source server disconnects before the transfer can bind its
+        // source scope.
+        _ = store.disconnect(serverId: sourceServer.id)
+        #expect(
+            store.pendingTransferRequestIDs.contains(requestID),
+            "Destination-scoped transfer remains visible until source ownership is known."
+        )
+
+        let waitTask = Task {
+            await store.waitForTransferRequest(requestID)
+            await waitProbe.markReturned()
+        }
+        await bindGate.release()
+        await sourceBoundProbe.waitUntilOccurred()
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then binding a source that already disconnected during this request
+        // cancels the transfer immediately, while still waiting for remote
+        // work to exit and suppressing late callbacks.
+        #expect(!store.pendingTransferRequestIDs.contains(requestID))
+        #expect(
+            await !waitProbe.didReturn,
+            "Late source binding should cancel the transfer without making the wait hook return early."
+        )
+
+        await workGate.release()
+        await waitTask.value
+
+        #expect(await waitProbe.didReturn)
+        #expect(operationEvents == ["operation-started", "source-bound", "operation-finished"])
+        #expect(callbackEvents.isEmpty)
+    }
+
+    @Test
     func cancelTransferRequestByIDHidesCallbacksButWaitsForOperationExit() async throws {
         let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
         let gate = RemoteFileMutationGate()

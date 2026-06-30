@@ -68,12 +68,13 @@ extension RemoteFileBrowserScreen {
             title: String(localized: "Transferring"),
             initialMessage: String(localized: "Preparing remote items."),
             successMessage: String(localized: "Transfer complete.")
-        ) { onProgress in
+        ) { onProgress, bindServerScope in
             let payloads = try await loadDroppedRemotePayloads(from: remoteProviders)
             try await transferDroppedRemoteItems(
                 payloads,
                 to: destinationPath,
-                onProgress: onProgress
+                onProgress: onProgress,
+                bindServerScope: bindServerScope
             )
         }
 
@@ -255,7 +256,8 @@ extension RemoteFileBrowserScreen {
     func transferDroppedRemoteItems(
         _ payloads: [RemoteFileDragPayload],
         to destinationDirectoryPath: String,
-        onProgress: (@MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void)? = nil
+        onProgress: RemoteFileBrowserStore.TransferProgressCallback? = nil,
+        bindServerScope: RemoteFileBrowserStore.TransferServerScopeBinder? = nil
     ) async throws {
         switch try RemoteFileDropPolicy.plan(
             payloads: payloads,
@@ -265,6 +267,8 @@ extension RemoteFileBrowserScreen {
         case .move(let moves):
             try await performDroppedRemoteMoves(moves, onProgress: onProgress)
         case .copy(let sourceServerId, let entries):
+            bindServerScope?([sourceServerId])
+            try Task.checkCancellation()
             try await browser.copyEntries(
                 entries,
                 from: sourceServerId,

@@ -126,7 +126,10 @@ extension RemoteFileBrowserScreen {
         successFileURL: URL? = nil,
         successFileName: String? = nil,
         successFilePath: String? = nil,
-        operation: @escaping @MainActor @Sendable (@escaping @MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void) async throws -> Void
+        operation: @escaping @MainActor @Sendable (
+            @escaping RemoteFileBrowserStore.TransferProgressCallback,
+            @escaping RemoteFileBrowserStore.TransferServerScopeBinder
+        ) async throws -> Void
     ) {
         let transferID = UUID()
 
@@ -139,7 +142,7 @@ extension RemoteFileBrowserScreen {
         }
 
         browser.requestTransfer(
-            serverId: server.id,
+            serverIds: [server.id],
             operation: operation,
             onProgress: { progress in
                 let itemName = progress.currentItemName.isEmpty
@@ -184,6 +187,29 @@ extension RemoteFileBrowserScreen {
                 )
             }
         )
+    }
+
+    func performTransfer(
+        title: String,
+        initialMessage: String,
+        successMessage: String,
+        successFileURL: URL? = nil,
+        successFileName: String? = nil,
+        successFilePath: String? = nil,
+        operation: @escaping @MainActor @Sendable (
+            @escaping RemoteFileBrowserStore.TransferProgressCallback
+        ) async throws -> Void
+    ) {
+        performTransfer(
+            title: title,
+            initialMessage: initialMessage,
+            successMessage: successMessage,
+            successFileURL: successFileURL,
+            successFileName: successFileName,
+            successFilePath: successFilePath
+        ) { onProgress, _ in
+            try await operation(onProgress)
+        }
     }
 
     func performTransfer(

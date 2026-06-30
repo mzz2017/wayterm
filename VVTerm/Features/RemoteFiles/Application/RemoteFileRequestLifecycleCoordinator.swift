@@ -9,7 +9,8 @@ final class RemoteFileRequestLifecycleCoordinator {
     }
 
     private struct TransferRequest {
-        let serverId: UUID?
+        var serverIds: Set<UUID>
+        let cancellationGenerationSnapshot: [UUID: Int]
         let task: Task<Void, Never>
         var isCancelled: Bool
     }
@@ -17,6 +18,7 @@ final class RemoteFileRequestLifecycleCoordinator {
     private var mutationRequests: [UUID: MutationRequest] = [:]
     private var transferRequests: [UUID: TransferRequest] = [:]
     private var transferCancellationTasks: [UUID: Task<Void, Never>] = [:]
+    private var transferServerCancellationGenerations: [UUID: Int] = [:]
 
     var pendingMutationRequestIDs: Set<UUID> {
         Set(mutationRequests.compactMap { requestID, request in
@@ -99,7 +101,32 @@ final class RemoteFileRequestLifecycleCoordinator {
         onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in },
         onCancel: @escaping @MainActor @Sendable () -> Void = {}
     ) -> UUID {
+        requestTransfer(
+            serverIds: Set(serverId.map { [$0] } ?? []),
+            operation: { onProgress, _ in
+                try await operation(onProgress)
+            },
+            onProgress: onProgress,
+            onSuccess: onSuccess,
+            onFailure: onFailure,
+            onCancel: onCancel
+        )
+    }
+
+    @discardableResult
+    func requestTransfer<Result>(
+        serverIds: Set<UUID>,
+        operation: @escaping @MainActor @Sendable (
+            @escaping @MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void,
+            @escaping @MainActor @Sendable (Set<UUID>) -> Void
+        ) async throws -> Result,
+        onProgress: @escaping @MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void = { _ in },
+        onSuccess: @escaping @MainActor @Sendable (Result) -> Void,
+        onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in },
+        onCancel: @escaping @MainActor @Sendable () -> Void = {}
+    ) -> UUID {
         let requestID = UUID()
+        let cancellationGenerationSnapshot = transferServerCancellationGenerations
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
@@ -107,10 +134,15 @@ final class RemoteFileRequestLifecycleCoordinator {
             }
 
             do {
-                let result = try await operation { progress in
-                    guard !Task.isCancelled, !self.isTransferRequestCancelled(requestID) else { return }
-                    onProgress(progress)
-                }
+                let result = try await operation(
+                    { progress in
+                        guard !Task.isCancelled, !self.isTransferRequestCancelled(requestID) else { return }
+                        onProgress(progress)
+                    },
+                    { serverIds in
+                        self.bindTransferRequest(requestID, to: serverIds)
+                    }
+                )
                 guard !Task.isCancelled, !isTransferRequestCancelled(requestID) else {
                     onCancel()
                     return
@@ -128,8 +160,26 @@ final class RemoteFileRequestLifecycleCoordinator {
             }
         }
 
-        transferRequests[requestID] = TransferRequest(serverId: serverId, task: task, isCancelled: false)
+        transferRequests[requestID] = TransferRequest(
+            serverIds: serverIds,
+            cancellationGenerationSnapshot: cancellationGenerationSnapshot,
+            task: task,
+            isCancelled: false
+        )
         return requestID
+    }
+
+    private func bindTransferRequest(_ requestID: UUID, to serverIds: Set<UUID>) {
+        guard !serverIds.isEmpty, var request = transferRequests[requestID], !request.isCancelled else { return }
+        request.serverIds.formUnion(serverIds)
+        if serverIds.contains(where: { serverId in
+            transferServerCancellationGenerations[serverId, default: 0]
+                != request.cancellationGenerationSnapshot[serverId, default: 0]
+        }) {
+            request.isCancelled = true
+            request.task.cancel()
+        }
+        transferRequests[requestID] = request
     }
 
     func waitForTransferRequest(_ requestID: UUID) async {
@@ -173,7 +223,8 @@ final class RemoteFileRequestLifecycleCoordinator {
     @discardableResult
     func cancelTransferRequests(for serverId: UUID) -> [Task<Void, Never>] {
         var canceledTasks: [Task<Void, Never>] = []
-        for (requestID, request) in transferRequests where request.serverId == serverId {
+        transferServerCancellationGenerations[serverId, default: 0] += 1
+        for (requestID, request) in transferRequests where request.serverIds.contains(serverId) {
             var canceledRequest = request
             canceledRequest.isCancelled = true
             transferRequests[requestID] = canceledRequest
