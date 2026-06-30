@@ -648,14 +648,7 @@ struct RemoteFileBrowserScreen: View {
         guard !entries.isEmpty else { return }
 
         performOperation {
-            for entry in entries {
-                try await browser.deleteItem(
-                    at: entry.path,
-                    in: fileTab,
-                    server: server,
-                    type: entry.type
-                )
-            }
+            try await browser.deleteEntries(entries, in: fileTab, server: server)
         }
     }
 

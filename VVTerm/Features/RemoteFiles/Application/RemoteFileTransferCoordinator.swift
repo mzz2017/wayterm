@@ -133,6 +133,42 @@ extension RemoteFileBrowserStore {
         }
     }
 
+    func deleteEntries(
+        _ entries: [RemoteFileEntry],
+        in tab: RemoteFileTab,
+        server: Server
+    ) async throws {
+        guard tab.serverId == server.id else {
+            throw RemoteFileBrowserError.disconnected
+        }
+
+        let uniqueEntries = transferPolicy.uniqueTransferEntries(entries)
+        guard !uniqueEntries.isEmpty else { return }
+
+        var didMutate = false
+        do {
+            for entry in uniqueEntries {
+                try Task.checkCancellation()
+                try await withRemoteFileService(for: server) { [self] service in
+                    switch entry.type {
+                    case .directory:
+                        try await deleteDirectoryRecursively(at: entry.path, using: service)
+                    case .file, .symlink, .other:
+                        try await service.deleteFile(at: entry.path)
+                    }
+                }
+                didMutate = true
+            }
+        } catch {
+            if didMutate {
+                await refresh(server: server, tab: tab)
+            }
+            throw error
+        }
+
+        await refresh(server: server, tab: tab)
+    }
+
     func setPermissions(
         _ entry: RemoteFileEntry,
         permissions: UInt32,

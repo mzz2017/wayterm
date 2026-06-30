@@ -97,6 +97,55 @@ struct RemoteFileTransferCoordinatorTests {
         }
     }
 
+    @Test
+    func deleteEntriesCancellationStopsBeforeNextSelectedItem() async throws {
+        let server = Server(
+            workspaceId: UUID(),
+            name: "Production",
+            host: "ssh.example.com",
+            username: "root"
+        )
+        let tab = RemoteFileTab(serverId: server.id, seedPath: "/remote")
+        let deleteBlocker = RemoteFileDeleteBlocker(blockedPath: "/remote/first.txt")
+        let service = RecordingRemoteFileService(
+            directoryContents: [:],
+            deleteBlocker: deleteBlocker
+        )
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            remoteFileServiceAccess: DirectRemoteFileServiceAccess(service: service),
+            serverProvider: { _ in nil }
+        )
+        let entries = [
+            makeEntry(name: "first.txt", path: "/remote/first.txt", type: .file),
+            makeEntry(name: "second.txt", path: "/remote/second.txt", type: .file)
+        ]
+
+        // Given batch deletion is blocked inside the first selected item.
+        let task = Task {
+            try await store.deleteEntries(entries, in: tab, server: server)
+        }
+        await deleteBlocker.waitUntilStarted()
+
+        // When the batch operation is canceled before the first delete returns.
+        task.cancel()
+        await deleteBlocker.release()
+
+        // Then cancellation is observed before deleting the next selected item.
+        let result = await task.result
+        #expect(service.operations == [
+            .deleteFile("/remote/first.txt")
+        ])
+        switch result {
+        case .success:
+            Issue.record("Expected batch delete to stop after cancellation")
+        case .failure(is CancellationError):
+            break
+        case .failure(let error):
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+    }
+
     private func makeEntry(name: String, path: String, type: RemoteFileType = .file) -> RemoteFileEntry {
         RemoteFileEntry(
             name: name,
@@ -146,6 +195,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
 
     let directoryContents: [String: [RemoteFileEntry]]
     let downloadBlocker: RemoteFileDownloadBlocker?
+    let deleteBlocker: RemoteFileDeleteBlocker?
     private let lock = NSLock()
     private var operationStorage: [Operation] = []
 
@@ -157,10 +207,12 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
 
     init(
         directoryContents: [String: [RemoteFileEntry]],
-        downloadBlocker: RemoteFileDownloadBlocker? = nil
+        downloadBlocker: RemoteFileDownloadBlocker? = nil,
+        deleteBlocker: RemoteFileDeleteBlocker? = nil
     ) {
         self.directoryContents = directoryContents
         self.downloadBlocker = downloadBlocker
+        self.deleteBlocker = deleteBlocker
     }
 
     func listDirectory(at path: String, maxEntries: Int?) async throws -> [RemoteFileEntry] {
@@ -197,7 +249,9 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
     func renameItem(at sourcePath: String, to destinationPath: String) async throws {}
 
     func deleteFile(at path: String) async throws {
-        record(.deleteFile(RemoteFilePath.normalize(path)))
+        let normalizedPath = RemoteFilePath.normalize(path)
+        record(.deleteFile(normalizedPath))
+        await deleteBlocker?.waitIfNeeded(path: normalizedPath)
     }
 
     func deleteDirectory(at path: String) async throws {
@@ -221,7 +275,61 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
     }
 }
 
+@MainActor
+private final class DirectRemoteFileServiceAccess: RemoteFileServiceAccessing {
+    private let service: any RemoteFileService
+
+    init(service: any RemoteFileService) {
+        self.service = service
+    }
+
+    func withService<T: Sendable>(
+        for server: Server,
+        operation: @Sendable @escaping (any RemoteFileService) async throws -> T
+    ) async throws -> T {
+        try await operation(service)
+    }
+
+    func disconnect(serverId: UUID) async {}
+
+    func disconnectAll() async {}
+}
+
 private actor RemoteFileDownloadBlocker {
+    let blockedPath: String
+    private var started = false
+    private var startedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    init(blockedPath: String) {
+        self.blockedPath = blockedPath
+    }
+
+    func waitIfNeeded(path: String) async {
+        guard path == blockedPath else { return }
+        started = true
+        startedWaiters.forEach { $0.resume() }
+        startedWaiters.removeAll()
+
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+        }
+    }
+
+    func waitUntilStarted() async {
+        if started { return }
+        await withCheckedContinuation { continuation in
+            startedWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
+private actor RemoteFileDeleteBlocker {
     let blockedPath: String
     private var started = false
     private var startedWaiters: [CheckedContinuation<Void, Never>] = []
