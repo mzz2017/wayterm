@@ -119,7 +119,12 @@ extension ConnectionSessionManager {
         context: TerminalSurfaceAttachContext,
         resetTerminal: @escaping @MainActor () -> Void
     ) -> UUID? {
-        requestSurfaceAttach(
+        if surfaceAttachRequestStore.requestID(forScope: sessionId) != nil,
+           shouldAcceptSurfaceReplacement(sessionId: sessionId, context: context) {
+            registerTerminal(terminal, for: sessionId)
+        }
+
+        return requestSurfaceAttach(
             sessionId: sessionId,
             context: context,
             resetTerminal: resetTerminal,
@@ -128,6 +133,16 @@ extension ConnectionSessionManager {
                 await self.attachSurface(terminal, to: sessionId)
             }
         )
+    }
+
+    private func shouldAcceptSurfaceReplacement(
+        sessionId: UUID,
+        context: TerminalSurfaceAttachContext
+    ) -> Bool {
+        sessionWithID(sessionId) != nil
+            && context.isAppActive
+            && context.isViewActive
+            && !isSuspendingForBackground
     }
 
     @discardableResult

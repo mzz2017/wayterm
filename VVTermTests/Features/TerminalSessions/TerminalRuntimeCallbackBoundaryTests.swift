@@ -27,9 +27,11 @@ struct TerminalRuntimeCallbackBoundaryTests {
         #expect(runnerSource.contains("terminal: TerminalConnectionSurfaceHandle"))
         #expect(runnerSource.contains("onProcessExit: TerminalProcessExitHandler"))
 
-        #expect(sessionRuntimeSource.contains("TerminalConnectionSurfaceHandle(surface: terminal)"))
+        #expect(sessionRuntimeSource.contains("TerminalConnectionSurfaceHandle("))
+        #expect(sessionRuntimeSource.contains("terminalSurfaceRegistry.surface(for: .session(sessionId))"))
         #expect(sessionRuntimeSource.contains("TerminalProcessExitHandler(action: runtime.onProcessExit)"))
-        #expect(tabRuntimeSource.contains("TerminalConnectionSurfaceHandle(surface: terminal)"))
+        #expect(tabRuntimeSource.contains("TerminalConnectionSurfaceHandle("))
+        #expect(tabRuntimeSource.contains("terminalSurfaceRegistry.surface(for: .pane(paneId))"))
         #expect(tabRuntimeSource.contains("TerminalProcessExitHandler(action: runtime.onProcessExit)"))
 
         #expect(!sessionRuntimeSource.contains("Task.detached(priority: .userInitiated) { [weak self, weak terminal]"))

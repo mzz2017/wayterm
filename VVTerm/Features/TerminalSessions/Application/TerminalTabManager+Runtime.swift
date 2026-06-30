@@ -27,9 +27,9 @@ extension TerminalTabManager {
         )
     }
 
-    func startRuntimeIfNeeded(forPane paneId: UUID, terminal: GhosttyTerminalView) async {
+    func startRuntimeIfNeeded(forPane paneId: UUID, terminal _: GhosttyTerminalView) async {
         guard let runtime = await runtimeStateForStarting(paneId: paneId) else { return }
-        await startRuntimeIfNeeded(runtime, terminal: terminal)
+        await startRuntimeIfNeeded(runtime)
     }
 
     func registeredShellRoute(forPane paneId: UUID) -> (client: SSHClient, shellId: UUID)? {
@@ -292,7 +292,7 @@ extension TerminalTabManager {
         }
     }
 
-    private func startRuntimeIfNeeded(_ runtime: PaneRuntimeState, terminal: any TerminalConnectionSurface) async {
+    private func startRuntimeIfNeeded(_ runtime: PaneRuntimeState) async {
         let paneId = runtime.paneId
 
         if await runtime.runtime.hasShellTask() {
@@ -324,7 +324,20 @@ extension TerminalTabManager {
 
         let server = runtime.server
         let credentials = runtime.credentials
-        let terminalHandle = TerminalConnectionSurfaceHandle(surface: terminal)
+        let terminalHandle = TerminalConnectionSurfaceHandle(
+            availabilityProvider: { [weak self] in
+                self?.terminalSurfaceRegistry.hasSurface(for: .pane(paneId)) ?? false
+            },
+            sizeProvider: { [weak self] in
+                self?.terminalSurfaceRegistry.surface(for: .pane(paneId))?.connectionSurfaceSize()
+            },
+            outputWriter: { [weak self] data in
+                self?.terminalSurfaceRegistry.surface(for: .pane(paneId))?.writeConnectionOutput(data)
+            },
+            exitReporter: { [weak self] exitCode in
+                self?.terminalSurfaceRegistry.surface(for: .pane(paneId))?.connectionSurfaceExited(exitCode)
+            }
+        )
         let processExitHandler = TerminalProcessExitHandler(action: runtime.onProcessExit)
         let logger = self.logger
         let shellGeneration = startResult.generation

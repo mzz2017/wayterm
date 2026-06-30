@@ -38,7 +38,12 @@ extension TerminalTabManager {
         terminal: GhosttyTerminalView,
         context: TerminalSurfaceAttachContext
     ) -> UUID? {
-        requestSurfaceAttach(
+        if surfaceAttachRequestStore.requestID(forScope: paneId) != nil,
+           shouldAcceptSurfaceReplacement(paneId: paneId, context: context) {
+            registerTerminal(terminal, for: paneId)
+        }
+
+        return requestSurfaceAttach(
             paneId: paneId,
             context: context,
             attachOperation: { [weak self, weak terminal] in
@@ -46,6 +51,15 @@ extension TerminalTabManager {
                 await self.attachSurface(terminal, toPane: paneId)
             }
         )
+    }
+
+    private func shouldAcceptSurfaceReplacement(
+        paneId: UUID,
+        context: TerminalSurfaceAttachContext
+    ) -> Bool {
+        paneStates[paneId] != nil
+            && context.isAppActive
+            && context.isViewActive
     }
 
     @discardableResult

@@ -174,9 +174,9 @@ extension ConnectionSessionManager {
         )
     }
 
-    func startRuntimeIfNeeded(for sessionId: UUID, terminal: GhosttyTerminalView) async {
+    func startRuntimeIfNeeded(for sessionId: UUID, terminal _: GhosttyTerminalView) async {
         guard let runtime = await runtimeStateForStarting(sessionId: sessionId) else { return }
-        await startRuntimeIfNeeded(runtime, terminal: terminal)
+        await startRuntimeIfNeeded(runtime)
     }
 
     func registeredShellRoute(for sessionId: UUID) -> (client: SSHClient, shellId: UUID)? {
@@ -331,7 +331,7 @@ extension ConnectionSessionManager {
         }
     }
 
-    private func startRuntimeIfNeeded(_ runtime: SessionRuntimeState, terminal: any TerminalConnectionSurface) async {
+    private func startRuntimeIfNeeded(_ runtime: SessionRuntimeState) async {
         let sessionId = runtime.sessionId
 
         if await runtime.runtime.hasShellTask() {
@@ -363,7 +363,20 @@ extension ConnectionSessionManager {
 
         let server = runtime.server
         let credentials = runtime.credentials
-        let terminalHandle = TerminalConnectionSurfaceHandle(surface: terminal)
+        let terminalHandle = TerminalConnectionSurfaceHandle(
+            availabilityProvider: { [weak self] in
+                self?.terminalSurfaceRegistry.hasSurface(for: .session(sessionId)) ?? false
+            },
+            sizeProvider: { [weak self] in
+                self?.terminalSurfaceRegistry.surface(for: .session(sessionId))?.connectionSurfaceSize()
+            },
+            outputWriter: { [weak self] data in
+                self?.terminalSurfaceRegistry.surface(for: .session(sessionId))?.writeConnectionOutput(data)
+            },
+            exitReporter: { [weak self] exitCode in
+                self?.terminalSurfaceRegistry.surface(for: .session(sessionId))?.connectionSurfaceExited(exitCode)
+            }
+        )
         let processExitHandler = TerminalProcessExitHandler(action: runtime.onProcessExit)
         let logger = self.logger
         let shellGeneration = startResult.generation

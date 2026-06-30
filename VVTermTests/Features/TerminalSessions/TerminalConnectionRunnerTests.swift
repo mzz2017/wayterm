@@ -122,6 +122,48 @@ final class TerminalConnectionRunnerTests: XCTestCase {
         XCTAssertEqual(surface.writtenData, [output], "Runner should stream shell bytes through the surface protocol.")
         XCTAssertEqual(surface.exitCodes, [0], "Runner should report external process exit through the surface protocol.")
     }
+
+    @MainActor
+    func testSurfaceHandleRoutesCallbacksToLatestResolvedSurface() {
+        let firstSurface = RecordingTerminalConnectionSurface(
+            size: TerminalConnectionSurfaceSize(columns: 80, rows: 24)
+        )
+        let secondSurface = RecordingTerminalConnectionSurface(
+            size: TerminalConnectionSurfaceSize(columns: 120, rows: 40)
+        )
+        var currentSurface: RecordingTerminalConnectionSurface? = firstSurface
+        let output = Data("latest surface\n".utf8)
+
+        // Given a long-running terminal runner owns a sendable surface handle
+        // whose concrete UIView-backed surface can be replaced by later UI
+        // attach intent for the same terminal entity.
+        let surfaceHandle = TerminalConnectionSurfaceHandle(
+            availabilityProvider: { currentSurface != nil },
+            sizeProvider: { currentSurface?.connectionSurfaceSize() },
+            outputWriter: { currentSurface?.writeConnectionOutput($0) },
+            exitReporter: { currentSurface?.connectionSurfaceExited($0) }
+        )
+
+        XCTAssertTrue(surfaceHandle.isAvailable())
+        XCTAssertEqual(surfaceHandle.connectionSurfaceSize(), TerminalConnectionSurfaceSize(columns: 80, rows: 24))
+
+        // When a newer surface becomes the current owner before stream output
+        // arrives.
+        currentSurface = secondSurface
+        surfaceHandle.writeConnectionOutput(output)
+        surfaceHandle.connectionSurfaceExited(0)
+
+        // Then shell output and exit notifications go to the latest surface,
+        // not the stale surface that existed when the runner was created.
+        XCTAssertEqual(firstSurface.writtenData, [])
+        XCTAssertEqual(firstSurface.exitCodes, [])
+        XCTAssertEqual(secondSurface.writtenData, [output])
+        XCTAssertEqual(secondSurface.exitCodes, [0])
+        XCTAssertEqual(surfaceHandle.connectionSurfaceSize(), TerminalConnectionSurfaceSize(columns: 120, rows: 40))
+
+        currentSurface = nil
+        XCTAssertFalse(surfaceHandle.isAvailable())
+    }
 }
 
 private actor TerminalConnectionRunnerProbe {

@@ -36,11 +36,12 @@ struct TerminalConnectionSurfaceHandle: @unchecked Sendable {
 
     @MainActor
     init(
+        availabilityProvider: @escaping @MainActor () -> Bool = { true },
         sizeProvider: @escaping @MainActor () -> TerminalConnectionSurfaceSize?,
         outputWriter: @escaping @MainActor (Data) -> Void,
         exitReporter: @escaping @MainActor (UInt32) -> Void
     ) {
-        self.availabilityProvider = { true }
+        self.availabilityProvider = availabilityProvider
         self.sizeProvider = sizeProvider
         self.outputWriter = outputWriter
         self.exitReporter = exitReporter
