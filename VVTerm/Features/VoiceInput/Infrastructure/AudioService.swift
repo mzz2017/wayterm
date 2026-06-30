@@ -112,12 +112,15 @@ class AudioService: NSObject, ObservableObject {
 
         let needsSpeech = effectiveProvider == .system
         let hasPermissions = await checkPermissions(includeSpeech: needsSpeech)
+        try Task.checkCancellation()
         if !hasPermissions {
             let granted = await requestPermissions(includeSpeech: needsSpeech)
+            try Task.checkCancellation()
             guard granted else {
                 throw RecordingError.permissionDenied
             }
         }
+        try Task.checkCancellation()
 
         // Reset state
         speechRecognitionService.resetTranscriptions()

@@ -5,14 +5,52 @@ import Testing
 @testable import VVTerm
 
 // Test Context:
-// These tests protect VoiceInput start-failure rollback. AudioService may start
-// Apple Speech before the microphone capture service starts, and
-// AudioCaptureService may activate the platform audio session before AVAudioEngine
-// starts. Failure in either half-started path must release the owned runtime
-// resources before returning an error. Fakes avoid real microphone, Speech, and
-// model access while preserving the start/cancel ordering being tested.
+// These tests protect VoiceInput start-failure and start-cancellation rollback.
+// AudioService may await permission checks before touching the microphone,
+// start Apple Speech before the microphone capture service starts, and
+// AudioCaptureService may activate the platform audio session before
+// AVAudioEngine starts. Cancellation or failure in these half-started paths must
+// release the owned runtime resources before returning. Fakes avoid real
+// microphone, Speech, and model access while preserving the start/cancel
+// ordering being tested.
 @MainActor
 struct AudioServiceLifecycleTests {
+    @Test
+    func canceledPermissionCheckDoesNotStartCaptureAfterPermissionResumes() async throws {
+        let permissionGate = PermissionGate()
+        let capture = RecordingStartVoiceAudioCapture()
+        let service = AudioService(
+            dependencies: makeDependencies(
+                audioCaptureService: capture,
+                speechAudioRecognitionRunner: RecordingSpeechAudioRecognitionRunner(),
+                checkPermissions: { _ in await permissionGate.waitForPermissionResult() }
+            )
+        )
+
+        // Given voice start is waiting for permission state before opening the
+        // microphone runtime.
+        let startTask = Task {
+            try await service.startRecording()
+        }
+        await permissionGate.waitUntilPermissionRequested()
+
+        // When lifecycle cancellation wins before the permission await resumes.
+        startTask.cancel()
+        await service.cancelRecording()
+        await permissionGate.resolvePermission(true)
+
+        do {
+            try await startTask.value
+        } catch is CancellationError {
+            // Expected once AudioService observes the canceled start task.
+        }
+
+        // Then a canceled start must not activate capture after permission is
+        // eventually granted.
+        #expect(capture.startCalls == 0, "Canceled voice start must not open microphone capture after permission resumes.")
+        #expect(!service.isRecording, "Canceled voice start must not publish an active recording state.")
+    }
+
     @Test
     func appleSpeechStartFailureCancelsStartedSpeechAndCapture() async throws {
         let speechRunner = RecordingSpeechAudioRecognitionRunner()
@@ -70,7 +108,9 @@ struct AudioServiceLifecycleTests {
 
     private func makeDependencies(
         audioCaptureService: any VoiceAudioCapturing,
-        speechAudioRecognitionRunner: any SpeechAudioRecognitionRunning
+        speechAudioRecognitionRunner: any SpeechAudioRecognitionRunning,
+        checkPermissions: (@MainActor (Bool) async -> Bool)? = nil,
+        requestPermissions: (@MainActor (Bool) async -> Bool)? = nil
     ) -> AudioServiceDependencies {
         AudioServiceDependencies(
             settings: TranscriptionSettingsReader {
@@ -89,8 +129,8 @@ struct AudioServiceLifecycleTests {
             audioCaptureSession: NoopAudioCaptureSession(),
             audioCaptureService: audioCaptureService,
             speechAudioRecognitionRunner: speechAudioRecognitionRunner,
-            checkPermissions: { _ in true },
-            requestPermissions: { _ in true }
+            checkPermissions: checkPermissions ?? { _ in true },
+            requestPermissions: requestPermissions ?? { _ in true }
         )
     }
 }
@@ -177,6 +217,28 @@ private final class FailingStartVoiceAudioCapture: VoiceAudioCapturing {
 }
 
 @MainActor
+private final class RecordingStartVoiceAudioCapture: VoiceAudioCapturing {
+    var audioLevel: Float = 0
+    var recordingDuration: TimeInterval = 0
+    var sampleRate: Double = 16_000
+    var bufferHandler: ((AVAudioPCMBuffer) -> Void)?
+    private(set) var startCalls = 0
+    private(set) var cancelCalls = 0
+
+    func start() throws {
+        startCalls += 1
+    }
+
+    func stop() async -> [Float] {
+        []
+    }
+
+    func cancel() async {
+        cancelCalls += 1
+    }
+}
+
+@MainActor
 private final class RecordingAudioCaptureSession: AudioCaptureSessionManaging {
     private(set) var activateCalls = 0
     private(set) var deactivateCalls = 0
@@ -194,5 +256,34 @@ private final class RecordingAudioCaptureSession: AudioCaptureSessionManaging {
 private final class RecordingVoiceSampleTranscriber: VoiceSampleTranscribing {
     func transcribe(samples: [Float]) async throws -> String {
         ""
+    }
+}
+
+private actor PermissionGate {
+    private var permissionContinuation: CheckedContinuation<Bool, Never>?
+    private var didRequestPermission = false
+    private var requestWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func waitForPermissionResult() async -> Bool {
+        didRequestPermission = true
+        let waiters = requestWaiters
+        requestWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+
+        return await withCheckedContinuation { continuation in
+            permissionContinuation = continuation
+        }
+    }
+
+    func waitUntilPermissionRequested() async {
+        guard !didRequestPermission else { return }
+        await withCheckedContinuation { continuation in
+            requestWaiters.append(continuation)
+        }
+    }
+
+    func resolvePermission(_ value: Bool) {
+        permissionContinuation?.resume(returning: value)
+        permissionContinuation = nil
     }
 }
