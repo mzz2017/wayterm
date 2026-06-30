@@ -25,6 +25,9 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
         let appSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/Bridge/Ghostty.App.swift")
         )
+        let appClipboardSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/Bridge/Ghostty.App+Clipboard.swift")
+        )
         let scrollGestureSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Scroll/GhosttyTerminalView+ScrollGesture+iOS.swift")
         )
@@ -45,7 +48,7 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
         #expect(ownerSource.contains("ghosttyApp: ghosttyApp"))
         #expect(ownerSource.contains("appWrapper: appWrapper"))
         #expect(ownerSource.contains("var liveSurfaceHandle: ghostty_surface_t?"))
-        #expect(appSource.contains("terminalView.surfaceOwner.liveSurfaceHandle"))
+        #expect(appClipboardSource.contains("terminalView.surfaceOwner.liveSurfaceHandle"))
 
         #expect(
             !viewSource.contains("var ghosttyApp: ghostty_app_t?"),
@@ -64,7 +67,8 @@ struct GhosttyIOSSurfaceOwnerBoundaryTests {
             "GhosttyTerminalView+iOS.swift should not expose the owned Ghostty surface wrapper."
         )
         #expect(
-            !appSource.contains("terminalView.surface?.unsafeCValue"),
+            !appSource.contains("terminalView.surface?.unsafeCValue")
+                && !appClipboardSource.contains("terminalView.surface?.unsafeCValue"),
             "Ghostty.App callbacks should ask the owner for a narrow live surface handle instead of reading the view surface."
         )
 
