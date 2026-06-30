@@ -94,6 +94,7 @@ enum TerminalConnectionRunner {
             performAttempt: { _ in
                 try await connect()
                 try Task.checkCancellation()
+                guard await MainActor.run(body: { terminal.isAvailable() }) else { return }
 
                 let size = await MainActor.run {
                     terminal.connectionSurfaceSize()
@@ -103,9 +104,13 @@ enum TerminalConnectionRunner {
 
                 await onBeforeShellStart(cols, rows)
                 let startup = await startupPlan()
+                try Task.checkCancellation()
+                guard await MainActor.run(body: { terminal.isAvailable() }) else { return }
+
                 let shell = try await startShell(cols, rows, startup.command)
 
-                guard !Task.isCancelled else {
+                guard !Task.isCancelled,
+                      await MainActor.run(body: { terminal.isAvailable() }) else {
                     await closeShell(shell.id)
                     return
                 }

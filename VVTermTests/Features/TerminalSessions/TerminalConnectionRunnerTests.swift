@@ -124,6 +124,85 @@ final class TerminalConnectionRunnerTests: XCTestCase {
     }
 
     @MainActor
+    func testSurfaceDisappearingAfterConnectPreventsShellStart() async {
+        let shellId = UUID()
+        var isSurfaceAvailable = true
+        let surfaceHandle = TerminalConnectionSurfaceHandle(
+            availabilityProvider: { isSurfaceAvailable },
+            sizeProvider: {
+                isSurfaceAvailable ? TerminalConnectionSurfaceSize(columns: 132, rows: 43) : nil
+            },
+            outputWriter: { _ in
+                XCTFail("Closed terminal surface must not receive shell output.")
+            },
+            exitReporter: { _ in
+                XCTFail("Closed terminal surface must not receive process exit.")
+            }
+        )
+        let probe = TerminalConnectionRunnerSurfaceProbe()
+        let stream = AsyncStream<Data> { continuation in
+            continuation.finish()
+        }
+
+        await TerminalConnectionRunner.run(
+            terminal: surfaceHandle,
+            logger: nil,
+            onAttempt: { attempt in
+                await probe.recordAttempt(attempt)
+            },
+            connect: {
+                await probe.recordConnect()
+                isSurfaceAvailable = false
+            },
+            startShell: { cols, rows, startupCommand in
+                await probe.recordShellStart(cols: cols, rows: rows, startupCommand: startupCommand)
+                return ShellHandle(id: shellId, stream: stream)
+            },
+            closeShell: { closedShellId in
+                await probe.recordClosedShell(closedShellId)
+            },
+            startupPlan: {
+                (command: "printf ready", skipTmuxLifecycle: true)
+            },
+            registerShell: { shell, skipTmuxLifecycle in
+                await probe.recordShellRegistration(
+                    shellId: shell.id,
+                    skipTmuxLifecycle: skipTmuxLifecycle
+                )
+                return true
+            },
+            onBeforeShellStart: { cols, rows in
+                await probe.recordBeforeShellStart(cols: cols, rows: rows)
+            },
+            onShellStarted: { _, startedShellId in
+                probe.startedShellId = startedShellId
+            },
+            onTitleChange: { _ in },
+            shouldContinueStreaming: { _, _ in true },
+            shouldResetClient: { _ in false },
+            resetConnection: {
+                await probe.recordReset()
+            },
+            onProcessExit: {
+                await probe.recordProcessExit()
+            },
+            onFailure: { error, _ in
+                XCTFail("Closed terminal surface should stop runtime start without failure, got \(error)")
+            }
+        )
+
+        let snapshot = await probe.snapshot()
+        XCTAssertEqual(snapshot.attempts, [1], "Runner should observe the original attach attempt.")
+        XCTAssertEqual(snapshot.connectCount, 1, "Runner may finish an in-flight connect before seeing surface close.")
+        XCTAssertEqual(snapshot.shellStartSizes, [], "Runner must not start a shell after the surface is unavailable.")
+        XCTAssertEqual(snapshot.beforeShellStartSizes, [], "Runner must not publish shell-start sizing for a closed surface.")
+        XCTAssertEqual(snapshot.registeredShellIds, [], "Runner must not register shell ownership after surface close.")
+        XCTAssertEqual(snapshot.closedShellIds, [], "No shell should exist to close when surface disappears before start.")
+        XCTAssertEqual(snapshot.processExitCount, 0, "Closed surface should not receive a synthetic process exit.")
+        XCTAssertNil(probe.startedShellId)
+    }
+
+    @MainActor
     func testSurfaceHandleRoutesCallbacksToLatestResolvedSurface() {
         let firstSurface = RecordingTerminalConnectionSurface(
             size: TerminalConnectionSurfaceSize(columns: 80, rows: 24)
