@@ -9,6 +9,11 @@ import XCTest
 // when SSHClient's pending-connect ownership contract intentionally changes.
 
 final class SSHClientConnectionLifecycleTests: XCTestCase {
+    override func setUp() async throws {
+        try await super.setUp()
+        await trustLifecycleTestHost()
+    }
+
     func testConcurrentSameTargetConnectsShareInFlightPreparation() async throws {
         // Given the first connect can suspend in pre-connect cleanup before an
         // SSHSession is created.
@@ -503,7 +508,12 @@ final class SSHClientConnectionLifecycleTests: XCTestCase {
             cloudflareClientSecret: nil
         )
 
-        _ = try await client.connect(to: target, credentials: credentials)
+        do {
+            _ = try await client.connect(to: target, credentials: credentials)
+        } catch {
+            XCTFail("connect should establish the first SSH session before shell timeout test, got \(error)")
+            return
+        }
 
         // When shell startup times out after aborting the socket.
         do {
@@ -522,7 +532,12 @@ final class SSHClientConnectionLifecycleTests: XCTestCase {
             "Shell startup timeout must invalidate the active SSHClient session."
         )
 
-        _ = try await client.connect(to: target, credentials: credentials)
+        do {
+            _ = try await client.connect(to: target, credentials: credentials)
+        } catch {
+            XCTFail("retry should establish a fresh SSH session after shell startup timeout, got \(error)")
+            return
+        }
         XCTAssertEqual(
             sessionFactory.createdCount(),
             2,
@@ -553,7 +568,12 @@ final class SSHClientConnectionLifecycleTests: XCTestCase {
             cloudflareClientSecret: nil
         )
 
-        _ = try await client.connect(to: target, credentials: credentials)
+        do {
+            _ = try await client.connect(to: target, credentials: credentials)
+        } catch {
+            XCTFail("connect should establish the SSH session before aborting shell startup, got \(error)")
+            return
+        }
         client.abort()
 
         // When shell startup is requested after disconnect intent has already
@@ -575,6 +595,20 @@ final class SSHClientConnectionLifecycleTests: XCTestCase {
         await client.disconnect()
     }
 
+}
+
+private func trustLifecycleTestHost() async {
+    let now = Date()
+    await KnownHostsStore.shared.save(
+        entry: KnownHostsManager.Entry(
+            host: "ssh.example.com",
+            port: 22,
+            fingerprint: "SHA256:test-host-key",
+            keyType: 1,
+            addedAt: now,
+            lastSeenAt: now
+        )
+    )
 }
 
 private final class RecordingSSHSessionFactory: @unchecked Sendable {
