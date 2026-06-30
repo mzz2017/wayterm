@@ -179,15 +179,15 @@ actor CloudflareTransportManager: CloudflareTransportManaging {
         let connectingSession = connectingSession
         self.activeSession = nil
         self.connectingSession = nil
-        if let connectingSession {
-            cleanedConnectRequestIDs.insert(connectingSession.requestID)
-        }
 
         if let activeSession {
-            await disconnect(session: activeSession)
+            _ = await disconnect(session: activeSession)
         }
         if let connectingSession {
-            await disconnect(session: connectingSession.session)
+            let didDisconnect = await disconnect(session: connectingSession.session)
+            if didDisconnect {
+                cleanedConnectRequestIDs.insert(connectingSession.requestID)
+            }
         }
     }
 
@@ -218,14 +218,16 @@ actor CloudflareTransportManager: CloudflareTransportManaging {
     ) async {
         guard cleanedConnectRequestIDs.insert(requestID).inserted else { return }
         clearConnectingSessionIfCurrent(requestID)
-        await disconnect(session: session)
+        _ = await disconnect(session: session)
     }
 
-    private func disconnect(session: any CloudflareTransportSession) async {
+    private func disconnect(session: any CloudflareTransportSession) async -> Bool {
         do {
             try await disconnectWithTimeout(session)
+            return true
         } catch {
             logger.warning("Timed out while disconnecting Cloudflare transport session")
+            return false
         }
     }
 

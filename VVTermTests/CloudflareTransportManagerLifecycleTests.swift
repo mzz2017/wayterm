@@ -260,6 +260,65 @@ struct CloudflareTransportManagerLifecycleTests {
     }
 
     @Test
+    func lateConnectAfterDisconnectTimeoutStillCleansTunnel() async throws {
+        let fakeSession = FakeCloudflareTransportSession(disconnectStartsReleased: false)
+        let manager = CloudflareTransportManager(disconnectTimeout: .milliseconds(80)) { _ in
+            fakeSession
+        }
+        let target = makeCloudflareTarget()
+        let credentials = ServerCredentials(
+            serverId: UUID(),
+            password: nil,
+            privateKey: nil,
+            publicKey: nil,
+            passphrase: nil,
+            cloudflareClientID: "client-id",
+            cloudflareClientSecret: "client-secret"
+        )
+        let disconnectCompletion = AsyncCompletionProbe()
+
+        // Given a Cloudflare connect has created a tunnel session, and manager
+        // teardown times out while that session's disconnect is still suspended.
+        let connectTask = Task {
+            try await manager.connect(target: target, credentials: credentials)
+        }
+        await fakeSession.waitForConnectStart()
+
+        let disconnectTask = Task {
+            await manager.disconnect()
+            await disconnectCompletion.markCompleted()
+        }
+        await fakeSession.waitForDisconnectStart()
+        try await Task.sleep(for: .milliseconds(180))
+        #expect(
+            await disconnectCompletion.isCompleted,
+            "Cloudflare disconnect should return after its timeout even when a connecting session ignores cancellation."
+        )
+
+        // When the original connect later succeeds, it is stale and must still
+        // try to clean up the now-live tunnel instead of treating the timed-out
+        // disconnect attempt as completed ownership.
+        await fakeSession.releaseConnect()
+        try await waitUntilDisconnectRetryIsObserved(on: fakeSession)
+        #expect(
+            await fakeSession.disconnectCallCount() == 2,
+            "A late-successful in-flight Cloudflare connect should perform a second cleanup attempt if the manager-level disconnect already timed out."
+        )
+
+        await fakeSession.releaseDisconnect()
+        await disconnectTask.value
+
+        do {
+            _ = try await connectTask.value
+            Issue.record("Expected stale Cloudflare connect to throw CancellationError")
+        } catch is CancellationError {
+            // Expected.
+        } catch {
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+    }
+
+    @Test
     func oauthCompletionCallbacksAreTrackedAndSessionScoped() throws {
         let source = try source(
             at: sourceRoot().appendingPathComponent("VVTerm/Core/Network/Cloudflare/CloudflareOAuthFlow.swift")
@@ -339,6 +398,20 @@ struct CloudflareTransportManagerLifecycleTests {
             url = next
         }
         return url.deletingLastPathComponent()
+    }
+
+    private func waitUntilDisconnectRetryIsObserved(
+        on session: FakeCloudflareTransportSession
+    ) async throws {
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+
+        while startedAt.duration(to: clock.now) < .milliseconds(300) {
+            if await session.disconnectCallCount() >= 2 {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     private enum SourceRootError: Error {
