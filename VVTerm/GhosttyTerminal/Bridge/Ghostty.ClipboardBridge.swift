@@ -1,6 +1,22 @@
 import Foundation
 
 nonisolated enum GhosttyClipboardBridge {
+    struct ReadSnapshot: @unchecked Sendable {
+        let surface: ghostty_surface_t
+        let string: String
+        let createdAt: Date
+    }
+
+    private static let readSnapshotStore = GhosttyClipboardReadSnapshotStore()
+
+    static func publishReadSnapshot(surface: ghostty_surface_t, string: String) {
+        readSnapshotStore.publish(ReadSnapshot(surface: surface, string: string, createdAt: Date()))
+    }
+
+    static func consumeReadSnapshot(maxAge: TimeInterval = 1) -> ReadSnapshot? {
+        readSnapshotStore.consume(maxAge: maxAge)
+    }
+
     static func completeReadRequest(
         surface: ghostty_surface_t,
         string: String,
@@ -32,6 +48,30 @@ nonisolated enum GhosttyClipboardBridge {
                 return string
             }
         }
+        return nil
+    }
+}
+
+nonisolated private final class GhosttyClipboardReadSnapshotStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var snapshot: GhosttyClipboardBridge.ReadSnapshot?
+
+    nonisolated func publish(_ snapshot: GhosttyClipboardBridge.ReadSnapshot) {
+        lock.lock()
+        self.snapshot = snapshot
+        lock.unlock()
+    }
+
+    nonisolated func consume(maxAge: TimeInterval) -> GhosttyClipboardBridge.ReadSnapshot? {
+        lock.lock()
+        let snapshot = snapshot
+        if let snapshot, Date().timeIntervalSince(snapshot.createdAt) <= maxAge {
+            self.snapshot = nil
+            lock.unlock()
+            return snapshot
+        }
+        self.snapshot = nil
+        lock.unlock()
         return nil
     }
 }

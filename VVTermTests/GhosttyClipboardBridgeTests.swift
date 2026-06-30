@@ -62,6 +62,25 @@ struct GhosttyClipboardBridgeTests {
         #expect(result == "copied")
     }
 
+    @Test
+    func readSnapshotIsConsumedOnceForSynchronousPasteCallback() {
+        // Given UI paste has snapshotted the pasteboard before entering
+        // Ghostty's synchronous paste_from_clipboard action.
+        let surface = ghostty_surface_t(bitPattern: 0x1234)!
+        GhosttyClipboardBridge.publishReadSnapshot(surface: surface, string: "paste me")
+
+        // When the Ghostty read callback runs off the main actor.
+        let snapshot = GhosttyClipboardBridge.consumeReadSnapshot()
+        let secondSnapshot = GhosttyClipboardBridge.consumeReadSnapshot()
+
+        // Then the callback can complete synchronously without asking the
+        // blocked main thread for pasteboard access, and the snapshot cannot
+        // be reused by a later unrelated clipboard read.
+        #expect(snapshot?.surface == surface)
+        #expect(snapshot?.string == "paste me")
+        #expect(secondSnapshot == nil)
+    }
+
     private func withClipboardEntry<Result>(
         mime: String?,
         data: String?,

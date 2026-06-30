@@ -670,6 +670,12 @@ class GhosttyTerminalView: NSView, NSUserInterfaceValidations {
     }
 
     func pasteTextFromClipboard() {
+        if let surface = surfaceOwner.liveSurfaceHandle {
+            GhosttyClipboardBridge.publishReadSnapshot(
+                surface: surface,
+                string: Clipboard.readString() ?? ""
+            )
+        }
         surfaceOwner.perform(action: "paste_from_clipboard")
         requestRender()
     }

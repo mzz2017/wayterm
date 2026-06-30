@@ -7,6 +7,15 @@ extension Ghostty.App {
         location: ghostty_clipboard_e,
         state: UnsafeMutableRawPointer?
     ) -> Bool {
+        if let snapshot = GhosttyClipboardBridge.consumeReadSnapshot() {
+            GhosttyClipboardBridge.completeReadRequest(
+                surface: snapshot.surface,
+                string: snapshot.string,
+                state: state
+            )
+            return true
+        }
+
         let surfaceContext = GhosttySurfaceCallbackContext.context(fromUserdata: userdata)
         return performClipboardReadOnMain(surfaceContext: surfaceContext, state: state)
     }
@@ -21,13 +30,7 @@ extension Ghostty.App {
             }
         }
 
-        var didStart = false
-        DispatchQueue.main.sync {
-            didStart = MainActor.assumeIsolated {
-                completeClipboardRead(surfaceContext: surfaceContext, state: state)
-            }
-        }
-        return didStart
+        return false
     }
 
     @MainActor

@@ -146,6 +146,12 @@ struct GhosttyAppSupportBoundaryTests {
         let clipboardCallbackSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/Bridge/Ghostty.App+Clipboard.swift")
         )
+        let iosInputSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/iOS/Input/GhosttyTerminalView+TerminalInput+iOS.swift")
+        )
+        let macOSInputSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/macOS/GhosttyTerminalView+macOS.swift")
+        )
         let clipboardSource = try source(
             at: root.appendingPathComponent("VVTerm/Core/Terminal/Clipboard.swift")
         )
@@ -167,9 +173,15 @@ struct GhosttyAppSupportBoundaryTests {
             "System pasteboard helpers should be main-actor isolated."
         )
         #expect(
-            readClipboardCallback.contains("performClipboardReadOnMain")
+            readClipboardCallback.contains("GhosttyClipboardBridge.consumeReadSnapshot")
+                && !clipboardCallbackSource.contains("DispatchQueue.main.sync")
                 && !readClipboardCallback.contains("let clipboardString = Clipboard.readString()"),
-            "Ghostty read clipboard callbacks should hop to main before touching the system pasteboard."
+            "Ghostty read clipboard callbacks must consume UI-paste snapshots instead of synchronously blocking on main."
+        )
+        #expect(
+            iosInputSource.contains("GhosttyClipboardBridge.publishReadSnapshot")
+                && macOSInputSource.contains("GhosttyClipboardBridge.publishReadSnapshot"),
+            "UI paste entry points should snapshot the main-actor pasteboard before entering Ghostty's synchronous paste action."
         )
         #expect(
             writeClipboardCallback.contains("GhosttyClipboardBridge.firstString")
