@@ -18,6 +18,8 @@ struct AudioServiceDependencies {
     var isModelAvailable: @MainActor (MLXModelKind, String) -> Bool
     var audioCaptureSession: any AudioCaptureSessionManaging
     var audioCaptureService: (any VoiceAudioCapturing)? = nil
+    var speechAudioRecognitionRunner: (any SpeechAudioRecognitionRunning)? = nil
+    var speechURLRecognitionRunner: (any SpeechURLRecognitionRunning)? = nil
     var appleSpeechFallback: (@MainActor ([Float], Double) async -> String?)? = nil
     var checkPermissions: (@MainActor (Bool) async -> Bool)? = nil
     var requestPermissions: (@MainActor (Bool) async -> Bool)? = nil
@@ -44,7 +46,11 @@ class AudioService: NSObject, ObservableObject {
     init(dependencies: AudioServiceDependencies? = nil) {
         let resolvedDependencies = dependencies ?? .live
         self.dependencies = resolvedDependencies
-        self.speechRecognitionService = SpeechRecognitionService(settings: resolvedDependencies.settings)
+        self.speechRecognitionService = SpeechRecognitionService(
+            settings: resolvedDependencies.settings,
+            audioRecognitionRunner: resolvedDependencies.speechAudioRecognitionRunner,
+            urlRecognitionRunner: resolvedDependencies.speechURLRecognitionRunner
+        )
         self.audioCaptureService = resolvedDependencies.audioCaptureService
             ?? AudioCaptureService(audioSession: resolvedDependencies.audioCaptureSession)
         super.init()
@@ -245,6 +251,9 @@ class AudioService: NSObject, ObservableObject {
         do {
             try audioCaptureService.start()
         } catch {
+            await audioCaptureService.cancel()
+            audioCaptureService.bufferHandler = nil
+            speechRecognitionService.cancelRecognition()
             throw RecordingError.recordingFailed
         }
     }

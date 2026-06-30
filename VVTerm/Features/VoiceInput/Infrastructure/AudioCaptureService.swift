@@ -21,6 +21,56 @@ protocol VoiceAudioCapturing: AnyObject {
 }
 
 @MainActor
+protocol VoiceAudioEngineManaging: AnyObject {
+    var inputFormat: AVAudioFormat { get }
+
+    func installTap(
+        bufferSize: AVAudioFrameCount,
+        format: AVAudioFormat,
+        handler: @escaping (AVAudioPCMBuffer) -> Void
+    )
+    func prepare()
+    func start() throws
+    func stop()
+    func removeTap()
+}
+
+@MainActor
+private final class LiveVoiceAudioEngine: VoiceAudioEngineManaging {
+    private let engine = AVAudioEngine()
+
+    var inputFormat: AVAudioFormat {
+        engine.inputNode.outputFormat(forBus: 0)
+    }
+
+    func installTap(
+        bufferSize: AVAudioFrameCount,
+        format: AVAudioFormat,
+        handler: @escaping (AVAudioPCMBuffer) -> Void
+    ) {
+        engine.inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: format) { buffer, _ in
+            handler(buffer)
+        }
+    }
+
+    func prepare() {
+        engine.prepare()
+    }
+
+    func start() throws {
+        try engine.start()
+    }
+
+    func stop() {
+        engine.stop()
+    }
+
+    func removeTap() {
+        engine.inputNode.removeTap(onBus: 0)
+    }
+}
+
+@MainActor
 struct NoopAudioCaptureSession: AudioCaptureSessionManaging {
     func activateForRecording() throws {}
     func deactivateAfterRecording() throws {}
@@ -37,13 +87,18 @@ final class AudioCaptureService: ObservableObject, VoiceAudioCapturing {
     private let targetSampleRate: Double = 16_000
     private let audioSession: any AudioCaptureSessionManaging
     nonisolated private let bufferUpdateTasks = AudioBufferUpdateTaskRegistry()
-    private var audioEngine: AVAudioEngine?
+    private var audioEngine: (any VoiceAudioEngineManaging)?
     private var converter: AVAudioConverter?
     private var recordedSamples: [Float] = []
     private var isRecording = false
+    private let makeEngine: @MainActor () -> any VoiceAudioEngineManaging
 
-    init(audioSession: (any AudioCaptureSessionManaging)? = nil) {
+    init(
+        audioSession: (any AudioCaptureSessionManaging)? = nil,
+        makeEngine: @escaping @MainActor () -> any VoiceAudioEngineManaging = { LiveVoiceAudioEngine() }
+    ) {
         self.audioSession = audioSession ?? NoopAudioCaptureSession()
+        self.makeEngine = makeEngine
     }
 
     var sampleRate: Double { targetSampleRate }
@@ -56,28 +111,56 @@ final class AudioCaptureService: ObservableObject, VoiceAudioCapturing {
         recordingDuration = 0
         lastSessionDeactivationError = nil
 
-        try audioSession.activateForRecording()
+        var didActivateSession = false
+        var didInstallTap = false
+        var engine: (any VoiceAudioEngineManaging)?
 
-        let engine = AVAudioEngine()
-        let inputNode = engine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
-        let targetFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: targetSampleRate, channels: 1, interleaved: false)!
-        let converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+        do {
+            try audioSession.activateForRecording()
+            didActivateSession = true
 
-        guard let converter else {
-            throw RecordingError.converterUnavailable
+            let captureEngine = makeEngine()
+            engine = captureEngine
+            let inputFormat = captureEngine.inputFormat
+            let targetFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: targetSampleRate, channels: 1, interleaved: false)!
+            let converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+
+            guard let converter else {
+                throw RecordingError.converterUnavailable
+            }
+
+            self.audioEngine = captureEngine
+            self.converter = converter
+
+            captureEngine.installTap(bufferSize: 1024, format: inputFormat) { [weak self] buffer in
+                self?.handleBuffer(buffer, inputFormat: inputFormat, targetFormat: targetFormat)
+            }
+            didInstallTap = true
+
+            captureEngine.prepare()
+            try captureEngine.start()
+            isRecording = true
+        } catch {
+            if didInstallTap {
+                engine?.removeTap()
+            }
+            engine?.stop()
+            audioEngine = nil
+            converter = nil
+            audioLevel = 0
+            recordingDuration = 0
+            recordedSamples.removeAll(keepingCapacity: false)
+
+            if didActivateSession {
+                do {
+                    try audioSession.deactivateAfterRecording()
+                } catch {
+                    lastSessionDeactivationError = error
+                }
+            }
+
+            throw error
         }
-
-        self.audioEngine = engine
-        self.converter = converter
-
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-            self?.handleBuffer(buffer, inputFormat: inputFormat, targetFormat: targetFormat)
-        }
-
-        engine.prepare()
-        try engine.start()
-        isRecording = true
     }
 
     func stop() async -> [Float] {
@@ -88,7 +171,7 @@ final class AudioCaptureService: ObservableObject, VoiceAudioCapturing {
         isRecording = false
 
         if let engine = audioEngine {
-            engine.inputNode.removeTap(onBus: 0)
+            engine.removeTap()
             engine.stop()
         }
 
