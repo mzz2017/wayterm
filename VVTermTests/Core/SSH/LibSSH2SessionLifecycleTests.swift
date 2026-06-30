@@ -12,11 +12,25 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         await KnownHostsStore.shared.remove(host: "ssh.example.com", port: 22)
+        await trustTestHostKey()
     }
 
     override func tearDown() async throws {
         await KnownHostsStore.shared.remove(host: "ssh.example.com", port: 22)
         try await super.tearDown()
+    }
+
+    private func trustTestHostKey() async {
+        await KnownHostsStore.shared.save(
+            entry: KnownHostsManager.Entry(
+                host: "ssh.example.com",
+                port: 22,
+                fingerprint: "SHA256:test-host-key",
+                keyType: 1,
+                addedAt: Date(),
+                lastSeenAt: Date()
+            )
+        )
     }
 
     func testRuntimeInitializationStateRunsInitializerOnlyOnceAcrossConcurrentCallers() throws {
@@ -211,6 +225,53 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         } catch {
             XCTFail("Expected SSHError.authenticationFailed, got \(error)")
         }
+    }
+
+    func testNewHostKeyRequiresExplicitTrustBeforeAuthentication() async {
+        // Given a server with no previously trusted host key entry.
+        await KnownHostsStore.shared.remove(host: "ssh.example.com", port: 22)
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When the server presents a first-use host key before authentication.
+        do {
+            try await session.connect()
+            XCTFail("Expected first-use host key to require explicit trust before auth")
+        } catch SSHError.hostKeyVerificationFailed {
+            // Then the connection fails closed until the user approves trust.
+        } catch {
+            XCTFail("Expected SSHError.hostKeyVerificationFailed, got \(error)")
+        }
+
+        let trustedEntry = await KnownHostsStore.shared.entry(for: "ssh.example.com", port: 22)
+        XCTAssertNil(
+            trustedEntry,
+            "First-use host key verification must not persist trust without an explicit user approval"
+        )
+    }
+
+    func testApprovedNewHostKeyPersistsTrustAndAuthenticates() async throws {
+        // Given a user has explicitly approved trusting the next presented key
+        // for a host with no saved entry.
+        await KnownHostsStore.shared.remove(host: "ssh.example.com", port: 22)
+        await KnownHostsStore.shared.approveNextPresentedKey(host: "ssh.example.com", port: 22)
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When SSH connects and receives the first-use host key.
+        try await session.connect()
+
+        // Then the approval is consumed to persist trust and auth can proceed.
+        let trustedEntry = await KnownHostsStore.shared.entry(for: "ssh.example.com", port: 22)
+        XCTAssertEqual(trustedEntry?.fingerprint, "SHA256:test-host-key")
     }
 
     func testKeyboardInteractiveAuthUsesSessionOwnedContext() async throws {

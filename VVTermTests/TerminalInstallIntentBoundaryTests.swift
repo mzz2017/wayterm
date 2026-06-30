@@ -19,7 +19,7 @@ struct TerminalInstallIntentBoundaryTests {
         )
         let installAlerts = try slice(
             startingAt: ".alert(\"Install tmux?\"",
-            endingBefore: ".alert(\"Replace Trusted Host?\"",
+            endingBefore: ".alert(\"Trust SSH Host Key?\"",
             in: source
         )
         let moshRequestHelper = try slice(
@@ -61,7 +61,7 @@ struct TerminalInstallIntentBoundaryTests {
         )
         let installAlerts = try slice(
             startingAt: ".alert(\"Install tmux?\"",
-            endingBefore: ".alert(\"Replace Trusted Host?\"",
+            endingBefore: ".alert(\"Trust SSH Host Key?\"",
             in: source
         )
         let moshRequestHelper = try slice(

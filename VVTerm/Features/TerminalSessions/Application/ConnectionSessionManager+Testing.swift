@@ -265,10 +265,10 @@ extension ConnectionSessionManager {
         moshService = service
     }
 
-    func setKnownHostRemoverForTesting(
-        _ remover: @escaping KnownHostRemover
+    func setKnownHostTrustApproverForTesting(
+        _ approver: @escaping KnownHostTrustApprover
     ) {
-        knownHostRemover = remover
+        knownHostTrustApprover = approver
     }
 
     func setWorkingDirectoryServiceForTesting(_ service: any TerminalWorkingDirectoryApplying) {

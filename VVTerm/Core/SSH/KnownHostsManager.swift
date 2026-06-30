@@ -100,6 +100,7 @@ actor KnownHostsStore {
 
     private let defaults: UserDefaults
     private let storageKey: String
+    private var pendingTrustApprovalKeys: Set<String> = []
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "KnownHosts")
 
     init(
@@ -129,15 +130,25 @@ actor KnownHostsStore {
         saveAll(entries)
     }
 
+    func approveNextPresentedKey(host: String, port: Int) {
+        pendingTrustApprovalKeys.insert(hostKey(host: host, port: port))
+    }
+
+    func consumeNextPresentedKeyApproval(host: String, port: Int) -> Bool {
+        pendingTrustApprovalKeys.remove(hostKey(host: host, port: port)) != nil
+    }
+
     func remove(host: String, port: Int) {
         var entries = loadAll()
         let key = hostKey(host: host, port: port)
+        pendingTrustApprovalKeys.remove(key)
         guard entries.removeValue(forKey: key) != nil else { return }
         saveAll(entries)
         logger.info("Removed known host entry for \(host):\(port)")
     }
 
     func removeAll() {
+        pendingTrustApprovalKeys.removeAll()
         defaults.removeObject(forKey: storageKey)
         logger.info("Removed all known host entries")
     }
@@ -219,5 +230,18 @@ nonisolated struct KnownHostVerificationService: Sendable {
             lastSeenAt: Date()
         )
         await store.save(entry: entry)
+    }
+
+    func trustIfApproved(
+        host: String,
+        port: Int,
+        fingerprint: String,
+        keyType: Int
+    ) async -> Bool {
+        guard await store.consumeNextPresentedKeyApproval(host: host, port: port) else {
+            return false
+        }
+        await trust(host: host, port: port, fingerprint: fingerprint, keyType: keyType)
+        return true
     }
 }

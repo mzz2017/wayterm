@@ -30,7 +30,7 @@ final class ConnectionSessionManager: ObservableObject {
     typealias LastConnectedUpdater = @MainActor (Server) async -> Void
     typealias IsProProvider = @MainActor () -> Bool
     typealias CredentialsProvider = @MainActor (Server) async throws -> ServerCredentials
-    typealias KnownHostRemover = @MainActor (_ host: String, _ port: Int) async -> Void
+    typealias KnownHostTrustApprover = @MainActor (_ host: String, _ port: Int) async -> Void
     typealias LiveActivityRefresher = @MainActor ([TerminalLiveActivitySnapshot]) -> Void
     typealias SuccessfulConnectionRecorder = @MainActor (_ id: UUID, _ transport: String) -> Void
     typealias TerminalSessionEndRecorder = @MainActor (_ otherTerminalsActive: Bool, _ isPro: Bool) -> Void
@@ -47,7 +47,7 @@ final class ConnectionSessionManager: ObservableObject {
         var tmuxService: any TerminalTmuxServicing
         var tmuxPreferences: any TmuxAttachPreferenceProviding
         var moshService: any TerminalMoshServicing
-        var knownHostRemover: KnownHostRemover
+        var knownHostTrustApprover: KnownHostTrustApprover
         var workingDirectoryService: any TerminalWorkingDirectoryApplying
         var liveActivityRefresher: LiveActivityRefresher
         var successfulConnectionRecorder: SuccessfulConnectionRecorder
@@ -276,9 +276,9 @@ final class ConnectionSessionManager: ObservableObject {
         get { dependencies.moshService }
         set { updateDependencies { $0.moshService = newValue } }
     }
-    var knownHostRemover: KnownHostRemover {
-        get { dependencies.knownHostRemover }
-        set { updateDependencies { $0.knownHostRemover = newValue } }
+    var knownHostTrustApprover: KnownHostTrustApprover {
+        get { dependencies.knownHostTrustApprover }
+        set { updateDependencies { $0.knownHostTrustApprover = newValue } }
     }
     var workingDirectoryService: any TerminalWorkingDirectoryApplying {
         get { dependencies.workingDirectoryService }

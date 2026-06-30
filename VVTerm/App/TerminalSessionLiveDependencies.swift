@@ -35,8 +35,9 @@ extension ConnectionSessionManager.Dependencies {
             tmuxService: RemoteTmuxManager.shared,
             tmuxPreferences: UserDefaultsTmuxAttachPreferences(),
             moshService: RemoteMoshManager.shared,
-            knownHostRemover: { host, port in
+            knownHostTrustApprover: { host, port in
                 await KnownHostsStore.shared.remove(host: host, port: port)
+                await KnownHostsStore.shared.approveNextPresentedKey(host: host, port: port)
             },
             workingDirectoryService: TerminalWorkingDirectoryService(),
             liveActivityRefresher: { snapshots in
@@ -87,8 +88,9 @@ extension TerminalTabManager.Dependencies {
             tmuxService: RemoteTmuxManager.shared,
             tmuxPreferences: UserDefaultsTmuxAttachPreferences(),
             moshService: RemoteMoshManager.shared,
-            knownHostRemover: { host, port in
+            knownHostTrustApprover: { host, port in
                 await KnownHostsStore.shared.remove(host: host, port: port)
+                await KnownHostsStore.shared.approveNextPresentedKey(host: host, port: port)
             },
             workingDirectoryService: TerminalWorkingDirectoryService(),
             successfulConnectionRecorder: { id, transport in

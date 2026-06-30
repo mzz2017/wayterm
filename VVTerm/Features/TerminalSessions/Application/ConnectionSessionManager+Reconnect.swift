@@ -291,7 +291,7 @@ extension ConnectionSessionManager {
 
     func retrustHostAndReconnect(session: ConnectionSession, server: Server) async -> Bool {
         guard canRunSessionHostRetrust(session: session, server: server) else { return false }
-        await knownHostRemover(server.host, server.port)
+        await knownHostTrustApprover(server.host, server.port)
         guard canRunSessionHostRetrust(session: session, server: server) else { return false }
         do {
             try await reconnect(session: session)

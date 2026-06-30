@@ -138,7 +138,7 @@ extension TerminalTabManager {
 
     func retrustHostAndReconnect(paneId: UUID, server: Server) async -> Bool {
         guard canRunPaneHostRetrust(paneId: paneId, server: server) else { return false }
-        await knownHostRemover(server.host, server.port)
+        await knownHostTrustApprover(server.host, server.port)
         guard canRunPaneHostRetrust(paneId: paneId, server: server) else { return false }
         await reconnectPane(paneId)
         return true

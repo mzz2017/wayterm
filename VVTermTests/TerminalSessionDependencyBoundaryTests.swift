@@ -218,14 +218,14 @@ struct TerminalSessionDependencyBoundaryTests {
 
         // Given changed-host-key recovery must remove the stale trusted host
         // entry before retrying the SSH lifecycle.
-        #expect(connectionManagerSource.contains("typealias KnownHostRemover"))
-        #expect(tabManagerSource.contains("typealias KnownHostRemover"))
-        #expect(connectionManagerSource.contains("knownHostRemover: KnownHostRemover"))
-        #expect(tabManagerSource.contains("knownHostRemover: KnownHostRemover"))
-        #expect(connectionReconnectSource.contains("await knownHostRemover(server.host, server.port)"))
-        #expect(tabReconnectSource.contains("await knownHostRemover(server.host, server.port)"))
-        #expect(connectionTestingSource.contains("func setKnownHostRemoverForTesting"))
-        #expect(tabTestingSource.contains("func setKnownHostRemoverForTesting"))
+        #expect(connectionManagerSource.contains("typealias KnownHostTrustApprover"))
+        #expect(tabManagerSource.contains("typealias KnownHostTrustApprover"))
+        #expect(connectionManagerSource.contains("knownHostTrustApprover: KnownHostTrustApprover"))
+        #expect(tabManagerSource.contains("knownHostTrustApprover: KnownHostTrustApprover"))
+        #expect(connectionReconnectSource.contains("await knownHostTrustApprover(server.host, server.port)"))
+        #expect(tabReconnectSource.contains("await knownHostTrustApprover(server.host, server.port)"))
+        #expect(connectionTestingSource.contains("func setKnownHostTrustApproverForTesting"))
+        #expect(tabTestingSource.contains("func setKnownHostTrustApproverForTesting"))
 
         // Then TerminalSessions does not reach directly into Core's known-hosts
         // actor except through the App-composed live adapter.

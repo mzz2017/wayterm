@@ -49,7 +49,7 @@ enum SSHError: LocalizedError {
         case .channelOpenFailed: return "Failed to open channel"
         case .shellRequestFailed: return "Failed to request shell"
         case .hostKeyVerificationFailed:
-            return "Host key verification failed. The saved SSH host fingerprint does not match the server's current key."
+            return "Host key verification failed. Trust this host key only if you recognize the server."
         case .socketError(let msg): return "Socket error: \(msg)"
         case .libssh2(let error):
             let detail = error.message ?? "code \(error.code)"

@@ -55,7 +55,7 @@ struct TerminalPaneView: View {
     private var retrustHostConfirmationMessage: String {
         let endpoint = "\(server.host):\(server.port)"
         return String(
-            format: String(localized: "VVTerm saved a different SSH host key for %@. Only continue if you recreated this server or trust the new host."),
+            format: String(localized: "VVTerm will trust the SSH host key presented by %@ on the next reconnect. Only continue if you recognize this server."),
             endpoint
         )
     }
@@ -309,9 +309,9 @@ struct TerminalPaneView: View {
         } message: {
             Text("Mosh is selected for this server, but mosh-server is missing on the host.")
         }
-        .alert("Replace Trusted Host?", isPresented: $showingRetrustHostConfirmation) {
+        .alert("Trust SSH Host Key?", isPresented: $showingRetrustHostConfirmation) {
             Button("Cancel", role: .cancel) { }
-            Button("Replace and Reconnect", role: .destructive) {
+            Button("Trust and Reconnect", role: .destructive) {
                 retrustHostAndRetry()
             }
         } message: {

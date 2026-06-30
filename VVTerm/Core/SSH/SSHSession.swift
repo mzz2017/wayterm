@@ -257,13 +257,16 @@ actor SSHSession {
         case .trusted:
             logger.info("Host key verified for \(host):\(port)")
         case .newHost:
-            await verifier.trust(
+            guard await verifier.trustIfApproved(
                 host: host,
                 port: port,
                 fingerprint: fingerprint,
                 keyType: keyType
-            )
-            logger.info("Trusted new host key for \(host):\(port) (\(fingerprint))")
+            ) else {
+                logger.error("Host key trust required for \(host):\(port) (\(fingerprint))")
+                throw SSHError.hostKeyVerificationFailed
+            }
+            logger.info("Trusted approved host key for \(host):\(port) (\(fingerprint))")
         case .changed(let knownFingerprint, let presentedFingerprint):
             logger.error("Host key mismatch for \(host):\(port). Known: \(knownFingerprint), Presented: \(presentedFingerprint)")
             throw SSHError.hostKeyVerificationFailed
