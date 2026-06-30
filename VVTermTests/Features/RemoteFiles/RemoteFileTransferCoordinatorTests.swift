@@ -135,6 +135,56 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func downloadDirectoryCancellationDoesNotExposePartialDestinationTree() async throws {
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            serverProvider: { _ in nil }
+        )
+        let downloadBlocker = RemoteFileDownloadBlocker(blockedPath: "/remote/first.txt")
+        let service = RecordingRemoteFileService(
+            directoryContents: [
+                "/remote": [
+                    makeEntry(name: "first.txt", path: "/remote/first.txt", type: .file),
+                    makeEntry(name: "second.txt", path: "/remote/second.txt", type: .file)
+                ]
+            ],
+            downloadBlocker: downloadBlocker,
+            downloadData: Data("partial-child".utf8)
+        )
+        let parentURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RemoteFileTransferCoordinatorTests-\(UUID().uuidString)", isDirectory: true)
+        let destinationURL = parentURL.appendingPathComponent("remote", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: parentURL) }
+
+        // Given a recursive directory download is writing into the first child.
+        let task = Task {
+            try await store.downloadItem(
+                makeEntry(name: "remote", path: "/remote", type: .directory),
+                to: destinationURL,
+                using: service
+            )
+        }
+        await downloadBlocker.waitUntilStarted()
+
+        // When cancellation arrives before the full directory tree completes.
+        task.cancel()
+        await downloadBlocker.release()
+
+        // Then no partial user-visible destination tree is left behind.
+        do {
+            try await task.value
+            Issue.record("Expected recursive directory download to stop after cancellation")
+        } catch is CancellationError {
+            #expect(
+                !FileManager.default.fileExists(atPath: destinationURL.path),
+                "Canceled directory downloads must not expose a partial final destination tree."
+            )
+        } catch {
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+    }
+
+    @Test
     func copyFileCancellationStopsAfterSourceDownloadBeforeDestinationUpload() async throws {
         let store = RemoteFileBrowserStore(
             persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
@@ -520,6 +570,18 @@ private actor RecordingRemoteFileLocalFileService: RemoteFileLocalFileServicing 
     }
 
     func createDirectory(at url: URL) async throws {}
+
+    func removeItem(at url: URL) async throws {
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    func replaceItem(at destinationURL: URL, withItemAt sourceURL: URL) async throws {
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            _ = try FileManager.default.replaceItemAt(destinationURL, withItemAt: sourceURL)
+        } else {
+            try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
+        }
+    }
 
     func withSecurityScopedAccess<T>(
         to urls: [URL],

@@ -519,7 +519,31 @@ extension RemoteFileBrowserStore {
         let effectiveEntry = try await resolvedTransferEntry(for: entry, using: service)
 
         if effectiveEntry.type == .directory {
-            try await createLocalDirectory(at: localURL)
+            let temporaryURL = try await makeAtomicDirectoryDownloadURL(for: localURL)
+            do {
+                try await createLocalDirectory(at: temporaryURL)
+                try await downloadDirectoryContents(
+                    of: entry,
+                    to: temporaryURL,
+                    using: service
+                )
+                try Task.checkCancellation()
+                try await localFileService.replaceItem(at: localURL, withItemAt: temporaryURL)
+            } catch {
+                try? await localFileService.removeItem(at: temporaryURL)
+                throw error
+            }
+            return
+        }
+
+        try await service.downloadFile(at: entry.path, to: localURL)
+    }
+
+    private func downloadDirectoryContents(
+        of entry: RemoteFileEntry,
+        to localURL: URL,
+        using service: any RemoteFileService
+    ) async throws {
             let children = try await service.listDirectory(at: entry.path, maxEntries: nil)
             for child in children {
                 try Task.checkCancellation()
@@ -529,10 +553,15 @@ extension RemoteFileBrowserStore {
                 )
                 try await downloadItem(child, to: childURL, using: service)
             }
-            return
-        }
+    }
 
-        try await service.downloadFile(at: entry.path, to: localURL)
+    private func makeAtomicDirectoryDownloadURL(for destinationURL: URL) async throws -> URL {
+        let parentURL = destinationURL.deletingLastPathComponent()
+        try await createLocalDirectory(at: parentURL)
+        return parentURL.appendingPathComponent(
+            ".\(destinationURL.lastPathComponent).vvterm-download-\(UUID().uuidString).tmp",
+            isDirectory: true
+        )
     }
 
     func copyRemoteEntry(

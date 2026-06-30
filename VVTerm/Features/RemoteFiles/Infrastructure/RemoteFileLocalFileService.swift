@@ -10,6 +10,8 @@ protocol RemoteFileLocalFileServicing: Sendable {
     func itemInfo(at url: URL) async throws -> RemoteFileLocalItemInfo
     func directoryContents(at url: URL) async throws -> [URL]
     func createDirectory(at url: URL) async throws
+    func removeItem(at url: URL) async throws
+    func replaceItem(at destinationURL: URL, withItemAt sourceURL: URL) async throws
     func withSecurityScopedAccess<T>(
         to urls: [URL],
         operation: () async throws -> T
@@ -50,6 +52,23 @@ nonisolated struct RemoteFileLocalFileService: RemoteFileLocalFileServicing {
     func createDirectory(at url: URL) async throws {
         try await Task.detached(priority: .utility) {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }.value
+    }
+
+    func removeItem(at url: URL) async throws {
+        try await Task.detached(priority: .utility) {
+            try FileManager.default.removeItem(at: url)
+        }.value
+    }
+
+    func replaceItem(at destinationURL: URL, withItemAt sourceURL: URL) async throws {
+        try await Task.detached(priority: .utility) {
+            let fileManager = FileManager.default
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                _ = try fileManager.replaceItemAt(destinationURL, withItemAt: sourceURL)
+            } else {
+                try fileManager.moveItem(at: sourceURL, to: destinationURL)
+            }
         }.value
     }
 
