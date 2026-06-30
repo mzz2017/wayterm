@@ -321,15 +321,15 @@ struct TerminalRichPasteUploadRequestTests {
                     for: session.id
                 )
             )
-            await manager.waitForSessionRichPasteUploadRequest(secondID)
 
             // Then visible request state belongs to the newest request while
             // the older request can still be awaited until its fake upload exits.
-            #expect(!manager.pendingSessionRichPasteUploadRequestIDs.contains(secondID))
+            #expect(manager.pendingSessionRichPasteUploadRequestIDs.contains(secondID))
             #expect(manager.pendingSessionRichPasteUploadRequestIDs.contains(firstID))
 
             await firstGate.open()
             await manager.waitForSessionRichPasteUploadRequest(firstID)
+            await manager.waitForSessionRichPasteUploadRequest(secondID)
 
             let events = await recorder.events()
             #expect(events.contains("input-\(RemoteTerminalBootstrap.posixPastedPath("/tmp/new.png"))"))
@@ -396,12 +396,14 @@ struct TerminalRichPasteUploadRequestTests {
                     }
                 )
             )
-            await recorder.waitForEvent("second-progress-second-progress")
+
+            #expect(manager.pendingSessionRichPasteUploadRequestIDs.contains(firstID))
+            #expect(manager.pendingSessionRichPasteUploadRequestIDs.contains(secondID))
 
             // And the older cancelled task finally unwinds while the newer
             // request is still visible.
             await firstGate.open()
-            await manager.waitForSessionRichPasteUploadRequest(firstID)
+            await recorder.waitForEvent("second-start")
 
             // Then stale callbacks from the old request must not clear the UI
             // notice owned by the newer request.
@@ -410,10 +412,13 @@ struct TerminalRichPasteUploadRequestTests {
                 !events.contains("first-progress-nil"),
                 "A superseded rich-paste request must not send progress cleanup after a newer request owns visible progress."
             )
-            #expect(manager.pendingSessionRichPasteUploadRequestIDs == [secondID])
+            #expect(manager.pendingSessionRichPasteUploadRequestIDs.contains(secondID))
+            #expect(manager.pendingSessionRichPasteUploadRequestIDs.contains(firstID))
 
             await secondGate.open()
             await manager.waitForSessionRichPasteUploadRequest(secondID)
+            await manager.waitForSessionRichPasteUploadRequest(firstID)
+            #expect(manager.pendingSessionRichPasteUploadRequestIDs.isEmpty)
         }
     }
 
