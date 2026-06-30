@@ -1,4 +1,5 @@
 import XCTest
+import StoreKit
 @testable import VVTerm
 
 // Test Context:
@@ -21,5 +22,16 @@ final class StoreStateTests: XCTestCase {
         let error = StoreError.purchaseFailed("network")
 
         XCTAssertEqual(error.errorDescription, "Purchase failed: network")
+    }
+
+    func testSubscriptionRenewalStateAccessPolicyOnlyEntitlesActiveServiceStates() {
+        XCTAssertTrue(StoreSubscriptionAccessPolicy.grantsAccess(for: .subscribed))
+        XCTAssertTrue(StoreSubscriptionAccessPolicy.grantsAccess(for: .inGracePeriod))
+        XCTAssertFalse(
+            StoreSubscriptionAccessPolicy.grantsAccess(for: .inBillingRetryPeriod),
+            "Billing retry without another current entitlement must not unlock Pro access."
+        )
+        XCTAssertFalse(StoreSubscriptionAccessPolicy.grantsAccess(for: .expired))
+        XCTAssertFalse(StoreSubscriptionAccessPolicy.grantsAccess(for: .revoked))
     }
 }

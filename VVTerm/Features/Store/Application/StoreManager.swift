@@ -387,7 +387,7 @@ final class StoreManager: ObservableObject {
             if !hasAccess {
                 for status in statuses {
                     if case .verified = status.transaction,
-                       status.state == .inBillingRetryPeriod || status.state == .inGracePeriod {
+                       StoreSubscriptionAccessPolicy.grantsAccess(for: status.state) {
                         hasAccess = true
                         break
                     }
