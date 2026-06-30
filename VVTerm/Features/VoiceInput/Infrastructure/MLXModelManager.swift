@@ -29,12 +29,19 @@ enum MLXModelKind: String, CaseIterable, Identifiable {
 
 @MainActor
 final class MLXModelManager: NSObject, ObservableObject {
+    struct DownloadContext: Equatable {
+        let kind: MLXModelKind
+        let modelId: String
+    }
+
     struct DownloadProgress: Equatable {
         var fraction: Double
         var bytesDownloaded: Int64
         var totalBytes: Int64
         var estimatedSecondsRemaining: Int?
     }
+
+    typealias DownloadOperation = @MainActor @Sendable (DownloadContext) async throws -> Void
 
     enum DownloadState: Equatable {
         case idle
@@ -69,15 +76,18 @@ final class MLXModelManager: NSObject, ObservableObject {
     private var lastRepoSizeModelId: String?
     private var isCleanedUp = false
     private let modelSizeProvider: any MLXModelSizing
+    private let downloadOperation: DownloadOperation?
 
     init(
         kind: MLXModelKind,
         modelId: String,
-        modelSizeProvider: any MLXModelSizing = NoopMLXModelSizer()
+        modelSizeProvider: any MLXModelSizing = NoopMLXModelSizer(),
+        downloadOperation: DownloadOperation? = nil
     ) {
         self.kind = kind
         self.modelId = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
         self.modelSizeProvider = modelSizeProvider
+        self.downloadOperation = downloadOperation
         super.init()
         session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
     }
@@ -174,15 +184,14 @@ final class MLXModelManager: NSObject, ObservableObject {
         if case .downloading = state { return }
 
         let modelId = normalizedModelId
+        let downloadDirectory = Self.modelDirectory(for: kind, modelId: modelId)
         guard !modelId.isEmpty else {
             state = .failed(String(localized: "Model ID is required"))
             return
         }
 
         do {
-            try FileManager.default.createDirectory(at: modelDirectory, withIntermediateDirectories: true)
-
-            let items = try await resolveDownloadItems()
+            try FileManager.default.createDirectory(at: downloadDirectory, withIntermediateDirectories: true)
 
             completedBytes = 0
             currentFileBytes = 0
@@ -190,20 +199,36 @@ final class MLXModelManager: NSObject, ObservableObject {
             downloadStartTime = Date()
             state = .downloading(DownloadProgress(fraction: 0, bytesDownloaded: 0, totalBytes: expectedTotalBytes, estimatedSecondsRemaining: nil))
 
+            if let downloadOperation {
+                try await downloadOperation(DownloadContext(kind: kind, modelId: modelId))
+                try validateDownloadIsCurrent(for: modelId)
+                state = .ready
+                refreshStorageUsage()
+                return
+            }
+
+            let items = try await resolveDownloadItems(modelId: modelId, modelDirectory: downloadDirectory)
+            try validateDownloadIsCurrent(for: modelId)
+
             for item in items {
                 currentFileBytes = 0
                 try await download(item)
+                try validateDownloadIsCurrent(for: modelId)
                 completedBytes += currentFileBytes
             }
 
             state = .ready
             refreshStorageUsage()
         } catch is CancellationError {
-            state = .idle
-            refreshStorageUsage()
+            if isDownloadCurrent(for: modelId) {
+                state = .idle
+                refreshStorageUsage()
+            }
         } catch {
             logger.error("Failed to download MLX model: \(error.localizedDescription)")
-            state = .failed(error.localizedDescription)
+            if isDownloadCurrent(for: modelId) {
+                state = .failed(error.localizedDescription)
+            }
         }
     }
 
@@ -332,13 +357,12 @@ final class MLXModelManager: NSObject, ObservableObject {
         }
     }
 
-    private func resolveDownloadItems() async throws -> [DownloadItem] {
-        let modelId = normalizedModelId
+    private func resolveDownloadItems(modelId: String, modelDirectory: URL) async throws -> [DownloadItem] {
         var configPath: String?
         var weightPaths: [String] = []
         let allowedExtensions = Self.allowedWeightExtensions(for: kind)
 
-        if let files = try? await fetchModelFiles() {
+        if let files = try? await fetchModelFiles(modelId: modelId) {
             configPath = files.first { $0.hasSuffix("config.json") }
 
             if let indexPath = files.first(where: { $0.hasSuffix(".safetensors.index.json") }) {
@@ -417,8 +441,8 @@ final class MLXModelManager: NSObject, ObservableObject {
         return items
     }
 
-    private func fetchModelFiles() async throws -> [String] {
-        let url = try MLXModelRepositoryURLBuilder.modelInfoURL(modelId: normalizedModelId)
+    private func fetchModelFiles(modelId: String) async throws -> [String] {
+        let url = try MLXModelRepositoryURLBuilder.modelInfoURL(modelId: modelId)
         let (data, _) = try await session.data(from: url)
         let info = try JSONDecoder().decode(HFModelInfo.self, from: data)
         return info.siblings.map(\.rfilename)
@@ -471,6 +495,16 @@ final class MLXModelManager: NSObject, ObservableObject {
             activeContinuation = continuation
             task.resume()
         }
+    }
+
+    private func validateDownloadIsCurrent(for modelId: String) throws {
+        guard isDownloadCurrent(for: modelId) else {
+            throw CancellationError()
+        }
+    }
+
+    private func isDownloadCurrent(for modelId: String) -> Bool {
+        !isCleanedUp && !Task.isCancelled && normalizedModelId == modelId
     }
 
     private func updateProgress(currentBytes: Int64, currentTotalBytes: Int64) {
