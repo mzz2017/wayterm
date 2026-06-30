@@ -342,7 +342,7 @@ extension TerminalTabManager {
         let logger = self.logger
         let shellGeneration = startResult.generation
 
-        let shellTask = Task.detached(priority: .userInitiated) { [weak self] in
+        await runtime.runtime.installShellTask(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             guard await terminalHandle.isAvailable() else {
                 await self.finishPaneShellTask(
@@ -434,7 +434,6 @@ extension TerminalTabManager {
                 generation: shellGeneration
             )
         }
-        await runtime.runtime.setShellTask(shellTask)
     }
 
     private func finishPaneShellTask(

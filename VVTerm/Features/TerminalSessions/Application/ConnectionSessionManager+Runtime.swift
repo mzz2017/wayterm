@@ -381,7 +381,7 @@ extension ConnectionSessionManager {
         let logger = self.logger
         let shellGeneration = startResult.generation
 
-        let shellTask = Task.detached(priority: .userInitiated) { [weak self] in
+        await runtime.runtime.installShellTask(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             guard await terminalHandle.isAvailable() else {
                 await self.finishSessionShellTask(
@@ -474,7 +474,6 @@ extension ConnectionSessionManager {
                 generation: shellGeneration
             )
         }
-        await runtime.runtime.setShellTask(shellTask)
     }
 
     private func finishSessionShellTask(

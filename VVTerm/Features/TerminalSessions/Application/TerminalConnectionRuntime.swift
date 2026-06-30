@@ -223,6 +223,16 @@ actor TerminalConnectionRuntime {
         shellTask = task
     }
 
+    func installShellTask(
+        priority: TaskPriority? = nil,
+        operation: @escaping @Sendable () async -> Void
+    ) {
+        let task = Task.detached(priority: priority) {
+            await operation()
+        }
+        shellTask = task
+    }
+
     func clearShellTask(ifUsing client: SSHClient) {
         guard let sshClient, ObjectIdentifier(sshClient) == ObjectIdentifier(client) else { return }
         shellTask = nil

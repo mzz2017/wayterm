@@ -83,6 +83,34 @@ final class TerminalConnectionRuntimeTests: XCTestCase {
         XCTAssertTrue(completedAfterRelease)
     }
 
+    func testInstallShellTaskStoresRunnerBeforeTaskBodyObservesRuntime() async throws {
+        // Given runner task creation must be owned by the runtime so close and
+        // suspend cannot observe a newly created task as untracked.
+        let runtime = TerminalConnectionRuntime(entityId: .session(UUID()))
+        let probe = TerminalConnectionRuntimeProbe()
+
+        // When the runtime creates and installs the runner task.
+        await runtime.installShellTask(priority: .userInitiated) {
+            let isTracked = await runtime.hasShellTask()
+            await probe.record(isTracked ? "tracked" : "untracked")
+        }
+        await probe.waitForCount(1)
+
+        // Then the runner body can never begin as an ownerless shell task.
+        let events = await probe.events()
+        XCTAssertEqual(
+            events,
+            ["tracked"],
+            "Runtime-created shell tasks must be tracked before their body can observe runtime state."
+        )
+
+        await runtime.closeRunner(
+            mode: .fullDisconnect,
+            closeShell: false,
+            disconnectClient: false
+        )
+    }
+
     func testSuspendWaitsForInFlightOpenTaskToExit() async throws {
         // Given an open is blocked inside the runtime-owned client.
         let fake = RecordingTerminalSSHClient(connectGate: TerminalConnectionRuntimeGate())
@@ -194,5 +222,37 @@ private actor TerminalConnectionRuntimeFlag {
 
     func isMarked() -> Bool {
         marked
+    }
+}
+
+private actor TerminalConnectionRuntimeProbe {
+    private var recordedEvents: [String] = []
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func record(_ event: String) {
+        recordedEvents.append(event)
+        resumeReadyContinuations()
+    }
+
+    func events() -> [String] {
+        recordedEvents
+    }
+
+    func waitForCount(_ count: Int) async {
+        if recordedEvents.count >= count { return }
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+        if recordedEvents.count < count {
+            await waitForCount(count)
+        }
+    }
+
+    private func resumeReadyContinuations() {
+        let ready = continuations
+        continuations.removeAll()
+        for continuation in ready {
+            continuation.resume()
+        }
     }
 }
