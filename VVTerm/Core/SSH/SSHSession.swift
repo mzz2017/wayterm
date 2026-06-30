@@ -55,10 +55,23 @@ actor SSHSession {
         socket = -1
         connectedPeerAddress = nil
 
-        let connectedSocket = try driver.connectSocket(host: config.dialHost, port: config.dialPort)
+        let connectedSocket = try driver.connectSocket(
+            host: config.dialHost,
+            port: config.dialPort,
+            timeout: config.connectionTimeout
+        )
         socket = connectedSocket.descriptor
         connectedPeerAddress = connectedSocket.peerAddress
         driver.configureInteractiveSocket(socket)
+
+        do {
+            try Task.checkCancellation()
+        } catch {
+            driver.closeSocket(socket)
+            socket = -1
+            connectedPeerAddress = nil
+            throw error
+        }
 
         // Create libssh2 session (use _ex variant since macros not available in Swift)
         // libssh2 stores this abstract pointer on the session and passes it back

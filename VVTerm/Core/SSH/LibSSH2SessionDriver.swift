@@ -99,7 +99,7 @@ typealias LibSSH2KeyboardInteractiveCallback = @convention(c) (
 
 protocol LibSSH2SessionDriving: Sendable {
     nonisolated func ensureRuntimeInitialized() throws
-    nonisolated func connectSocket(host: String, port: Int) throws -> LibSSH2ConnectedSocket
+    nonisolated func connectSocket(host: String, port: Int, timeout: TimeInterval) throws -> LibSSH2ConnectedSocket
     nonisolated func configureInteractiveSocket(_ socket: Int32)
     nonisolated func closeSocket(_ socket: Int32)
     nonisolated func makeSession(abstract: UnsafeMutableRawPointer?) -> OpaquePointer?
@@ -219,7 +219,7 @@ nonisolated struct LibSSH2SessionDriver: LibSSH2SessionDriving {
         try LibSSH2Runtime.ensureInitialized()
     }
 
-    nonisolated func connectSocket(host: String, port: Int) throws -> LibSSH2ConnectedSocket {
+    nonisolated func connectSocket(host: String, port: Int, timeout: TimeInterval) throws -> LibSSH2ConnectedSocket {
         var hints = addrinfo()
         hints.ai_family = AF_UNSPEC
         hints.ai_socktype = SOCK_STREAM
@@ -248,21 +248,81 @@ nonisolated struct LibSSH2SessionDriver: LibSSH2SessionDriving {
                 continue
             }
 
-            let connectResult = Darwin.connect(candidateSocket, current.pointee.ai_addr, current.pointee.ai_addrlen)
-            if connectResult == 0 {
+            let connectError = connectNonBlocking(
+                socket: candidateSocket,
+                address: current.pointee.ai_addr,
+                addressLength: current.pointee.ai_addrlen,
+                timeout: timeout
+            )
+            if connectError == 0 {
                 return LibSSH2ConnectedSocket(
                     descriptor: candidateSocket,
                     peerAddress: resolveNumericPeerAddress(for: candidateSocket)
                 )
             }
 
-            lastConnectError = errno
+            lastConnectError = connectError
             Darwin.close(candidateSocket)
             candidate = current.pointee.ai_next
         }
 
+        if lastConnectError == ETIMEDOUT {
+            throw SSHError.timeout
+        }
         let message = lastConnectError == 0 ? "Unknown connect failure" : String(cString: strerror(lastConnectError))
         throw SSHError.connectionFailed("Failed to connect: \(message)")
+    }
+
+    private nonisolated func connectNonBlocking(
+        socket: Int32,
+        address: UnsafePointer<sockaddr>,
+        addressLength: socklen_t,
+        timeout: TimeInterval
+    ) -> Int32 {
+        let originalFlags = fcntl(socket, F_GETFL, 0)
+        if originalFlags >= 0 {
+            _ = fcntl(socket, F_SETFL, originalFlags | O_NONBLOCK)
+        }
+
+        let connectResult = Darwin.connect(socket, address, addressLength)
+        if connectResult == 0 {
+            if originalFlags >= 0 {
+                _ = fcntl(socket, F_SETFL, originalFlags)
+            }
+            return 0
+        }
+
+        guard errno == EINPROGRESS else {
+            return errno
+        }
+
+        var pollDescriptor = pollfd(fd: socket, events: Int16(POLLOUT), revents: 0)
+        let timeoutMilliseconds = max(1, min(Int(timeout * 1000), Int(Int32.max)))
+        while true {
+            let pollResult = poll(&pollDescriptor, 1, Int32(timeoutMilliseconds))
+            if pollResult == 0 {
+                return ETIMEDOUT
+            }
+            if pollResult < 0 {
+                if errno == EINTR {
+                    continue
+                }
+                return errno
+            }
+
+            var socketError: Int32 = 0
+            var socketErrorLength = socklen_t(MemoryLayout<Int32>.size)
+            guard getsockopt(socket, SOL_SOCKET, SO_ERROR, &socketError, &socketErrorLength) == 0 else {
+                return errno
+            }
+            if socketError == 0 {
+                if originalFlags >= 0 {
+                    _ = fcntl(socket, F_SETFL, originalFlags)
+                }
+                return 0
+            }
+            return socketError
+        }
     }
 
     nonisolated func configureInteractiveSocket(_ socket: Int32) {

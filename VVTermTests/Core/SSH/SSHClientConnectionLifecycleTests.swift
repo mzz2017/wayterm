@@ -220,6 +220,56 @@ final class SSHClientConnectionLifecycleTests: XCTestCase {
         _ = await connectTask.result
     }
 
+    func testConnectUsesBoundedSocketDialTimeout() async throws {
+        // Given the low-level TCP dialer does not return a connected socket
+        // before the client-level connect timeout.
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            connectSocketBehavior: .timeout
+        )
+        let client = SSHClient(
+            sessionFactory: { config in
+                SSHSession(config: config, driver: driver)
+            },
+            connectTimeout: .milliseconds(80)
+        )
+        let target = SSHConnectionTarget(host: "ssh.example.com", username: "root")
+        let credentials = ServerCredentials(
+            serverId: UUID(),
+            password: "secret",
+            privateKey: nil,
+            publicKey: nil,
+            passphrase: nil,
+            cloudflareClientID: nil,
+            cloudflareClientSecret: nil
+        )
+        let startedAt = ContinuousClock.now
+
+        // When SSHClient starts a connection that stalls before libssh2 has a
+        // socket-backed session to abort.
+        do {
+            _ = try await client.connect(to: target, credentials: credentials)
+            XCTFail("Expected socket dial timeout to fail SSHClient.connect")
+        } catch SSHError.timeout {
+            // Then the configured connect timeout is enforced by the socket
+            // dialer instead of relying on cancellation of a blocking connect.
+        } catch {
+            XCTFail("Expected SSHError.timeout, got \(error)")
+        }
+
+        let elapsed = startedAt.duration(to: .now)
+        XCTAssertLessThan(
+            elapsed,
+            .milliseconds(500),
+            "SSHClient.connect should return on its configured socket dial timeout, not on the OS TCP timeout."
+        )
+        XCTAssertEqual(
+            driver.connectSocketTimeouts().map { Int(($0 * 1000).rounded()) },
+            [80],
+            "SSHClient should pass its connect timeout into the low-level socket dialer."
+        )
+    }
+
     func testStartShellRejectsAfterClientAbortBeforeReadingSession() async throws {
         // Given SSHClient owns a connected SSHSession whose shell startup would
         // otherwise succeed.
@@ -242,7 +292,7 @@ final class SSHClientConnectionLifecycleTests: XCTestCase {
             cloudflareClientSecret: nil
         )
 
-        try await client.connect(to: target, credentials: credentials)
+        _ = try await client.connect(to: target, credentials: credentials)
         client.abort()
 
         // When shell startup is requested after disconnect intent has already

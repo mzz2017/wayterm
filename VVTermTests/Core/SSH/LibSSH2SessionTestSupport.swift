@@ -87,6 +87,11 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
         case waitForSocketClose
     }
 
+    enum ConnectSocketBehavior {
+        case succeed
+        case timeout
+    }
+
     enum AuthResult {
         case success
         case rejected
@@ -159,6 +164,7 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
 
     private let sessionInitResult: OpaquePointer?
     private let connectedSocket: Int32
+    private let connectSocketBehavior: ConnectSocketBehavior
     private let handshakeBehavior: HandshakeBehavior
     private let authMethodsResult: AuthMethodsResult
     private let publicKeyAuthResult: AuthResult
@@ -197,10 +203,12 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
     private var sessionAbstractPointer: UnsafeMutableRawPointer?
     private var keyboardInteractiveResponseLog: [String] = []
     private var keyboardInteractiveResponseBufferLog: [KeyboardInteractiveResponseBuffer] = []
+    private var connectSocketTimeoutLog: [TimeInterval] = []
 
     init(
         sessionInitResult: OpaquePointer?,
         connectedSocket: Int32 = testSocket,
+        connectSocketBehavior: ConnectSocketBehavior = .succeed,
         handshakeBehavior: HandshakeBehavior = .succeed,
         authMethods: AuthMethodsResult = .unavailable,
         publicKeyAuthResult: AuthResult = .success,
@@ -229,6 +237,7 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
     ) {
         self.sessionInitResult = sessionInitResult
         self.connectedSocket = connectedSocket
+        self.connectSocketBehavior = connectSocketBehavior
         self.handshakeBehavior = handshakeBehavior
         self.authMethodsResult = authMethods
         self.publicKeyAuthResult = publicKeyAuthResult
@@ -260,6 +269,12 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
         lock.lock()
         defer { lock.unlock() }
         return closedSocketDescriptors
+    }
+
+    func connectSocketTimeouts() -> [TimeInterval] {
+        lock.lock()
+        defer { lock.unlock() }
+        return connectSocketTimeoutLog
     }
 
     func channelEvents(includeEnvironment: Bool = false) -> [ChannelEvent] {
@@ -407,8 +422,17 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
 
     nonisolated func ensureRuntimeInitialized() throws {}
 
-    nonisolated func connectSocket(host: String, port: Int) throws -> LibSSH2ConnectedSocket {
-        LibSSH2ConnectedSocket(descriptor: connectedSocket, peerAddress: "203.0.113.10")
+    nonisolated func connectSocket(host: String, port: Int, timeout: TimeInterval) throws -> LibSSH2ConnectedSocket {
+        lock.lock()
+        connectSocketTimeoutLog.append(timeout)
+        lock.unlock()
+
+        if connectSocketBehavior == .timeout {
+            Thread.sleep(forTimeInterval: timeout)
+            throw SSHError.timeout
+        }
+
+        return LibSSH2ConnectedSocket(descriptor: connectedSocket, peerAddress: "203.0.113.10")
     }
 
     nonisolated func configureInteractiveSocket(_ socket: Int32) {}

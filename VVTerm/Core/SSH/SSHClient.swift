@@ -43,7 +43,7 @@ nonisolated actor SSHClient {
     nonisolated private let moshTeardownTasks = SSHMoshTeardownTaskRegistry()
     private let cloudflareTransportManager: any CloudflareTransportManaging
     private let moshStartupTimeout: Duration = .seconds(8)
-    private let connectTimeout: Duration = .seconds(30)
+    private let connectTimeout: Duration
     private let disconnectTimeout: Duration
     private let shellStartTimeout: Duration = .seconds(20)
     private let execTimeout: Duration = .seconds(20)
@@ -55,10 +55,12 @@ nonisolated actor SSHClient {
     init(
         sessionFactory: @escaping @Sendable (SSHSessionConfig) -> SSHSession = { SSHSession(config: $0) },
         cloudflareTransportManager: any CloudflareTransportManaging = CloudflareTransportManager(),
+        connectTimeout: Duration = .seconds(30),
         disconnectTimeout: Duration = .seconds(4)
     ) {
         self.sessionFactory = sessionFactory
         self.cloudflareTransportManager = cloudflareTransportManager
+        self.connectTimeout = connectTimeout
         self.disconnectTimeout = disconnectTimeout
     }
 
@@ -135,7 +137,8 @@ nonisolated actor SSHClient {
                 username: target.username,
                 connectionMode: target.connectionMode,
                 authMethod: target.authMethod,
-                credentials: credentials
+                credentials: credentials,
+                connectionTimeout: connectTimeout.timeInterval
             )
             let pendingSession = makeSession(config)
             let didRegister = self.registerPendingConnectSession(pendingSession, requestID: requestID)
@@ -890,5 +893,12 @@ nonisolated actor SSHClient {
         default:
             return .sessionFailed
         }
+    }
+}
+
+private extension Duration {
+    nonisolated var timeInterval: TimeInterval {
+        let components = self.components
+        return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000
     }
 }
