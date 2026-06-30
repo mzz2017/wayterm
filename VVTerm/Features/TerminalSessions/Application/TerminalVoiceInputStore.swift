@@ -156,7 +156,7 @@ final class TerminalVoiceInputStore: ObservableObject {
     ) -> Task<Void, Never> {
         let requestID = enqueueCancelRequest(
             for: target,
-            waitsForPendingLifecycleRequests: true,
+            waitsForPendingLifecycleRequests: false,
             coalescesByKey: false,
             onCancelled: onCancelled
         )

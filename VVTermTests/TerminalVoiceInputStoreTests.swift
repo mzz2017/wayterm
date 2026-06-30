@@ -178,7 +178,7 @@ struct TerminalVoiceInputStoreTests {
     }
 
     @Test
-    func cancelTaskWaitsForCanceledStopRequestBeforeCompletion() async throws {
+    func cancelTaskDoesNotWaitForCanceledStopRequestBeforeCompletion() async throws {
         let audio = FakeTerminalVoiceAudioService()
         audio.stopText = "shutdown now"
         let store = TerminalVoiceInputStore(audioService: audio)
@@ -206,19 +206,22 @@ struct TerminalVoiceInputStoreTests {
         }
         try await Task.sleep(for: .milliseconds(20))
 
-        // Then cancel remains awaitable until the canceled transcription task exits.
+        // Then close-scoped cancel cleanup completes after cancelRecording and
+        // does not wait for uninterruptible stop/transcription work to finish.
         #expect(
-            await !waitProbe.didFinish(),
-            "Voice cancel cleanup should wait for a canceled stop/transcription task to exit before close returns."
+            await waitProbe.didFinish(),
+            "Voice cancel cleanup should not keep terminal close blocked on a canceled stop/transcription task."
         )
         #expect(store.pendingVoiceRequestIDs.contains(stopID))
+        #expect(didCancel == true)
+        #expect(store.activeTarget == nil)
+        #expect(store.isProcessing == false)
+        #expect(store.isRecording == false)
 
         await audio.releaseStop()
         await waitTask.value
         await store.waitForVoiceRequest(stopID)
 
-        #expect(didCancel == true)
-        #expect(await waitProbe.didFinish())
         #expect(store.pendingVoiceRequestIDs.isEmpty)
         #expect(store.activeTarget == nil)
         #expect(store.isProcessing == false)
