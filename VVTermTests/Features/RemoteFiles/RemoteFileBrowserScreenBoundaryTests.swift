@@ -126,6 +126,41 @@ struct RemoteFileBrowserScreenBoundaryTests {
     }
 
     @Test
+    func macOSFilePromiseDelegateIsRetainedUntilWriteCompletes() throws {
+        let root = try sourceRoot()
+        let tableSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Platform/RemoteFileBrowserMacTableView.swift")
+        )
+        let filePromiseSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/UI/Platform/RemoteFileBrowserMacFilePromise.swift")
+        )
+
+        // Given NSFilePromiseProvider keeps a weak delegate reference, the
+        // coordinator must not release the delegate merely because the drag
+        // session ended; AppKit may ask it to write the promise later.
+        #expect(
+            !tableSource.contains("promiseDelegates.removeAll()"),
+            "macOS file-promise delegates should not be released at drag-session end because NSFilePromiseProvider.delegate is weak."
+        )
+        #expect(
+            tableSource.contains("onCompletion: { [weak self] delegateID in"),
+            "MacOSRemoteFileTableView.Coordinator should release each file-promise delegate only after its write callback completes."
+        )
+        #expect(
+            tableSource.contains("promiseDelegates.removeValue(forKey: delegateID)"),
+            "Completed file-promise delegates should be removed individually, not through drag-session cleanup."
+        )
+        #expect(
+            filePromiseSource.contains("private let onCompletion: @MainActor (UUID) -> Void"),
+            "FilePromiseDelegate should expose a completion hook so its UI owner can retain it through weak AppKit delegate delivery."
+        )
+        #expect(
+            filePromiseSource.contains("completionHandler(error)\n                onCompletion(id)"),
+            "FilePromiseDelegate should release its owner retention only after completing AppKit's promise callback."
+        )
+    }
+
+    @Test
     func screenDoesNotOwnActionMenuPresentation() throws {
         let root = try sourceRoot()
         let screenSource = try source(

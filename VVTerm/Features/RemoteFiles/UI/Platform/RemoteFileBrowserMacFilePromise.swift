@@ -6,16 +6,19 @@ final class FilePromiseDelegate: NSObject, NSFilePromiseProviderDelegate {
     let id = UUID()
     private let entry: RemoteFileEntry
     private let fileTypeIdentifier: String
-    private let export: @MainActor (RemoteFileEntry, URL, @escaping (Error?) -> Void) -> Void
+    private let export: @MainActor (RemoteFileEntry, URL, @escaping @MainActor (Error?) -> Void) -> Void
+    private let onCompletion: @MainActor (UUID) -> Void
 
     init(
         entry: RemoteFileEntry,
         fileTypeIdentifier: String,
-        export: @escaping @MainActor (RemoteFileEntry, URL, @escaping (Error?) -> Void) -> Void
+        export: @escaping @MainActor (RemoteFileEntry, URL, @escaping @MainActor (Error?) -> Void) -> Void,
+        onCompletion: @escaping @MainActor (UUID) -> Void = { _ in }
     ) {
         self.entry = entry
         self.fileTypeIdentifier = fileTypeIdentifier
         self.export = export
+        self.onCompletion = onCompletion
     }
 
     func makeProvider() -> NSFilePromiseProvider {
@@ -42,7 +45,10 @@ final class FilePromiseDelegate: NSObject, NSFilePromiseProviderDelegate {
         completionHandler: @escaping (Error?) -> Void
     ) {
         MainActor.assumeIsolated {
-            export(entry, url, completionHandler)
+            export(entry, url) { [id, onCompletion] error in
+                completionHandler(error)
+                onCompletion(id)
+            }
         }
     }
 }

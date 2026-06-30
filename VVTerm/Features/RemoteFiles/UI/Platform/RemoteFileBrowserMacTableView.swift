@@ -28,7 +28,7 @@ struct MacOSRemoteFileTableView: NSViewRepresentable {
     let onDropRemotePayload: @MainActor (RemoteFileDragPayload, String) -> Void
     let menuForEntry: @MainActor (RemoteFileEntry) -> NSMenu
     let menuForBackground: @MainActor () -> NSMenu
-    let exportEntry: @MainActor (RemoteFileEntry, URL, @escaping (Error?) -> Void) -> Void
+    let exportEntry: @MainActor (RemoteFileEntry, URL, @escaping @MainActor (Error?) -> Void) -> Void
     let fileTypeIdentifier: (RemoteFileEntry) -> String
     let kindLabel: (RemoteFileEntry) -> String
     let onSubmitInlineEdit: @MainActor (String) -> Void
@@ -307,7 +307,10 @@ struct MacOSRemoteFileTableView: NSViewRepresentable {
             let delegate = FilePromiseDelegate(
                 entry: entry,
                 fileTypeIdentifier: parent.fileTypeIdentifier(entry),
-                export: parent.exportEntry
+                export: parent.exportEntry,
+                onCompletion: { [weak self] delegateID in
+                    self?.promiseDelegates.removeValue(forKey: delegateID)
+                }
             )
             promiseDelegates[delegate.id] = delegate
             return delegate.makeProvider()
@@ -326,7 +329,6 @@ struct MacOSRemoteFileTableView: NSViewRepresentable {
 
         func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
             MacOSRemoteFileDragSessionStore.shared.payload = nil
-            promiseDelegates.removeAll()
         }
 
         func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
