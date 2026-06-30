@@ -4,6 +4,43 @@ import Speech
 import AVFoundation
 
 @MainActor
+protocol SpeechRecognitionTaskCancellable: AnyObject {
+    func cancel()
+}
+
+extension SFSpeechRecognitionTask: SpeechRecognitionTaskCancellable {}
+
+@MainActor
+protocol SpeechURLRecognitionRunning: AnyObject {
+    var isAvailable: Bool { get }
+
+    func startRecognition(
+        with request: SFSpeechURLRecognitionRequest,
+        resultHandler: @escaping (SFSpeechRecognitionResult?, Error?) -> Void
+    ) -> any SpeechRecognitionTaskCancellable
+}
+
+@MainActor
+private final class LiveSpeechURLRecognitionRunner: SpeechURLRecognitionRunning {
+    private let recognizer: SFSpeechRecognizer
+
+    init(recognizer: SFSpeechRecognizer) {
+        self.recognizer = recognizer
+    }
+
+    var isAvailable: Bool {
+        recognizer.isAvailable
+    }
+
+    func startRecognition(
+        with request: SFSpeechURLRecognitionRequest,
+        resultHandler: @escaping (SFSpeechRecognitionResult?, Error?) -> Void
+    ) -> any SpeechRecognitionTaskCancellable {
+        recognizer.recognitionTask(with: request, resultHandler: resultHandler)
+    }
+}
+
+@MainActor
 class SpeechRecognitionService: ObservableObject {
     @Published var transcribedText = ""
     @Published var partialTranscription = ""
@@ -11,15 +48,21 @@ class SpeechRecognitionService: ObservableObject {
     private var speechRecognizer: SFSpeechRecognizer?
     private var recognizerLanguageCode: String?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-    private var recognitionTask: SFSpeechRecognitionTask?
+    private var recognitionTask: (any SpeechRecognitionTaskCancellable)?
+    private var urlRecognitionContinuation: URLRecognitionContinuation?
     private let settings: TranscriptionSettingsReader
+    private let injectedURLRecognitionRunner: (any SpeechURLRecognitionRunning)?
 
     var isAvailable: Bool {
-        resolvedRecognizer()?.isAvailable ?? false
+        resolvedURLRecognitionRunner()?.isAvailable ?? false
     }
 
-    init(settings: TranscriptionSettingsReader) {
+    init(
+        settings: TranscriptionSettingsReader,
+        urlRecognitionRunner: (any SpeechURLRecognitionRunning)? = nil
+    ) {
         self.settings = settings
+        self.injectedURLRecognitionRunner = urlRecognitionRunner
     }
 
     // MARK: - Recognizer Resolution
@@ -54,6 +97,14 @@ class SpeechRecognitionService: ObservableObject {
             }
         }
         return SFSpeechRecognizer()
+    }
+
+    private func resolvedURLRecognitionRunner() -> (any SpeechURLRecognitionRunning)? {
+        if let injectedURLRecognitionRunner {
+            return injectedURLRecognitionRunner
+        }
+        guard let recognizer = resolvedRecognizer() else { return nil }
+        return LiveSpeechURLRecognitionRunner(recognizer: recognizer)
     }
 
     private static func candidateLocales(languageCode: String) -> [Locale] {
@@ -137,12 +188,13 @@ class SpeechRecognitionService: ObservableObject {
     }
 
     func transcribe(samples: [Float], sampleRate: Double) async throws -> String {
-        guard let speechRecognizer = resolvedRecognizer(), speechRecognizer.isAvailable else {
+        guard let urlRecognitionRunner = resolvedURLRecognitionRunner(), urlRecognitionRunner.isAvailable else {
             throw SpeechRecognitionError.recognitionUnavailable
         }
 
         recognitionTask?.cancel()
         recognitionTask = nil
+        finishURLRecognitionContinuation(.failure(CancellationError()))
 
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("vvterm-transcription-\(UUID().uuidString)")
@@ -166,32 +218,25 @@ class SpeechRecognitionService: ObservableObject {
         request.requiresOnDeviceRecognition = false
 
         return try await withCheckedThrowingContinuation { continuation in
-            var finished = false
-            let cleanup: () -> Void = {
-                try? FileManager.default.removeItem(at: tempURL)
-            }
+            let urlContinuation = URLRecognitionContinuation(
+                tempURL: tempURL,
+                continuation: continuation
+            )
+            urlRecognitionContinuation = urlContinuation
 
-            recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
-                if finished { return }
+            recognitionTask = urlRecognitionRunner.startRecognition(with: request) { [weak self, weak urlContinuation] result, error in
+                Task { @MainActor in
+                    guard let self,
+                          let urlContinuation,
+                          self.urlRecognitionContinuation === urlContinuation else { return }
 
-                if let error {
-                    finished = true
-                    cleanup()
-                    Task { @MainActor in
-                        self?.recognitionTask = nil
+                    if let error {
+                        self.finishURLRecognitionContinuation(.failure(error))
+                        return
                     }
-                    continuation.resume(throwing: error)
-                    return
-                }
 
-                guard let result else { return }
-                if result.isFinal {
-                    finished = true
-                    cleanup()
-                    Task { @MainActor in
-                        self?.recognitionTask = nil
-                    }
-                    continuation.resume(returning: result.bestTranscription.formattedString)
+                    guard let result, result.isFinal else { return }
+                    self.finishURLRecognitionContinuation(.success(result.bestTranscription.formattedString))
                 }
             }
         }
@@ -200,6 +245,7 @@ class SpeechRecognitionService: ObservableObject {
     func cancelRecognition() {
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
+        finishURLRecognitionContinuation(.failure(CancellationError()))
 
         recognitionRequest = nil
         recognitionTask = nil
@@ -213,6 +259,13 @@ class SpeechRecognitionService: ObservableObject {
         partialTranscription = ""
     }
 
+    private func finishURLRecognitionContinuation(_ result: Result<String, Error>) {
+        guard let continuation = urlRecognitionContinuation else { return }
+        urlRecognitionContinuation = nil
+        recognitionTask = nil
+        continuation.finish(result)
+    }
+
     // MARK: - Errors
 
     enum SpeechRecognitionError: LocalizedError {
@@ -223,6 +276,30 @@ class SpeechRecognitionService: ObservableObject {
             case .recognitionUnavailable:
                 return "Speech recognition is not available. Please enable Siri in System Settings > Siri & Spotlight."
             }
+        }
+    }
+}
+
+@MainActor
+private final class URLRecognitionContinuation {
+    private let tempURL: URL
+    private var continuation: CheckedContinuation<String, Error>?
+
+    init(tempURL: URL, continuation: CheckedContinuation<String, Error>) {
+        self.tempURL = tempURL
+        self.continuation = continuation
+    }
+
+    func finish(_ result: Result<String, Error>) {
+        guard let continuation else { return }
+        self.continuation = nil
+        try? FileManager.default.removeItem(at: tempURL)
+
+        switch result {
+        case .success(let text):
+            continuation.resume(returning: text)
+        case .failure(let error):
+            continuation.resume(throwing: error)
         }
     }
 }
