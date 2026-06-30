@@ -224,6 +224,41 @@ struct TerminalVoiceInputStoreTests {
         #expect(store.isProcessing == false)
         #expect(store.isRecording == false)
     }
+
+    @Test
+    func cancelRequestKeepsLateStopTranscriptionHiddenAfterUserCancel() async {
+        let audio = FakeTerminalVoiceAudioService()
+        audio.stopText = "rm -rf /tmp/stale"
+        audio.writesStopTextToTranscription = true
+        let store = TerminalVoiceInputStore(audioService: audio)
+        let target = TerminalVoiceInputTarget.session(UUID())
+
+        let startID = store.requestStart(for: target)
+        await audio.waitForStartCallCount(1)
+        await audio.releaseStart()
+        await store.waitForVoiceRequest(startID)
+
+        // Given stop/transcription work is in flight when the user cancels
+        // voice input instead of sending the command.
+        let stopID = store.requestStopAndSend(for: target)
+        await audio.waitForStopCallCount(1)
+        let cancelID = store.requestCancel(for: target)
+        await store.waitForVoiceRequest(cancelID)
+
+        // When the canceled stop request returns late and the audio layer
+        // publishes its stale transcription.
+        await audio.releaseStop()
+        await store.waitForVoiceRequest(stopID)
+
+        // Then the application-layer store must keep canceled transcription
+        // output hidden from UI state.
+        #expect(store.activeTarget == nil)
+        #expect(store.isProcessing == false)
+        #expect(
+            store.transcribedText.isEmpty,
+            "Canceled voice input must not surface late stop/transcription text through the store."
+        )
+    }
 }
 
 @MainActor
@@ -235,6 +270,7 @@ private final class FakeTerminalVoiceAudioService: TerminalVoiceAudioServicing {
     var recordingDuration: TimeInterval = 0
     var startError: Error?
     var stopText = ""
+    var writesStopTextToTranscription = false
     private(set) var cancelCallCount = 0
     private let startGate = TerminalVoiceInputGate()
     private let stopGate = TerminalVoiceInputGate()
@@ -252,6 +288,9 @@ private final class FakeTerminalVoiceAudioService: TerminalVoiceAudioServicing {
         await stopGate.recordCall()
         await stopGate.waitUntilOpen()
         isRecording = false
+        if writesStopTextToTranscription {
+            transcribedText = stopText
+        }
         return stopText
     }
 

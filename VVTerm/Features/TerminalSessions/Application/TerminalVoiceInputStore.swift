@@ -39,11 +39,11 @@ final class TerminalVoiceInputStore: ObservableObject {
     }
 
     var transcribedText: String {
-        audioService.transcribedText
+        exposesVoiceTranscription ? audioService.transcribedText : ""
     }
 
     var partialTranscription: String {
-        audioService.partialTranscription
+        exposesVoiceTranscription ? audioService.partialTranscription : ""
     }
 
     var audioLevel: Float {
@@ -56,6 +56,10 @@ final class TerminalVoiceInputStore: ObservableObject {
 
     var pendingVoiceRequestIDs: Set<UUID> {
         Set(voiceRequests.keys)
+    }
+
+    private var exposesVoiceTranscription: Bool {
+        activeTarget != nil || isProcessing
     }
 
     convenience init() {
