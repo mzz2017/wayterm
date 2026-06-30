@@ -213,6 +213,7 @@ extension ServerManager {
 
             // Save merged data locally
             saveLocalData()
+            await cloudKit.commitFetchedChanges(fetchedChanges)
 
             logger.info("Loaded \(self.workspaces.count) workspaces and \(self.servers.count) servers from CloudKit")
         } catch {

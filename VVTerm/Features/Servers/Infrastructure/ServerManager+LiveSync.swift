@@ -60,7 +60,10 @@ final class ServerCloudKitSyncService: ServerCloudSyncing {
             workspaces: workspaces,
             deletedServerIDs: deletedServerIDs,
             deletedWorkspaceIDs: deletedWorkspaceIDs,
-            isFullFetch: changes.isFullFetch
+            isFullFetch: changes.isFullFetch,
+            commitFetchedChanges: { [cloudKit, token = changes.changeToken] in
+                cloudKit.commitChangeToken(token)
+            }
         )
     }
 

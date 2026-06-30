@@ -9,6 +9,7 @@ struct CloudKitRecordChanges {
     let records: [CKRecord]
     let deletions: [CloudKitManager.Deletion]
     let isFullFetch: Bool
+    let changeToken: CKServerChangeToken?
 }
 
 @MainActor
@@ -243,15 +244,17 @@ final class CloudKitManager: ObservableObject {
             moreComing = batch.moreComing
         }
 
-        if let token = token {
-            saveChangeToken(token)
-        }
-
         return CloudKitRecordChanges(
             records: records,
             deletions: deletions,
-            isFullFetch: isFullFetch
+            isFullFetch: isFullFetch,
+            changeToken: token
         )
+    }
+
+    func commitChangeToken(_ token: CKServerChangeToken?) {
+        guard let token else { return }
+        saveChangeToken(token)
     }
 
     // MARK: - Record Operations

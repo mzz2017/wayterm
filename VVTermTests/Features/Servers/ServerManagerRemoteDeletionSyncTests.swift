@@ -149,6 +149,90 @@ struct ServerManagerRemoteDeletionSyncTests {
             "Remote workspace tombstones should not enqueue duplicate CloudKit delete mutations."
         )
     }
+
+    @Test
+    func remoteDeletionCommitsFetchedChangesAfterLocalApplySucceeds() async throws {
+        let previousSyncSetting = enableSyncForTest()
+        defer { restoreSyncSetting(previousSyncSetting) }
+
+        let workspace = Workspace(id: UUID(), name: "Main", order: 0)
+        let server = Server(
+            id: UUID(),
+            workspaceId: workspace.id,
+            name: "Tencent",
+            host: "remote-server-ack.example.com",
+            username: "root"
+        )
+        let cloudKit = RemoteDeletionCloudSyncService(changes: CloudKitChanges(
+            servers: [],
+            workspaces: [],
+            deletedServerIDs: [server.id],
+            deletedWorkspaceIDs: [],
+            isFullFetch: false
+        ))
+        let manager = ServerManager.makeForTesting(
+            servers: [server],
+            workspaces: [workspace],
+            cloudKit: cloudKit,
+            syncCoordinator: RemoteDeletionPendingCloudSyncCoordinator()
+        )
+
+        // When a fetched remote tombstone is applied successfully.
+        await manager.loadData()
+
+        // Then the CloudKit change token may be committed only after local
+        // apply finishes, so future fetches can safely advance past it.
+        #expect(
+            cloudKit.commitCount == 1,
+            "Fetched CloudKit changes should be acknowledged after successful local apply, not during fetch."
+        )
+    }
+
+    @Test
+    func remoteDeletionDoesNotCommitFetchedChangesWhenLocalApplyFails() async throws {
+        let previousSyncSetting = enableSyncForTest()
+        defer { restoreSyncSetting(previousSyncSetting) }
+
+        let workspace = Workspace(id: UUID(), name: "Main", order: 0)
+        let server = Server(
+            id: UUID(),
+            workspaceId: workspace.id,
+            name: "Tencent",
+            host: "remote-server-ack-failure.example.com",
+            username: "root"
+        )
+        let cloudKit = RemoteDeletionCloudSyncService(changes: CloudKitChanges(
+            servers: [],
+            workspaces: [],
+            deletedServerIDs: [server.id],
+            deletedWorkspaceIDs: [],
+            isFullFetch: false
+        ))
+        let manager = ServerManager.makeForTesting(
+            servers: [server],
+            workspaces: [workspace],
+            deleteCredentials: { _ in
+                throw RemoteDeletionSyncTestError.localApplyFailed
+            },
+            cloudKit: cloudKit,
+            syncCoordinator: RemoteDeletionPendingCloudSyncCoordinator()
+        )
+
+        // When local cleanup fails while applying the fetched tombstone.
+        await manager.loadData()
+
+        // Then the token must remain uncommitted so a later fetch can replay
+        // the same remote deletion.
+        #expect(
+            cloudKit.commitCount == 0,
+            "Fetched CloudKit changes must not be acknowledged if local apply fails."
+        )
+        #expect(manager.servers.contains { $0.id == server.id })
+    }
+}
+
+private enum RemoteDeletionSyncTestError: Error {
+    case localApplyFailed
 }
 
 private func enableSyncForTest() -> Any? {
@@ -186,6 +270,7 @@ private actor RemoteDeletionOrderProbe {
 private final class RemoteDeletionCloudSyncService: ServerCloudSyncing {
     var isAvailable = true
     private let changes: CloudKitChanges
+    private(set) var commitCount = 0
 
     init(changes: CloudKitChanges) {
         self.changes = changes
@@ -193,6 +278,10 @@ private final class RemoteDeletionCloudSyncService: ServerCloudSyncing {
 
     func fetchChanges(forceFullFetch: Bool) async throws -> CloudKitChanges {
         changes
+    }
+
+    func commitFetchedChanges(_ changes: CloudKitChanges) async {
+        commitCount += 1
     }
 
     func saveServer(_ server: Server) async throws {}

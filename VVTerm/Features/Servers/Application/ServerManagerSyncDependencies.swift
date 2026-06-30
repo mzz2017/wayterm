@@ -6,6 +6,27 @@ struct CloudKitChanges {
     let deletedServerIDs: [UUID]
     let deletedWorkspaceIDs: [UUID]
     let isFullFetch: Bool
+    private let commitHandler: (@MainActor () async -> Void)?
+
+    init(
+        servers: [Server],
+        workspaces: [Workspace],
+        deletedServerIDs: [UUID],
+        deletedWorkspaceIDs: [UUID],
+        isFullFetch: Bool,
+        commitFetchedChanges: (@MainActor () async -> Void)? = nil
+    ) {
+        self.servers = servers
+        self.workspaces = workspaces
+        self.deletedServerIDs = deletedServerIDs
+        self.deletedWorkspaceIDs = deletedWorkspaceIDs
+        self.isFullFetch = isFullFetch
+        self.commitHandler = commitFetchedChanges
+    }
+
+    func commitFetchedChanges() async {
+        await commitHandler?()
+    }
 }
 
 @MainActor
@@ -13,9 +34,16 @@ protocol ServerCloudSyncing {
     var isAvailable: Bool { get }
 
     func fetchChanges(forceFullFetch: Bool) async throws -> CloudKitChanges
+    func commitFetchedChanges(_ changes: CloudKitChanges) async
     func saveServer(_ server: Server) async throws
     func saveWorkspace(_ workspace: Workspace) async throws
     func isSchemaError(_ error: Error) -> Bool
+}
+
+extension ServerCloudSyncing {
+    func commitFetchedChanges(_ changes: CloudKitChanges) async {
+        await changes.commitFetchedChanges()
+    }
 }
 
 @MainActor
