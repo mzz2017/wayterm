@@ -8,66 +8,30 @@ extension Ghostty.App {
     }
 
     static func dispatchActionSurfaceContext(
-        app: ghostty_app_t,
-        surface: ghostty_surface_t?,
+        appContext: GhosttyAppCallbackContext?,
+        surfaceContext: GhosttySurfaceCallbackContext?,
         titleTargetDescription: String,
         _ body: @escaping @MainActor (ActionSurfaceContext) -> Void
     ) {
         DispatchQueue.main.async {
-            body(actionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription))
+            body(actionSurfaceContext(
+                appContext: appContext,
+                surfaceContext: surfaceContext,
+                titleTargetDescription: titleTargetDescription
+            ))
         }
     }
 
     @MainActor
     private static func actionSurfaceContext(
-        app: ghostty_app_t,
-        surface: ghostty_surface_t?,
+        appContext: GhosttyAppCallbackContext?,
+        surfaceContext: GhosttySurfaceCallbackContext?,
         titleTargetDescription: String
     ) -> ActionSurfaceContext {
-        guard let surface else {
-            return ActionSurfaceContext(
-                terminalView: nil,
-                titleTargetDescription: titleTargetDescription,
-                activeSurfaceCount: 0
-            )
-        }
-
-        if let appUserdata = ghostty_app_userdata(app) {
-            let appOwner = GhosttyAppCallbackContext.app(fromUserdata: appUserdata)
-            let activeSurfaceCount = appOwner?.activeSurfaceCount() ?? 0
-            if let registeredView = appOwner?.terminalView(for: surface) {
-                return ActionSurfaceContext(
-                    terminalView: registeredView,
-                    titleTargetDescription: titleTargetDescription,
-                    activeSurfaceCount: activeSurfaceCount
-                )
-            }
-
-            guard let surfaceUserdata = ghostty_surface_userdata(surface) else {
-                return ActionSurfaceContext(
-                    terminalView: nil,
-                    titleTargetDescription: titleTargetDescription,
-                    activeSurfaceCount: activeSurfaceCount
-                )
-            }
-            return ActionSurfaceContext(
-                terminalView: GhosttySurfaceCallbackContext.terminalView(fromUserdata: surfaceUserdata),
-                titleTargetDescription: titleTargetDescription,
-                activeSurfaceCount: activeSurfaceCount
-            )
-        }
-
-        guard let surfaceUserdata = ghostty_surface_userdata(surface) else {
-            return ActionSurfaceContext(
-                terminalView: nil,
-                titleTargetDescription: titleTargetDescription,
-                activeSurfaceCount: 0
-            )
-        }
         return ActionSurfaceContext(
-            terminalView: GhosttySurfaceCallbackContext.terminalView(fromUserdata: surfaceUserdata),
+            terminalView: surfaceContext?.resolveTerminalView(),
             titleTargetDescription: titleTargetDescription,
-            activeSurfaceCount: 0
+            activeSurfaceCount: appContext?.resolveApp()?.activeSurfaceCount() ?? 0
         )
     }
 }

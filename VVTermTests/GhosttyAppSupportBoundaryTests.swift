@@ -90,6 +90,9 @@ struct GhosttyAppSupportBoundaryTests {
         let appSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/Bridge/Ghostty.App.swift")
         )
+        let actionContextSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/Bridge/Ghostty.App+ActionSurfaceContext.swift")
+        )
         let actionPrefix = try sourceSlice(
             in: appSource,
             from: "static func action(_ app:",
@@ -108,6 +111,21 @@ struct GhosttyAppSupportBoundaryTests {
         #expect(
             !actionPrefix.contains("activeSurfaceCount()") && !actionPrefix.contains("terminalView(for:"),
             "Ghostty action callback entry must not read MainActor app surface registry before hopping to main."
+        )
+        #expect(
+            actionPrefix.contains("GhosttyAppCallbackContext.context(fromUserdata: ghostty_app_userdata(app))")
+                && actionPrefix.contains("GhosttySurfaceCallbackContext.context(fromSurface: surface)"),
+            "Ghostty action callback entry should synchronously capture Swift callback contexts while raw C pointers are valid."
+        )
+        #expect(
+            !actionContextSource.contains("ghostty_app_userdata")
+                && !actionContextSource.contains("ghostty_surface_userdata"),
+            "Deferred Ghostty action delivery must not dereference raw app/surface pointers after teardown may have freed them."
+        )
+        #expect(
+            !actionContextSource.contains("liveSurfaceHandle")
+                && !actionContextSource.contains("terminalView(for:"),
+            "Deferred Ghostty action delivery should use the synchronously captured Swift surface context instead of re-reading raw surface handles."
         )
         #expect(
             scrollbarCase.contains("dispatchActionSurfaceContext")

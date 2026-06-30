@@ -31,16 +31,23 @@ nonisolated final class GhosttySurfaceCallbackContext: GhosttySurfaceCallbackInv
         Unmanaged.passUnretained(self).toOpaque()
     }
 
-    static func terminalView(fromUserdata pointer: UnsafeMutableRawPointer?) -> GhosttyTerminalView? {
+    static func context(fromUserdata pointer: UnsafeMutableRawPointer?) -> GhosttySurfaceCallbackContext? {
         guard let pointer else { return nil }
         return Unmanaged<GhosttySurfaceCallbackContext>
             .fromOpaque(pointer)
             .takeUnretainedValue()
-            .resolveTerminalView()
+    }
+
+    static func terminalView(fromUserdata pointer: UnsafeMutableRawPointer?) -> GhosttyTerminalView? {
+        context(fromUserdata: pointer)?.resolveTerminalView()
+    }
+
+    static func context(fromSurface surface: ghostty_surface_t?) -> GhosttySurfaceCallbackContext? {
+        guard let surface else { return nil }
+        return context(fromUserdata: ghostty_surface_userdata(surface))
     }
 
     static func terminalView(fromSurface surface: ghostty_surface_t?) -> GhosttyTerminalView? {
-        guard let surface else { return nil }
-        return terminalView(fromUserdata: ghostty_surface_userdata(surface))
+        context(fromSurface: surface)?.resolveTerminalView()
     }
 }

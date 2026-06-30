@@ -41,11 +41,14 @@ nonisolated final class GhosttyAppCallbackContext: @unchecked Sendable {
         Unmanaged.passUnretained(self).toOpaque()
     }
 
-    static func app(fromUserdata pointer: UnsafeMutableRawPointer?) -> Ghostty.App? {
+    static func context(fromUserdata pointer: UnsafeMutableRawPointer?) -> GhosttyAppCallbackContext? {
         guard let pointer else { return nil }
         return Unmanaged<GhosttyAppCallbackContext>
             .fromOpaque(pointer)
             .takeUnretainedValue()
-            .resolveApp()
+    }
+
+    static func app(fromUserdata pointer: UnsafeMutableRawPointer?) -> Ghostty.App? {
+        context(fromUserdata: pointer)?.resolveApp()
     }
 }

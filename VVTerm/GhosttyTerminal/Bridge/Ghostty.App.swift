@@ -552,6 +552,8 @@ extension Ghostty {
         static func action(_ app: ghostty_app_t, target: ghostty_target_s, action: ghostty_action_s) -> Bool {
             let surface = target.tag == GHOSTTY_TARGET_SURFACE ? target.target.surface : nil
             let titleTargetDescription = surface.map { String(describing: $0) } ?? "target \(target.tag.rawValue)"
+            let appContext = GhosttyAppCallbackContext.context(fromUserdata: ghostty_app_userdata(app))
+            let surfaceContext = GhosttySurfaceCallbackContext.context(fromSurface: surface)
 
             switch action.tag {
             case GHOSTTY_ACTION_SET_TITLE:
@@ -560,7 +562,7 @@ extension Ghostty {
                     let title = String(cString: titlePtr)
 
                     // Propagate to terminal view callback
-                    dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                    dispatchActionSurfaceContext(appContext: appContext, surfaceContext: surfaceContext, titleTargetDescription: titleTargetDescription) { context in
                         guard let terminalView = context.terminalView else {
                             if TitleDeliveryLogCache.lastUndeliveredTitleBySurface[context.titleTargetDescription] != title {
                                 TitleDeliveryLogCache.lastUndeliveredTitleBySurface[context.titleTargetDescription] = title
@@ -591,7 +593,7 @@ extension Ghostty {
                 if let pwdPtr = action.action.pwd.pwd {
                     let pwd = String(cString: pwdPtr)
                     Ghostty.logger.info("PWD changed: \(pwd)")
-                    dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                    dispatchActionSurfaceContext(appContext: appContext, surfaceContext: surfaceContext, titleTargetDescription: titleTargetDescription) { context in
                         context.terminalView?.onPwdChange?(pwd)
                     }
                 }
@@ -606,7 +608,7 @@ extension Ghostty {
                 let report = action.action.progress_report
                 let state = GhosttyProgressState(cState: report.state)
                 let value = report.progress >= 0 ? Int(report.progress) : nil
-                dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                dispatchActionSurfaceContext(appContext: appContext, surfaceContext: surfaceContext, titleTargetDescription: titleTargetDescription) { context in
                     context.terminalView?.onProgressReport?(state, value)
                 }
                 return true
@@ -614,7 +616,7 @@ extension Ghostty {
             case GHOSTTY_ACTION_START_SEARCH:
                 #if os(iOS)
                 let needle = action.action.start_search.needle.map { String(cString: $0) } ?? ""
-                dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                dispatchActionSurfaceContext(appContext: appContext, surfaceContext: surfaceContext, titleTargetDescription: titleTargetDescription) { context in
                     context.terminalView?.handleGhosttySearchStarted(needle: needle)
                 }
                 return true
@@ -624,7 +626,7 @@ extension Ghostty {
 
             case GHOSTTY_ACTION_END_SEARCH:
                 #if os(iOS)
-                dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                dispatchActionSurfaceContext(appContext: appContext, surfaceContext: surfaceContext, titleTargetDescription: titleTargetDescription) { context in
                     context.terminalView?.handleGhosttySearchEnded()
                 }
                 return true
@@ -635,7 +637,7 @@ extension Ghostty {
             case GHOSTTY_ACTION_SEARCH_TOTAL:
                 #if os(iOS)
                 let total = action.action.search_total.total >= 0 ? Int(action.action.search_total.total) : nil
-                dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                dispatchActionSurfaceContext(appContext: appContext, surfaceContext: surfaceContext, titleTargetDescription: titleTargetDescription) { context in
                     context.terminalView?.handleGhosttySearchTotalChange(total)
                 }
                 return true
@@ -646,7 +648,7 @@ extension Ghostty {
             case GHOSTTY_ACTION_SEARCH_SELECTED:
                 #if os(iOS)
                 let selected = action.action.search_selected.selected >= 0 ? Int(action.action.search_selected.selected) : nil
-                dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                dispatchActionSurfaceContext(appContext: appContext, surfaceContext: surfaceContext, titleTargetDescription: titleTargetDescription) { context in
                     context.terminalView?.handleGhosttySearchSelectedChange(selected)
                 }
                 return true
@@ -659,7 +661,7 @@ extension Ghostty {
                 #if os(macOS)
                 let cellSize = action.action.cell_size
                 let backingSize = NSSize(width: Double(cellSize.width), height: Double(cellSize.height))
-                dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                dispatchActionSurfaceContext(appContext: appContext, surfaceContext: surfaceContext, titleTargetDescription: titleTargetDescription) { context in
                     guard let terminalView = context.terminalView else { return }
                     // Convert from backing (pixel) coordinates to points
                     terminalView.cellSize = terminalView.convertFromBacking(backingSize)
@@ -667,7 +669,7 @@ extension Ghostty {
                 }
                 #else
                 let cellSize = action.action.cell_size
-                dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                dispatchActionSurfaceContext(appContext: appContext, surfaceContext: surfaceContext, titleTargetDescription: titleTargetDescription) { context in
                     guard let terminalView = context.terminalView else { return }
                     // Convert from backing (pixel) coordinates to points
                     let scale = terminalView.window?.screen.scale ?? UIScreen.main.scale
@@ -683,7 +685,7 @@ extension Ghostty {
             case GHOSTTY_ACTION_SCROLLBAR:
                 // Scrollbar state update - post notification for scroll view
                 let scrollbar = Ghostty.Action.Scrollbar(c: action.action.scrollbar)
-                dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                dispatchActionSurfaceContext(appContext: appContext, surfaceContext: surfaceContext, titleTargetDescription: titleTargetDescription) { context in
                     NotificationCenter.default.post(
                         name: .ghosttyDidUpdateScrollbar,
                         object: context.terminalView,
