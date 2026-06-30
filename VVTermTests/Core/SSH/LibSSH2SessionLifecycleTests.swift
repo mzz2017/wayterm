@@ -1552,6 +1552,56 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         )
     }
 
+    func testSFTPDownloadFailurePreservesExistingLocalFile() async throws {
+        // Given a user-selected download destination already contains local data.
+        let localDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vvterm-download-\(UUID().uuidString)", isDirectory: true)
+        let destinationURL = localDirectory.appendingPathComponent("report.txt")
+        try FileManager.default.createDirectory(at: localDirectory, withIntermediateDirectories: true)
+        try Data("original-local-report".utf8).write(to: destinationURL)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: localDirectory)
+        }
+
+        let rawError = LibSSH2RawError(
+            operation: .sftpRead,
+            code: LIBSSH2_ERROR_SOCKET_RECV,
+            message: "socket recv failed during download"
+        )
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            sftpSessionResult: OpaquePointer(bitPattern: 0x55),
+            sftpOpenResult: OpaquePointer(bitPattern: 0x66),
+            sftpReadFileResults: [
+                Int(LIBSSH2_ERROR_SOCKET_RECV)
+            ],
+            sftpLastErrorResult: 0,
+            rawErrors: [rawError]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When the remote download fails after the destination is selected.
+        try await session.connect()
+        do {
+            try await session.downloadFile(at: "/remote/report.txt", to: destinationURL)
+            XCTFail("Expected raw libssh2 SFTP download failure")
+        } catch SSHError.libssh2(let receivedRawError) {
+            XCTAssertEqual(receivedRawError.operation, .sftpRead)
+            XCTAssertEqual(receivedRawError.code, LIBSSH2_ERROR_SOCKET_RECV)
+        } catch {
+            XCTFail("Expected SSHError.libssh2, got \(error)")
+        }
+
+        // Then a failed overwrite must not destroy the user's existing local file.
+        XCTAssertEqual(
+            try Data(contentsOf: destinationURL),
+            Data("original-local-report".utf8),
+            "Failed or canceled downloads must preserve the pre-existing local destination until replacement succeeds."
+        )
+    }
+
     func testSFTPFileWriteFailurePreservesRawLibSSH2TransportError() async throws {
         // Given writing an opened SFTP file fails because the underlying SSH
         // transport closes before an SFTP status is available.

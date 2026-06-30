@@ -156,14 +156,15 @@ extension SSHSession {
         let fileManager = FileManager.default
         let destinationDirectory = localURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
-        if fileManager.fileExists(atPath: localURL.path) {
-            try fileManager.removeItem(at: localURL)
-        }
-        guard fileManager.createFile(atPath: localURL.path, contents: nil) else {
+        let temporaryURL = destinationDirectory.appendingPathComponent(
+            ".\(localURL.lastPathComponent).vvterm-download-\(UUID().uuidString).tmp"
+        )
+        try? fileManager.removeItem(at: temporaryURL)
+        guard fileManager.createFile(atPath: temporaryURL.path, contents: nil) else {
             throw SSHFileTransferError.failed(operation: "create local download file", path: localURL.path)
         }
 
-        let localFileHandle = try FileHandle(forWritingTo: localURL)
+        let localFileHandle = try FileHandle(forWritingTo: temporaryURL)
         do {
             while true {
                 try Task.checkCancellation()
@@ -194,11 +195,16 @@ extension SSHSession {
             }
         } catch {
             try? localFileHandle.close()
-            try? fileManager.removeItem(at: localURL)
+            try? fileManager.removeItem(at: temporaryURL)
             throw error
         }
 
         try localFileHandle.close()
+        if fileManager.fileExists(atPath: localURL.path) {
+            _ = try fileManager.replaceItemAt(localURL, withItemAt: temporaryURL)
+        } else {
+            try fileManager.moveItem(at: temporaryURL, to: localURL)
+        }
     }
 
     func writeFile(_ data: Data, to path: String, permissions: Int32 = 0o644) async throws {
