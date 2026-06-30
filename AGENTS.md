@@ -224,6 +224,32 @@ Output: `Vendor/libssh2/{macos,ios,ios-simulator}/`
 
 ### Test Quality
 
+- Treat tests as the behavior harness, not as after-the-fact reassurance. A
+  good regression test should fail on the broken implementation, pass after the
+  fix, and protect a user-visible workflow, lifecycle ordering rule, resource
+  ownership invariant, or explicit architecture rule.
+- For bug fixes, prefer TDD: write the smallest meaningful failing test first,
+  run it, verify it fails for the expected product/architecture reason, then
+  implement the minimal fix and rerun the same focused test to GREEN.
+- Do not call a test good just because it compiles or increases coverage. If it
+  would still pass with the original bug restored, rewrite it or remove it.
+- Prefer behavior tests over mocks that only prove the fake was called. Use
+  fake clients, fake transports, fake clocks, small actors, gates, and injected
+  closures to prove observable ordering such as awaited teardown, cancellation,
+  retry, duplicate intent coalescing, late callback suppression, source/destination
+  ownership, and error preservation.
+- Source/string/boundary tests are secondary harnesses. Use them only to guard
+  explicit rules from this file, keep them narrow, name them as boundary tests,
+  and do not use them as proof that runtime behavior works.
+- Keep every new test tied to a single intent. Avoid broad "coverage" tests that
+  mix unrelated lifecycle, UI, persistence, sync, authentication, or transfer
+  behavior.
+- A focused test is enough for an atomic commit only when it covers the changed
+  owner and failure mode. Run broader focused suites after several related owner
+  fixes, and run full iOS unit tests at phase gates.
+- Be precise about evidence: `build-for-testing` proves compilation, not XCTest
+  execution; a focused class proves that class, not the whole app; a hung or
+  bootstrap-failed run is not a pass.
 - Prefer behavior and boundary tests that protect real invariants over tests that only assert file shape, line count, symbol names, or incidental implementation layout.
 - Structure-only tests are allowed only when they guard an explicit architecture rule from this file. Keep them narrow, documented, cheap to update, and named as boundary tests.
 - Do not add tests whose only value is making a refactor appear covered. Each new test should make clear what behavior, lifecycle ordering, ownership boundary, or architectural invariant it protects.
