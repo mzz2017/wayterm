@@ -19,6 +19,7 @@ no_output_timeout="${IOS_TEST_NO_OUTPUT_TIMEOUT:-900}"
 xcodebuild_quiet="${IOS_TEST_XCODEBUILD_QUIET:-0}"
 xcodebuild_action="${IOS_TEST_XCODEBUILD_ACTION:-test}"
 test_context="${IOS_TEST_CONTEXT:-${xcodebuild_action}}"
+require_executed_tests="${IOS_TEST_REQUIRE_EXECUTED_TESTS:-auto}"
 progress_interval="${IOS_TEST_PROGRESS_INTERVAL:-0}"
 progress_log_lines="${IOS_TEST_PROGRESS_LOG_LINES:-20}"
 failure_log_lines="${IOS_TEST_FAILURE_LOG_LINES:-120}"
@@ -323,6 +324,83 @@ validate_test_logging_settings() {
     validate_unsigned_integer "IOS_TEST_FAILURE_LOG_LINES" "$failure_log_lines" 9
 }
 
+should_require_executed_tests() {
+    local arg
+
+    case "$require_executed_tests" in
+    1 | true | TRUE | yes | YES)
+        return 0
+        ;;
+    0 | false | FALSE | no | NO)
+        return 1
+        ;;
+    auto)
+        ;;
+    *)
+        echo "Unsupported IOS_TEST_REQUIRE_EXECUTED_TESTS: ${require_executed_tests}" >&2
+        exit 10
+        ;;
+    esac
+
+    case "$xcodebuild_action" in
+    test | test-without-building)
+        ;;
+    *)
+        return 1
+        ;;
+    esac
+
+    for arg in "$@"; do
+        case "$arg" in
+        -only-testing:*)
+            return 0
+            ;;
+        esac
+    done
+
+    return 1
+}
+
+executed_test_count() {
+    local log_path="$1"
+    local swift_testing_count
+    local xctest_count
+
+    swift_testing_count="$(
+        sed -n 's/.*Test run with \([0-9][0-9]*\) tests.*/\1/p' "$log_path" |
+            awk '{ total += $1 } END { print total + 0 }'
+    )"
+    xctest_count="$(
+        sed -n 's/.*Executed \([0-9][0-9]*\) tests,.*/\1/p' "$log_path" |
+            awk '{ total += $1 } END { print total + 0 }'
+    )"
+
+    echo $((swift_testing_count + xctest_count))
+}
+
+validate_executed_tests() {
+    local log_path="$1"
+    shift
+
+    if ! should_require_executed_tests "$@"; then
+        return 0
+    fi
+
+    local count
+    count="$(executed_test_count "$log_path")"
+    echo "Executed test count: ${count}"
+    if (( count > 0 )); then
+        return 0
+    fi
+
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+        echo "::error title=iOS tests executed zero tests::${test_context} matched no tests"
+    fi
+    echo "xcodebuild exited successfully, but the requested test filters executed zero tests." >&2
+    echo "Check -only-testing arguments for renamed, removed, or mismatched test identifiers." >&2
+    return 11
+}
+
 print_xcodebuild_process_snapshot() {
     echo "xcodebuild PID: ${xcode_pid}"
     ps -o pid,ppid,etime,pcpu,pmem,state,command -p "$xcode_pid" || true
@@ -567,6 +645,14 @@ run_xcodebuild_test() {
     fi
 
     last_status="$(cat "$status_file")"
+    if [[ "$last_status" -eq 0 ]]; then
+        local validation_status
+        validate_executed_tests "$log_file" "$@"
+        validation_status="$?"
+        if [[ "$validation_status" -ne 0 ]]; then
+            last_status="$validation_status"
+        fi
+    fi
     write_run_metadata "$last_status" "$elapsed" "$result_bundle_path" "$@"
     if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
         echo "::notice title=iOS xcodebuild finished::${test_context} ${xcodebuild_action} status ${last_status} in ${elapsed}s"
