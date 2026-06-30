@@ -210,6 +210,44 @@ struct CloudKitSyncCoordinatorLifecycleTests {
     }
 
     @Test
+    func pendingServerAndWorkspaceDeletesUseEntityKeyWhenPayloadIsMissing() async throws {
+        let cloudKit = RecordingPendingCloudKitRecordSync()
+        let serverID = UUID()
+        let workspaceID = UUID()
+
+        // Given pending delete mutations survived with entity keys but without
+        // feature payloads.
+        let serverDelete = PendingCloudKitMutation.delete(
+            entity: .server,
+            entityKey: serverID.uuidString,
+            payload: nil
+        )
+        let workspaceDelete = PendingCloudKitMutation.delete(
+            entity: .workspace,
+            entityKey: workspaceID.uuidString,
+            payload: nil
+        )
+
+        // When the live CloudKit adapter drains those deletes.
+        try await CloudKitPendingMutationLiveSync.sync(serverDelete, cloudKit: cloudKit)
+        try await CloudKitPendingMutationLiveSync.sync(workspaceDelete, cloudKit: cloudKit)
+
+        // Then the adapter issues record deletes from entityKey instead of
+        // silently succeeding without touching CloudKit.
+        #expect(
+            cloudKit.deletedRecordNames == [
+                serverID.uuidString,
+                workspaceID.uuidString
+            ],
+            "Pending server/workspace delete must use entityKey when payload is unavailable."
+        )
+        #expect(
+            cloudKit.savedRecordNames.isEmpty,
+            "Pending delete mutations must not be converted into save operations."
+        )
+    }
+
+    @Test
     func duplicateDrainWaitsForActiveDrainToFinish() async throws {
         let syncSettingsRestore = SyncSettingsRestore()
         syncSettingsRestore.setEnabled(true)
@@ -367,6 +405,29 @@ private enum CloudKitDrainTestError: LocalizedError {
         case .transientServerDelete:
             return "Transient server delete failure"
         }
+    }
+}
+
+@MainActor
+private final class RecordingPendingCloudKitRecordSync: PendingCloudKitRecordSyncing {
+    let recordZoneID = CKRecordZone.ID(zoneName: "TestZone", ownerName: CKCurrentUserDefaultName)
+    private(set) var savedRecordNames: [String] = []
+    private(set) var deletedRecordNames: [String] = []
+
+    func savePendingCloudKitRecord(
+        _ record: CKRecord,
+        successLog: String,
+        failureLog: String
+    ) async throws {
+        savedRecordNames.append(record.recordID.recordName)
+    }
+
+    func deletePendingCloudKitRecord(
+        named recordName: String,
+        successLog: String,
+        failureLog: String
+    ) async throws {
+        deletedRecordNames.append(recordName)
     }
 }
 
