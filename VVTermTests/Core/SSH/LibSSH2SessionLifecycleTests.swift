@@ -451,6 +451,54 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         )
     }
 
+    func testStartShellRejectsInactiveSessionWhileDisconnectAwaitsCleanup() async throws {
+        // Given a connected session whose disconnect has marked it inactive but
+        // is still waiting for tracked channel cleanup before freeing libssh2.
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x22)
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+        let cleanupGate = AsyncGate()
+        try await session.connect()
+        session.trackChannelCleanupTask {
+            await cleanupGate.wait()
+        }
+
+        let disconnectTask = Task {
+            await session.disconnect()
+        }
+        for _ in 0..<50 where await session.isConnected {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let isConnectedDuringCleanup = await session.isConnected
+        XCTAssertFalse(
+            isConnectedDuringCleanup,
+            "Disconnect should mark the session inactive before waiting for channel cleanup."
+        )
+
+        // When a late caller tries to start another shell during that teardown
+        // window.
+        do {
+            _ = try await session.startShell(cols: 80, rows: 24)
+            XCTFail("Expected inactive session to reject late shell startup")
+        } catch SSHError.notConnected {
+            // Then the inactive state gates new libssh2 channel work even though
+            // the raw libssh2 session pointer has not been freed yet.
+        } catch {
+            XCTFail("Expected SSHError.notConnected, got \(error)")
+        }
+
+        await cleanupGate.open()
+        await disconnectTask.value
+        XCTAssertFalse(
+            driver.channelEvents().contains(.startShell),
+            "Late shell startup must not reach libssh2 while disconnect is in progress."
+        )
+    }
+
     func testExecuteRetriesStartupEAGAINReadsStdoutAndClosesChannel() async throws {
         // Given an exec request whose process startup would block once, then
         // produces stdout and reaches EOF.
@@ -1249,6 +1297,24 @@ private final class LibSSH2RuntimeInitializationRecorder: @unchecked Sendable {
         lock.lock()
         count += 1
         lock.unlock()
+    }
+}
+
+private actor AsyncGate {
+    private var isOpen = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func open() {
+        isOpen = true
+        continuations.forEach { $0.resume() }
+        continuations.removeAll()
     }
 }
 

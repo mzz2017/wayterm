@@ -96,7 +96,7 @@ extension SSHSession {
         environment: RemoteEnvironment = .fallbackPOSIX,
         terminalType: RemoteTerminalType = RemoteTerminalBootstrap.defaultTerminalType
     ) async throws -> ShellHandle {
-        guard let session = libssh2Session else {
+        guard isConnected, let session = libssh2Session else {
             throw SSHError.notConnected
         }
 
