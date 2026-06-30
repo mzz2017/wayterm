@@ -550,23 +550,8 @@ extension Ghostty {
         }
 
         static func action(_ app: ghostty_app_t, target: ghostty_target_s, action: ghostty_action_s) -> Bool {
-            // Get the terminal view from surface userdata if target is a surface
-            var titleTargetDescription = "target \(target.tag.rawValue)"
-            var activeSurfaceCount = 0
-            let terminalView: GhosttyTerminalView? = {
-                guard target.tag == GHOSTTY_TARGET_SURFACE else { return nil }
-                guard let surface = target.target.surface else { return nil }
-                titleTargetDescription = String(describing: surface)
-                if let appUserdata = ghostty_app_userdata(app) {
-                    let appOwner = GhosttyAppCallbackContext.app(fromUserdata: appUserdata)
-                    activeSurfaceCount = appOwner?.activeSurfaceCount() ?? 0
-                    if let registeredView = appOwner?.terminalView(for: surface) {
-                        return registeredView
-                    }
-                }
-                guard let surfaceUserdata = ghostty_surface_userdata(surface) else { return nil }
-                return GhosttySurfaceCallbackContext.terminalView(fromUserdata: surfaceUserdata)
-            }()
+            let surface = target.tag == GHOSTTY_TARGET_SURFACE ? target.target.surface : nil
+            let titleTargetDescription = surface.map { String(describing: $0) } ?? "target \(target.tag.rawValue)"
 
             switch action.tag {
             case GHOSTTY_ACTION_SET_TITLE:
@@ -575,22 +560,22 @@ extension Ghostty {
                     let title = String(cString: titlePtr)
 
                     // Propagate to terminal view callback
-                    DispatchQueue.main.async {
-                        guard let terminalView else {
-                            if TitleDeliveryLogCache.lastUndeliveredTitleBySurface[titleTargetDescription] != title {
-                                TitleDeliveryLogCache.lastUndeliveredTitleBySurface[titleTargetDescription] = title
+                    dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                        guard let terminalView = context.terminalView else {
+                            if TitleDeliveryLogCache.lastUndeliveredTitleBySurface[context.titleTargetDescription] != title {
+                                TitleDeliveryLogCache.lastUndeliveredTitleBySurface[context.titleTargetDescription] = title
                                 Ghostty.logger.warning(
-                                    "Ghostty title received without terminal view: \(title, privacy: .public), target: \(titleTargetDescription, privacy: .public), active surfaces: \(activeSurfaceCount)"
+                                    "Ghostty title received without terminal view: \(title, privacy: .public), target: \(context.titleTargetDescription, privacy: .public), active surfaces: \(context.activeSurfaceCount)"
                                 )
                             }
                             return
                         }
 
                         guard terminalView.onTitleChange != nil else {
-                            if TitleDeliveryLogCache.lastUndeliveredTitleBySurface[titleTargetDescription] != title {
-                                TitleDeliveryLogCache.lastUndeliveredTitleBySurface[titleTargetDescription] = title
+                            if TitleDeliveryLogCache.lastUndeliveredTitleBySurface[context.titleTargetDescription] != title {
+                                TitleDeliveryLogCache.lastUndeliveredTitleBySurface[context.titleTargetDescription] = title
                                 Ghostty.logger.warning(
-                                    "Ghostty title received before title callback was installed: \(title, privacy: .public), target: \(titleTargetDescription, privacy: .public)"
+                                    "Ghostty title received before title callback was installed: \(title, privacy: .public), target: \(context.titleTargetDescription, privacy: .public)"
                                 )
                             }
                             return
@@ -606,8 +591,8 @@ extension Ghostty {
                 if let pwdPtr = action.action.pwd.pwd {
                     let pwd = String(cString: pwdPtr)
                     Ghostty.logger.info("PWD changed: \(pwd)")
-                    DispatchQueue.main.async {
-                        terminalView?.onPwdChange?(pwd)
+                    dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                        context.terminalView?.onPwdChange?(pwd)
                     }
                 }
                 return true
@@ -621,16 +606,16 @@ extension Ghostty {
                 let report = action.action.progress_report
                 let state = GhosttyProgressState(cState: report.state)
                 let value = report.progress >= 0 ? Int(report.progress) : nil
-                DispatchQueue.main.async {
-                    terminalView?.onProgressReport?(state, value)
+                dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                    context.terminalView?.onProgressReport?(state, value)
                 }
                 return true
 
             case GHOSTTY_ACTION_START_SEARCH:
                 #if os(iOS)
                 let needle = action.action.start_search.needle.map { String(cString: $0) } ?? ""
-                DispatchQueue.main.async {
-                    terminalView?.handleGhosttySearchStarted(needle: needle)
+                dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                    context.terminalView?.handleGhosttySearchStarted(needle: needle)
                 }
                 return true
                 #else
@@ -639,8 +624,8 @@ extension Ghostty {
 
             case GHOSTTY_ACTION_END_SEARCH:
                 #if os(iOS)
-                DispatchQueue.main.async {
-                    terminalView?.handleGhosttySearchEnded()
+                dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                    context.terminalView?.handleGhosttySearchEnded()
                 }
                 return true
                 #else
@@ -650,8 +635,8 @@ extension Ghostty {
             case GHOSTTY_ACTION_SEARCH_TOTAL:
                 #if os(iOS)
                 let total = action.action.search_total.total >= 0 ? Int(action.action.search_total.total) : nil
-                DispatchQueue.main.async {
-                    terminalView?.handleGhosttySearchTotalChange(total)
+                dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                    context.terminalView?.handleGhosttySearchTotalChange(total)
                 }
                 return true
                 #else
@@ -661,8 +646,8 @@ extension Ghostty {
             case GHOSTTY_ACTION_SEARCH_SELECTED:
                 #if os(iOS)
                 let selected = action.action.search_selected.selected >= 0 ? Int(action.action.search_selected.selected) : nil
-                DispatchQueue.main.async {
-                    terminalView?.handleGhosttySearchSelectedChange(selected)
+                dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                    context.terminalView?.handleGhosttySearchSelectedChange(selected)
                 }
                 return true
                 #else
@@ -674,16 +659,16 @@ extension Ghostty {
                 #if os(macOS)
                 let cellSize = action.action.cell_size
                 let backingSize = NSSize(width: Double(cellSize.width), height: Double(cellSize.height))
-                DispatchQueue.main.async {
-                    guard let terminalView = terminalView else { return }
+                dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                    guard let terminalView = context.terminalView else { return }
                     // Convert from backing (pixel) coordinates to points
                     terminalView.cellSize = terminalView.convertFromBacking(backingSize)
                     NotificationCenter.default.post(name: .ghosttyDidUpdateCellSize, object: terminalView)
                 }
                 #else
                 let cellSize = action.action.cell_size
-                DispatchQueue.main.async {
-                    guard let terminalView = terminalView else { return }
+                dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                    guard let terminalView = context.terminalView else { return }
                     // Convert from backing (pixel) coordinates to points
                     let scale = terminalView.window?.screen.scale ?? UIScreen.main.scale
                     terminalView.cellSize = CGSize(
@@ -698,11 +683,13 @@ extension Ghostty {
             case GHOSTTY_ACTION_SCROLLBAR:
                 // Scrollbar state update - post notification for scroll view
                 let scrollbar = Ghostty.Action.Scrollbar(c: action.action.scrollbar)
-                NotificationCenter.default.post(
-                    name: .ghosttyDidUpdateScrollbar,
-                    object: terminalView,
-                    userInfo: [Notification.Name.ScrollbarKey: scrollbar]
-                )
+                dispatchActionSurfaceContext(app: app, surface: surface, titleTargetDescription: titleTargetDescription) { context in
+                    NotificationCenter.default.post(
+                        name: .ghosttyDidUpdateScrollbar,
+                        object: context.terminalView,
+                        userInfo: [Notification.Name.ScrollbarKey: scrollbar]
+                    )
+                }
                 return true
 
             case GHOSTTY_ACTION_MOUSE_SHAPE,

@@ -84,8 +84,50 @@ struct GhosttyAppSupportBoundaryTests {
         )
     }
 
+    @Test
+    func actionCallbackResolvesSurfaceContextOnMainActor() throws {
+        let root = try sourceRoot()
+        let appSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/Bridge/Ghostty.App.swift")
+        )
+        let actionPrefix = try sourceSlice(
+            in: appSource,
+            from: "static func action(_ app:",
+            to: "            switch action.tag"
+        )
+        let scrollbarCase = try sourceSlice(
+            in: appSource,
+            from: "case GHOSTTY_ACTION_SCROLLBAR:",
+            to: "                return true\n\n            case GHOSTTY_ACTION_MOUSE_SHAPE"
+        )
+
+        #expect(
+            appSource.contains("dispatchActionSurfaceContext"),
+            "Ghostty action callbacks should resolve app-owned surface registry state on the main actor."
+        )
+        #expect(
+            !actionPrefix.contains("activeSurfaceCount()") && !actionPrefix.contains("terminalView(for:"),
+            "Ghostty action callback entry must not read MainActor app surface registry before hopping to main."
+        )
+        #expect(
+            scrollbarCase.contains("dispatchActionSurfaceContext")
+                && scrollbarCase.contains("NotificationCenter.default.post("),
+            "Scrollbar notifications should be posted from the main-actor action surface context."
+        )
+    }
+
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func sourceSlice(in source: String, from start: String, to end: String) throws -> String {
+        guard let startRange = source.range(of: start) else {
+            throw SourceRootError.notFound
+        }
+        guard let endRange = source[startRange.lowerBound...].range(of: end) else {
+            throw SourceRootError.notFound
+        }
+        return String(source[startRange.lowerBound..<endRange.lowerBound])
     }
 
     private func sourceRoot() throws -> URL {
