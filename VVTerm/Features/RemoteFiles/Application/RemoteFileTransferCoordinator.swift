@@ -455,6 +455,7 @@ extension RemoteFileBrowserStore {
             }
         }
 
+        try Task.checkCancellation()
         try await service.deleteDirectory(at: normalizedPath)
     }
 

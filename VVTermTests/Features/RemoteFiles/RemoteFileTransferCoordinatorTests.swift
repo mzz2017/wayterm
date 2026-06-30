@@ -51,6 +51,43 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func deleteDirectoryCancellationStopsAfterDirectoryListingBeforeParentDelete() async throws {
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            serverProvider: { _ in nil }
+        )
+        let listBlocker = RemoteFileListBlocker(blockedPath: "/remote/empty")
+        let service = RecordingRemoteFileService(
+            directoryContents: ["/remote/empty": []],
+            listBlocker: listBlocker
+        )
+
+        // Given recursive delete is blocked while listing an empty directory.
+        let task = Task {
+            try await store.deleteDirectoryRecursively(at: "/remote/empty", using: service)
+        }
+        await listBlocker.waitUntilStarted()
+
+        // When cancellation arrives after the directory listing has started
+        // but before the parent directory delete is allowed to run.
+        task.cancel()
+        await listBlocker.release()
+
+        // Then cancellation is observed at the phase boundary before the
+        // destructive parent delete operation.
+        let result = await task.result
+        #expect(service.operations.isEmpty)
+        switch result {
+        case .success:
+            Issue.record("Expected recursive directory delete to stop after cancellation")
+        case .failure(is CancellationError):
+            break
+        case .failure(let error):
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+    }
+
+    @Test
     func downloadDirectoryCancellationStopsBeforeNextChild() async throws {
         let store = RemoteFileBrowserStore(
             persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
@@ -252,6 +289,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
     }
 
     let directoryContents: [String: [RemoteFileEntry]]
+    let listBlocker: RemoteFileListBlocker?
     let downloadBlocker: RemoteFileDownloadBlocker?
     let renameBlocker: RemoteFileRenameBlocker?
     let deleteBlocker: RemoteFileDeleteBlocker?
@@ -266,18 +304,22 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
 
     init(
         directoryContents: [String: [RemoteFileEntry]],
+        listBlocker: RemoteFileListBlocker? = nil,
         downloadBlocker: RemoteFileDownloadBlocker? = nil,
         renameBlocker: RemoteFileRenameBlocker? = nil,
         deleteBlocker: RemoteFileDeleteBlocker? = nil
     ) {
         self.directoryContents = directoryContents
+        self.listBlocker = listBlocker
         self.downloadBlocker = downloadBlocker
         self.renameBlocker = renameBlocker
         self.deleteBlocker = deleteBlocker
     }
 
     func listDirectory(at path: String, maxEntries: Int?) async throws -> [RemoteFileEntry] {
-        directoryContents[RemoteFilePath.normalize(path)] ?? []
+        let normalizedPath = RemoteFilePath.normalize(path)
+        await listBlocker?.waitIfNeeded(path: normalizedPath)
+        return directoryContents[normalizedPath] ?? []
     }
 
     func stat(at path: String) async throws -> RemoteFileEntry {
@@ -338,6 +380,40 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         lock.lock()
         operationStorage.append(operation)
         lock.unlock()
+    }
+}
+
+private actor RemoteFileListBlocker {
+    let blockedPath: String
+    private var started = false
+    private var startedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    init(blockedPath: String) {
+        self.blockedPath = blockedPath
+    }
+
+    func waitIfNeeded(path: String) async {
+        guard path == blockedPath else { return }
+        started = true
+        startedWaiters.forEach { $0.resume() }
+        startedWaiters.removeAll()
+
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+        }
+    }
+
+    func waitUntilStarted() async {
+        if started { return }
+        await withCheckedContinuation { continuation in
+            startedWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
     }
 }
 
