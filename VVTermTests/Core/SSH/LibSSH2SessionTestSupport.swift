@@ -185,6 +185,8 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
     private let sftpLastErrorResult: UInt
     private let sessionBlockDirectionsResult: Int32
     private let channelWriteDelayMicroseconds: useconds_t
+    private let execStartDelayMicroseconds: useconds_t
+    private let execStartDelayCommandSubstring: String?
     private let shouldBlockDisconnect: Bool
     private let rawErrors: [LibSSH2RawError]
     private let lock = NSLock()
@@ -234,6 +236,8 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
         sftpLastErrorResult: UInt = 0,
         sessionBlockDirectionsResult: Int32 = 0,
         channelWriteDelayMicroseconds: useconds_t = 0,
+        execStartDelayMicroseconds: useconds_t = 0,
+        execStartDelayCommandSubstring: String? = nil,
         shouldBlockDisconnect: Bool = false,
         rawErrors: [LibSSH2RawError] = [],
         execStartResults: [Int32] = [],
@@ -262,6 +266,8 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
         self.sftpLastErrorResult = sftpLastErrorResult
         self.sessionBlockDirectionsResult = sessionBlockDirectionsResult
         self.channelWriteDelayMicroseconds = channelWriteDelayMicroseconds
+        self.execStartDelayMicroseconds = execStartDelayMicroseconds
+        self.execStartDelayCommandSubstring = execStartDelayCommandSubstring
         self.shouldBlockDisconnect = shouldBlockDisconnect
         self.rawErrors = rawErrors
         self.execStartResultQueue = execStartResults
@@ -631,6 +637,10 @@ final class RecordingLibSSH2SessionDriver: @unchecked Sendable, LibSSH2SessionDr
 
     nonisolated func startExec(channel: OpaquePointer, command: String) -> Int32 {
         recordChannelEvent(.startExec(command))
+        let shouldDelay = execStartDelayCommandSubstring.map { command.contains($0) } ?? true
+        if shouldDelay, execStartDelayMicroseconds > 0 {
+            usleep(execStartDelayMicroseconds)
+        }
         return nextExecStartResult()
     }
 

@@ -45,7 +45,7 @@ nonisolated actor SSHClient {
     private let moshStartupTimeout: Duration = .seconds(8)
     private let connectTimeout: Duration
     private let disconnectTimeout: Duration
-    private let shellStartTimeout: Duration = .seconds(20)
+    private let shellStartTimeout: Duration
     private let execTimeout: Duration = .seconds(20)
     private let downloadTimeout: Duration = .seconds(120)
     private let uploadTimeout: Duration = .seconds(60)
@@ -56,12 +56,14 @@ nonisolated actor SSHClient {
         sessionFactory: @escaping @Sendable (SSHSessionConfig) -> SSHSession = { SSHSession(config: $0) },
         cloudflareTransportManager: any CloudflareTransportManaging = CloudflareTransportManager(),
         connectTimeout: Duration = .seconds(30),
-        disconnectTimeout: Duration = .seconds(4)
+        disconnectTimeout: Duration = .seconds(4),
+        shellStartTimeout: Duration = .seconds(20)
     ) {
         self.sessionFactory = sessionFactory
         self.cloudflareTransportManager = cloudflareTransportManager
         self.connectTimeout = connectTimeout
         self.disconnectTimeout = disconnectTimeout
+        self.shellStartTimeout = shellStartTimeout
     }
 
     /// Immediately abort the connection by closing the socket (non-blocking, can be called from any thread)
@@ -552,21 +554,49 @@ nonisolated actor SSHClient {
         environment: RemoteEnvironment,
         terminalType: RemoteTerminalType
     ) async throws -> ShellHandle {
-        try await SSHClient.runWithTimeout(
-            shellStartTimeout,
-            operation: {
-                try await session.startShell(
-                    cols: cols,
-                    rows: rows,
-                    startupCommand: startupCommand,
-                    environment: environment,
-                    terminalType: terminalType
-                )
-            },
-            onTimeout: {
-                session.abort()
-            }
-        )
+        do {
+            return try await SSHClient.runWithTimeout(
+                shellStartTimeout,
+                operation: {
+                    try await session.startShell(
+                        cols: cols,
+                        rows: rows,
+                        startupCommand: startupCommand,
+                        environment: environment,
+                        terminalType: terminalType
+                    )
+                },
+                onTimeout: {
+                    session.abort()
+                }
+            )
+        } catch SSHError.timeout {
+            await invalidateSessionAfterShellStartupTimeout(session)
+            throw SSHError.timeout
+        }
+    }
+
+    private func invalidateSessionAfterShellStartupTimeout(_ timedOutSession: SSHSession) async {
+        var shouldDisconnectCloudflareTransport = false
+        if let activeSession = session,
+           ObjectIdentifier(activeSession) == ObjectIdentifier(timedOutSession) {
+            shouldDisconnectCloudflareTransport = connectedTarget?.connectionMode == .cloudflare
+            keepAliveTask?.cancel()
+            keepAliveTask = nil
+            session = nil
+            abortState.setSessionForAbort(nil)
+            connectionKey = nil
+            connectedTarget = nil
+            resolvedRemoteEnvironment = nil
+            resolvedRemoteTerminalType = nil
+            logger.warning("Invalidated SSH session after shell startup timeout")
+        }
+
+        timedOutSession.abort()
+        await disconnectSSHSession(timedOutSession)
+        if shouldDisconnectCloudflareTransport {
+            await disconnectCloudflareTransport(reason: "shell startup timeout")
+        }
     }
 
     func write(_ data: Data, to shellId: UUID) async throws {

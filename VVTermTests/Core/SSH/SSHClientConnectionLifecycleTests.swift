@@ -379,6 +379,85 @@ final class SSHClientConnectionLifecycleTests: XCTestCase {
         timeoutTask.cancel()
     }
 
+    func testShellStartTimeoutInvalidatesStaleSessionBeforeRetry() async throws {
+        // Given SSH is connected, but shell startup enters a blocking libssh2
+        // setup call that outlives the shell startup timeout.
+        var firstDescriptors = [Int32](repeating: -1, count: 2)
+        var secondDescriptors = [Int32](repeating: -1, count: 2)
+        XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &firstDescriptors), 0)
+        XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, &secondDescriptors), 0)
+        defer {
+            Darwin.close(firstDescriptors[1])
+            Darwin.close(secondDescriptors[1])
+        }
+
+        let firstDriver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            connectedSocket: firstDescriptors[0],
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x44),
+            execStartDelayMicroseconds: 1_000_000,
+            execStartDelayCommandSubstring: "vvterm-block-shell-start",
+            channelEOFResults: Array(repeating: true, count: 10)
+        )
+        let secondDriver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x2),
+            connectedSocket: secondDescriptors[0],
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success
+        )
+        let sessionFactory = RecordingSSHSessionFactory([
+            SSHSession(config: .libSSH2AuthLifecycleTest, driver: firstDriver),
+            SSHSession(config: .libSSH2AuthLifecycleTest, driver: secondDriver)
+        ])
+        let client = SSHClient(
+            sessionFactory: { _ in
+                sessionFactory.makeSession()
+            },
+            connectTimeout: .milliseconds(200),
+            disconnectTimeout: .milliseconds(80),
+            shellStartTimeout: .milliseconds(80)
+        )
+        let target = SSHConnectionTarget(host: "ssh.example.com", username: "root", authMethod: .sshKey)
+        let credentials = ServerCredentials(
+            serverId: UUID(),
+            password: nil,
+            privateKey: Data("private-key".utf8),
+            publicKey: Data("public-key".utf8),
+            passphrase: nil,
+            cloudflareClientID: nil,
+            cloudflareClientSecret: nil
+        )
+
+        _ = try await client.connect(to: target, credentials: credentials)
+
+        // When shell startup times out after aborting the socket.
+        do {
+            _ = try await client.startShell(startupCommand: "vvterm-block-shell-start")
+            XCTFail("Expected shell startup timeout")
+        } catch SSHError.timeout {
+            // Then the timed-out SSHSession must not remain the active logical
+            // connection for same-target retries.
+        } catch {
+            XCTFail("Expected SSHError.timeout, got \(error)")
+        }
+
+        let isConnectedAfterTimeout = await client.isConnected
+        XCTAssertFalse(
+            isConnectedAfterTimeout,
+            "Shell startup timeout must invalidate the active SSHClient session."
+        )
+
+        _ = try await client.connect(to: target, credentials: credentials)
+        XCTAssertEqual(
+            sessionFactory.createdCount(),
+            2,
+            "Retry after shell startup timeout should create a fresh SSHSession instead of reusing the stale one."
+        )
+        await client.disconnect()
+    }
+
     func testStartShellRejectsAfterClientAbortBeforeReadingSession() async throws {
         // Given SSHClient owns a connected SSHSession whose shell startup would
         // otherwise succeed.
