@@ -64,8 +64,9 @@ final class ServerCredentialPersistence {
             try deleteSupersededAuthCredentials(for: server)
         }
 
-        if server.connectionMode == .cloudflare,
-           server.cloudflareAccessMode == .serviceToken,
+        let usesCloudflareServiceToken = server.connectionMode == .cloudflare
+            && server.cloudflareAccessMode == .serviceToken
+        if usesCloudflareServiceToken,
            let cloudflareClientID = credentials.cloudflareClientID,
            let cloudflareClientSecret = credentials.cloudflareClientSecret {
             try library.storeCloudflareServiceToken(
@@ -73,7 +74,7 @@ final class ServerCredentialPersistence {
                 clientID: cloudflareClientID,
                 clientSecret: cloudflareClientSecret
             )
-        } else if didStoreAuthCredential {
+        } else if !usesCloudflareServiceToken {
             try library.deleteCloudflareServiceToken(for: server.id)
         }
     }

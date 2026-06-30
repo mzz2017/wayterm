@@ -108,6 +108,29 @@ struct ServerCredentialPersistenceTests {
     }
 
     @Test
+    func switchingAwayFromCloudflareServiceTokenDeletesStoredTokenWithoutNewAuthMaterial() throws {
+        let library = RecordingCredentialLibrary()
+        let persistence = ServerCredentialPersistence(library: library)
+        let server = makeServer(
+            connectionMode: .cloudflare,
+            authMethod: .password,
+            cloudflareAccessMode: .oauth
+        )
+        let credentials = ServerCredentials(serverId: server.id)
+
+        // Given an existing server may already have a Cloudflare service token
+        // in Keychain, and the user switches the connection to OAuth without
+        // changing SSH auth material in the same save.
+        try persistence.storeCredentials(for: server, credentials: credentials)
+
+        // Then the stale service token is still removed, so future connects
+        // cannot silently reuse credentials for the old Cloudflare mode.
+        #expect(library.events == [
+            .deleteCloudflareServiceToken(server.id)
+        ])
+    }
+
+    @Test
     func deleteCredentialsForwardsToCredentialLibrary() throws {
         let library = RecordingCredentialLibrary()
         let persistence = ServerCredentialPersistence(library: library)
