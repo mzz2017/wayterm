@@ -119,6 +119,50 @@ struct RemoteConnectionLeaseTests {
     }
 
     @Test
+    func borrowedLeasesForSameClientShareExclusiveOperationState() async throws {
+        // Given two borrowed leases that point at the same stable SSH client owner.
+        let client = RecordingRemoteConnectionClient()
+        let firstLease = RemoteConnectionLease(client: client, ownership: .borrowed)
+        let secondLease = RemoteConnectionLease(client: client, ownership: .borrowed)
+        let blocker = BlockingOperationProbe()
+        let secondOperation = QueuedOperationProbe()
+
+        let firstTask = Task {
+            try await firstLease.withExclusiveClient { _ in
+                await blocker.markStarted()
+                await blocker.waitUntilReleased()
+            }
+        }
+
+        await blocker.waitUntilStarted()
+
+        // When a second borrowed lease attempts another exclusive operation on that same client.
+        let secondTask = Task {
+            await secondOperation.markAttempted()
+            try await secondLease.withExclusiveClient { _ in
+                await secondOperation.markRan()
+            }
+        }
+
+        await secondOperation.waitUntilAttempted()
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then the second lease must wait for the first operation instead of bypassing the mutex.
+        let didRunBeforeFirstLeaseReleased = await secondOperation.didRun()
+        #expect(
+            !didRunBeforeFirstLeaseReleased,
+            "Borrowed leases for the same client must share exclusive-operation state."
+        )
+
+        await blocker.release()
+        try await firstTask.value
+        try await secondTask.value
+
+        let didRunAfterFirstLeaseReleased = await secondOperation.didRun()
+        #expect(didRunAfterFirstLeaseReleased, "Queued borrowed-lease operation should run after the active operation completes.")
+    }
+
+    @Test
     func closeWaitsForExclusiveOperationBeforeDisconnectingOwnedClient() async throws {
         // Given an owned lease with one exclusive operation already in flight.
         let client = RecordingRemoteConnectionClient()
@@ -362,7 +406,25 @@ private actor BlockingOperationProbe {
 }
 
 private actor QueuedOperationProbe {
+    private var didAttemptOperation = false
     private var didRunOperation = false
+    private var attemptWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func markAttempted() {
+        didAttemptOperation = true
+        let waiters = attemptWaiters
+        attemptWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func waitUntilAttempted() async {
+        if didAttemptOperation { return }
+        await withCheckedContinuation { continuation in
+            attemptWaiters.append(continuation)
+        }
+    }
 
     func markRan() {
         didRunOperation = true

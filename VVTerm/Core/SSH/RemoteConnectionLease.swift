@@ -30,7 +30,12 @@ nonisolated struct RemoteConnectionLease: Sendable {
     ) {
         self.client = client
         self.ownership = ownership
-        self.state = RemoteConnectionLeaseState()
+        switch ownership {
+        case .borrowed:
+            self.state = RemoteConnectionLeaseStateRegistry.shared.state(forBorrowedClient: client)
+        case .owned:
+            self.state = RemoteConnectionLeaseState()
+        }
     }
 
     func close() async {
@@ -60,6 +65,35 @@ nonisolated struct RemoteConnectionLeaseProvider {
 }
 
 extension SSHClient: RemoteConnectionLeaseClient {}
+
+private nonisolated final class RemoteConnectionLeaseStateRegistry: @unchecked Sendable {
+    static let shared = RemoteConnectionLeaseStateRegistry()
+
+    private let lock = NSLock()
+    private let borrowedStates = NSMapTable<AnyObject, RemoteConnectionLeaseStateBox>(
+        keyOptions: [.weakMemory, .objectPointerPersonality],
+        valueOptions: [.strongMemory]
+    )
+
+    func state(forBorrowedClient client: any RemoteConnectionLeaseClient) -> RemoteConnectionLeaseState {
+        let key = client as AnyObject
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        if let box = borrowedStates.object(forKey: key) {
+            return box.state
+        }
+
+        let box = RemoteConnectionLeaseStateBox()
+        borrowedStates.setObject(box, forKey: key)
+        return box.state
+    }
+}
+
+private nonisolated final class RemoteConnectionLeaseStateBox {
+    let state = RemoteConnectionLeaseState()
+}
 
 private actor RemoteConnectionLeaseState {
     private enum CloseState {
