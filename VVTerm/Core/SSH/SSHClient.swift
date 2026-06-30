@@ -118,7 +118,9 @@ nonisolated actor SSHClient {
             var dialPort = target.port
 
             if target.connectionMode == .cloudflare {
-                let localPort = try await cloudflareTransportManager.connect(target: target, credentials: credentials)
+                let localPort = try await SSHClient.runWithTimeout(connectTimeout) {
+                    try await cloudflareTransportManager.connect(target: target, credentials: credentials)
+                }
                 dialHost = "127.0.0.1"
                 dialPort = Int(localPort)
                 logger.info("Using Cloudflare local tunnel endpoint \(dialHost):\(dialPort)")

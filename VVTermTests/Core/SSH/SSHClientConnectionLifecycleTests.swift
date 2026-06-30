@@ -220,6 +220,75 @@ final class SSHClientConnectionLifecycleTests: XCTestCase {
         _ = await connectTask.result
     }
 
+    func testCloudflareConnectIsBoundedByClientConnectTimeout() async throws {
+        // Given Cloudflare tunnel setup has entered a subsystem that does not
+        // return before the SSH client connect timeout.
+        let cloudflareTransport = BlockingCloudflareTransportManager()
+        let sessionFactory = CountingSSHSessionFactory()
+        let client = SSHClient(
+            sessionFactory: { config in
+                sessionFactory.makeSession(config: config)
+            },
+            cloudflareTransportManager: cloudflareTransport,
+            connectTimeout: .milliseconds(80)
+        )
+        let target = SSHConnectionTarget(
+            host: "ssh.example.com",
+            username: "root",
+            connectionMode: .cloudflare,
+            authMethod: .password,
+            cloudflareAccessMode: .serviceToken,
+            cloudflareTeamDomainOverride: "team.cloudflareaccess.com"
+        )
+        let credentials = ServerCredentials(
+            serverId: UUID(),
+            password: "secret",
+            privateKey: nil,
+            publicKey: nil,
+            passphrase: nil,
+            cloudflareClientID: "client-id",
+            cloudflareClientSecret: "client-secret"
+        )
+        let startedAt = ContinuousClock.now
+
+        // When the Cloudflare connect never produces a local tunnel endpoint.
+        do {
+            _ = try await AsyncTimeoutGate.run(
+                timeout: .milliseconds(600),
+                timeoutError: { SSHClientConnectionLifecycleTestError.cloudflareConnectEscapedTimeout }
+            ) {
+                try await client.connect(to: target, credentials: credentials)
+            }
+            XCTFail("Expected Cloudflare setup to be bounded by SSHClient.connect timeout")
+        } catch SSHError.timeout {
+            // Then the client returns the configured timeout before any
+            // SSHSession exists and asks the Cloudflare owner to clean up.
+        } catch SSHClientConnectionLifecycleTestError.cloudflareConnectEscapedTimeout {
+            XCTFail("Cloudflare connect escaped SSHClient.connect timeout")
+        } catch {
+            XCTFail("Expected SSHError.timeout, got \(error)")
+        }
+
+        let elapsed = startedAt.duration(to: .now)
+        XCTAssertLessThan(
+            elapsed,
+            .milliseconds(800),
+            "Cloudflare setup should be covered by SSHClient.connect timeout."
+        )
+        XCTAssertEqual(
+            sessionFactory.createdCount(),
+            0,
+            "Timed-out Cloudflare setup must not create an SSHSession without a tunnel endpoint."
+        )
+        let disconnectCount = await cloudflareTransport.disconnectCount()
+        XCTAssertEqual(
+            disconnectCount,
+            1,
+            "Timed-out Cloudflare setup should disconnect the Cloudflare owner exactly once."
+        )
+        await cloudflareTransport.releaseConnect()
+    }
+
     func testConnectUsesBoundedSocketDialTimeout() async throws {
         // Given the low-level TCP dialer does not return a connected socket
         // before the client-level connect timeout.
@@ -399,6 +468,28 @@ private final class RecordingSSHSessionFactory: @unchecked Sendable {
     }
 }
 
+private final class CountingSSHSessionFactory: @unchecked Sendable {
+    private let lock = NSLock()
+    private var createdSessions = 0
+
+    func makeSession(config: SSHSessionConfig) -> SSHSession {
+        lock.lock()
+        createdSessions += 1
+        lock.unlock()
+
+        return SSHSession(
+            config: config,
+            driver: RecordingLibSSH2SessionDriver(sessionInitResult: OpaquePointer(bitPattern: 0x1))
+        )
+    }
+
+    func createdCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return createdSessions
+    }
+}
+
 private actor DisconnectReturnMarker {
     private(set) var hasReturned = false
 
@@ -413,6 +504,7 @@ private actor BlockingCloudflareTransportManager: CloudflareTransportManaging {
     private var connectStartedWaiters: [CheckedContinuation<Void, Never>] = []
     private var disconnectStartedWaiters: [CheckedContinuation<Void, Never>] = []
     private var connectReleaseContinuation: CheckedContinuation<Void, Never>?
+    private var disconnectInvocations = 0
 
     func connect(target: SSHConnectionTarget, credentials: ServerCredentials) async throws -> UInt16 {
         connectStarted = true
@@ -428,6 +520,7 @@ private actor BlockingCloudflareTransportManager: CloudflareTransportManaging {
 
     func disconnect() async {
         disconnectStarted = true
+        disconnectInvocations += 1
         disconnectStartedWaiters.forEach { $0.resume() }
         disconnectStartedWaiters.removeAll()
     }
@@ -449,6 +542,10 @@ private actor BlockingCloudflareTransportManager: CloudflareTransportManaging {
     func releaseConnect() {
         connectReleaseContinuation?.resume()
         connectReleaseContinuation = nil
+    }
+
+    func disconnectCount() -> Int {
+        disconnectInvocations
     }
 }
 
@@ -477,6 +574,7 @@ private func sourceRoot() throws -> URL {
 private enum SSHClientConnectionLifecycleTestError: Error {
     case sourceSliceNotFound
     case timeoutGateWaitedForBlockedOperation
+    case cloudflareConnectEscapedTimeout
 }
 
 private func blockCurrentThreadIgnoringCancellation() {
