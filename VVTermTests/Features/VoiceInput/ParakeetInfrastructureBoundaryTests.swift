@@ -69,6 +69,39 @@ struct ParakeetInfrastructureBoundaryTests {
         }
     }
 
+    @Test
+    func parakeetRuntimeDecodePathsHaveCancellationCheckpoints() throws {
+        let root = try sourceRoot()
+        let modelSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/VoiceInput/Infrastructure/Parakeet/ParakeetModel.swift")
+        )
+
+        // Given Parakeet model execution is compiled only on arm64 in product
+        // builds, these source guards protect the lifecycle rule that long MLX
+        // transcription work must observe task cancellation inside its decode
+        // and chunk loops.
+        try expectCancellationCheck(
+            in: modelSource,
+            after: "public func transcribe(",
+            before: "private func transcribeChunked("
+        )
+        try expectCancellationCheck(
+            in: modelSource,
+            after: "while start < audioLength {",
+            before: "return sentencesToResult(tokensToSentences(allTokens))"
+        )
+        try expectCancellationCheck(
+            in: modelSource,
+            after: "public func generate(mel: MLXArray)",
+            before: "public func decode("
+        )
+        try expectCancellationCheck(
+            in: modelSource,
+            after: "while step < length {",
+            before: "results.append(hypothesis)"
+        )
+    }
+
     private func swiftFiles(in directory: URL) throws -> [URL] {
         let urls = try FileManager.default.contentsOfDirectory(
             at: directory,
@@ -79,6 +112,27 @@ struct ParakeetInfrastructureBoundaryTests {
 
     private func source(at url: URL) throws -> String {
         try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func expectCancellationCheck(
+        in source: String,
+        after startMarker: String,
+        before endMarker: String
+    ) throws {
+        guard let start = source.range(of: startMarker) else {
+            Issue.record("Expected to find Parakeet runtime start marker: \(startMarker)")
+            return
+        }
+        guard let end = source.range(of: endMarker, range: start.upperBound..<source.endIndex) else {
+            Issue.record("Expected to find Parakeet runtime end marker: \(endMarker)")
+            return
+        }
+
+        let section = source[start.upperBound..<end.lowerBound]
+        #expect(
+            section.contains("try Task.checkCancellation()"),
+            "Parakeet runtime section after \(startMarker) should observe task cancellation."
+        )
     }
 
     private func sourceRoot() throws -> URL {

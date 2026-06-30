@@ -193,6 +193,7 @@ nonisolated public struct DecodingConfig {
         chunkCallback: ((Float, Float) -> Void)? = nil
     ) throws -> AlignedResult {
 
+        try Task.checkCancellation()
         let processedAudio = audioData.dtype == dtype ? audioData : audioData.asType(dtype)
 
         if let chunkDuration = chunkDuration {
@@ -200,6 +201,7 @@ nonisolated public struct DecodingConfig {
 
             if audioLengthSeconds <= chunkDuration {
                 let mel = try getLogMel(processedAudio, config: preprocessConfig)
+                try Task.checkCancellation()
                 return try generate(mel: mel)[0]
             }
 
@@ -211,6 +213,7 @@ nonisolated public struct DecodingConfig {
             )
         } else {
             let mel = try getLogMel(processedAudio, config: preprocessConfig)
+            try Task.checkCancellation()
             return try generate(mel: mel)[0]
         }
     }
@@ -230,6 +233,7 @@ nonisolated public struct DecodingConfig {
         var start = 0
 
         while start < audioLength {
+            try Task.checkCancellation()
             let end = min(start + chunkSamples, audioLength)
 
             chunkCallback?(Float(end), Float(audioLength))
@@ -240,6 +244,7 @@ nonisolated public struct DecodingConfig {
 
             let chunkAudio = audio[start..<end]
             let chunkMel = try getLogMel(chunkAudio, config: preprocessConfig)
+            try Task.checkCancellation()
             let chunkResult = try generate(mel: chunkMel)[0]
 
             let chunkOffset = Float(start) / Float(preprocessConfig.sampleRate)
@@ -269,9 +274,11 @@ nonisolated public struct DecodingConfig {
     }
 
     public func generate(mel: MLXArray) throws -> [AlignedResult] {
+        try Task.checkCancellation()
         let inputMel = mel.ndim == 2 ? mel.expandedDimensions(axis: 0) : mel
 
         let (features, lengths) = try encoder(inputMel)
+        try Task.checkCancellation()
 
         let (results, _) = try decode(
             features: features,
@@ -314,6 +321,7 @@ nonisolated public struct DecodingConfig {
             var currentLastToken = actualLastToken[batch]
 
             while step < length {
+                try Task.checkCancellation()
                 let decoderInput = currentLastToken.map { token in
                     MLXArray([token]).expandedDimensions(axis: 0)
                 }
