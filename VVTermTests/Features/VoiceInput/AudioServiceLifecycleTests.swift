@@ -114,6 +114,46 @@ struct AudioServiceLifecycleTests {
     }
 
     @Test
+    func cancelRecordingCancelsInFlightMLXTranscription() async throws {
+        let transcriber = BlockingVoiceSampleTranscriber()
+        let capture = RecordingStopVoiceAudioCapture(samples: [0.1, 0.2])
+        let service = AudioService(
+            dependencies: makeDependencies(
+                provider: .mlxWhisper,
+                whisperProvider: transcriber,
+                isWhisperSupported: true,
+                isModelAvailable: true,
+                audioCaptureService: capture,
+                speechAudioRecognitionRunner: RecordingSpeechAudioRecognitionRunner()
+            )
+        )
+
+        // Given MLX recording is active and stop has entered long-running
+        // transcription after microphone capture is closed.
+        try await service.startRecording()
+        let stopTask = Task { @MainActor in
+            await service.stopRecording()
+        }
+        await transcriber.waitForTranscribeCall()
+
+        // When terminal lifecycle cancellation asks AudioService to cancel the
+        // voice runtime while transcription is still running.
+        await service.cancelRecording()
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then the in-flight MLX transcription task must be cancelled instead
+        // of continuing after the terminal has closed.
+        #expect(
+            transcriber.didCancel,
+            "Canceling recording should cancel the in-flight MLX transcription task."
+        )
+        transcriber.release("late command")
+        let result = await stopTask.value
+        #expect(result.isEmpty, "Canceled MLX transcription should not return late command text.")
+        #expect(service.transcribedText.isEmpty, "Canceled MLX transcription should not publish late text.")
+    }
+
+    @Test
     func audioCaptureStartFailureDeactivatesActivatedSession() throws {
         let session = RecordingAudioCaptureSession()
         let engine = FailingStartVoiceAudioEngine()
@@ -141,6 +181,12 @@ struct AudioServiceLifecycleTests {
     }
 
     private func makeDependencies(
+        provider: TranscriptionProvider = .system,
+        whisperProvider: (any VoiceSampleTranscribing)? = nil,
+        parakeetProvider: (any VoiceSampleTranscribing)? = nil,
+        isWhisperSupported: Bool = false,
+        isParakeetSupported: Bool = false,
+        isModelAvailable: Bool = false,
         audioCaptureService: any VoiceAudioCapturing,
         speechAudioRecognitionRunner: any SpeechAudioRecognitionRunning,
         checkPermissions: (@MainActor (Bool) async -> Bool)? = nil,
@@ -149,17 +195,17 @@ struct AudioServiceLifecycleTests {
         AudioServiceDependencies(
             settings: TranscriptionSettingsReader {
                 TranscriptionSettingsSnapshot(
-                    provider: .system,
+                    provider: provider,
                     whisperModelId: "test/whisper",
                     parakeetModelId: "test/parakeet",
                     languageCode: "en"
                 )
             },
-            whisperProvider: RecordingVoiceSampleTranscriber(),
-            parakeetProvider: RecordingVoiceSampleTranscriber(),
-            isWhisperSupported: { false },
-            isParakeetSupported: { false },
-            isModelAvailable: { _, _ in false },
+            whisperProvider: whisperProvider ?? RecordingVoiceSampleTranscriber(),
+            parakeetProvider: parakeetProvider ?? RecordingVoiceSampleTranscriber(),
+            isWhisperSupported: { isWhisperSupported },
+            isParakeetSupported: { isParakeetSupported },
+            isModelAvailable: { _, _ in isModelAvailable },
             audioCaptureSession: NoopAudioCaptureSession(),
             audioCaptureService: audioCaptureService,
             speechAudioRecognitionRunner: speechAudioRecognitionRunner,
@@ -273,6 +319,35 @@ private final class RecordingStartVoiceAudioCapture: VoiceAudioCapturing {
 }
 
 @MainActor
+private final class RecordingStopVoiceAudioCapture: VoiceAudioCapturing {
+    var audioLevel: Float = 0
+    var recordingDuration: TimeInterval = 0
+    var sampleRate: Double = 16_000
+    var bufferHandler: ((AVAudioPCMBuffer) -> Void)?
+    private let samples: [Float]
+    private(set) var startCalls = 0
+    private(set) var stopCalls = 0
+    private(set) var cancelCalls = 0
+
+    init(samples: [Float]) {
+        self.samples = samples
+    }
+
+    func start() throws {
+        startCalls += 1
+    }
+
+    func stop() async -> [Float] {
+        stopCalls += 1
+        return samples
+    }
+
+    func cancel() async {
+        cancelCalls += 1
+    }
+}
+
+@MainActor
 private final class BlockingCancelVoiceAudioCapture: VoiceAudioCapturing {
     var audioLevel: Float = 0
     var recordingDuration: TimeInterval = 0
@@ -331,6 +406,45 @@ private final class RecordingAudioCaptureSession: AudioCaptureSessionManaging {
 private final class RecordingVoiceSampleTranscriber: VoiceSampleTranscribing {
     func transcribe(samples: [Float]) async throws -> String {
         ""
+    }
+}
+
+@MainActor
+private final class BlockingVoiceSampleTranscriber: VoiceSampleTranscribing {
+    private var transcribeCallContinuations: [CheckedContinuation<Void, Never>] = []
+    private var continuation: CheckedContinuation<String, Error>?
+    private(set) var transcribeCallCount = 0
+    private(set) var didCancel = false
+
+    func transcribe(samples: [Float]) async throws -> String {
+        transcribeCallCount += 1
+        let callContinuations = transcribeCallContinuations
+        transcribeCallContinuations.removeAll()
+        callContinuations.forEach { $0.resume() }
+
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                self.continuation = continuation
+            }
+        } onCancel: {
+            Task { @MainActor in
+                self.didCancel = true
+                self.continuation?.resume(throwing: CancellationError())
+                self.continuation = nil
+            }
+        }
+    }
+
+    func waitForTranscribeCall() async {
+        guard transcribeCallCount == 0 else { return }
+        await withCheckedContinuation { continuation in
+            transcribeCallContinuations.append(continuation)
+        }
+    }
+
+    func release(_ text: String) {
+        continuation?.resume(returning: text)
+        continuation = nil
     }
 }
 

@@ -23,16 +23,20 @@ final class MLXWhisperProvider {
         let modelDirectory = await MainActor.run {
             MLXModelManager.modelDirectory(for: .whisper, modelId: modelId)
         }
-        return try await Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             guard !samples.isEmpty else { return "" }
+            try Task.checkCancellation()
 
             let model = try WhisperModelLoader.shared.loadModel(at: modelDirectory)
+            try Task.checkCancellation()
 
             let mel = try WhisperAudioProcessor.logMelSpectrogram(samples, nMels: model.dims.n_mels, padding: WhisperAudioConstants.nSamples)
             let melSegment = WhisperAudioProcessor.padOrTrim(mel, length: WhisperAudioConstants.nFrames, axis: 0).asType(.float16)
             let melBatch = melSegment.reshaped(1, melSegment.dim(0), melSegment.dim(1))
+            try Task.checkCancellation()
 
             let audioFeatures = model.encoder(melBatch)
+            try Task.checkCancellation()
 
             let language: String?
             if model.isMultilingual {
@@ -49,6 +53,7 @@ final class MLXWhisperProvider {
                 task: "transcribe",
                 modelId: modelId
             )
+            try Task.checkCancellation()
 
             let promptTokens = tokenizer.initialTokens(withoutTimestamps: true)
             var allTokens = promptTokens
@@ -60,6 +65,7 @@ final class MLXWhisperProvider {
 
             let maxTokens = model.dims.n_text_ctx
             while allTokens.count < maxTokens {
+                try Task.checkCancellation()
                 if nextToken == tokenizer.eot { break }
                 let tokenArray = MLXArray([nextToken], [1, 1])
                 let result = model.decoder(tokenArray, audioFeatures: audioFeatures, kvCache: kvCache)
@@ -70,8 +76,15 @@ final class MLXWhisperProvider {
             }
 
             let outputTokens = Array(allTokens.dropFirst(promptTokens.count))
+            try Task.checkCancellation()
             return tokenizer.decode(outputTokens).trimmingCharacters(in: .whitespacesAndNewlines)
-        }.value
+        }
+
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
         #else
         throw NSError(domain: "MLXWhisper", code: -1, userInfo: [NSLocalizedDescriptionKey: "MLX Whisper not supported on this architecture"])
         #endif

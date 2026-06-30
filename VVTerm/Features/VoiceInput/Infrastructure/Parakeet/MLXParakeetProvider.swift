@@ -23,14 +23,24 @@ final class MLXParakeetProvider {
             MLXModelManager.modelDirectory(for: .parakeetTDT, modelId: modelId)
         }
 
-        return try await Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             guard !samples.isEmpty else { return "" }
+            try Task.checkCancellation()
 
             let model = try ParakeetModelLoader.shared.loadModel(at: modelDirectory)
+            try Task.checkCancellation()
+
             let audio = MLXArray(samples, [samples.count])
             let result = try model.transcribe(audioData: audio, dtype: .float32, chunkDuration: nil)
+            try Task.checkCancellation()
             return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.value
+        }
+
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
         #else
         throw NSError(domain: "MLXParakeet", code: -1, userInfo: [NSLocalizedDescriptionKey: "MLX Parakeet not supported on this architecture"])
         #endif

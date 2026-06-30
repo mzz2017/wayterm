@@ -42,6 +42,7 @@ class AudioService: NSObject, ObservableObject {
     private let dependencies: AudioServiceDependencies
 
     private var activeProvider: TranscriptionProvider = .system
+    private var activeTranscriptionTask: (id: UUID, task: Task<String, Error>)?
 
     init(dependencies: AudioServiceDependencies? = nil) {
         let resolvedDependencies = dependencies ?? .live
@@ -150,7 +151,9 @@ class AudioService: NSObject, ObservableObject {
             return finalText
         case .mlxWhisper:
             do {
-                let text = try await dependencies.whisperProvider.transcribe(samples: samples)
+                let text = try await runMLXTranscription { [self] in
+                    try await dependencies.whisperProvider.transcribe(samples: samples)
+                }
                 transcribedText = text
                 return text
             } catch is CancellationError {
@@ -165,7 +168,9 @@ class AudioService: NSObject, ObservableObject {
             }
         case .mlxParakeet:
             do {
-                let text = try await dependencies.parakeetProvider.transcribe(samples: samples)
+                let text = try await runMLXTranscription { [self] in
+                    try await dependencies.parakeetProvider.transcribe(samples: samples)
+                }
                 transcribedText = text
                 return text
             } catch is CancellationError {
@@ -184,6 +189,7 @@ class AudioService: NSObject, ObservableObject {
     func cancelRecording() async {
         isRecording = false
 
+        activeTranscriptionTask?.task.cancel()
         await audioCaptureService.cancel()
         speechRecognitionService.cancelRecognition()
         speechRecognitionService.resetTranscriptions()
@@ -270,6 +276,27 @@ class AudioService: NSObject, ObservableObject {
             try audioCaptureService.start()
         } catch {
             throw RecordingError.recordingFailed
+        }
+    }
+
+    private func runMLXTranscription(
+        _ operation: @escaping @MainActor () async throws -> String
+    ) async throws -> String {
+        let taskID = UUID()
+        let task = Task { @MainActor in
+            try await operation()
+        }
+        activeTranscriptionTask = (taskID, task)
+        defer {
+            if activeTranscriptionTask?.id == taskID {
+                activeTranscriptionTask = nil
+            }
+        }
+
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
         }
     }
 
