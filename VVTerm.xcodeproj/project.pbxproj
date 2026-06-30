@@ -1105,8 +1105,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/wiedymi/swift-umami";
 			requirement = {
-				branch = main;
-				kind = branch;
+				kind = revision;
+				revision = e7a14c16d745ec1d7e4355f35407f8407808475a;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

@@ -42,7 +42,6 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/wiedymi/swift-umami",
       "state" : {
-        "branch" : "main",
         "revision" : "e7a14c16d745ec1d7e4355f35407f8407808475a"
       }
     },
