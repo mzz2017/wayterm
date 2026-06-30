@@ -43,6 +43,9 @@ jobs:
       - name: Run SwiftPM tests
         run: swift test
 
+      - name: Run iOS wrapper self-tests
+        run: ./scripts/test-ios-ramdisk-self-test.sh
+
   ios-focused-runtime:
     name: Focused runtime lifecycle tests
     runs-on: macos-15
@@ -55,6 +58,7 @@ jobs:
       IOS_TEST_PROGRESS_LOG_LINES: "100"
       IOS_TEST_FAILURE_LOG_LINES: "500"
       IOS_TEST_KEEP_DERIVED_DATA: "1"
+      IOS_TEST_RAMDISK_MB: "0"
       IOS_FOCUSED_RUNTIME_SYNC_CLOUDFLARE_FILTERS: |
         -only-testing:VVTermTests/AppSyncCoordinatorTests
         -only-testing:VVTermTests/CloudKitSyncCoordinatorLifecycleTests
@@ -250,6 +254,7 @@ jobs:
       IOS_TEST_PROGRESS_LOG_LINES: "100"
       IOS_TEST_FAILURE_LOG_LINES: "500"
       IOS_TEST_KEEP_DERIVED_DATA: "1"
+      IOS_TEST_RAMDISK_MB: "0"
       ENABLE_DEBUG_DYLIB: "NO"
       SWIFT_STRICT_CONCURRENCY: complete
 
@@ -340,6 +345,7 @@ jobs:
       IOS_TEST_PROGRESS_LOG_LINES: "100"
       IOS_TEST_FAILURE_LOG_LINES: "500"
       IOS_TEST_KEEP_DERIVED_DATA: "1"
+      IOS_TEST_RAMDISK_MB: "0"
 
     steps:
       - name: Check out repository

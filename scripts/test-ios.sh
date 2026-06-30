@@ -25,6 +25,7 @@ progress_log_lines="${IOS_TEST_PROGRESS_LOG_LINES:-20}"
 failure_log_lines="${IOS_TEST_FAILURE_LOG_LINES:-120}"
 diagnostic_log_dir="${IOS_TEST_LOG_DIR:-}"
 result_bundle_dir="${IOS_TEST_RESULT_BUNDLE_DIR:-}"
+ramdisk_mb="${IOS_TEST_RAMDISK_MB:-0}"
 lock_acquired=0
 cleanup_derived_data=0
 log_file=""
@@ -33,6 +34,9 @@ watchdog_pid=""
 progress_pid=""
 xcode_pid=""
 attempt=0
+ramdisk_device=""
+ramdisk_mount_path=""
+ramdisk_volume_name=""
 
 utc_now() {
     date -u '+%Y-%m-%dT%H:%M:%SZ'
@@ -73,6 +77,8 @@ write_run_metadata() {
             echo "destination=platform=iOS Simulator,id=${udid}"
             echo "derived_data_path=${derived_data_path}"
             echo "cloned_source_packages_path=${cloned_source_packages_path}"
+            echo "ramdisk_mb=${ramdisk_mb}"
+            echo "ramdisk_mount_path=${ramdisk_mount_path:-none}"
             echo "log_dir=${diagnostic_log_dir}"
             echo "result_bundle_path=${result_bundle_path:-none}"
             echo "arguments:"
@@ -95,6 +101,7 @@ write_run_metadata() {
             echo "- Attempt: ${attempt}/${total_attempts}"
             echo "- Destination: platform=iOS Simulator,id=${udid}"
             echo "- DerivedData: ${derived_data_path}"
+            echo "- RAM disk: ${ramdisk_mount_path:-disabled}"
             echo "- Full log dir: ${diagnostic_log_dir:-not configured}"
             echo "- Result bundle: ${result_bundle_path:-not configured}"
             echo
@@ -146,11 +153,23 @@ cleanup() {
     if [[ "$cleanup_derived_data" -eq 1 && "$keep_derived_data" != "1" ]]; then
         rm -rf "$derived_data_path"
     fi
+    cleanup_ramdisk
     if [[ "$lock_acquired" -eq 1 ]]; then
         if [[ "$(cat "$lock_dir/pid" 2>/dev/null || true)" == "$$" ]]; then
             rm -rf "$lock_dir"
         fi
     fi
+}
+
+cleanup_ramdisk() {
+    if [[ -z "$ramdisk_device" ]]; then
+        return
+    fi
+
+    diskutil unmountDisk force "$ramdisk_device" >/dev/null 2>&1 || true
+    hdiutil detach -force "$ramdisk_device" >/dev/null 2>&1 || true
+    ramdisk_device=""
+    ramdisk_mount_path=""
 }
 
 trap cleanup EXIT
@@ -227,7 +246,11 @@ prepare_derived_data() {
         return
     fi
 
-    derived_data_path="$(mktemp -d -t vvterm-ios-derived-data.XXXXXX)"
+    if [[ -n "$ramdisk_mount_path" ]]; then
+        derived_data_path="$(mktemp -d "${ramdisk_mount_path}/vvterm-ios-derived-data.XXXXXX")"
+    else
+        derived_data_path="$(mktemp -d -t vvterm-ios-derived-data.XXXXXX)"
+    fi
     cleanup_derived_data=1
 }
 
@@ -322,6 +345,56 @@ validate_test_logging_settings() {
     validate_unsigned_integer "IOS_TEST_PROGRESS_INTERVAL" "$progress_interval" 7
     validate_unsigned_integer "IOS_TEST_PROGRESS_LOG_LINES" "$progress_log_lines" 8
     validate_unsigned_integer "IOS_TEST_FAILURE_LOG_LINES" "$failure_log_lines" 9
+}
+
+validate_ramdisk_settings() {
+    validate_unsigned_integer "IOS_TEST_RAMDISK_MB" "$ramdisk_mb" 12
+
+    if [[ "$ramdisk_mb" == "0" ]]; then
+        return
+    fi
+
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+        echo "Ignoring IOS_TEST_RAMDISK_MB on GitHub Actions."
+        ramdisk_mb=0
+        return
+    fi
+
+    if [[ -n "$derived_data_path" ]]; then
+        echo "Ignoring IOS_TEST_RAMDISK_MB because IOS_TEST_DERIVED_DATA_PATH is explicitly set: ${derived_data_path}" >&2
+        ramdisk_mb=0
+        return
+    fi
+
+    if ! command -v hdiutil >/dev/null 2>&1 || ! command -v diskutil >/dev/null 2>&1; then
+        echo "IOS_TEST_RAMDISK_MB requires hdiutil and diskutil on macOS." >&2
+        exit 13
+    fi
+}
+
+prepare_ramdisk() {
+    if [[ "$ramdisk_mb" == "0" ]]; then
+        return
+    fi
+
+    local sectors
+    sectors=$((ramdisk_mb * 2048))
+    ramdisk_volume_name="VVTerm-iOS-Test-$$"
+
+    ramdisk_device="$(hdiutil attach -nomount "ram://${sectors}" | awk 'NR == 1 { print $1 }')"
+    if [[ -z "$ramdisk_device" ]]; then
+        echo "Unable to create iOS test RAM disk." >&2
+        exit 14
+    fi
+
+    diskutil erasevolume HFS+ "$ramdisk_volume_name" "$ramdisk_device" >/dev/null
+    ramdisk_mount_path="$(diskutil info -plist "$ramdisk_device" | plutil -extract MountPoint raw -o - -)"
+    if [[ -z "$ramdisk_mount_path" || ! -d "$ramdisk_mount_path" ]]; then
+        echo "Unable to resolve iOS test RAM disk mount point for ${ramdisk_device}." >&2
+        exit 15
+    fi
+
+    echo "Using RAM disk for auto-managed DerivedData at ${ramdisk_mount_path} (${ramdisk_mb} MB)."
 }
 
 should_require_executed_tests() {
@@ -674,7 +747,9 @@ run_xcodebuild_test() {
 
 validate_xcodebuild_action
 validate_test_logging_settings
+validate_ramdisk_settings
 acquire_global_lock
+prepare_ramdisk
 prepare_derived_data
 prepare_cloned_source_packages
 resolve_packages
