@@ -270,6 +270,46 @@ final class SSHClientConnectionLifecycleTests: XCTestCase {
         )
     }
 
+    func testRunWithTimeoutReturnsWithoutWaitingForBlockedOperation() async throws {
+        // Given a timeout-wrapped operation has entered a blocking subsystem
+        // that does not observe Swift task cancellation.
+        let operationStarted = DispatchSemaphore(value: 0)
+        let timeoutTask = Task {
+            try await SSHClient.runWithTimeout(.milliseconds(50)) {
+                operationStarted.signal()
+                blockCurrentThreadIgnoringCancellation()
+            }
+        }
+        XCTAssertEqual(operationStarted.wait(timeout: .now() + 5), .success)
+        let startedAt = ContinuousClock.now
+
+        // When the timeout elapses before the operation can finish.
+        do {
+            _ = try await AsyncTimeoutGate.run(
+                timeout: .milliseconds(350),
+                timeoutError: { SSHClientConnectionLifecycleTestError.timeoutGateWaitedForBlockedOperation }
+            ) {
+                try await timeoutTask.value
+            }
+            XCTFail("Expected SSHClient.runWithTimeout to throw SSHError.timeout")
+        } catch SSHError.timeout {
+            // Then the timeout wrapper returns promptly instead of waiting for
+            // the blocked operation task to unwind.
+        } catch SSHClientConnectionLifecycleTestError.timeoutGateWaitedForBlockedOperation {
+            XCTFail("SSHClient.runWithTimeout waited for a blocked operation after its timeout fired")
+        } catch {
+            XCTFail("Expected SSHError.timeout, got \(error)")
+        }
+
+        let elapsed = startedAt.duration(to: .now)
+        XCTAssertLessThan(
+            elapsed,
+            .milliseconds(500),
+            "SSHClient.runWithTimeout should not hang behind a blocked child task after the timeout fires."
+        )
+        timeoutTask.cancel()
+    }
+
     func testStartShellRejectsAfterClientAbortBeforeReadingSession() async throws {
         // Given SSHClient owns a connected SSHSession whose shell startup would
         // otherwise succeed.
@@ -436,4 +476,9 @@ private func sourceRoot() throws -> URL {
 
 private enum SSHClientConnectionLifecycleTestError: Error {
     case sourceSliceNotFound
+    case timeoutGateWaitedForBlockedOperation
+}
+
+private func blockCurrentThreadIgnoringCancellation() {
+    usleep(1_000_000)
 }

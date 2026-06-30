@@ -853,28 +853,17 @@ nonisolated actor SSHClient {
         operation: @escaping @Sendable () async throws -> T,
         onTimeout: (@Sendable () async -> Void)? = nil
     ) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask {
-                try await operation()
+        do {
+            return try await AsyncTimeoutGate.run(
+                timeout: timeout,
+                timeoutError: { SSHError.timeout },
+                operation: operation
+            )
+        } catch SSHError.timeout {
+            if let onTimeout {
+                await onTimeout()
             }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                if let onTimeout {
-                    await onTimeout()
-                }
-                throw SSHError.timeout
-            }
-
-            do {
-                guard let result = try await group.next() else {
-                    throw SSHError.timeout
-                }
-                group.cancelAll()
-                return result
-            } catch {
-                group.cancelAll()
-                throw error
-            }
+            throw SSHError.timeout
         }
     }
 
