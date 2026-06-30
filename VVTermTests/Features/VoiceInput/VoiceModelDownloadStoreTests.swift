@@ -254,6 +254,72 @@ struct VoiceModelDownloadStoreTests {
     }
 
     @Test
+    func clearAllStorageCancelsAndWaitsForTrackedDownloadsBeforeReturning() async {
+        let probe = VoiceModelDownloadProbe()
+        let releaseCancellation = VoiceModelDownloadGate()
+        let neverFinishDownload = VoiceModelDownloadGate()
+        let store = VoiceModelDownloadStore.makeForTesting(
+            downloadAction: { kind in
+                await probe.record("download-start:\(kind.rawValue)")
+                await withTaskCancellationHandler {
+                    await neverFinishDownload.wait()
+                } onCancel: {
+                    Task {
+                        await probe.record("download-cancel:\(kind.rawValue)")
+                        await releaseCancellation.wait()
+                        await probe.record("download-cancel-finished:\(kind.rawValue)")
+                        await neverFinishDownload.open()
+                    }
+                }
+            }
+        )
+
+        // Given a large model download is still running when settings sends
+        // destructive clear-all-storage intent.
+        let downloadTask = store.downloadModel(for: .whisper)
+        await probe.waitForCount(1)
+
+        // When clear-all-storage starts.
+        let clearTask = Task { @MainActor in
+            await store.clearAllStorage()
+            await probe.record("clear-return")
+        }
+
+        for _ in 0..<20 where (await probe.events()).count < 2 {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        // Then the application-layer store must cancel tracked download work
+        // and stay suspended until cancellation finishes, instead of deleting
+        // the model root while URLSession-backed work keeps running.
+        let eventsBeforeRelease = await probe.events()
+        #expect(
+            eventsBeforeRelease.contains("download-cancel:whisper"),
+            "Clear-all-storage should cancel active voice model downloads before deleting storage."
+        )
+        #expect(
+            !eventsBeforeRelease.contains("clear-return"),
+            "Clear-all-storage should not return before tracked download cancellation has finished."
+        )
+
+        store.cancelDownload(for: .whisper)
+        await releaseCancellation.open()
+        await neverFinishDownload.open()
+        await clearTask.value
+        await downloadTask.value
+
+        #expect(
+            await probe.events() == [
+                "download-start:whisper",
+                "download-cancel:whisper",
+                "download-cancel-finished:whisper",
+                "clear-return"
+            ],
+            "Clear-all-storage should reuse the awaitable VoiceInput model teardown path."
+        )
+    }
+
+    @Test
     func cancelAllAndWaitWaitsForModelManagerBackgroundTasks() async {
         let modelSizer = BlockingMLXModelSizer()
         let probe = VoiceModelDownloadProbe()

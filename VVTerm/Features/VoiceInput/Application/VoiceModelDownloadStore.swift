@@ -10,6 +10,7 @@ final class VoiceModelDownloadStore: ObservableObject {
 
     private let downloadAction: DownloadAction?
     private var downloadTasks: [MLXModelKind: (id: UUID, task: Task<Void, Never>)] = [:]
+    private var clearStorageTask: (id: UUID, task: Task<Void, Never>)?
 
     init(
         settings: TranscriptionSettingsReader,
@@ -34,6 +35,7 @@ final class VoiceModelDownloadStore: ObservableObject {
         // Store lifetime is MainActor-bound; keep teardown synchronous instead of spawning untracked cleanup work.
         MainActor.assumeIsolated {
             cancelTrackedDownloads()
+            clearStorageTask?.task.cancel()
             whisperManager.cleanup()
             parakeetManager.cleanup()
         }
@@ -134,7 +136,28 @@ final class VoiceModelDownloadStore: ObservableObject {
         manager(for: kind).removeModel()
     }
 
-    func clearAllStorage() {
+    @discardableResult
+    func requestClearAllStorage() -> Task<Void, Never> {
+        if let clearStorageTask {
+            return clearStorageTask.task
+        }
+
+        let taskID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.clearStorageTask?.id == taskID {
+                    self.clearStorageTask = nil
+                }
+            }
+            await self.clearAllStorage()
+        }
+        clearStorageTask = (taskID, task)
+        return task
+    }
+
+    func clearAllStorage() async {
+        await cancelAllAndWait()
         MLXModelManager.clearAllStorage()
         refreshStatuses()
     }

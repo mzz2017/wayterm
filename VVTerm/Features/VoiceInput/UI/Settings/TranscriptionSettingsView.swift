@@ -256,6 +256,7 @@ struct TranscriptionSettingsView: View {
         if mlxAvailable {
             let activeManager = settingsStore.providerRawValue == TranscriptionProvider.mlxWhisper.rawValue ? whisperManager : parakeetManager
             if activeManager.totalStorageBytes > 0 {
+                let isDownloading = isModelDownloading(whisperManager) || isModelDownloading(parakeetManager)
                 Section("Storage") {
                     HStack {
                         Text("Model Storage")
@@ -270,11 +271,19 @@ struct TranscriptionSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     Button("Clear All Storage", role: .destructive) {
-                        modelDownloads.clearAllStorage()
+                        modelDownloads.requestClearAllStorage()
                     }
+                    .disabled(isDownloading)
                 }
             }
         }
         #endif
+    }
+
+    private func isModelDownloading(_ manager: MLXModelManager) -> Bool {
+        if case .downloading = manager.state {
+            return true
+        }
+        return false
     }
 }
