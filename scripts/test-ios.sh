@@ -13,7 +13,7 @@ lock_dir="${IOS_TEST_LOCK_DIR:-${TMPDIR:-/tmp}/vvterm-ios-test.lock}"
 lock_timeout="${IOS_TEST_LOCK_TIMEOUT:-600}"
 lock_owner_metadata_grace="${IOS_TEST_LOCK_OWNER_METADATA_GRACE:-10}"
 derived_data_path="${IOS_TEST_DERIVED_DATA_PATH:-}"
-cloned_source_packages_path="${IOS_TEST_CLONED_SOURCE_PACKAGES_DIR:-${TMPDIR:-/tmp}/vvterm-ios-source-packages}"
+cloned_source_packages_path="${IOS_TEST_CLONED_SOURCE_PACKAGES_DIR:-}"
 keep_derived_data="${IOS_TEST_KEEP_DERIVED_DATA:-0}"
 no_output_timeout="${IOS_TEST_NO_OUTPUT_TIMEOUT:-900}"
 xcodebuild_quiet="${IOS_TEST_XCODEBUILD_QUIET:-0}"
@@ -26,6 +26,8 @@ failure_log_lines="${IOS_TEST_FAILURE_LOG_LINES:-120}"
 diagnostic_log_dir="${IOS_TEST_LOG_DIR:-}"
 result_bundle_dir="${IOS_TEST_RESULT_BUNDLE_DIR:-}"
 ramdisk_mb="${IOS_TEST_RAMDISK_MB:-0}"
+reuse_booted_simulator="${IOS_TEST_REUSE_BOOTED_SIMULATOR:-1}"
+collect_test_diagnostics="${IOS_TEST_COLLECT_DIAGNOSTICS:-never}"
 lock_acquired=0
 cleanup_derived_data=0
 log_file=""
@@ -37,6 +39,7 @@ attempt=0
 ramdisk_device=""
 ramdisk_mount_path=""
 ramdisk_volume_name=""
+force_simulator_reboot=0
 
 utc_now() {
     date -u '+%Y-%m-%dT%H:%M:%SZ'
@@ -81,6 +84,8 @@ write_run_metadata() {
             echo "ramdisk_mount_path=${ramdisk_mount_path:-none}"
             echo "log_dir=${diagnostic_log_dir}"
             echo "result_bundle_path=${result_bundle_path:-none}"
+            echo "reuse_booted_simulator=${reuse_booted_simulator}"
+            echo "collect_test_diagnostics=${collect_test_diagnostics}"
             echo "arguments:"
             if [[ "$#" -eq 0 ]]; then
                 echo "  (none)"
@@ -286,6 +291,13 @@ is_auto_cleanup_derived_data_path() {
 }
 
 prepare_cloned_source_packages() {
+    if [[ -z "$cloned_source_packages_path" ]]; then
+        if [[ -n "$ramdisk_mount_path" ]]; then
+            cloned_source_packages_path="${ramdisk_mount_path}/vvterm-ios-source-packages"
+        else
+            cloned_source_packages_path="${TMPDIR:-/tmp}/vvterm-ios-source-packages"
+        fi
+    fi
     mkdir -p "$cloned_source_packages_path"
 }
 
@@ -293,6 +305,7 @@ resolve_packages() {
     xcodebuild -resolvePackageDependencies \
         -project "$project" \
         -scheme "$scheme" \
+        -derivedDataPath "$derived_data_path" \
         -clonedSourcePackagesDirPath "$cloned_source_packages_path"
 }
 
@@ -301,6 +314,10 @@ patch_mlx_swift_metal_warnings() {
 
     attention_header="${cloned_source_packages_path}/checkouts/mlx-swift/Source/Cmlx/mlx-generated/metal/steel/attn/kernels/steel_attention.h"
     if [[ ! -f "$attention_header" ]]; then
+        return
+    fi
+
+    if ! grep -Eq 'if constexpr \((is_bool|BD == 128)\)' "$attention_header"; then
         return
     fi
 
@@ -341,10 +358,39 @@ validate_unsigned_integer() {
     esac
 }
 
+validate_boolean_setting() {
+    local name="$1"
+    local value="$2"
+    local exit_code="$3"
+
+    case "$value" in
+    0 | 1)
+        ;;
+    *)
+        echo "Unsupported ${name}: ${value}" >&2
+        exit "$exit_code"
+        ;;
+    esac
+}
+
 validate_test_logging_settings() {
     validate_unsigned_integer "IOS_TEST_PROGRESS_INTERVAL" "$progress_interval" 7
     validate_unsigned_integer "IOS_TEST_PROGRESS_LOG_LINES" "$progress_log_lines" 8
     validate_unsigned_integer "IOS_TEST_FAILURE_LOG_LINES" "$failure_log_lines" 9
+}
+
+validate_simulator_io_settings() {
+    validate_boolean_setting "IOS_TEST_REUSE_BOOTED_SIMULATOR" "$reuse_booted_simulator" 16
+
+    case "$collect_test_diagnostics" in
+    never | on-failure | default)
+        ;;
+    *)
+        echo "Unsupported IOS_TEST_COLLECT_DIAGNOSTICS: ${collect_test_diagnostics}" >&2
+        echo "Use never, on-failure, or default." >&2
+        exit 17
+        ;;
+    esac
 }
 
 validate_ramdisk_settings() {
@@ -575,10 +621,24 @@ resolve_destination_id() {
     fi
 }
 
+is_simulator_booted() {
+    local udid="$1"
+
+    xcrun simctl list devices available |
+        grep -F "(${udid})" |
+        grep -Fq "(Booted)"
+}
+
 prepare_simulator() {
     local udid="$1"
 
     xcrun simctl terminate "$udid" "$app_identifier" >/dev/null 2>&1 || true
+    if [[ "$reuse_booted_simulator" == "1" && "$force_simulator_reboot" == "0" ]] && is_simulator_booted "$udid"; then
+        echo "Reusing already booted iOS simulator ${udid}."
+        return
+    fi
+
+    force_simulator_reboot=0
     xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
     sleep 2
     xcrun simctl boot "$udid" >/dev/null 2>&1 || true
@@ -621,6 +681,9 @@ run_xcodebuild_test() {
         rm -rf "$result_bundle_path"
         xcodebuild_args+=(-resultBundlePath "$result_bundle_path")
     fi
+    if [[ "$collect_test_diagnostics" != "default" ]]; then
+        xcodebuild_args+=(-collect-test-diagnostics "$collect_test_diagnostics")
+    fi
 
     if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
         echo "::notice title=iOS xcodebuild started::${test_context} ${xcodebuild_action} attempt ${attempt}/${total_attempts}"
@@ -633,6 +696,8 @@ run_xcodebuild_test() {
     echo "Destination: platform=iOS Simulator,id=${udid}"
     echo "DerivedData: ${derived_data_path}"
     echo "Cloned source packages: ${cloned_source_packages_path}"
+    echo "Reuse booted simulator: ${reuse_booted_simulator}"
+    echo "Collect test diagnostics: ${collect_test_diagnostics}"
     echo "Result bundle: ${result_bundle_path:-not configured}"
     echo "Arguments:"
     if [[ "$#" -eq 0 ]]; then
@@ -747,6 +812,7 @@ run_xcodebuild_test() {
 
 validate_xcodebuild_action
 validate_test_logging_settings
+validate_simulator_io_settings
 validate_ramdisk_settings
 acquire_global_lock
 prepare_ramdisk
@@ -801,6 +867,7 @@ while (( attempt <= total_attempts )); do
         echo "xcodebuild hit a simulator preflight launch failure; retrying after simulator cleanup." >&2
         rm -f "$log_file"
         log_file=""
+        force_simulator_reboot=1
         attempt=$((attempt + 1))
         continue
     fi
