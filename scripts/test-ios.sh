@@ -142,6 +142,39 @@ preserve_xcodebuild_log() {
     echo "Preserved xcodebuild log: ${destination}"
 }
 
+terminate_xcodebuild_tree() {
+    local pid="${1:-}"
+    local child_pids=""
+    local late_child_pids=""
+
+    [[ -n "$pid" ]] || return
+
+    child_pids="$(pgrep -P "$pid" 2>/dev/null || true)"
+    if [[ -n "$child_pids" ]]; then
+        while IFS= read -r child_pid; do
+            [[ -n "$child_pid" ]] || continue
+            kill -TERM "$child_pid" >/dev/null 2>&1 || true
+        done <<<"$child_pids"
+    fi
+
+    kill -TERM "$pid" >/dev/null 2>&1 || true
+    sleep 2
+
+    late_child_pids="$(pgrep -P "$pid" 2>/dev/null || true)"
+    if [[ -n "$late_child_pids" ]]; then
+        child_pids="${child_pids}"$'\n'"${late_child_pids}"
+    fi
+
+    if [[ -n "$child_pids" ]]; then
+        while IFS= read -r child_pid; do
+            [[ -n "$child_pid" ]] || continue
+            kill -KILL "$child_pid" >/dev/null 2>&1 || true
+        done <<<"$child_pids"
+    fi
+
+    kill -KILL "$pid" >/dev/null 2>&1 || true
+}
+
 cleanup() {
     if [[ -n "$tail_pid" ]]; then
         kill "$tail_pid" >/dev/null 2>&1 || true
@@ -153,7 +186,8 @@ cleanup() {
         kill "$progress_pid" >/dev/null 2>&1 || true
     fi
     if [[ -n "$xcode_pid" ]]; then
-        kill "$xcode_pid" >/dev/null 2>&1 || true
+        terminate_xcodebuild_tree "$xcode_pid"
+        xcode_pid=""
     fi
     if [[ -n "$log_file" ]]; then
         preserve_xcodebuild_log "interrupted" || true
@@ -346,11 +380,7 @@ resolve_packages() {
                         print_recent_xcodebuild_log "$failure_log_lines" "$now"
                     } >&2
                     touch "$timeout_file"
-                    pkill -TERM -P "$xcode_pid" >/dev/null 2>&1 || true
-                    kill -TERM "$xcode_pid" >/dev/null 2>&1 || true
-                    sleep 2
-                    pkill -KILL -P "$xcode_pid" >/dev/null 2>&1 || true
-                    kill -KILL "$xcode_pid" >/dev/null 2>&1 || true
+                    terminate_xcodebuild_tree "$xcode_pid"
                     exit 0
                 fi
 
@@ -828,11 +858,7 @@ run_xcodebuild_test() {
                         print_recent_xcodebuild_log "$failure_log_lines" "$now"
                     } >&2
                     touch "$timeout_file"
-                    pkill -TERM -P "$xcode_pid" >/dev/null 2>&1 || true
-                    kill -TERM "$xcode_pid" >/dev/null 2>&1 || true
-                    sleep 5
-                    pkill -KILL -P "$xcode_pid" >/dev/null 2>&1 || true
-                    kill -KILL "$xcode_pid" >/dev/null 2>&1 || true
+                    terminate_xcodebuild_tree "$xcode_pid"
                     exit 0
                 fi
 

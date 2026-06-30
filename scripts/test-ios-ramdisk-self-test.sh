@@ -66,7 +66,7 @@ assert_pid_not_running() {
     done
 
     kill "$pid" >/dev/null 2>&1 || true
-    fail "${label} child process was still running after wrapper timeout: ${pid}"
+    fail "${label} child process was still running after wrapper cleanup: ${pid}"
 }
 
 write_stub_tools() {
@@ -214,6 +214,41 @@ run_wrapper_expect_failure() {
     echo "$status" >"${capture_dir}/wrapper.status"
 }
 
+run_wrapper_and_terminate() {
+    local capture_dir="$1"
+    local ramdisk_mount="$2"
+    local stdout_file="$3"
+    local stderr_file="$4"
+    local cloned_source_packages_dir="${5:-}"
+    local device_state="${6:-Shutdown}"
+    local status
+    local wrapper_pid
+    local script_pid
+    shift 6
+
+    run_wrapper "$capture_dir" "$ramdisk_mount" "$stdout_file" "$stderr_file" "$cloned_source_packages_dir" "$device_state" "$@" &
+    wrapper_pid="$!"
+
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if [[ -f "${capture_dir}/xcodebuild-test-child.pid" ]]; then
+            break
+        fi
+        sleep 1
+    done
+    [[ -f "${capture_dir}/xcodebuild-test-child.pid" ]] ||
+        fail "wrapper did not start stub xcodebuild child before termination"
+
+    script_pid="$(pgrep -P "$wrapper_pid" 2>/dev/null | head -n 1 || true)"
+    [[ -n "$script_pid" ]] || fail "could not find test-ios.sh process for termination"
+
+    kill -TERM "$script_pid" >/dev/null 2>&1 || true
+    set +e
+    wait "$wrapper_pid"
+    status="$?"
+    set -e
+    echo "$status" >"${capture_dir}/wrapper.status"
+}
+
 write_stub_tools "${tmp_root}/bin"
 
 local_capture="${tmp_root}/capture-local"
@@ -317,5 +352,21 @@ assert_pid_not_running "${test_timeout_capture}/xcodebuild-test-child.pid" "test
 [[ ! -d "${tmp_root}/ios-test.lock" ]] || fail "test timeout should remove the iOS test lock"
 [[ -z "$(find "$test_timeout_mount" -maxdepth 1 -name 'vvterm-ios-derived-data.*' -print -quit)" ]] ||
     fail "test timeout should clean auto-managed DerivedData from RAM disk"
+
+test_term_capture="${tmp_root}/capture-test-term"
+test_term_mount="${tmp_root}/ramdisk-test-term"
+run_wrapper_and_terminate "$test_term_capture" "$test_term_mount" \
+    "${tmp_root}/test-term.out" "${tmp_root}/test-term.err" "" "Shutdown" \
+    IOS_TEST_RAMDISK_MB=16 \
+    IOS_TEST_NO_OUTPUT_TIMEOUT=0 \
+    VVTERM_STUB_TEST_STALL=1 \
+    VVTERM_STUB_TEST_SLEEP=30 \
+    VVTERM_STUB_TEST_CHILD_SLEEP=30
+
+assert_contains "${test_term_capture}/wrapper.status" "143"
+assert_pid_not_running "${test_term_capture}/xcodebuild-test-child.pid" "test trap termination"
+[[ ! -d "${tmp_root}/ios-test.lock" ]] || fail "test trap termination should remove the iOS test lock"
+[[ -z "$(find "$test_term_mount" -maxdepth 1 -name 'vvterm-ios-derived-data.*' -print -quit)" ]] ||
+    fail "test trap termination should clean auto-managed DerivedData from RAM disk"
 
 echo "test-ios RAM disk self-test passed"
