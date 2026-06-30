@@ -125,6 +125,7 @@ class AudioService: NSObject, ObservableObject {
         // Reset state
         speechRecognitionService.resetTranscriptions()
         await audioCaptureService.cancel()
+        try Task.checkCancellation()
 
         // Start services
         switch effectiveProvider {

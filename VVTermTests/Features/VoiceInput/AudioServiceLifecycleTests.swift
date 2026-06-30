@@ -52,6 +52,40 @@ struct AudioServiceLifecycleTests {
     }
 
     @Test
+    func canceledResetCancelDoesNotStartCaptureAfterCancelResumes() async throws {
+        let capture = BlockingCancelVoiceAudioCapture()
+        let service = AudioService(
+            dependencies: makeDependencies(
+                audioCaptureService: capture,
+                speechAudioRecognitionRunner: RecordingSpeechAudioRecognitionRunner()
+            )
+        )
+
+        // Given voice start has passed permission checks and is waiting for
+        // reset cancellation before reopening the microphone runtime.
+        let startTask = Task {
+            try await service.startRecording()
+        }
+        await capture.waitUntilCancelStarted()
+
+        // When lifecycle cancellation wins while reset cancellation is still
+        // suspended.
+        startTask.cancel()
+        await capture.releaseCancel()
+
+        do {
+            try await startTask.value
+        } catch is CancellationError {
+            // Expected once AudioService observes the canceled start task.
+        }
+
+        // Then the canceled start must not continue into Apple Speech or
+        // microphone capture after reset cancellation resumes.
+        #expect(capture.startCalls == 0, "Canceled voice start must not open microphone capture after reset cancellation resumes.")
+        #expect(!service.isRecording, "Canceled voice start must not publish an active recording state.")
+    }
+
+    @Test
     func appleSpeechStartFailureCancelsStartedSpeechAndCapture() async throws {
         let speechRunner = RecordingSpeechAudioRecognitionRunner()
         let capture = FailingStartVoiceAudioCapture()
@@ -235,6 +269,47 @@ private final class RecordingStartVoiceAudioCapture: VoiceAudioCapturing {
 
     func cancel() async {
         cancelCalls += 1
+    }
+}
+
+@MainActor
+private final class BlockingCancelVoiceAudioCapture: VoiceAudioCapturing {
+    var audioLevel: Float = 0
+    var recordingDuration: TimeInterval = 0
+    var sampleRate: Double = 16_000
+    var bufferHandler: ((AVAudioPCMBuffer) -> Void)?
+    private(set) var startCalls = 0
+    private var cancelStartedContinuations: [CheckedContinuation<Void, Never>] = []
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    func start() throws {
+        startCalls += 1
+    }
+
+    func stop() async -> [Float] {
+        []
+    }
+
+    func cancel() async {
+        let startedContinuations = cancelStartedContinuations
+        cancelStartedContinuations.removeAll()
+        startedContinuations.forEach { $0.resume() }
+
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+        }
+    }
+
+    func waitUntilCancelStarted() async {
+        if releaseContinuation != nil { return }
+        await withCheckedContinuation { continuation in
+            cancelStartedContinuations.append(continuation)
+        }
+    }
+
+    func releaseCancel() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
     }
 }
 
