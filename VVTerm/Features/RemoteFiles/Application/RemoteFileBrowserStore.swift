@@ -244,14 +244,16 @@ final class RemoteFileBrowserStore: ObservableObject {
         operation: @escaping @MainActor @Sendable (@escaping @MainActor @Sendable (TransferProgress) -> Void) async throws -> Result,
         onProgress: @escaping @MainActor @Sendable (TransferProgress) -> Void = { _ in },
         onSuccess: @escaping @MainActor @Sendable (Result) -> Void,
-        onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in }
+        onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in },
+        onCancel: @escaping @MainActor @Sendable () -> Void = {}
     ) -> UUID {
         requestLifecycleCoordinator.requestTransfer(
             serverId: serverId,
             operation: operation,
             onProgress: onProgress,
             onSuccess: onSuccess,
-            onFailure: onFailure
+            onFailure: onFailure,
+            onCancel: onCancel
         )
     }
 

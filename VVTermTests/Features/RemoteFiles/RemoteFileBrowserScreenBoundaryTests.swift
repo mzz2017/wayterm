@@ -307,6 +307,10 @@ struct RemoteFileBrowserScreenBoundaryTests {
             "Progress cancellation should send an intent to the browser store instead of owning cancellation task tracking in UI."
         )
         #expect(
+            transferSource.contains("onCancel: {\n                completion(nil, false, CancellationError())"),
+            "File representation export cancellation should complete the system callback exactly once through the transfer cancellation continuation."
+        )
+        #expect(
             !transferSource.contains("RemoteFileTransferCancellationTaskRegistry"),
             "RemoteFileBrowserScreen+FileTransfers.swift should not own a long-lived cancellation task registry."
         )

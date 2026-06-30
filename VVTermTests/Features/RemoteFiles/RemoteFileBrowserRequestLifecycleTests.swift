@@ -405,6 +405,46 @@ struct RemoteFileBrowserRequestLifecycleTests {
     }
 
     @Test
+    func canceledTransferRunsCancellationContinuationWithoutPublishingFailure() async throws {
+        let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
+        let gate = RemoteFileMutationGate()
+        var events: [String] = []
+
+        // Given a file-export style transfer has a completion adapter that
+        // must be called even when explicit cancellation suppresses normal
+        // success/failure UI callbacks.
+        let requestID = store.requestTransfer(
+            operation: { _ in
+                events.append("operation-started")
+                await gate.wait()
+                events.append("operation-finished")
+                try Task.checkCancellation()
+                return "exported"
+            },
+            onSuccess: { result in
+                events.append("success-\(result)")
+            },
+            onFailure: { _ in
+                events.append("failure")
+            },
+            onCancel: {
+                events.append("cancel")
+            }
+        )
+        try await Task.sleep(for: .milliseconds(20))
+
+        // When cancellation is requested through the application owner.
+        _ = store.cancelTransferRequest(requestID)
+        await gate.release()
+        await store.waitForTransferRequest(requestID)
+
+        // Then the special cancellation continuation runs exactly where
+        // system file-export completion can be fulfilled, without treating
+        // cancellation as a user-facing transfer failure.
+        #expect(events == ["operation-started", "operation-finished", "cancel"])
+    }
+
+    @Test
     func synchronousTransferCancellationCallbackTracksWaitTaskUntilOperationExits() async throws {
         let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
         let gate = RemoteFileMutationGate()

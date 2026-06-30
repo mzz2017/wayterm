@@ -96,7 +96,8 @@ final class RemoteFileRequestLifecycleCoordinator {
         operation: @escaping @MainActor @Sendable (@escaping @MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void) async throws -> Result,
         onProgress: @escaping @MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void = { _ in },
         onSuccess: @escaping @MainActor @Sendable (Result) -> Void,
-        onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in }
+        onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in },
+        onCancel: @escaping @MainActor @Sendable () -> Void = {}
     ) -> UUID {
         let requestID = UUID()
         let task = Task { @MainActor [weak self] in
@@ -110,12 +111,19 @@ final class RemoteFileRequestLifecycleCoordinator {
                     guard !Task.isCancelled, !self.isTransferRequestCancelled(requestID) else { return }
                     onProgress(progress)
                 }
-                guard !Task.isCancelled, !isTransferRequestCancelled(requestID) else { return }
+                guard !Task.isCancelled, !isTransferRequestCancelled(requestID) else {
+                    onCancel()
+                    return
+                }
                 onSuccess(result)
             } catch is CancellationError {
                 // Disconnect-driven cancellation is lifecycle state, not a user-facing transfer failure.
+                onCancel()
             } catch {
-                guard !Task.isCancelled, !isTransferRequestCancelled(requestID) else { return }
+                guard !Task.isCancelled, !isTransferRequestCancelled(requestID) else {
+                    onCancel()
+                    return
+                }
                 onFailure(error)
             }
         }

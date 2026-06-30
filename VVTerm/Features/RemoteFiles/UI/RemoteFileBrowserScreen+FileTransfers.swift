@@ -186,6 +186,9 @@ extension RemoteFileBrowserScreen {
                 } else {
                     completion(nil, false, error)
                 }
+            },
+            onCancel: {
+                completion(nil, false, CancellationError())
             }
         )
         cancellationTarget.setRequestID(transferRequestID)

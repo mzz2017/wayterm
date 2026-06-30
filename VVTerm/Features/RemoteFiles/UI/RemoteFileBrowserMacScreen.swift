@@ -95,6 +95,9 @@ extension RemoteFileBrowserScreen {
                     },
                     onFailure: { error in
                         completion(error)
+                    },
+                    onCancel: {
+                        completion(CancellationError())
                     }
                 )
             },
