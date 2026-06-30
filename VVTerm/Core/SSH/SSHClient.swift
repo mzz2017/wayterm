@@ -29,7 +29,6 @@ nonisolated actor SSHClient {
             task?.cancel()
         }
     }
-
     private var session: SSHSession?
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "SSH")
     private var keepAliveTask: Task<Void, Never>?
@@ -45,7 +44,7 @@ nonisolated actor SSHClient {
     private let cloudflareTransportManager: any CloudflareTransportManaging
     private let moshStartupTimeout: Duration = .seconds(8)
     private let connectTimeout: Duration = .seconds(30)
-    private let disconnectTimeout: Duration = .seconds(4)
+    private let disconnectTimeout: Duration
     private let shellStartTimeout: Duration = .seconds(20)
     private let execTimeout: Duration = .seconds(20)
     private let downloadTimeout: Duration = .seconds(120)
@@ -55,10 +54,12 @@ nonisolated actor SSHClient {
 
     init(
         sessionFactory: @escaping @Sendable (SSHSessionConfig) -> SSHSession = { SSHSession(config: $0) },
-        cloudflareTransportManager: any CloudflareTransportManaging = CloudflareTransportManager()
+        cloudflareTransportManager: any CloudflareTransportManaging = CloudflareTransportManager(),
+        disconnectTimeout: Duration = .seconds(4)
     ) {
         self.sessionFactory = sessionFactory
         self.cloudflareTransportManager = cloudflareTransportManager
+        self.disconnectTimeout = disconnectTimeout
     }
 
     /// Immediately abort the connection by closing the socket (non-blocking, can be called from any thread)
@@ -261,7 +262,7 @@ nonisolated actor SSHClient {
             await disconnectCloudflareTransport(reason: "client disconnect before SSH session")
         }
         if shouldWaitForPendingConnectCleanup {
-            _ = await pendingConnectTask?.result
+            await waitForPendingConnectCleanup(pendingConnectTask)
         }
 
         await disconnectSSHSession(activeSession)
@@ -664,6 +665,15 @@ nonisolated actor SSHClient {
         }
     }
 
+    private func waitForPendingConnectCleanup(_ task: Task<SSHSession, Error>?) async {
+        guard let task else { return }
+        do {
+            try await SSHClient.waitForTaskCompletion(task, timeout: disconnectTimeout)
+        } catch {
+            logger.warning("Timed out while waiting for pending SSH connect cleanup")
+        }
+    }
+
     private func disconnectCloudflareTransport(reason: String) async {
         do {
             try await SSHClient.runWithTimeout(disconnectTimeout) { [cloudflareTransportManager] in
@@ -671,6 +681,22 @@ nonisolated actor SSHClient {
             }
         } catch {
             logger.warning("Timed out while disconnecting Cloudflare transport (\(reason, privacy: .public))")
+        }
+    }
+
+    nonisolated private static func waitForTaskCompletion<T: Sendable>(
+        _ task: Task<T, Error>,
+        timeout: Duration
+    ) async throws {
+        do {
+            return try await AsyncTimeoutGate.waitForTask(
+                task,
+                timeout: timeout,
+                timeoutError: { SSHError.timeout }
+            )
+        } catch {
+            task.cancel()
+            throw error
         }
     }
 

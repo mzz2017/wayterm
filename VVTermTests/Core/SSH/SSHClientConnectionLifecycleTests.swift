@@ -263,6 +263,27 @@ final class SSHClientConnectionLifecycleTests: XCTestCase {
         )
         await client.disconnect()
     }
+
+    func testPendingConnectCleanupUsesBoundedTimeoutGate() throws {
+        let source = try String(
+            contentsOf: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift"),
+            encoding: .utf8
+        )
+        let cleanupMethod = try sourceSlice(
+            in: source,
+            from: "    private func waitForPendingConnectCleanup",
+            to: "    private func disconnectCloudflareTransport"
+        )
+
+        XCTAssertTrue(
+            cleanupMethod.contains("SSHClient.waitForTaskCompletion(task, timeout: disconnectTimeout)"),
+            "SSHClient pending connect cleanup should be bounded by the client disconnect timeout."
+        )
+        XCTAssertFalse(
+            cleanupMethod.contains("await pendingConnectTask?.result"),
+            "SSHClient.disconnect must not wait unboundedly on pending connect cleanup."
+        )
+    }
 }
 
 private final class RecordingSSHSessionFactory: @unchecked Sendable {
@@ -339,4 +360,30 @@ private actor BlockingCloudflareTransportManager: CloudflareTransportManaging {
         connectReleaseContinuation?.resume()
         connectReleaseContinuation = nil
     }
+}
+
+private func sourceSlice(in source: String, from start: String, to end: String) throws -> String {
+    guard let startRange = source.range(of: start) else {
+        throw SSHClientConnectionLifecycleTestError.sourceSliceNotFound
+    }
+    guard let endRange = source[startRange.lowerBound...].range(of: end) else {
+        throw SSHClientConnectionLifecycleTestError.sourceSliceNotFound
+    }
+    return String(source[startRange.lowerBound..<endRange.lowerBound])
+}
+
+private func sourceRoot() throws -> URL {
+    var url = URL(fileURLWithPath: #filePath)
+    while url.lastPathComponent != "VVTermTests" {
+        let next = url.deletingLastPathComponent()
+        if next.path == url.path {
+            throw SSHClientConnectionLifecycleTestError.sourceSliceNotFound
+        }
+        url = next
+    }
+    return url.deletingLastPathComponent()
+}
+
+private enum SSHClientConnectionLifecycleTestError: Error {
+    case sourceSliceNotFound
 }
