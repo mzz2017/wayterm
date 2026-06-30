@@ -99,6 +99,45 @@ extension RemoteFileBrowserStore {
         }
     }
 
+    func moveEntries(
+        _ moves: [RemoteFileDropPolicy.MovePlan],
+        in tab: RemoteFileTab,
+        server: Server,
+        onProgress: (@MainActor @Sendable (TransferProgress) -> Void)? = nil
+    ) async throws {
+        guard tab.serverId == server.id else {
+            throw RemoteFileBrowserError.disconnected
+        }
+        guard !moves.isEmpty else { return }
+
+        let totalUnitCount = max(1, moves.count)
+        var didMutate = false
+
+        do {
+            for (index, move) in moves.enumerated() {
+                try Task.checkCancellation()
+                try await withRemoteFileService(for: server) { service in
+                    try await service.renameItem(at: move.sourcePath, to: move.destinationPath)
+                }
+                didMutate = true
+                onProgress?(
+                    TransferProgress(
+                        completedUnitCount: index + 1,
+                        totalUnitCount: totalUnitCount,
+                        currentItemName: move.entry.name
+                    )
+                )
+            }
+        } catch {
+            if didMutate {
+                await refresh(server: server, tab: tab)
+            }
+            throw error
+        }
+
+        await refresh(server: server, tab: tab)
+    }
+
     func deleteFile(
         at remotePath: String,
         in tab: RemoteFileTab,

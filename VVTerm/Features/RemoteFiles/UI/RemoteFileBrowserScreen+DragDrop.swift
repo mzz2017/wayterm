@@ -249,23 +249,7 @@ extension RemoteFileBrowserScreen {
         _ moves: [RemoteFileDropPolicy.MovePlan],
         onProgress: (@MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void)? = nil
     ) async throws {
-        let totalUnitCount = max(1, moves.count)
-
-        for (index, move) in moves.enumerated() {
-            try await browser.renameItem(
-                at: move.sourcePath,
-                to: move.destinationPath,
-                in: fileTab,
-                server: server
-            )
-            onProgress?(
-                RemoteFileBrowserStore.TransferProgress(
-                    completedUnitCount: index + 1,
-                    totalUnitCount: totalUnitCount,
-                    currentItemName: move.entry.name
-                )
-            )
-        }
+        try await browser.moveEntries(moves, in: fileTab, server: server, onProgress: onProgress)
     }
 
     func transferDroppedRemoteItems(

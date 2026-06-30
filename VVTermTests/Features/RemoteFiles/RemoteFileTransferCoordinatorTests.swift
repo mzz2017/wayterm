@@ -146,6 +146,63 @@ struct RemoteFileTransferCoordinatorTests {
         }
     }
 
+    @Test
+    func moveEntriesCancellationStopsBeforeNextRename() async throws {
+        let server = Server(
+            workspaceId: UUID(),
+            name: "Production",
+            host: "ssh.example.com",
+            username: "root"
+        )
+        let tab = RemoteFileTab(serverId: server.id, seedPath: "/target")
+        let renameBlocker = RemoteFileRenameBlocker(blockedSourcePath: "/source/first.txt")
+        let service = RecordingRemoteFileService(
+            directoryContents: [:],
+            renameBlocker: renameBlocker
+        )
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            remoteFileServiceAccess: DirectRemoteFileServiceAccess(service: service),
+            serverProvider: { _ in nil }
+        )
+        let moves = [
+            RemoteFileDropPolicy.MovePlan(
+                entry: makeEntry(name: "first.txt", path: "/source/first.txt", type: .file),
+                sourcePath: "/source/first.txt",
+                destinationPath: "/target/first.txt"
+            ),
+            RemoteFileDropPolicy.MovePlan(
+                entry: makeEntry(name: "second.txt", path: "/source/second.txt", type: .file),
+                sourcePath: "/source/second.txt",
+                destinationPath: "/target/second.txt"
+            )
+        ]
+
+        // Given same-server move is blocked inside the first rename.
+        let task = Task {
+            try await store.moveEntries(moves, in: tab, server: server)
+        }
+        await renameBlocker.waitUntilStarted()
+
+        // When the move task is canceled before the first rename returns.
+        task.cancel()
+        await renameBlocker.release()
+
+        // Then cancellation is observed before renaming the next dragged item.
+        let result = await task.result
+        #expect(service.operations == [
+            .renameItem(source: "/source/first.txt", destination: "/target/first.txt")
+        ])
+        switch result {
+        case .success:
+            Issue.record("Expected same-server move to stop after cancellation")
+        case .failure(is CancellationError):
+            break
+        case .failure(let error):
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+    }
+
     private func makeEntry(name: String, path: String, type: RemoteFileType = .file) -> RemoteFileEntry {
         RemoteFileEntry(
             name: name,
@@ -189,12 +246,14 @@ struct RemoteFileTransferCoordinatorTests {
 private final class RecordingRemoteFileService: RemoteFileService, @unchecked Sendable {
     enum Operation: Equatable, Sendable {
         case downloadFile(String)
+        case renameItem(source: String, destination: String)
         case deleteFile(String)
         case deleteDirectory(String)
     }
 
     let directoryContents: [String: [RemoteFileEntry]]
     let downloadBlocker: RemoteFileDownloadBlocker?
+    let renameBlocker: RemoteFileRenameBlocker?
     let deleteBlocker: RemoteFileDeleteBlocker?
     private let lock = NSLock()
     private var operationStorage: [Operation] = []
@@ -208,10 +267,12 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
     init(
         directoryContents: [String: [RemoteFileEntry]],
         downloadBlocker: RemoteFileDownloadBlocker? = nil,
+        renameBlocker: RemoteFileRenameBlocker? = nil,
         deleteBlocker: RemoteFileDeleteBlocker? = nil
     ) {
         self.directoryContents = directoryContents
         self.downloadBlocker = downloadBlocker
+        self.renameBlocker = renameBlocker
         self.deleteBlocker = deleteBlocker
     }
 
@@ -246,7 +307,12 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
 
     func createDirectory(at path: String, permissions: Int32) async throws {}
 
-    func renameItem(at sourcePath: String, to destinationPath: String) async throws {}
+    func renameItem(at sourcePath: String, to destinationPath: String) async throws {
+        let normalizedSource = RemoteFilePath.normalize(sourcePath)
+        let normalizedDestination = RemoteFilePath.normalize(destinationPath)
+        record(.renameItem(source: normalizedSource, destination: normalizedDestination))
+        await renameBlocker?.waitIfNeeded(sourcePath: normalizedSource)
+    }
 
     func deleteFile(at path: String) async throws {
         let normalizedPath = RemoteFilePath.normalize(path)
@@ -341,6 +407,40 @@ private actor RemoteFileDeleteBlocker {
 
     func waitIfNeeded(path: String) async {
         guard path == blockedPath else { return }
+        started = true
+        startedWaiters.forEach { $0.resume() }
+        startedWaiters.removeAll()
+
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+        }
+    }
+
+    func waitUntilStarted() async {
+        if started { return }
+        await withCheckedContinuation { continuation in
+            startedWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
+private actor RemoteFileRenameBlocker {
+    let blockedSourcePath: String
+    private var started = false
+    private var startedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    init(blockedSourcePath: String) {
+        self.blockedSourcePath = blockedSourcePath
+    }
+
+    func waitIfNeeded(sourcePath: String) async {
+        guard sourcePath == blockedSourcePath else { return }
         started = true
         startedWaiters.forEach { $0.resume() }
         startedWaiters.removeAll()
