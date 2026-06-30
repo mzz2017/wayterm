@@ -163,7 +163,10 @@ extension ConnectionSessionManager {
                 surfaceAttachRequestStore.update(requestID) { $0.context = context }
                 return nil
             }
-            surfaceAttachRequestStore.update(requestID) { $0.context = context }
+            surfaceAttachRequestStore.update(requestID) {
+                $0.context = context
+                $0.attachOperation = attachOperation
+            }
             return requestID
         }
 
@@ -181,11 +184,17 @@ extension ConnectionSessionManager {
             if self.consumeTerminalReconnectReset(for: sessionId) {
                 resetTerminal()
             }
-            await attachOperation()
+            let latestAttachOperation = self.surfaceAttachRequestStore[requestID]?.attachOperation ?? attachOperation
+            await latestAttachOperation()
         }
 
         surfaceAttachRequestStore.insert(
-            SurfaceAttachRequest(sessionId: sessionId, context: context, task: task),
+            SurfaceAttachRequest(
+                sessionId: sessionId,
+                context: context,
+                attachOperation: attachOperation,
+                task: task
+            ),
             id: requestID,
             scopeID: sessionId
         )

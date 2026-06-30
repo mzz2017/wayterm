@@ -116,6 +116,52 @@ struct TerminalSurfaceAttachIntentTests {
     }
 
     @Test
+    func rootSurfaceAttachRunsLatestDuplicateOperationAfterReset() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: "Tencent",
+                connectionState: .connecting
+            )
+            manager.sessions = [session]
+            manager.markTerminalForReconnectReset(for: session.id)
+
+            let recorder = SurfaceAttachRecorder()
+            var duplicateRequestID: UUID?
+
+            // When a newer surface attach arrives while reconnect-reset work is
+            // running but before the pending request executes its attach operation.
+            let requestID = try! #require(
+                manager.requestSurfaceAttach(
+                    sessionId: session.id,
+                    context: .active,
+                    resetTerminal: {
+                        recorder.recordSync("reset")
+                        duplicateRequestID = manager.requestSurfaceAttach(
+                            sessionId: session.id,
+                            context: .active,
+                            attachOperation: {
+                                recorder.record("latest-attach")
+                            }
+                        )
+                    },
+                    attachOperation: {
+                        recorder.record("stale-attach")
+                    }
+                )
+            )
+
+            await manager.waitForSurfaceAttachRequest(requestID)
+
+            // Then the duplicate keeps the same tracked request but replaces
+            // the operation that will bind runtime work to the latest surface.
+            #expect(duplicateRequestID == requestID)
+            #expect(recorder.events == ["reset", "latest-attach"])
+        }
+    }
+
+    @Test
     func rootSurfaceAttachRejectsExistingShellAndShellStartInFlight() async {
         await withCleanConnectionManager { manager in
             let server = makeServer()
@@ -271,6 +317,49 @@ struct TerminalSurfaceAttachIntentTests {
             #expect(
                 manager.requestSurfaceAttachForTesting(paneId: tab.rootPaneId, context: .active) == nil
             )
+        }
+    }
+
+    @Test
+    func paneSurfaceAttachRunsLatestDuplicateOperationBeforeTaskStarts() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tab = TerminalTab(serverId: server.id, title: "Tencent")
+            manager.tabsByServer[server.id] = [tab]
+            manager.selectedTabByServer[server.id] = tab.id
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+
+            let recorder = SurfaceAttachRecorder()
+
+            // When SwiftUI reports a newer pane surface before the app-owned
+            // pending attach task has had a chance to start.
+            let requestID = try! #require(
+                manager.requestSurfaceAttach(
+                    paneId: tab.rootPaneId,
+                    context: .active,
+                    attachOperation: {
+                        recorder.record("stale-pane-attach")
+                    }
+                )
+            )
+            let duplicateRequestID = manager.requestSurfaceAttach(
+                paneId: tab.rootPaneId,
+                context: .active,
+                attachOperation: {
+                    recorder.record("latest-pane-attach")
+                }
+            )
+
+            await manager.waitForSurfaceAttachRequest(requestID)
+
+            // Then the duplicate keeps the same tracked request but replaces
+            // the operation that binds runtime work to the latest pane surface.
+            #expect(duplicateRequestID == requestID)
+            #expect(recorder.events == ["latest-pane-attach"])
         }
     }
 

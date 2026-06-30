@@ -85,6 +85,7 @@ enum ConnectionSessionManagerSupport {
     struct SurfaceAttachRequest {
         let sessionId: UUID
         var context: TerminalSurfaceAttachContext
+        var attachOperation: @MainActor () async -> Void
         let task: Task<Void, Never>
     }
 

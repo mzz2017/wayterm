@@ -61,6 +61,7 @@ enum TerminalTabManagerSupport {
     struct SurfaceAttachRequest {
         let paneId: UUID
         var context: TerminalSurfaceAttachContext
+        var attachOperation: @MainActor () async -> Void
         let task: Task<Void, Never>
     }
 

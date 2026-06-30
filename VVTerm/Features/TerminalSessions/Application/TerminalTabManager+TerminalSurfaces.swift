@@ -79,7 +79,10 @@ extension TerminalTabManager {
                 surfaceAttachRequestStore.update(requestID) { $0.context = context }
                 return nil
             }
-            surfaceAttachRequestStore.update(requestID) { $0.context = context }
+            surfaceAttachRequestStore.update(requestID) {
+                $0.context = context
+                $0.attachOperation = attachOperation
+            }
             return requestID
         }
 
@@ -92,13 +95,19 @@ extension TerminalTabManager {
                 self.surfaceAttachRequestStore.remove(id: requestID, ifMappedTo: paneId)
             }
 
-            let latestContext = self.surfaceAttachRequestStore[requestID]?.context ?? context
+            let latestRequest = self.surfaceAttachRequestStore[requestID]
+            let latestContext = latestRequest?.context ?? context
             guard self.shouldAcceptSurfaceAttach(paneId: paneId, context: latestContext) else { return }
-            await attachOperation()
+            await (latestRequest?.attachOperation ?? attachOperation)()
         }
 
         surfaceAttachRequestStore.insert(
-            SurfaceAttachRequest(paneId: paneId, context: context, task: task),
+            SurfaceAttachRequest(
+                paneId: paneId,
+                context: context,
+                attachOperation: attachOperation,
+                task: task
+            ),
             id: requestID,
             scopeID: paneId
         )
