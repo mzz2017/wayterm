@@ -25,6 +25,8 @@ final class StoreManager: ObservableObject {
     private(set) var hasPresentedPaywallThisLaunch = false
     private var purchaseRequestTasks: [UUID: Task<Void, Never>] = [:]
     private var restoreRequestTasks: [UUID: Task<Void, Never>] = [:]
+    private var purchaseRequestID: UUID?
+    private var restoreRequestID: UUID?
     private(set) var lastPurchaseRequestFailure: Error?
     private(set) var lastRestoreRequestFailure: Error?
     var pendingPurchaseRequestIDs: Set<UUID> { Set(purchaseRequestTasks.keys) }
@@ -129,6 +131,8 @@ final class StoreManager: ObservableObject {
         productLoadRequestTask = nil
         productLoadRequestID = nil
         productLoadCompletionCallbacks = []
+        purchaseRequestID = nil
+        restoreRequestID = nil
         purchaseRequestTasks.removeAll()
         restoreRequestTasks.removeAll()
     }
@@ -259,12 +263,22 @@ final class StoreManager: ObservableObject {
 
     @discardableResult
     fileprivate func requestPurchase(operation: @escaping @MainActor () async throws -> Void) -> UUID {
+        if let purchaseRequestID {
+            return purchaseRequestID
+        }
+
         let requestID = UUID()
+        purchaseRequestID = requestID
         lastPurchaseRequestFailure = nil
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.purchaseRequestTasks.removeValue(forKey: requestID) }
+            defer {
+                if self.purchaseRequestID == requestID {
+                    self.purchaseRequestID = nil
+                }
+                self.purchaseRequestTasks.removeValue(forKey: requestID)
+            }
 
             do {
                 try await operation()
@@ -323,12 +337,22 @@ final class StoreManager: ObservableObject {
 
     @discardableResult
     fileprivate func requestRestorePurchases(operation: @escaping @MainActor () async throws -> Void) -> UUID {
+        if let restoreRequestID {
+            return restoreRequestID
+        }
+
         let requestID = UUID()
+        restoreRequestID = requestID
         lastRestoreRequestFailure = nil
 
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.restoreRequestTasks.removeValue(forKey: requestID) }
+            defer {
+                if self.restoreRequestID == requestID {
+                    self.restoreRequestID = nil
+                }
+                self.restoreRequestTasks.removeValue(forKey: requestID)
+            }
 
             do {
                 try await operation()

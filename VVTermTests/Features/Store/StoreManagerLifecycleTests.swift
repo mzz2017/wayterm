@@ -167,6 +167,40 @@ struct StoreManagerLifecycleTests {
     }
 
     @Test
+    func duplicatePurchaseRequestsCoalesceUntilCompletion() async {
+        let manager = StoreManager.makeForTesting()
+        let gate = StoreRequestGate()
+        var purchaseCount = 0
+
+        // Given purchase intent is sent twice while the first StoreKit
+        // operation is still pending.
+        let firstID = manager.requestPurchaseForTesting {
+            purchaseCount += 1
+            await gate.waitForRelease()
+        }
+        let secondID = manager.requestPurchaseForTesting {
+            purchaseCount += 1
+        }
+
+        await gate.waitForOperationStart()
+        await Task.yield()
+
+        // Then StoreManager keeps a single purchase lifecycle owner so stale
+        // completion from another overlapping request cannot overwrite UI state.
+        #expect(
+            firstID == secondID,
+            "Duplicate purchase intent should coalesce to the in-flight purchase request."
+        )
+        #expect(purchaseCount == 1, "Duplicate purchase intent should not start a second StoreKit operation.")
+        #expect(manager.pendingPurchaseRequestIDs == [firstID])
+
+        await gate.release()
+        await manager.waitForPurchaseRequest(firstID)
+
+        #expect(manager.pendingPurchaseRequestIDs.isEmpty)
+    }
+
+    @Test
     func restoreRequestTracksFailureAndClearsPendingRequest() async {
         let manager = StoreManager.makeForTesting()
         let gate = StoreRequestGate()
@@ -197,6 +231,40 @@ struct StoreManagerLifecycleTests {
             manager.lastRestoreRequestFailure is StoreRequestTestError,
             "StoreManager should record restore request failures for diagnostics and tests."
         )
+    }
+
+    @Test
+    func duplicateRestoreRequestsCoalesceUntilCompletion() async {
+        let manager = StoreManager.makeForTesting()
+        let gate = StoreRequestGate()
+        var restoreCount = 0
+
+        // Given restore intent is sent twice while the first App Store sync is
+        // still pending.
+        let firstID = manager.requestRestorePurchasesForTesting {
+            restoreCount += 1
+            await gate.waitForRelease()
+        }
+        let secondID = manager.requestRestorePurchasesForTesting {
+            restoreCount += 1
+        }
+
+        await gate.waitForOperationStart()
+        await Task.yield()
+
+        // Then StoreManager keeps a single restore lifecycle owner so stale
+        // completion from another overlapping request cannot overwrite UI state.
+        #expect(
+            firstID == secondID,
+            "Duplicate restore intent should coalesce to the in-flight restore request."
+        )
+        #expect(restoreCount == 1, "Duplicate restore intent should not start a second App Store sync.")
+        #expect(manager.pendingRestoreRequestIDs == [firstID])
+
+        await gate.release()
+        await manager.waitForRestoreRequest(firstID)
+
+        #expect(manager.pendingRestoreRequestIDs.isEmpty)
     }
 
     @Test
