@@ -89,32 +89,29 @@ extension CloudKitManager {
                 )
                 operation.qualityOfService = .userInitiated
 
-                var records: [CKRecord] = []
-                var deletions: [Deletion] = []
-                var serverChangeToken: CKServerChangeToken?
-                var moreComing = false
+                let batchCollector = CloudKitZoneChangeBatchCollector()
                 var zoneError: Error?
 
                 operation.recordWasChangedBlock = { recordID, recordResult in
-                    switch recordResult {
-                    case .success(let record):
-                        records.append(record)
-                    case .failure(let error):
+                    if case .failure(let error) = recordResult {
                         logger.error(
                             "Failed to fetch record \(recordID.recordName): \(error.localizedDescription)"
                         )
                     }
+                    batchCollector.recordWasChanged(recordID: recordID, result: recordResult)
                 }
 
                 operation.recordWithIDWasDeletedBlock = { recordID, recordType in
-                    deletions.append(Deletion(recordID: recordID, recordType: recordType))
+                    batchCollector.recordWithIDWasDeleted(recordID: recordID, recordType: recordType)
                 }
 
                 operation.recordZoneFetchResultBlock = { _, result in
                     switch result {
                     case .success(let info):
-                        serverChangeToken = info.serverChangeToken
-                        moreComing = info.moreComing
+                        batchCollector.recordZoneFetchSucceeded(
+                            serverChangeToken: info.serverChangeToken,
+                            moreComing: info.moreComing
+                        )
                     case .failure(let error):
                         zoneError = error
                     }
@@ -126,14 +123,11 @@ extension CloudKitManager {
                         if let zoneError = zoneError {
                             continuation.resume(throwing: zoneError)
                         } else {
-                            continuation.resume(
-                                returning: ZoneChangeBatch(
-                                    records: records,
-                                    deletions: deletions,
-                                    serverChangeToken: serverChangeToken,
-                                    moreComing: moreComing
-                                )
-                            )
+                            do {
+                                continuation.resume(returning: try batchCollector.makeBatch())
+                            } catch {
+                                continuation.resume(throwing: error)
+                            }
                         }
                     case .failure(let error):
                         continuation.resume(throwing: error)

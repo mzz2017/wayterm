@@ -446,11 +446,12 @@ final class CloudKitManager: ObservableObject {
 
 // MARK: - CloudKit Error
 
-enum CloudKitError: LocalizedError {
+nonisolated enum CloudKitError: LocalizedError, Equatable {
     case notAvailable
     case recordNotFound
     case encodingFailed
     case decodingFailed
+    case recordFetchFailed(recordName: String, message: String)
 
     var errorDescription: String? {
         switch self {
@@ -458,6 +459,8 @@ enum CloudKitError: LocalizedError {
         case .recordNotFound: return "Record not found"
         case .encodingFailed: return "Failed to encode data"
         case .decodingFailed: return "Failed to decode data"
+        case .recordFetchFailed(let recordName, let message):
+            return "Failed to fetch CloudKit record \(recordName): \(message)"
         }
     }
 }
