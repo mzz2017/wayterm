@@ -23,7 +23,9 @@ Use this skill to write VVTerm commits that are conventional, searchable, and us
    - `feat`: user-facing capability.
    - `chore`: narrow maintenance that does not fit the above.
 4. Add a scope only when it improves searchability: `fix(ssh): ...`, `test(remote-files): ...`, `ci(ios): ...`.
-5. Write the subject, then decide whether a body is needed.
+5. Write the subject, then add a short body for any non-trivial change.
+   Subject-only commits are allowed only for obvious mechanical edits where
+   the staged diff itself fully explains the reason, invariant, and validation.
 
 ## Subject Rules
 
@@ -56,7 +58,11 @@ misc cleanup
 
 ## Body Rules
 
-Add a body when the subject cannot explain the review-relevant context. Keep it short and wrap paragraphs around 72 columns.
+Default to a body for `fix`, `refactor`, `ci`, lifecycle, concurrency,
+architecture-boundary, test-infra, FFI, or behavior-test commits. The subject
+names the change; the body preserves the context a future reviewer cannot
+recover from the diff alone. Keep it short and wrap paragraphs around 72
+columns.
 
 Use the body to explain:
 
@@ -66,6 +72,17 @@ Use the body to explain:
 - what validation ran, if it is helpful to future archaeology.
 
 Do not use the body to repeat the diff mechanically.
+
+Body checklist before committing:
+
+- Does it name the user-visible, runtime, or architecture failure mode?
+- Does it state the durable invariant being protected?
+- Does it mention the focused verification when that evidence matters?
+- Would the message still make sense after surrounding commits are rebased
+  away?
+
+If any answer is "no" for a non-trivial commit, add or revise the body instead
+of committing a bare subject.
 
 Good body shape:
 
@@ -92,7 +109,10 @@ If any answer is uncomfortable, split the commit or unstage unrelated files.
 
 ## Commit Command
 
-Use `git commit -m` for subject-only commits. Use a temp message file or editor for bodies; avoid unreadable shell quoting for multi-paragraph messages.
+Use `git commit -m` only for allowed subject-only commits. For normal VVTerm
+commits, use multiple `-m` arguments or a temp message file so the body is
+present and readable; avoid unreadable shell quoting for multi-paragraph
+messages.
 
 After committing, verify:
 
