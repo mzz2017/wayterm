@@ -21,4 +21,17 @@ nonisolated enum GhosttyClipboardBridge {
         }
         return String(cString: dataPointer)
     }
+
+    static func firstString(
+        in contents: UnsafePointer<ghostty_clipboard_content_s>?,
+        count: Int
+    ) -> String? {
+        guard let contents, count > 0 else { return nil }
+        for index in 0..<count {
+            if let string = string(from: contents.advanced(by: index).pointee) {
+                return string
+            }
+        }
+        return nil
+    }
 }

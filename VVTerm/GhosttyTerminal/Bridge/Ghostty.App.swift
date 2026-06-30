@@ -711,23 +711,6 @@ extension Ghostty {
             }
         }
 
-        static func readClipboard(_ userdata: UnsafeMutableRawPointer?, location: ghostty_clipboard_e, state: UnsafeMutableRawPointer?) -> Bool {
-            guard let terminalView = GhosttySurfaceCallbackContext.terminalView(fromUserdata: userdata) else { return false }
-            guard let surface = terminalView.surfaceOwner.liveSurfaceHandle else { return false }
-
-            // Read from macOS clipboard
-            let clipboardString = Clipboard.readString() ?? ""
-
-            GhosttyClipboardBridge.completeReadRequest(
-                surface: surface,
-                string: clipboardString,
-                state: state
-            )
-
-            Ghostty.logger.debug("Read clipboard: \(clipboardString.prefix(50))...")
-            return true
-        }
-
         static func confirmReadClipboard(
             _ userdata: UnsafeMutableRawPointer?,
             string: UnsafePointer<CChar>?,
@@ -738,34 +721,6 @@ extension Ghostty {
             // For security, apps can confirm before allowing clipboard access
             // For now, just log it
             Ghostty.logger.debug("Clipboard read confirmation requested")
-        }
-
-        static func writeClipboard(
-            _ userdata: UnsafeMutableRawPointer?,
-            location: ghostty_clipboard_e,
-            contents: UnsafePointer<ghostty_clipboard_content_s>?,
-            count: Int,
-            confirm: Bool
-        ) {
-            guard let contents = contents, count > 0 else { return }
-            #if os(iOS)
-            guard location != GHOSTTY_CLIPBOARD_SELECTION else { return }
-            #endif
-
-            // The runtime passes an array of clipboard entries; prefer the first textual entry.
-            for idx in 0..<count {
-                let entry = contents.advanced(by: idx).pointee
-                guard var string = GhosttyClipboardBridge.string(from: entry) else { continue }
-
-                if !string.isEmpty {
-                    // Apply copy transformations from settings
-                    string = TerminalTextCleaner.cleanText(string, settings: .current())
-
-                    Clipboard.copy(string)
-                    Ghostty.logger.debug("Wrote to clipboard: \(string.prefix(50))...")
-                    return
-                }
-            }
         }
 
         static func closeSurface(_ userdata: UnsafeMutableRawPointer?, processAlive: Bool) {

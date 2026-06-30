@@ -33,16 +33,19 @@ struct ClipboardSnapshot: Sendable {
 }
 
 enum Clipboard {
+    @MainActor
     static func copy(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
     }
 
+    @MainActor
     static func readString() -> String? {
         NSPasteboard.general.string(forType: .string)
     }
 
+    @MainActor
     static func copy(lines: [String], separator: String = "\n") {
         copy(lines.joined(separator: separator))
     }
@@ -127,14 +130,17 @@ struct ClipboardSnapshot: Sendable {
 }
 
 enum Clipboard {
+    @MainActor
     static func copy(_ text: String) {
         UIPasteboard.general.string = text
     }
 
+    @MainActor
     static func readString() -> String? {
         UIPasteboard.general.string
     }
 
+    @MainActor
     static func copy(lines: [String], separator: String = "\n") {
         copy(lines.joined(separator: separator))
     }

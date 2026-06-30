@@ -42,6 +42,26 @@ struct GhosttyClipboardBridgeTests {
         #expect(result == nil)
     }
 
+    @Test
+    func firstStringSnapshotsFirstTextualClipboardEntryBeforeCallbackReturns() {
+        // Given a Ghostty clipboard callback payload with a non-text entry
+        // before the textual entry. The C array is only stable during the
+        // callback, so production must copy out a Swift String before any
+        // deferred main-actor pasteboard handoff.
+        let result = withClipboardEntries(
+            [
+                ClipboardEntryFixture(mime: "image/png", data: "not-text"),
+                ClipboardEntryFixture(mime: "text/plain", data: "copied")
+            ]
+        ) { entries in
+            GhosttyClipboardBridge.firstString(in: entries.baseAddress, count: entries.count)
+        }
+
+        // Then the bridge snapshots the first textual payload and ignores
+        // earlier non-text entries.
+        #expect(result == "copied")
+    }
+
     private func withClipboardEntry<Result>(
         mime: String?,
         data: String?,
@@ -68,5 +88,43 @@ struct GhosttyClipboardBridgeTests {
         }
 
         return body(ghostty_clipboard_content_s(mime: nil, data: nil))
+    }
+
+    private func withClipboardEntries<Result>(
+        _ fixtures: [ClipboardEntryFixture],
+        _ body: (UnsafeBufferPointer<ghostty_clipboard_content_s>) -> Result
+    ) -> Result {
+        var strings: [String] = []
+        var entries: [ghostty_clipboard_content_s] = []
+        strings.reserveCapacity(fixtures.count * 2)
+        entries.reserveCapacity(fixtures.count)
+
+        for fixture in fixtures {
+            let mimeIndex = fixture.mime.map { value -> Int in
+                strings.append(value)
+                return strings.count - 1
+            }
+            let dataIndex = fixture.data.map { value -> Int in
+                strings.append(value)
+                return strings.count - 1
+            }
+            entries.append(ghostty_clipboard_content_s(
+                mime: mimeIndex.map { strings[$0] }.map { strdup($0) },
+                data: dataIndex.map { strings[$0] }.map { strdup($0) }
+            ))
+        }
+        defer {
+            for entry in entries {
+                free(UnsafeMutableRawPointer(mutating: entry.mime))
+                free(UnsafeMutableRawPointer(mutating: entry.data))
+            }
+        }
+
+        return entries.withUnsafeBufferPointer(body)
+    }
+
+    private struct ClipboardEntryFixture {
+        let mime: String?
+        let data: String?
     }
 }

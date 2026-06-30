@@ -24,6 +24,9 @@ struct GhosttyAppSupportBoundaryTests {
         let clipboardBridgeSource = try source(
             at: root.appendingPathComponent("VVTerm/GhosttyTerminal/Bridge/Ghostty.ClipboardBridge.swift")
         )
+        let clipboardCallbackSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/Bridge/Ghostty.App+Clipboard.swift")
+        )
 
         // Given Ghostty.App is the app lifecycle and callback owner.
         #expect(appSource.contains("class App: ObservableObject"))
@@ -48,6 +51,9 @@ struct GhosttyAppSupportBoundaryTests {
         #expect(surfaceReferenceSource.contains("final class SurfaceReference"))
         #expect(surfaceReferenceSource.contains("func invalidate()"))
         #expect(clipboardBridgeSource.contains("enum GhosttyClipboardBridge"))
+        #expect(clipboardCallbackSource.contains("extension Ghostty.App"))
+        #expect(clipboardCallbackSource.contains("static func readClipboard"))
+        #expect(clipboardCallbackSource.contains("static func writeClipboard"))
 
         #expect(
             appSource.split(separator: "\n", omittingEmptySubsequences: false).count < 800,
@@ -130,7 +136,46 @@ struct GhosttyAppSupportBoundaryTests {
         #expect(
             scrollbarCase.contains("dispatchActionSurfaceContext")
                 && scrollbarCase.contains("NotificationCenter.default.post("),
-            "Scrollbar notifications should be posted from the main-actor action surface context."
+                "Scrollbar notifications should be posted from the main-actor action surface context."
+        )
+    }
+
+    @Test
+    func clipboardCallbacksRoutePasteboardAccessThroughMainActor() throws {
+        let root = try sourceRoot()
+        let clipboardCallbackSource = try source(
+            at: root.appendingPathComponent("VVTerm/GhosttyTerminal/Bridge/Ghostty.App+Clipboard.swift")
+        )
+        let clipboardSource = try source(
+            at: root.appendingPathComponent("VVTerm/Core/Terminal/Clipboard.swift")
+        )
+        let readClipboardCallback = try sourceSlice(
+            in: clipboardCallbackSource,
+            from: "static func readClipboard(",
+            to: "    private static func performClipboardReadOnMain("
+        )
+        let writeClipboardCallback = try sourceSlice(
+            in: clipboardCallbackSource,
+            from: "static func writeClipboard(",
+            to: "\n}"
+        )
+
+        #expect(
+            clipboardSource.contains("@MainActor\n    static func copy(_ text: String)")
+                && clipboardSource.contains("@MainActor\n    static func readString() -> String?")
+                && clipboardSource.contains("@MainActor\n    static func copy(lines: [String]"),
+            "System pasteboard helpers should be main-actor isolated."
+        )
+        #expect(
+            readClipboardCallback.contains("performClipboardReadOnMain")
+                && !readClipboardCallback.contains("let clipboardString = Clipboard.readString()"),
+            "Ghostty read clipboard callbacks should hop to main before touching the system pasteboard."
+        )
+        #expect(
+            writeClipboardCallback.contains("GhosttyClipboardBridge.firstString")
+                && writeClipboardCallback.contains("DispatchQueue.main.async")
+                && !writeClipboardCallback.contains("Clipboard.copy(string)"),
+            "Ghostty write clipboard callbacks should snapshot C payloads before asynchronously copying on main."
         )
     }
 
