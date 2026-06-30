@@ -180,8 +180,13 @@ struct GhosttyAppSupportBoundaryTests {
         )
         #expect(
             iosInputSource.contains("GhosttyClipboardBridge.publishReadSnapshot")
+                && iosInputSource.contains("GhosttyClipboardBridge.clearReadSnapshot")
                 && macOSInputSource.contains("GhosttyClipboardBridge.publishReadSnapshot"),
             "UI paste entry points should snapshot the main-actor pasteboard before entering Ghostty's synchronous paste action."
+        )
+        #expect(
+            macOSInputSource.contains("GhosttyClipboardBridge.clearReadSnapshot"),
+            "macOS paste should clear an unconsumed read snapshot after the synchronous Ghostty paste action returns."
         )
         #expect(
             writeClipboardCallback.contains("GhosttyClipboardBridge.firstString")

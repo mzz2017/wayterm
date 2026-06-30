@@ -13,13 +13,17 @@ extension GhosttyTerminalView {
     
     func pasteTextFromClipboard() {
         guard canRouteTerminalInput else { return }
-        if let surface = surfaceOwner.liveSurfaceHandle {
+        let surface = surfaceOwner.liveSurfaceHandle
+        if let surface {
             GhosttyClipboardBridge.publishReadSnapshot(
                 surface: surface,
                 string: Clipboard.readString() ?? ""
             )
         }
         _ = surfaceOwner.perform(action: "paste_from_clipboard")
+        if let surface {
+            GhosttyClipboardBridge.clearReadSnapshot(for: surface)
+        }
         requestRender()
     }
     

@@ -13,8 +13,12 @@ nonisolated enum GhosttyClipboardBridge {
         readSnapshotStore.publish(ReadSnapshot(surface: surface, string: string, createdAt: Date()))
     }
 
-    static func consumeReadSnapshot(maxAge: TimeInterval = 1) -> ReadSnapshot? {
-        readSnapshotStore.consume(maxAge: maxAge)
+    static func consumeReadSnapshot(for surface: ghostty_surface_t, maxAge: TimeInterval = 1) -> ReadSnapshot? {
+        readSnapshotStore.consume(surface: surface, maxAge: maxAge)
+    }
+
+    static func clearReadSnapshot(for surface: ghostty_surface_t) {
+        readSnapshotStore.clear(surface: surface)
     }
 
     static func completeReadRequest(
@@ -62,16 +66,31 @@ nonisolated private final class GhosttyClipboardReadSnapshotStore: @unchecked Se
         lock.unlock()
     }
 
-    nonisolated func consume(maxAge: TimeInterval) -> GhosttyClipboardBridge.ReadSnapshot? {
+    nonisolated func consume(
+        surface: ghostty_surface_t,
+        maxAge: TimeInterval
+    ) -> GhosttyClipboardBridge.ReadSnapshot? {
         lock.lock()
         let snapshot = snapshot
-        if let snapshot, Date().timeIntervalSince(snapshot.createdAt) <= maxAge {
+        if let snapshot,
+           snapshot.surface == surface,
+           Date().timeIntervalSince(snapshot.createdAt) <= maxAge {
             self.snapshot = nil
             lock.unlock()
             return snapshot
         }
-        self.snapshot = nil
+        if let snapshot, Date().timeIntervalSince(snapshot.createdAt) > maxAge {
+            self.snapshot = nil
+        }
         lock.unlock()
         return nil
+    }
+
+    nonisolated func clear(surface: ghostty_surface_t) {
+        lock.lock()
+        if snapshot?.surface == surface {
+            snapshot = nil
+        }
+        lock.unlock()
     }
 }

@@ -7,7 +7,10 @@ extension Ghostty.App {
         location: ghostty_clipboard_e,
         state: UnsafeMutableRawPointer?
     ) -> Bool {
-        if let snapshot = GhosttyClipboardBridge.consumeReadSnapshot() {
+        let surfaceContext = GhosttySurfaceCallbackContext.context(fromUserdata: userdata)
+        if let terminalView = surfaceContext?.resolveTerminalView(),
+           let surface = terminalView.surfaceOwner.liveSurfaceHandle,
+           let snapshot = GhosttyClipboardBridge.consumeReadSnapshot(for: surface) {
             GhosttyClipboardBridge.completeReadRequest(
                 surface: snapshot.surface,
                 string: snapshot.string,
@@ -16,7 +19,6 @@ extension Ghostty.App {
             return true
         }
 
-        let surfaceContext = GhosttySurfaceCallbackContext.context(fromUserdata: userdata)
         return performClipboardReadOnMain(surfaceContext: surfaceContext, state: state)
     }
 
