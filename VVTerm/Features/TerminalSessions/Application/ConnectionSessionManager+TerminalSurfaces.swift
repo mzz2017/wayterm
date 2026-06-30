@@ -4,7 +4,8 @@ import os.log
 extension ConnectionSessionManager {
     // MARK: - Terminal Registration (with LRU caching)
 
-    func registerTerminal(_ terminal: GhosttyTerminalView, for sessionId: UUID) {
+    @discardableResult
+    func registerTerminal(_ terminal: GhosttyTerminalView, for sessionId: UUID) -> TerminalSurfaceRegistrationToken {
         // Evict oldest terminals if we're at capacity
         evictOldTerminalsIfNeeded()
 
@@ -16,14 +17,15 @@ extension ConnectionSessionManager {
             self?.setTerminalFindNavigatorVisible(isVisible, for: sessionId)
         }
         #endif
-        terminalSurfaceRegistry.register(terminal, for: .session(sessionId))
+        let token = terminalSurfaceRegistry.register(terminal, for: .session(sessionId))
         #if os(iOS)
-        guard terminalSurfaceRegistry.surface(for: .session(sessionId)) === terminal else { return }
+        guard terminalSurfaceRegistry.surface(for: .session(sessionId)) === terminal else { return token }
         setTerminalBrowseMode(terminal.isKeyboardInBrowseMode, for: sessionId)
         setTerminalFindNavigatorVisible(terminal.isFindNavigatorVisible, for: sessionId)
         #endif
 
         logger.debug("Registered terminal for session, total: \(self.terminalSurfaceRegistry.count)/\(self.maxTerminals)")
+        return token
     }
 
     func unregisterTerminal(for sessionId: UUID) {
@@ -81,6 +83,10 @@ extension ConnectionSessionManager {
     /// Returns whether a terminal exists without mutating LRU state.
     func hasTerminal(for sessionId: UUID) -> Bool {
         terminalSurfaceRegistry.hasSurface(for: .session(sessionId))
+    }
+
+    func surfaceRegistrationToken(for sessionId: UUID) -> TerminalSurfaceRegistrationToken? {
+        terminalSurfaceRegistry.registrationToken(for: .session(sessionId))
     }
 
     func markTerminalForReconnectReset(for sessionId: UUID) {
@@ -214,8 +220,16 @@ extension ConnectionSessionManager {
         }
     }
 
-    func detachSurfaceForViewDisappeared(from sessionId: UUID) {
-        terminalSurfaceRegistry.detachSurface(for: .session(sessionId), cleanup: false)
+    @discardableResult
+    func detachSurfaceForViewDisappeared(
+        from sessionId: UUID,
+        surfaceToken: TerminalSurfaceRegistrationToken? = nil
+    ) -> Bool {
+        terminalSurfaceRegistry.detachSurface(
+            for: .session(sessionId),
+            matching: surfaceToken,
+            cleanup: false
+        )
     }
 
     func detachSurfaceForClosedSession(_ sessionId: UUID) {
@@ -225,10 +239,13 @@ extension ConnectionSessionManager {
     func handleSurfaceViewDisappeared(
         sessionId: UUID,
         serverId: UUID,
+        surfaceToken: TerminalSurfaceRegistrationToken? = nil,
         reason: String
     ) -> TerminalSurfaceViewDisappearanceResolution {
         guard sessionWithID(sessionId) == nil else {
-            detachSurfaceForViewDisappeared(from: sessionId)
+            guard detachSurfaceForViewDisappeared(from: sessionId, surfaceToken: surfaceToken) else {
+                return .staleSurfaceIgnored
+            }
             return .preservedForReuse
         }
 

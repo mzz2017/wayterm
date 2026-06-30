@@ -84,6 +84,14 @@ struct TerminalProcessExitHandler: @unchecked Sendable {
     }
 }
 
+struct TerminalSurfaceRegistrationToken: Equatable, Hashable, Sendable {
+    fileprivate let rawValue: UUID
+
+    init() {
+        rawValue = UUID()
+    }
+}
+
 extension GhosttyTerminalView: TerminalConnectionSurface {
     func connectionSurfaceSize() -> TerminalConnectionSurfaceSize? {
         guard let size = terminalSize() else { return nil }
@@ -111,6 +119,7 @@ final class TerminalSurfaceRegistry {
 
     private var surfaces: [TerminalEntityID: GhosttyTerminalView] = [:]
     private var testSurfaces: [TerminalEntityID: TestSurface] = [:]
+    private var registrationTokens: [TerminalEntityID: TerminalSurfaceRegistrationToken] = [:]
     private var accessOrder: [TerminalEntityID] = []
 
     var count: Int {
@@ -125,20 +134,27 @@ final class TerminalSurfaceRegistry {
         Array(surfaces.values)
     }
 
-    func register(_ surface: GhosttyTerminalView, for entityId: TerminalEntityID) {
+    @discardableResult
+    func register(_ surface: GhosttyTerminalView, for entityId: TerminalEntityID) -> TerminalSurfaceRegistrationToken {
         if surfaces[entityId] === surface {
             testSurfaces.removeValue(forKey: entityId)
             touch(entityId)
-            return
+            return registrationTokens[entityId] ?? assignRegistrationToken(for: entityId)
         }
 
         cleanupSurface(for: entityId)
         surfaces[entityId] = surface
+        let token = assignRegistrationToken(for: entityId)
         touch(entityId)
+        return token
     }
 
     func surface(for entityId: TerminalEntityID) -> GhosttyTerminalView? {
         surfaces[entityId]
+    }
+
+    func registrationToken(for entityId: TerminalEntityID) -> TerminalSurfaceRegistrationToken? {
+        registrationTokens[entityId]
     }
 
     func accessedSurface(for entityId: TerminalEntityID) -> GhosttyTerminalView? {
@@ -152,12 +168,26 @@ final class TerminalSurfaceRegistry {
     }
 
     func detachSurface(for entityId: TerminalEntityID, cleanup: Bool) {
+        detachSurface(for: entityId, matching: nil, cleanup: cleanup)
+    }
+
+    @discardableResult
+    func detachSurface(
+        for entityId: TerminalEntityID,
+        matching token: TerminalSurfaceRegistrationToken?,
+        cleanup: Bool
+    ) -> Bool {
+        guard tokenMatches(token, for: entityId) else {
+            return false
+        }
+
         if cleanup {
             cleanupSurface(for: entityId)
         } else {
             surfaces[entityId]?.pauseRendering()
             testSurfaces[entityId]?.pause()
         }
+        return true
     }
 
     @discardableResult
@@ -168,6 +198,7 @@ final class TerminalSurfaceRegistry {
         } else {
             surfaces.removeValue(forKey: entityId)
             testSurfaces.removeValue(forKey: entityId)
+            registrationTokens.removeValue(forKey: entityId)
             removeFromAccessOrder(entityId)
         }
         return hadSurface
@@ -178,6 +209,7 @@ final class TerminalSurfaceRegistry {
         let removedTestSurfaces = Array(testSurfaces.values)
         surfaces.removeAll()
         testSurfaces.removeAll()
+        registrationTokens.removeAll()
         accessOrder.removeAll()
 
         guard cleanup else { return removedSurfaces }
@@ -217,6 +249,17 @@ final class TerminalSurfaceRegistry {
         }
     }
 
+    private func assignRegistrationToken(for entityId: TerminalEntityID) -> TerminalSurfaceRegistrationToken {
+        let token = TerminalSurfaceRegistrationToken()
+        registrationTokens[entityId] = token
+        return token
+    }
+
+    private func tokenMatches(_ token: TerminalSurfaceRegistrationToken?, for entityId: TerminalEntityID) -> Bool {
+        guard let token else { return true }
+        return registrationTokens[entityId] == token
+    }
+
     private func cleanupSurface(for entityId: TerminalEntityID) {
         if let surface = surfaces.removeValue(forKey: entityId) {
             #if os(iOS)
@@ -228,20 +271,24 @@ final class TerminalSurfaceRegistry {
         if let testSurface = testSurfaces.removeValue(forKey: entityId) {
             testSurface.cleanup()
         }
+        registrationTokens.removeValue(forKey: entityId)
         removeFromAccessOrder(entityId)
     }
 }
 
 #if DEBUG
 extension TerminalSurfaceRegistry {
+    @discardableResult
     func registerForTesting(
         entityId: TerminalEntityID,
         pause: @escaping () -> Void,
         cleanup: @escaping () -> Void
-    ) {
+    ) -> TerminalSurfaceRegistrationToken {
         cleanupSurface(for: entityId)
         testSurfaces[entityId] = TestSurface(pause: pause, cleanup: cleanup)
+        let token = assignRegistrationToken(for: entityId)
         touch(entityId)
+        return token
     }
 }
 #endif

@@ -100,6 +100,7 @@ struct SSHTerminalWrapper: NSViewRepresentable {
             // Mark coordinator as reusing existing terminal so dismantle keeps the surface alive.
             coordinator.isReusingTerminal = true
             coordinator.terminalView = existingTerminal
+            coordinator.surfaceToken = sessionManager.surfaceRegistrationToken(for: session.id)
 
             // Update callbacks because the SwiftUI coordinator can be recreated
             // while the application-owned runtime stays alive.
@@ -179,8 +180,8 @@ struct SSHTerminalWrapper: NSViewRepresentable {
 
         // Store terminal reference in coordinator and register with session manager
         coordinator.terminalView = terminalView
+        coordinator.surfaceToken = sessionManager.registerTerminal(terminalView, for: session.id)
         coordinator.installRichPasteInterception(on: terminalView)
-        sessionManager.registerTerminal(terminalView, for: session.id)
 
         // Setup write callback to send keyboard input to SSH
         terminalView.writeCallback = { [weak coordinator] data in
@@ -227,6 +228,7 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         let resolution = coordinator.sessionManager.handleSurfaceViewDisappeared(
             sessionId: coordinator.sessionId,
             serverId: coordinator.server.id,
+            surfaceToken: coordinator.surfaceToken,
             reason: "mac dismantle"
         )
         switch resolution {
@@ -234,6 +236,10 @@ struct SSHTerminalWrapper: NSViewRepresentable {
             coordinator.isReusingTerminal = true
         case .closedAndCleanedUp:
             coordinator.terminalView = nil
+            coordinator.surfaceToken = nil
+        case .staleSurfaceIgnored:
+            coordinator.terminalView = nil
+            coordinator.surfaceToken = nil
         }
     }
 
@@ -247,6 +253,7 @@ struct SSHTerminalWrapper: NSViewRepresentable {
         let onProcessExit: () -> Void
         let sessionManager: ConnectionSessionManager
         weak var terminalView: GhosttyTerminalView?
+        var surfaceToken: TerminalSurfaceRegistrationToken?
 
         private let richPasteRuntime: TerminalRichPasteRuntime
         let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "SSHTerminal")
@@ -375,6 +382,7 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         if let existingTerminal = sessionManager.peekTerminal(for: session.id) {
             sessionManager.markTerminalUsed(for: session.id)
             coordinator.terminalView = existingTerminal
+            coordinator.surfaceToken = sessionManager.surfaceRegistrationToken(for: session.id)
             coordinator.isTerminalReady = true
             coordinator.preserveSession = true
             existingTerminal.onVoiceButtonTapped = onVoiceTrigger
@@ -458,8 +466,8 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         terminalView.applyPresentationOverrides(sessionManager.presentationOverrides(for: session.id))
 
         coordinator.terminalView = terminalView
+        coordinator.surfaceToken = sessionManager.registerTerminal(terminalView, for: session.id)
         coordinator.installRichPasteInterception(on: terminalView)
-        sessionManager.registerTerminal(terminalView, for: session.id)
 
         terminalView.writeCallback = { [weak coordinator] data in
             coordinator?.sendToSSH(data)
@@ -568,6 +576,7 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         let resolution = coordinator.sessionManager.handleSurfaceViewDisappeared(
             sessionId: coordinator.sessionId,
             serverId: coordinator.server.id,
+            surfaceToken: coordinator.surfaceToken,
             reason: "ios dismantle"
         )
         switch resolution {
@@ -576,6 +585,10 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
             coordinator.preserveSession = true
         case .closedAndCleanedUp:
             coordinator.terminalView = nil
+            coordinator.surfaceToken = nil
+        case .staleSurfaceIgnored:
+            coordinator.terminalView = nil
+            coordinator.surfaceToken = nil
         }
     }
 
@@ -608,6 +621,7 @@ private struct SSHTerminalRepresentable: UIViewRepresentable {
         let onProcessExit: () -> Void
         let sessionManager: ConnectionSessionManager
         weak var terminalView: GhosttyTerminalView?
+        var surfaceToken: TerminalSurfaceRegistrationToken?
 
         private let richPasteRuntime: TerminalRichPasteRuntime
         let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "SSHTerminal")

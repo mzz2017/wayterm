@@ -20,6 +20,7 @@ enum TerminalSurfaceDetachReason: Equatable, Sendable {
 enum TerminalSurfaceViewDisappearanceResolution: Equatable, Sendable {
     case preservedForReuse
     case closedAndCleanedUp
+    case staleSurfaceIgnored
 }
 
 enum TerminalSurfaceUpdateDisposition: Equatable, Sendable {

@@ -4,9 +4,11 @@ extension TerminalTabManager {
     // MARK: - Pane Terminal Surface Lifecycle
 
     /// Register a terminal view for a pane.
-    func registerTerminal(_ terminal: GhosttyTerminalView, for paneId: UUID) {
-        terminalSurfaceRegistry.register(terminal, for: .pane(paneId))
+    @discardableResult
+    func registerTerminal(_ terminal: GhosttyTerminalView, for paneId: UUID) -> TerminalSurfaceRegistrationToken {
+        let token = terminalSurfaceRegistry.register(terminal, for: .pane(paneId))
         scheduleTerminalRegistryVersionUpdate()
+        return token
     }
 
     /// Unregister a terminal view.
@@ -22,6 +24,10 @@ extension TerminalTabManager {
     /// Get terminal for a pane.
     func getTerminal(for paneId: UUID) -> GhosttyTerminalView? {
         terminalSurfaceRegistry.surface(for: .pane(paneId))
+    }
+
+    func surfaceRegistrationToken(for paneId: UUID) -> TerminalSurfaceRegistrationToken? {
+        terminalSurfaceRegistry.registrationToken(for: .pane(paneId))
     }
 
     func attachSurface(_ terminal: GhosttyTerminalView, toPane paneId: UUID) async {
@@ -119,17 +125,30 @@ extension TerminalTabManager {
         }
     }
 
-    func detachSurfaceForPaneViewDisappeared(_ paneId: UUID) {
-        terminalSurfaceRegistry.detachSurface(for: .pane(paneId), cleanup: false)
+    @discardableResult
+    func detachSurfaceForPaneViewDisappeared(
+        _ paneId: UUID,
+        surfaceToken: TerminalSurfaceRegistrationToken? = nil
+    ) -> Bool {
+        terminalSurfaceRegistry.detachSurface(
+            for: .pane(paneId),
+            matching: surfaceToken,
+            cleanup: false
+        )
     }
 
     func detachSurfaceForClosedPane(_ paneId: UUID) {
         unregisterTerminal(for: paneId)
     }
 
-    func handlePaneSurfaceViewDisappeared(_ paneId: UUID) -> TerminalSurfaceViewDisappearanceResolution {
+    func handlePaneSurfaceViewDisappeared(
+        _ paneId: UUID,
+        surfaceToken: TerminalSurfaceRegistrationToken? = nil
+    ) -> TerminalSurfaceViewDisappearanceResolution {
         guard paneStates[paneId] == nil else {
-            detachSurfaceForPaneViewDisappeared(paneId)
+            guard detachSurfaceForPaneViewDisappeared(paneId, surfaceToken: surfaceToken) else {
+                return .staleSurfaceIgnored
+            }
             return .preservedForReuse
         }
 

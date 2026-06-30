@@ -50,6 +50,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         if let existingTerminal = tabManager.getTerminal(for: paneId) {
             coordinator.isReusingTerminal = true
             coordinator.terminal = existingTerminal
+            coordinator.surfaceToken = tabManager.surfaceRegistrationToken(for: paneId)
 
             existingTerminal.onResize = { [tabManager, paneId] cols, rows in
                 tabManager.requestPaneResize(
@@ -116,8 +117,8 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
 
         // Store terminal reference
         coordinator.terminal = terminalView
+        coordinator.surfaceToken = tabManager.registerTerminal(terminalView, for: paneId)
         coordinator.installRichPasteInterception(on: terminalView)
-        tabManager.registerTerminal(terminalView, for: paneId)
 
         // Setup write callback to send keyboard input to SSH
         terminalView.writeCallback = { [weak coordinator] data in
@@ -152,12 +153,19 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
     }
 
     static func dismantleNSView(_: NSView, coordinator: Coordinator) {
-        let resolution = coordinator.tabManager.handlePaneSurfaceViewDisappeared(coordinator.paneId)
+        let resolution = coordinator.tabManager.handlePaneSurfaceViewDisappeared(
+            coordinator.paneId,
+            surfaceToken: coordinator.surfaceToken
+        )
         switch resolution {
         case .preservedForReuse:
             coordinator.isReusingTerminal = true
         case .closedAndCleanedUp:
             coordinator.terminal = nil
+            coordinator.surfaceToken = nil
+        case .staleSurfaceIgnored:
+            coordinator.terminal = nil
+            coordinator.surfaceToken = nil
         }
     }
 
@@ -176,6 +184,7 @@ struct SSHTerminalPaneWrapper: NSViewRepresentable {
         let onProcessExit: () -> Void
         let tabManager: TerminalTabManager
         weak var terminal: GhosttyTerminalView?
+        var surfaceToken: TerminalSurfaceRegistrationToken?
         var isReusingTerminal = false
         private let richPasteRuntime: TerminalRichPasteRuntime
 

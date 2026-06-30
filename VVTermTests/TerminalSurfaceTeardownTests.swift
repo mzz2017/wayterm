@@ -184,6 +184,51 @@ struct TerminalSurfaceTeardownTests {
 
     @MainActor
     @Test
+    func staleRootViewDisappearanceDoesNotPauseReplacementSurface() async {
+        let manager = ConnectionSessionManager.shared
+        await manager.resetForTesting()
+
+        let session = ConnectionSession(
+            serverId: UUID(),
+            title: "Replacement",
+            connectionState: .connected
+        )
+        let firstRecorder = TerminalSurfaceRegistryRecorder()
+        let secondRecorder = TerminalSurfaceRegistryRecorder()
+        manager.sessions = [session]
+        let staleSurfaceToken = manager.terminalSurfaceRegistry.registerForTesting(
+            entityId: .session(session.id),
+            pause: { firstRecorder.pauseCount += 1 },
+            cleanup: { firstRecorder.cleanupCount += 1 }
+        )
+        _ = manager.terminalSurfaceRegistry.registerForTesting(
+            entityId: .session(session.id),
+            pause: { secondRecorder.pauseCount += 1 },
+            cleanup: { secondRecorder.cleanupCount += 1 }
+        )
+
+        // Given SwiftUI has already replaced a live root surface for the same
+        // session, and the old representable is dismantled afterwards.
+        let resolution = manager.handleSurfaceViewDisappeared(
+            sessionId: session.id,
+            serverId: session.serverId,
+            surfaceToken: staleSurfaceToken,
+            reason: "test stale root disappearance"
+        )
+
+        // Then the stale disappearance is ignored instead of pausing the latest
+        // registered surface for the live session.
+        #expect(resolution == .staleSurfaceIgnored)
+        #expect(firstRecorder.cleanupCount == 1)
+        #expect(secondRecorder.pauseCount == 0)
+        #expect(secondRecorder.cleanupCount == 0)
+        #expect(manager.hasTerminal(for: session.id))
+
+        await manager.resetForTesting()
+    }
+
+    @MainActor
+    @Test
     func rootViewDisappearanceTracksClosedSessionCleanupUntilAwaited() async {
         let manager = ConnectionSessionManager.shared
         await manager.resetForTesting()
@@ -342,6 +387,49 @@ struct TerminalSurfaceTeardownTests {
         #expect(resolution == .preservedForReuse)
         #expect(recorder.pauseCount == 1)
         #expect(recorder.cleanupCount == 0)
+        #expect(manager.terminalSurfaceRegistry.hasSurface(for: .pane(paneId)))
+
+        await manager.resetForTesting()
+    }
+
+    @MainActor
+    @Test
+    func staleSplitViewDisappearanceDoesNotPauseReplacementSurface() async {
+        let manager = TerminalTabManager.shared
+        await manager.resetForTesting()
+
+        let paneId = UUID()
+        let tabId = UUID()
+        let firstRecorder = TerminalSurfaceRegistryRecorder()
+        let secondRecorder = TerminalSurfaceRegistryRecorder()
+        manager.paneStates[paneId] = TerminalPaneState(
+            paneId: paneId,
+            tabId: tabId,
+            serverId: UUID()
+        )
+        let staleSurfaceToken = manager.terminalSurfaceRegistry.registerForTesting(
+            entityId: .pane(paneId),
+            pause: { firstRecorder.pauseCount += 1 },
+            cleanup: { firstRecorder.cleanupCount += 1 }
+        )
+        _ = manager.terminalSurfaceRegistry.registerForTesting(
+            entityId: .pane(paneId),
+            pause: { secondRecorder.pauseCount += 1 },
+            cleanup: { secondRecorder.cleanupCount += 1 }
+        )
+
+        // Given SwiftUI has already replaced a live split-pane surface, and the
+        // old representable is dismantled afterwards.
+        let resolution = manager.handlePaneSurfaceViewDisappeared(
+            paneId,
+            surfaceToken: staleSurfaceToken
+        )
+
+        // Then stale pane teardown cannot pause or cleanup the replacement.
+        #expect(resolution == .staleSurfaceIgnored)
+        #expect(firstRecorder.cleanupCount == 1)
+        #expect(secondRecorder.pauseCount == 0)
+        #expect(secondRecorder.cleanupCount == 0)
         #expect(manager.terminalSurfaceRegistry.hasSurface(for: .pane(paneId)))
 
         await manager.resetForTesting()
