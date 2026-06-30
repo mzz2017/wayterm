@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import Testing
 @testable import VVTerm
 
@@ -47,6 +48,40 @@ struct AudioServiceDependencyBoundaryTests {
             unsupportedParakeet.resolveProviderForTesting() == .system,
             "Unsupported injected Parakeet runtime should fall back to system speech."
         )
+    }
+
+    @Test
+    func mlxStopCancellationDoesNotFallbackToAppleSpeech() async throws {
+        let whisper = FakeVoiceSampleTranscriber()
+        whisper.error = CancellationError()
+        let capture = FakeVoiceAudioCapture(stopSamples: [0.25, -0.25])
+        var fallbackCalls = 0
+        let service = AudioService(
+            dependencies: makeDependencies(
+                provider: .mlxWhisper,
+                isWhisperSupported: true,
+                availableModels: [.whisper: "test/whisper"],
+                whisperProvider: whisper,
+                audioCaptureService: capture,
+                appleSpeechFallback: { _, _ in
+                    fallbackCalls += 1
+                    return "fallback command"
+                }
+            )
+        )
+
+        // Given the VoiceInput lifecycle starts with MLX Whisper as the
+        // effective provider and then cancellation reaches the transcriber.
+        try await service.startRecording()
+        #expect(capture.startCalls == 1, "MLX voice recording should start the injected audio capture service.")
+
+        let text = await service.stopRecording()
+
+        // Then cancellation is lifecycle completion, not an MLX failure that
+        // should start Apple Speech fallback and publish stale command text.
+        #expect(text.isEmpty, "Canceled MLX stop should not return Apple Speech fallback text.")
+        #expect(fallbackCalls == 0, "Canceled MLX stop must not invoke Apple Speech fallback.")
+        #expect(service.transcribedText.isEmpty, "Canceled MLX stop must not publish fallback transcription text.")
     }
 
     @Test
@@ -186,7 +221,11 @@ struct AudioServiceDependencyBoundaryTests {
         provider: TranscriptionProvider,
         isWhisperSupported: Bool = false,
         isParakeetSupported: Bool = false,
-        availableModels: [MLXModelKind: String] = [:]
+        availableModels: [MLXModelKind: String] = [:],
+        whisperProvider: (any VoiceSampleTranscribing)? = nil,
+        parakeetProvider: (any VoiceSampleTranscribing)? = nil,
+        audioCaptureService: (any VoiceAudioCapturing)? = nil,
+        appleSpeechFallback: (@MainActor ([Float], Double) async -> String?)? = nil
     ) -> AudioServiceDependencies {
         AudioServiceDependencies(
             settings: TranscriptionSettingsReader {
@@ -197,14 +236,18 @@ struct AudioServiceDependencyBoundaryTests {
                     languageCode: "en"
                 )
             },
-            whisperProvider: FakeVoiceSampleTranscriber(),
-            parakeetProvider: FakeVoiceSampleTranscriber(),
+            whisperProvider: whisperProvider ?? FakeVoiceSampleTranscriber(),
+            parakeetProvider: parakeetProvider ?? FakeVoiceSampleTranscriber(),
             isWhisperSupported: { isWhisperSupported },
             isParakeetSupported: { isParakeetSupported },
             isModelAvailable: { kind, modelId in
                 availableModels[kind] == modelId
             },
-            audioCaptureSession: NoopAudioCaptureSession()
+            audioCaptureSession: NoopAudioCaptureSession(),
+            audioCaptureService: audioCaptureService,
+            appleSpeechFallback: appleSpeechFallback,
+            checkPermissions: { _ in true },
+            requestPermissions: { _ in true }
         )
     }
 
@@ -229,10 +272,40 @@ struct AudioServiceDependencyBoundaryTests {
     }
 }
 
+@MainActor
 private final class FakeVoiceSampleTranscriber: VoiceSampleTranscribing {
+    var error: Error?
+
     func transcribe(samples: [Float]) async throws -> String {
-        ""
+        if let error {
+            throw error
+        }
+        return ""
     }
+}
+
+@MainActor
+private final class FakeVoiceAudioCapture: VoiceAudioCapturing {
+    var audioLevel: Float = 0
+    var recordingDuration: TimeInterval = 0
+    var sampleRate: Double = 16_000
+    var bufferHandler: ((AVAudioPCMBuffer) -> Void)?
+    private(set) var startCalls = 0
+    private let stopSamples: [Float]
+
+    init(stopSamples: [Float]) {
+        self.stopSamples = stopSamples
+    }
+
+    func start() throws {
+        startCalls += 1
+    }
+
+    func stop() async -> [Float] {
+        stopSamples
+    }
+
+    func cancel() async {}
 }
 
 private actor AudioBufferUpdateGate {

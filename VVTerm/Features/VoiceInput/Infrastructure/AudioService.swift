@@ -17,6 +17,10 @@ struct AudioServiceDependencies {
     var isParakeetSupported: @MainActor () -> Bool
     var isModelAvailable: @MainActor (MLXModelKind, String) -> Bool
     var audioCaptureSession: any AudioCaptureSessionManaging
+    var audioCaptureService: (any VoiceAudioCapturing)? = nil
+    var appleSpeechFallback: (@MainActor ([Float], Double) async -> String?)? = nil
+    var checkPermissions: (@MainActor (Bool) async -> Bool)? = nil
+    var requestPermissions: (@MainActor (Bool) async -> Bool)? = nil
 }
 
 @MainActor
@@ -32,7 +36,7 @@ class AudioService: NSObject, ObservableObject {
     // Services
     private let permissionManager = AudioPermissionManager()
     private let speechRecognitionService: SpeechRecognitionService
-    private let audioCaptureService: AudioCaptureService
+    private let audioCaptureService: any VoiceAudioCapturing
     private let dependencies: AudioServiceDependencies
 
     private var activeProvider: TranscriptionProvider = .system
@@ -41,7 +45,8 @@ class AudioService: NSObject, ObservableObject {
         let resolvedDependencies = dependencies ?? .live
         self.dependencies = resolvedDependencies
         self.speechRecognitionService = SpeechRecognitionService(settings: resolvedDependencies.settings)
-        self.audioCaptureService = AudioCaptureService(audioSession: resolvedDependencies.audioCaptureSession)
+        self.audioCaptureService = resolvedDependencies.audioCaptureService
+            ?? AudioCaptureService(audioSession: resolvedDependencies.audioCaptureSession)
         super.init()
         setupBindings()
     }
@@ -61,20 +66,28 @@ class AudioService: NSObject, ObservableObject {
             .assign(to: &$partialTranscription)
 
         // Audio capture
-        audioCaptureService.$audioLevel
-            .assign(to: &$audioLevel)
+        if let observableAudioCaptureService = audioCaptureService as? AudioCaptureService {
+            observableAudioCaptureService.$audioLevel
+                .assign(to: &$audioLevel)
 
-        audioCaptureService.$recordingDuration
-            .assign(to: &$recordingDuration)
+            observableAudioCaptureService.$recordingDuration
+                .assign(to: &$recordingDuration)
+        }
     }
 
     // MARK: - Permission Handling
 
     func requestPermissions(includeSpeech: Bool) async -> Bool {
+        if let requestPermissions = dependencies.requestPermissions {
+            return await requestPermissions(includeSpeech)
+        }
         return await permissionManager.requestPermissions(includeSpeech: includeSpeech)
     }
 
     func checkPermissions(includeSpeech: Bool) async -> Bool {
+        if let checkPermissions = dependencies.checkPermissions {
+            return await checkPermissions(includeSpeech)
+        }
         return await permissionManager.checkPermissions(includeSpeech: includeSpeech)
     }
 
@@ -130,6 +143,8 @@ class AudioService: NSObject, ObservableObject {
                 let text = try await dependencies.whisperProvider.transcribe(samples: samples)
                 transcribedText = text
                 return text
+            } catch is CancellationError {
+                return ""
             } catch {
                 logger.error("MLX Whisper failed: \(error.localizedDescription)")
                 if let fallback = await fallbackToAppleSpeech(samples: samples) {
@@ -143,6 +158,8 @@ class AudioService: NSObject, ObservableObject {
                 let text = try await dependencies.parakeetProvider.transcribe(samples: samples)
                 transcribedText = text
                 return text
+            } catch is CancellationError {
+                return ""
             } catch {
                 logger.error("MLX Parakeet failed: \(error.localizedDescription)")
                 if let fallback = await fallbackToAppleSpeech(samples: samples) {
@@ -245,6 +262,11 @@ class AudioService: NSObject, ObservableObject {
 
     private func fallbackToAppleSpeech(samples: [Float]) async -> String? {
         guard !samples.isEmpty else { return nil }
+
+        if let appleSpeechFallback = dependencies.appleSpeechFallback {
+            return await appleSpeechFallback(samples, audioCaptureService.sampleRate)
+        }
+
         guard speechRecognitionService.isAvailable else { return nil }
 
         let hasPermissions = await checkPermissions(includeSpeech: true)

@@ -9,13 +9,25 @@ protocol AudioCaptureSessionManaging {
 }
 
 @MainActor
+protocol VoiceAudioCapturing: AnyObject {
+    var audioLevel: Float { get }
+    var recordingDuration: TimeInterval { get }
+    var sampleRate: Double { get }
+    var bufferHandler: ((AVAudioPCMBuffer) -> Void)? { get set }
+
+    func start() throws
+    func stop() async -> [Float]
+    func cancel() async
+}
+
+@MainActor
 struct NoopAudioCaptureSession: AudioCaptureSessionManaging {
     func activateForRecording() throws {}
     func deactivateAfterRecording() throws {}
 }
 
 @MainActor
-final class AudioCaptureService: ObservableObject {
+final class AudioCaptureService: ObservableObject, VoiceAudioCapturing {
     @Published var audioLevel: Float = 0.0
     @Published var recordingDuration: TimeInterval = 0
 
