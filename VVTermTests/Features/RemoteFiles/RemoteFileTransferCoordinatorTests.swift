@@ -135,6 +135,53 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func copyFileCancellationStopsAfterSourceDownloadBeforeDestinationUpload() async throws {
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            serverProvider: { _ in nil }
+        )
+        let downloadBlocker = RemoteFileDownloadBlocker(blockedPath: "/source/file.txt")
+        let sourceService = RecordingRemoteFileService(
+            directoryContents: [:],
+            downloadBlocker: downloadBlocker,
+            downloadData: Data("payload".utf8)
+        )
+        let destinationService = RecordingRemoteFileService(directoryContents: [:])
+
+        // Given cross-server copy is blocked in the source download phase.
+        let task = Task {
+            try await store.copyRemoteEntry(
+                makeEntry(name: "file.txt", path: "/source/file.txt", type: .file),
+                to: "/destination",
+                sourceService: sourceService,
+                destinationService: destinationService,
+                progressTracker: nil
+            )
+        }
+        await downloadBlocker.waitUntilStarted()
+
+        // When cancellation arrives after the source download has started but
+        // before destination upload is allowed to mutate the target server.
+        task.cancel()
+        await downloadBlocker.release()
+
+        // Then the copied payload is not uploaded to the destination server.
+        let result = await task.result
+        #expect(sourceService.operations == [
+            .downloadFile("/source/file.txt")
+        ])
+        #expect(destinationService.operations.isEmpty)
+        switch result {
+        case .success:
+            Issue.record("Expected cross-server copy to stop after cancellation")
+        case .failure(is CancellationError):
+            break
+        case .failure(let error):
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+    }
+
+    @Test
     func deleteEntriesCancellationStopsBeforeNextSelectedItem() async throws {
         let server = Server(
             workspaceId: UUID(),
@@ -283,6 +330,7 @@ struct RemoteFileTransferCoordinatorTests {
 private final class RecordingRemoteFileService: RemoteFileService, @unchecked Sendable {
     enum Operation: Equatable, Sendable {
         case downloadFile(String)
+        case upload(path: String, text: String)
         case renameItem(source: String, destination: String)
         case deleteFile(String)
         case deleteDirectory(String)
@@ -291,6 +339,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
     let directoryContents: [String: [RemoteFileEntry]]
     let listBlocker: RemoteFileListBlocker?
     let downloadBlocker: RemoteFileDownloadBlocker?
+    let downloadData: Data?
     let renameBlocker: RemoteFileRenameBlocker?
     let deleteBlocker: RemoteFileDeleteBlocker?
     private let lock = NSLock()
@@ -306,12 +355,14 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         directoryContents: [String: [RemoteFileEntry]],
         listBlocker: RemoteFileListBlocker? = nil,
         downloadBlocker: RemoteFileDownloadBlocker? = nil,
+        downloadData: Data? = nil,
         renameBlocker: RemoteFileRenameBlocker? = nil,
         deleteBlocker: RemoteFileDeleteBlocker? = nil
     ) {
         self.directoryContents = directoryContents
         self.listBlocker = listBlocker
         self.downloadBlocker = downloadBlocker
+        self.downloadData = downloadData
         self.renameBlocker = renameBlocker
         self.deleteBlocker = deleteBlocker
     }
@@ -338,6 +389,9 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         let normalizedPath = RemoteFilePath.normalize(path)
         record(.downloadFile(normalizedPath))
         await downloadBlocker?.waitIfNeeded(path: normalizedPath)
+        if let downloadData {
+            try downloadData.write(to: localURL)
+        }
     }
 
     func upload(
@@ -345,7 +399,12 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         to remotePath: String,
         permissions: Int32,
         strategy: SSHUploadStrategy
-    ) async throws {}
+    ) async throws {
+        record(.upload(
+            path: RemoteFilePath.normalize(remotePath),
+            text: String(data: data, encoding: .utf8) ?? "<binary>"
+        ))
+    }
 
     func createDirectory(at path: String, permissions: Int32) async throws {}
 

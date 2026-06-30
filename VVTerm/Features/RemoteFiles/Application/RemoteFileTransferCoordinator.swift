@@ -566,6 +566,7 @@ extension RemoteFileBrowserStore {
         defer { temporaryStorage.removeItem(at: temporaryURL) }
 
         try await sourceService.downloadFile(at: entry.path, to: temporaryURL)
+        try Task.checkCancellation()
         let data = try await loadLocalFileData(from: temporaryURL)
         try await destinationService.upload(
             data,
