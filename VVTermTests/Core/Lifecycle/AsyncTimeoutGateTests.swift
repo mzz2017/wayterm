@@ -8,21 +8,25 @@ import XCTest
 // longer need bounded waits around non-structured external cleanup.
 
 final class AsyncTimeoutGateTests: XCTestCase {
-    func testWaitForTaskReturnsOnTimeoutWhenTaskDoesNotResume() async throws {
-        // Given a task representing external cleanup that never resumes.
-        let neverFinishingTask = Task<Void, Error> {
-            try await withCheckedThrowingContinuation { (_: CheckedContinuation<Void, Error>) in
-                // Intentionally never resumed.
+    func testWaitForTaskReturnsOnTimeoutWhenCleanupIgnoresCancellation() async throws {
+        // Given a task representing external cleanup that ignores cancellation
+        // and only resumes well after the lifecycle timeout.
+        let slowCleanupTask = Task<Void, Error> {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                Task {
+                    try? await Task.sleep(for: .seconds(1))
+                    continuation.resume(returning: ())
+                }
             }
         }
-        defer { neverFinishingTask.cancel() }
+        defer { slowCleanupTask.cancel() }
 
         let startedAt = ContinuousClock.now
 
         // When a lifecycle owner waits through the timeout gate.
         do {
             try await AsyncTimeoutGate.waitForTask(
-                neverFinishingTask,
+                slowCleanupTask,
                 timeout: .milliseconds(60),
                 timeoutError: { SSHError.timeout }
             )
@@ -37,8 +41,8 @@ final class AsyncTimeoutGateTests: XCTestCase {
         let elapsed = startedAt.duration(to: .now)
         XCTAssertLessThan(
             elapsed,
-            .seconds(2),
-            "AsyncTimeoutGate should not structurally wait for the never-finishing task after timing out."
+            .milliseconds(500),
+            "AsyncTimeoutGate should return on timeout instead of waiting for a cancellation-uncooperative cleanup task to resume."
         )
     }
 }
