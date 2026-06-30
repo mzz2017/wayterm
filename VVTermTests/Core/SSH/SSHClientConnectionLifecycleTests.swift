@@ -219,6 +219,50 @@ final class SSHClientConnectionLifecycleTests: XCTestCase {
         await disconnectTask.value
         _ = await connectTask.result
     }
+
+    func testStartShellRejectsAfterClientAbortBeforeReadingSession() async throws {
+        // Given SSHClient owns a connected SSHSession whose shell startup would
+        // otherwise succeed.
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            channelOpenResult: OpaquePointer(bitPattern: 0x44)
+        )
+        let pendingSession = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+        let client = SSHClient(sessionFactory: { _ in pendingSession })
+        let target = SSHConnectionTarget(host: "ssh.example.com", username: "root")
+        let credentials = ServerCredentials(
+            serverId: UUID(),
+            password: nil,
+            privateKey: Data("private-key".utf8),
+            publicKey: Data("public-key".utf8),
+            passphrase: nil,
+            cloudflareClientID: nil,
+            cloudflareClientSecret: nil
+        )
+
+        try await client.connect(to: target, credentials: credentials)
+        client.abort()
+
+        // When shell startup is requested after disconnect intent has already
+        // aborted the client but before actor reentrancy has cleared session.
+        do {
+            let shell = try await client.startShell()
+            await client.closeShell(shell.id)
+            XCTFail("Expected aborted SSHClient to reject shell startup")
+        } catch SSHError.notConnected {
+            // Then no shell can be created during the disconnect/teardown window.
+        } catch {
+            XCTFail("Expected SSHError.notConnected, got \(error)")
+        }
+
+        XCTAssertFalse(
+            driver.channelEvents().contains(.startShell),
+            "SSHClient.startShell should check abort state before using a stale session during teardown."
+        )
+        await client.disconnect()
+    }
 }
 
 private final class RecordingSSHSessionFactory: @unchecked Sendable {

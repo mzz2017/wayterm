@@ -461,6 +461,9 @@ nonisolated actor SSHClient {
     // MARK: - Shell
 
     func startShell(cols: Int = 80, rows: Int = 24, startupCommand: String? = nil) async throws -> ShellHandle {
+        guard !abortState.isAborted else {
+            throw SSHError.notConnected
+        }
         guard let session = session else {
             throw SSHError.notConnected
         }
