@@ -77,6 +77,10 @@ final class VoiceModelDownloadStore: ObservableObject {
 
     func setModelId(_ modelId: String, for kind: MLXModelKind) {
         let manager = manager(for: kind)
+        let normalizedModelId = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if manager.modelId != normalizedModelId {
+            cancelDownload(for: kind)
+        }
         manager.modelId = modelId
         manager.refreshStatus()
     }

@@ -115,6 +115,54 @@ struct VoiceModelDownloadStoreTests {
     }
 
     @Test
+    func changingModelIdCancelsInFlightDownloadAndAllowsFreshDownload() async throws {
+        // Given a same-kind model download is still running for the previously
+        // selected model identity.
+        let probe = VoiceModelDownloadProbe()
+        let releaseFirstDownload = VoiceModelDownloadGate()
+        let store = VoiceModelDownloadStore.makeForTesting(
+            downloadAction: { kind in
+                let attempt = await probe.recordDownloadStart(kind.rawValue)
+                await withTaskCancellationHandler {
+                    if attempt == 1 {
+                        await releaseFirstDownload.wait()
+                    }
+                } onCancel: {
+                    Task {
+                        await probe.record("download-cancel:\(kind.rawValue):\(attempt)")
+                    }
+                }
+            }
+        )
+
+        let first = store.downloadModel(for: .whisper)
+        await probe.waitForCount(1)
+
+        // When settings selects a different model ID while that download is in
+        // flight, then asks to download the newly selected model.
+        store.setModelId("test/new-whisper", for: .whisper)
+        for _ in 0..<20 where await probe.events().count < 2 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let second = store.downloadModel(for: .whisper)
+        try await Task.sleep(for: .milliseconds(20))
+        await releaseFirstDownload.open()
+        await first.value
+        await second.value
+
+        // Then the stale same-kind download is canceled and a fresh task starts
+        // for the new model ID instead of reusing the old task keyed only by kind.
+        #expect(
+            await probe.events() == [
+                "download-start:whisper:1",
+                "download-cancel:whisper:1",
+                "download-start:whisper:2"
+            ],
+            "Changing voice model ID should cancel stale same-kind download work and allow a fresh selected-model download."
+        )
+    }
+
+    @Test
     func deinitCancelsTrackedDownloads() async {
         // Given a store-owned model download is still running.
         let probe = VoiceModelDownloadProbe()
