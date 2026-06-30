@@ -71,7 +71,7 @@ struct AudioServiceLifecycleTests {
         // When lifecycle cancellation wins while reset cancellation is still
         // suspended.
         startTask.cancel()
-        await capture.releaseCancel()
+        capture.releaseCancel()
 
         do {
             try await startTask.value

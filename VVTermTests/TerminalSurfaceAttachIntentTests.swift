@@ -87,7 +87,10 @@ struct TerminalSurfaceAttachIntentTests {
 
             // Then the request is tracked until the attach operation finishes,
             // and reconnect reset is consumed only for the accepted attach.
-            let unwrappedRequestID = try! #require(requestID)
+            guard let unwrappedRequestID = requestID else {
+                Issue.record("Expected active root surface attach to be accepted.")
+                return
+            }
             await recorder.waitForCount(2)
             let duplicateRequestID = manager.requestSurfaceAttachForTesting(
                 sessionId: session.id,
@@ -132,25 +135,26 @@ struct TerminalSurfaceAttachIntentTests {
 
             // When a newer surface attach arrives while reconnect-reset work is
             // running but before the pending request executes its attach operation.
-            let requestID = try! #require(
-                manager.requestSurfaceAttach(
-                    sessionId: session.id,
-                    context: .active,
-                    resetTerminal: {
-                        recorder.recordSync("reset")
-                        duplicateRequestID = manager.requestSurfaceAttach(
-                            sessionId: session.id,
-                            context: .active,
-                            attachOperation: {
-                                recorder.record("latest-attach")
-                            }
-                        )
-                    },
-                    attachOperation: {
-                        recorder.record("stale-attach")
-                    }
-                )
-            )
+            guard let requestID = manager.requestSurfaceAttach(
+                sessionId: session.id,
+                context: .active,
+                resetTerminal: {
+                    recorder.recordSync("reset")
+                    duplicateRequestID = manager.requestSurfaceAttach(
+                        sessionId: session.id,
+                        context: .active,
+                        attachOperation: {
+                            recorder.record("latest-attach")
+                        }
+                    )
+                },
+                attachOperation: {
+                    recorder.record("stale-attach")
+                }
+            ) else {
+                Issue.record("Expected root surface attach to be accepted before duplicate replacement.")
+                return
+            }
 
             await manager.waitForSurfaceAttachRequest(requestID)
 
@@ -246,9 +250,10 @@ struct TerminalSurfaceAttachIntentTests {
             )
 
             // When the view is active and auto-reconnect is enabled.
-            let requestID = try! #require(
-                manager.requestSurfaceAttachForTesting(sessionId: session.id, context: .active)
-            )
+            guard let requestID = manager.requestSurfaceAttachForTesting(sessionId: session.id, context: .active) else {
+                Issue.record("Expected disconnected root surface attach to be accepted when auto-reconnect is active.")
+                return
+            }
             await manager.waitForSurfaceAttachRequest(requestID)
 
             // Then the manager owns the accepted attach operation.
@@ -278,12 +283,13 @@ struct TerminalSurfaceAttachIntentTests {
             }
 
             // When the pane surface attach request is accepted.
-            let requestID = try! #require(
-                manager.requestSurfaceAttachForTesting(
-                    paneId: tab.rootPaneId,
-                    context: .active
-                )
-            )
+            guard let requestID = manager.requestSurfaceAttachForTesting(
+                paneId: tab.rootPaneId,
+                context: .active
+            ) else {
+                Issue.record("Expected active pane surface attach to be accepted.")
+                return
+            }
             await recorder.waitForCount(1)
 
             // Then duplicate attach intent coalesces with the tracked request.
@@ -337,15 +343,16 @@ struct TerminalSurfaceAttachIntentTests {
 
             // When SwiftUI reports a newer pane surface before the app-owned
             // pending attach task has had a chance to start.
-            let requestID = try! #require(
-                manager.requestSurfaceAttach(
-                    paneId: tab.rootPaneId,
-                    context: .active,
-                    attachOperation: {
-                        recorder.record("stale-pane-attach")
-                    }
-                )
-            )
+            guard let requestID = manager.requestSurfaceAttach(
+                paneId: tab.rootPaneId,
+                context: .active,
+                attachOperation: {
+                    recorder.record("stale-pane-attach")
+                }
+            ) else {
+                Issue.record("Expected active pane surface attach to be accepted before duplicate replacement.")
+                return
+            }
             let duplicateRequestID = manager.requestSurfaceAttach(
                 paneId: tab.rootPaneId,
                 context: .active,

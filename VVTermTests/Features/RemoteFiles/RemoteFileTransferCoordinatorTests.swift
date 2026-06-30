@@ -244,7 +244,7 @@ struct RemoteFileTransferCoordinatorTests {
         let service = RecordingRemoteFileService(
             directoryContents: [:],
             downloadAccessProbe: {
-                await localFileService.isAccessing(destinationURL)
+                localFileService.isAccessing(destinationURL)
             }
         )
         let store = RemoteFileBrowserStore(
@@ -264,8 +264,8 @@ struct RemoteFileTransferCoordinatorTests {
         // Then the local file service owns the scoped write access while the
         // remote transfer writes to the destination, and releases it afterward.
         #expect(service.downloadObservedSecurityScope == true)
-        #expect(await localFileService.accessEvents(for: destinationURL) == [.start, .stop])
-        #expect(await !localFileService.isAccessing(destinationURL))
+        #expect(localFileService.accessEvents(for: destinationURL) == [.start, .stop])
+        #expect(!localFileService.isAccessing(destinationURL))
     }
 
     @Test
@@ -610,12 +610,13 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
     }
 }
 
-private actor RecordingRemoteFileLocalFileService: RemoteFileLocalFileServicing {
+private final class RecordingRemoteFileLocalFileService: RemoteFileLocalFileServicing, @unchecked Sendable {
     enum AccessEvent: Equatable {
         case start
         case stop
     }
 
+    private let lock = NSLock()
     private var eventsByURL: [URL: [AccessEvent]] = [:]
     private var activeURLs: Set<URL> = []
 
@@ -649,25 +650,41 @@ private actor RecordingRemoteFileLocalFileService: RemoteFileLocalFileServicing 
         to urls: [URL],
         operation: () async throws -> T
     ) async throws -> T {
-        for url in urls {
-            eventsByURL[url, default: []].append(.start)
-            activeURLs.insert(url)
-        }
+        recordAccessStart(for: urls)
         defer {
-            for url in urls {
-                activeURLs.remove(url)
-                eventsByURL[url, default: []].append(.stop)
-            }
+            recordAccessStop(for: urls)
         }
         return try await operation()
     }
 
     func accessEvents(for url: URL) -> [AccessEvent] {
-        eventsByURL[url] ?? []
+        lock.withLock {
+            eventsByURL[url] ?? []
+        }
     }
 
     func isAccessing(_ url: URL) -> Bool {
-        activeURLs.contains(url)
+        lock.withLock {
+            activeURLs.contains(url)
+        }
+    }
+
+    private func recordAccessStart(for urls: [URL]) {
+        lock.withLock {
+            for url in urls {
+                eventsByURL[url, default: []].append(.start)
+                activeURLs.insert(url)
+            }
+        }
+    }
+
+    private func recordAccessStop(for urls: [URL]) {
+        lock.withLock {
+            for url in urls {
+                activeURLs.remove(url)
+                eventsByURL[url, default: []].append(.stop)
+            }
+        }
     }
 }
 
