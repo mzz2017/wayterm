@@ -404,6 +404,58 @@ struct RemoteFilePreviewCoordinatorTests {
     }
 
     @Test
+    func textPreviewSaveCancellationDoesNotWriteFinalRemotePath() async throws {
+        let server = makeServer()
+        let tab = RemoteFileTab(serverId: server.id, seedPath: "/tmp")
+        let entry = makeEntry(name: "notes.txt", path: "/tmp/notes.txt", permissions: 0o600)
+        let client = BlockingPreviewSaveClient(updatedEntry: makeEntry(
+            name: "notes.txt",
+            path: "/tmp/notes.txt",
+            size: 12,
+            permissions: 0o600
+        ))
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            remoteFileServiceAccess: NonSerializingRemoteFileServiceAccess(client: client),
+            serverProvider: { _ in nil }
+        )
+
+        // Given inline text editing has reached the remote write phase.
+        let saveTask = Task { @MainActor in
+            try await store.saveTextPreview("updated text", for: entry, in: tab, server: server)
+        }
+        await client.waitUntilUploadStarted()
+
+        // When cancellation arrives before the edited file is published.
+        saveTask.cancel()
+        await client.releaseUpload()
+
+        // Then inline save uses the same temporary upload contract as file
+        // transfers: no partial bytes are written to the final remote path,
+        // and the temporary path is cleaned instead of renamed.
+        let result = await saveTask.result
+        switch result {
+        case .success:
+            Issue.record("Expected inline preview save cancellation before final remote replacement")
+        case .failure(is CancellationError):
+            break
+        case .failure(let error):
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+
+        let operations = await client.operations()
+        let uploadPaths = operations.compactMap { operation -> String? in
+            guard case .upload(let path, _) = operation else { return nil }
+            return path
+        }
+        let uploadedPath = try #require(uploadPaths.first)
+        #expect(uploadedPath != "/tmp/notes.txt")
+        #expect(uploadedPath.hasPrefix("/tmp/.notes.txt.vvterm-upload-"))
+        #expect(operations.contains(.deleteFile(uploadedPath)))
+        #expect(!operations.contains(.renameItem(source: uploadedPath, destination: "/tmp/notes.txt")))
+    }
+
+    @Test
     func disconnectCancelsTextPreviewSaveAndPreventsLateStateResurrection() async throws {
         let server = makeServer()
         let tab = RemoteFileTab(serverId: server.id, seedPath: "/tmp")
@@ -717,8 +769,15 @@ private actor PreviewLoadWaitProbe {
 }
 
 private actor BlockingPreviewSaveClient: SFTPRemoteFileClient {
+    enum Operation: Equatable {
+        case upload(path: String, text: String)
+        case renameItem(source: String, destination: String)
+        case deleteFile(String)
+    }
+
     private let updatedEntry: RemoteFileEntry
     private var uploadedData = Data()
+    private var operationStorage: [Operation] = []
     private var uploadStarted = false
     private var uploadStartedWaiters: [CheckedContinuation<Void, Never>] = []
     private var releaseContinuation: CheckedContinuation<Void, Never>?
@@ -746,6 +805,10 @@ private actor BlockingPreviewSaveClient: SFTPRemoteFileClient {
 
     func uploadedText() -> String? {
         String(data: uploadedData, encoding: .utf8)
+    }
+
+    func operations() -> [Operation] {
+        operationStorage
     }
 
     func connectForRemoteFileLease(to server: Server, credentials: ServerCredentials) async throws {}
@@ -779,6 +842,10 @@ private actor BlockingPreviewSaveClient: SFTPRemoteFileClient {
         strategy: SSHUploadStrategy
     ) async throws {
         uploadedData = data
+        operationStorage.append(.upload(
+            path: RemoteFilePath.normalize(remotePath),
+            text: String(data: data, encoding: .utf8) ?? "<binary>"
+        ))
         uploadStarted = true
         for waiter in uploadStartedWaiters {
             waiter.resume()
@@ -792,9 +859,16 @@ private actor BlockingPreviewSaveClient: SFTPRemoteFileClient {
 
     func createDirectory(at path: String, permissions: Int32) async throws {}
 
-    func renameItem(at sourcePath: String, to destinationPath: String) async throws {}
+    func renameItem(at sourcePath: String, to destinationPath: String) async throws {
+        operationStorage.append(.renameItem(
+            source: RemoteFilePath.normalize(sourcePath),
+            destination: RemoteFilePath.normalize(destinationPath)
+        ))
+    }
 
-    func deleteFile(at path: String) async throws {}
+    func deleteFile(at path: String) async throws {
+        operationStorage.append(.deleteFile(RemoteFilePath.normalize(path)))
+    }
 
     func deleteDirectory(at path: String) async throws {}
 

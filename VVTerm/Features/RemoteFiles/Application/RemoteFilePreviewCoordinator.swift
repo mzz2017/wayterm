@@ -215,8 +215,7 @@ extension RemoteFileBrowserStore {
 
         let updatedEntry = try await withRemoteFileService(for: server) { service in
             let effectivePermissions = Int32(entry.permissions ?? 0o644)
-            try await service.upload(data, to: entry.path, permissions: effectivePermissions, strategy: .automatic)
-            try Task.checkCancellation()
+            try await self.uploadAtomically(data, to: entry.path, permissions: effectivePermissions, using: service)
             return try await service.lstat(at: entry.path)
         }
 
