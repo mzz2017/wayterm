@@ -216,9 +216,11 @@ extension RemoteFileBrowserStore {
         let updatedEntry = try await withRemoteFileService(for: server) { service in
             let effectivePermissions = Int32(entry.permissions ?? 0o644)
             try await service.upload(data, to: entry.path, permissions: effectivePermissions, strategy: .automatic)
+            try Task.checkCancellation()
             return try await service.lstat(at: entry.path)
         }
 
+        try Task.checkCancellation()
         updateState(for: tab) { state in
             if let index = state.entries.firstIndex(where: { $0.path == entry.path }) {
                 state.entries[index] = updatedEntry
@@ -250,6 +252,7 @@ extension RemoteFileBrowserStore {
         onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in }
     ) -> UUID {
         requestMutation(
+            serverId: server.id,
             operation: {
                 try await self.saveTextPreview(text, for: entry, in: tab, server: server)
             },

@@ -403,6 +403,83 @@ struct RemoteFilePreviewCoordinatorTests {
         #expect(store.entries(for: tab).first?.size == 12)
     }
 
+    @Test
+    func disconnectCancelsTextPreviewSaveAndPreventsLateStateResurrection() async throws {
+        let server = makeServer()
+        let tab = RemoteFileTab(serverId: server.id, seedPath: "/tmp")
+        let entry = makeEntry(name: "notes.txt", path: "/tmp/notes.txt", permissions: 0o600)
+        let client = BlockingPreviewSaveClient(updatedEntry: makeEntry(
+            name: "notes.txt",
+            path: "/tmp/notes.txt",
+            size: 12,
+            permissions: 0o600
+        ))
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            remoteFileServiceAccess: NonSerializingRemoteFileServiceAccess(client: client),
+            serverProvider: { _ in nil }
+        )
+        let waitProbe = PreviewLoadWaitProbe()
+        var events: [String] = []
+        store.updateState(for: tab) { state in
+            state.entries = [entry]
+            state.selectedEntryPath = entry.path
+            state.viewerPayload = RemoteFileViewerPayload(
+                previewKind: .text,
+                entry: entry,
+                textPreview: "old text",
+                previewFileURL: nil,
+                isTruncated: false,
+                unavailableMessage: nil,
+                requiresExplicitDownload: false,
+                previewByteCount: 8
+            )
+        }
+
+        // Given edited preview text save is blocked in remote upload.
+        let requestID = store.requestTextPreviewSave(
+            "updated text",
+            for: entry,
+            in: tab,
+            server: server,
+            onSaved: {
+                events.append("saved")
+            },
+            onFailure: { error in
+                events.append("failed-\(type(of: error))")
+            }
+        )
+        await client.waitUntilUploadStarted()
+        #expect(store.pendingMutationRequestIDs.contains(requestID))
+
+        // When the owning server disconnects before upload returns.
+        let disconnectTask = store.disconnect(serverId: server.id)
+        let disconnectWaitTask = Task { @MainActor in
+            await disconnectTask.value
+            await waitProbe.markFinished()
+        }
+        await Task.yield()
+
+        // Then the save request is no longer allowed to publish into removed state.
+        #expect(!store.pendingMutationRequestIDs.contains(requestID))
+        #expect(store.states[tab.id] == nil)
+        #expect(
+            await !waitProbe.didFinish(),
+            "RemoteFiles disconnect should wait for canceled preview save upload to exit before finishing."
+        )
+
+        await client.releaseUpload()
+        await disconnectWaitTask.value
+        await store.waitForMutationRequest(requestID)
+
+        #expect(await waitProbe.didFinish())
+        #expect(events.isEmpty)
+        #expect(
+            store.states[tab.id] == nil,
+            "A canceled preview save must not recreate removed tab state after disconnect."
+        )
+    }
+
     private func makeEntry(
         name: String,
         path: String,
