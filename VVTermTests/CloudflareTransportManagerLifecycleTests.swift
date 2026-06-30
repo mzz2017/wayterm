@@ -165,6 +165,56 @@ struct CloudflareTransportManagerLifecycleTests {
     }
 
     @Test
+    func disconnectCleansInFlightConnectSessionBeforeReturning() async throws {
+        let fakeSession = FakeCloudflareTransportSession()
+        let manager = CloudflareTransportManager { _ in
+            fakeSession
+        }
+        let target = makeCloudflareTarget()
+        let credentials = ServerCredentials(
+            serverId: UUID(),
+            password: nil,
+            privateKey: nil,
+            publicKey: nil,
+            passphrase: nil,
+            cloudflareClientID: "client-id",
+            cloudflareClientSecret: "client-secret"
+        )
+
+        // Given Cloudflare connect has created its tunnel session, but the
+        // tunnel connect operation has not returned a local port yet.
+        let connectTask = Task {
+            try await manager.connect(target: target, credentials: credentials)
+        }
+        await fakeSession.waitForConnectStart()
+
+        // When teardown is requested while connect is still in flight.
+        await manager.disconnect()
+
+        // Then disconnect owns that in-flight session and awaits cleanup before
+        // returning instead of leaving it for a late connect continuation.
+        #expect(
+            await fakeSession.disconnectCallCount() == 1,
+            "Disconnect should clean an in-flight Cloudflare tunnel session before returning."
+        )
+
+        await fakeSession.releaseConnect()
+        do {
+            _ = try await connectTask.value
+            Issue.record("Expected disconnected in-flight Cloudflare connect to throw CancellationError")
+        } catch is CancellationError {
+            // Expected.
+        } catch {
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+
+        #expect(
+            await fakeSession.disconnectCallCount() == 1,
+            "Late completion of a disconnected in-flight connect should not double-disconnect the session."
+        )
+    }
+
+    @Test
     func oauthCompletionCallbacksAreTrackedAndSessionScoped() throws {
         let source = try source(
             at: sourceRoot().appendingPathComponent("VVTerm/Core/Network/Cloudflare/CloudflareOAuthFlow.swift")
