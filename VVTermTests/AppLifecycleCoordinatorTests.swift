@@ -548,6 +548,30 @@ struct AppLifecycleCoordinatorTests {
     }
 
     @Test
+    func foregroundRefreshRequestsStoreEntitlementsEvenWhenSyncIsDisabled() async {
+        // Given CloudKit sync is disabled but Store entitlements may have
+        // expired while the app was backgrounded.
+        let probe = AppLifecycleProbe()
+        let coordinator = AppLifecycleCoordinator.makeForTesting(
+            refreshServerData: { reason in
+                Task { await probe.record("sync:\(reason)") }
+            },
+            refreshStoreEntitlements: {
+                Task { await probe.record("store-entitlements") }
+            },
+            isSyncEnabled: { false }
+        )
+
+        // When foreground intent arrives.
+        coordinator.requestForegroundRefresh()
+        await probe.waitForCount(1)
+
+        // Then Store entitlement refresh still runs independently of CloudKit
+        // sync availability or throttling.
+        #expect(await probe.events() == ["store-entitlements"])
+    }
+
+    @Test
     func remoteNotificationCompletionDelegatesToTrackedSyncRefresh() async {
         // Given remote notification refresh is still controlled by the existing
         // app sync coordinator boundary.

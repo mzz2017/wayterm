@@ -6,6 +6,7 @@ final class AppLifecycleCoordinator {
     typealias AppLockLifecycleAction = @MainActor @Sendable () async -> Void
     typealias LaunchAction = @MainActor @Sendable () -> Task<Void, Never>
     typealias ServerRefreshAction = @MainActor @Sendable (AppSyncCoordinator.ServerRefreshReason) -> Task<Void, Never>
+    typealias StoreEntitlementRefreshAction = @MainActor @Sendable () -> Void
     typealias RemoteNotificationRefreshAction = @MainActor @Sendable () async -> Bool
     typealias RemoteNotificationCompletionAction = @MainActor @Sendable (Bool) async -> Void
     typealias SyncEnabledProvider = @MainActor @Sendable () -> Bool
@@ -32,6 +33,7 @@ final class AppLifecycleCoordinator {
     private let lockAppIfNeededForBackground: AppLockLifecycleAction
     private let startChangeSubscription: LaunchAction
     private let refreshServerData: ServerRefreshAction
+    private let refreshStoreEntitlements: StoreEntitlementRefreshAction
     private let refreshServerDataAfterRemoteNotification: RemoteNotificationRefreshAction
     private let isSyncEnabled: SyncEnabledProvider
     private let now: DateProvider
@@ -96,6 +98,9 @@ final class AppLifecycleCoordinator {
         refreshServerData: @escaping ServerRefreshAction = { reason in
             AppSyncCoordinator.shared.refreshServerData(reason: reason)
         },
+        refreshStoreEntitlements: @escaping StoreEntitlementRefreshAction = {
+            StoreManager.shared.requestEntitlementRefresh(reason: .foreground)
+        },
         refreshServerDataAfterRemoteNotification: @escaping RemoteNotificationRefreshAction = {
             guard SyncSettings.isEnabled else {
                 return false
@@ -131,6 +136,7 @@ final class AppLifecycleCoordinator {
         self.lockAppIfNeededForBackground = lockAppIfNeededForBackground
         self.startChangeSubscription = startChangeSubscription
         self.refreshServerData = refreshServerData
+        self.refreshStoreEntitlements = refreshStoreEntitlements
         self.refreshServerDataAfterRemoteNotification = refreshServerDataAfterRemoteNotification
         self.isSyncEnabled = isSyncEnabled
         self.now = now
@@ -159,6 +165,7 @@ final class AppLifecycleCoordinator {
         lockAppIfNeededForBackground: @escaping AppLockLifecycleAction = {},
         startChangeSubscription: @escaping LaunchAction = { Task {} },
         refreshServerData: @escaping ServerRefreshAction = { _ in Task {} },
+        refreshStoreEntitlements: @escaping StoreEntitlementRefreshAction = {},
         refreshServerDataAfterRemoteNotification: @escaping RemoteNotificationRefreshAction = { true },
         isSyncEnabled: @escaping SyncEnabledProvider = { true },
         now: @escaping DateProvider = { Date() },
@@ -183,6 +190,7 @@ final class AppLifecycleCoordinator {
             lockAppIfNeededForBackground: lockAppIfNeededForBackground,
             startChangeSubscription: startChangeSubscription,
             refreshServerData: refreshServerData,
+            refreshStoreEntitlements: refreshStoreEntitlements,
             refreshServerDataAfterRemoteNotification: refreshServerDataAfterRemoteNotification,
             isSyncEnabled: isSyncEnabled,
             now: now,
@@ -201,6 +209,8 @@ final class AppLifecycleCoordinator {
     }
 
     func requestForegroundRefresh() {
+        refreshStoreEntitlements()
+
         guard isSyncEnabled() else { return }
 
         let currentDate = now()

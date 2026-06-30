@@ -377,6 +377,65 @@ struct StoreManagerLifecycleTests {
     }
 
     @Test
+    func entitlementRefreshRequestTracksOperationUntilCompletion() async {
+        let entitlementGate = StoreRequestGate()
+        var entitlementRefreshCount = 0
+        let manager = StoreManager.makeForTesting(
+            checkEntitlementsAction: { _ in
+                entitlementRefreshCount += 1
+                await entitlementGate.waitForRelease()
+            }
+        )
+
+        // Given app lifecycle sends foreground entitlement refresh intent.
+        let requestID = manager.requestEntitlementRefresh(reason: .foreground)
+        await entitlementGate.waitForOperationStart()
+
+        // Then StoreManager owns and tracks the StoreKit entitlement refresh.
+        #expect(
+            manager.pendingEntitlementRefreshRequestIDs == [requestID],
+            "Foreground entitlement refresh must stay tracked while StoreKit entitlement work is pending."
+        )
+
+        await entitlementGate.release()
+        await manager.waitForEntitlementRefreshRequest(requestID)
+
+        #expect(entitlementRefreshCount == 1)
+        #expect(
+            manager.pendingEntitlementRefreshRequestIDs.isEmpty,
+            "StoreManager should clear foreground entitlement refresh tracking after completion."
+        )
+    }
+
+    @Test
+    func duplicateEntitlementRefreshRequestsCoalesceUntilCompletion() async {
+        let entitlementGate = StoreRequestGate()
+        var entitlementRefreshCount = 0
+        let manager = StoreManager.makeForTesting(
+            checkEntitlementsAction: { _ in
+                entitlementRefreshCount += 1
+                await entitlementGate.waitForRelease()
+            }
+        )
+
+        // Given foreground and expiry refresh intent arrive while the first
+        // StoreKit entitlement check is still pending.
+        let foregroundID = manager.requestEntitlementRefresh(reason: .foreground)
+        let expiryID = manager.requestEntitlementRefresh(reason: .subscriptionExpiration)
+        await entitlementGate.waitForOperationStart()
+
+        // Then StoreManager keeps a single entitlement refresh owner.
+        #expect(foregroundID == expiryID)
+        #expect(entitlementRefreshCount == 1)
+        #expect(manager.pendingEntitlementRefreshRequestIDs == [foregroundID])
+
+        await entitlementGate.release()
+        await manager.waitForEntitlementRefreshRequest(foregroundID)
+
+        #expect(manager.pendingEntitlementRefreshRequestIDs.isEmpty)
+    }
+
+    @Test
     func transactionListenerIsTrackedUntilListenerOperationCompletes() async {
         let listenerGate = StoreRequestGate()
         let manager = StoreManager.makeForTesting(

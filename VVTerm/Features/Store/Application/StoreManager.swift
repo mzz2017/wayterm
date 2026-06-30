@@ -5,6 +5,11 @@ import os.log
 
 // MARK: - Store Manager
 
+nonisolated enum StoreEntitlementRefreshReason: Sendable {
+    case foreground
+    case subscriptionExpiration
+}
+
 @MainActor
 final class StoreManager: ObservableObject {
     private typealias StoreLifecycleAction = @MainActor (StoreManager) async -> Void
@@ -35,11 +40,17 @@ final class StoreManager: ObservableObject {
         guard let productLoadRequestID else { return [] }
         return [productLoadRequestID]
     }
+    var pendingEntitlementRefreshRequestIDs: Set<UUID> {
+        guard let entitlementRefreshRequestID else { return [] }
+        return [entitlementRefreshRequestID]
+    }
 
     private var startupRefreshTask: Task<Void, Never>?
     private var startupRefreshTaskID: UUID?
     private var reviewModeRefreshTask: Task<Void, Never>?
     private var reviewModeRefreshTaskID: UUID?
+    private var entitlementRefreshTask: Task<Void, Never>?
+    private var entitlementRefreshRequestID: UUID?
     private var productLoadRequestTask: Task<Void, Never>?
     private var productLoadRequestID: UUID?
     private var productLoadCompletionCallbacks: [@MainActor () -> Void] = []
@@ -99,6 +110,7 @@ final class StoreManager: ObservableObject {
         updateListenerTask?.cancel()
         startupRefreshTask?.cancel()
         reviewModeRefreshTask?.cancel()
+        entitlementRefreshTask?.cancel()
         reviewModeExpiryTask?.cancel()
         productLoadRequestTask?.cancel()
         purchaseRequestTasks.values.forEach { $0.cancel() }
@@ -110,6 +122,7 @@ final class StoreManager: ObservableObject {
             updateListenerTask,
             startupRefreshTask,
             reviewModeRefreshTask,
+            entitlementRefreshTask,
             reviewModeExpiryTask,
             productLoadRequestTask
         ].compactMap { $0 }
@@ -127,6 +140,8 @@ final class StoreManager: ObservableObject {
         startupRefreshTaskID = nil
         reviewModeRefreshTask = nil
         reviewModeRefreshTaskID = nil
+        entitlementRefreshTask = nil
+        entitlementRefreshRequestID = nil
         reviewModeExpiryTask = nil
         productLoadRequestTask = nil
         productLoadRequestID = nil
@@ -222,6 +237,39 @@ final class StoreManager: ObservableObject {
     func waitForProductLoadRequest(_ requestID: UUID) async {
         guard productLoadRequestID == requestID else { return }
         await productLoadRequestTask?.value
+    }
+
+    @discardableResult
+    func requestEntitlementRefresh(reason: StoreEntitlementRefreshReason) -> UUID {
+        if let entitlementRefreshRequestID {
+            return entitlementRefreshRequestID
+        }
+
+        let requestID = UUID()
+        entitlementRefreshRequestID = requestID
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.entitlementRefreshRequestID == requestID {
+                    self.entitlementRefreshRequestID = nil
+                    self.entitlementRefreshTask = nil
+                }
+            }
+
+            guard !Task.isCancelled else { return }
+            await self.checkEntitlementsAction(self)
+        }
+
+        if entitlementRefreshRequestID == requestID {
+            entitlementRefreshTask = task
+        }
+        return requestID
+    }
+
+    func waitForEntitlementRefreshRequest(_ requestID: UUID) async {
+        guard entitlementRefreshRequestID == requestID else { return }
+        await entitlementRefreshTask?.value
     }
 
     func loadProducts() async {
