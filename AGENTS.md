@@ -261,16 +261,17 @@ Output: `Vendor/libssh2/{macos,ios,ios-simulator}/`
 - For full iOS CLI verification, prefer the repo wrapper. It serializes testing, uses isolated DerivedData with a shared Swift package clone cache, disables Xcode's debug dylib layout, preboots the target simulator, and retries only simulator preflight launch failures:
 
 ```bash
-./scripts/test-ios.sh
+IOS_TEST_RAMDISK_MB=8192 ./scripts/test-ios.sh
 ```
 
 - Pass normal `xcodebuild test` filters after the script name for focused runs:
 
 ```bash
-./scripts/test-ios.sh \
+IOS_TEST_RAMDISK_MB=8192 ./scripts/test-ios.sh \
   -only-testing:VVTermTests/<TestClass>
 ```
 
+- For local agent-run iOS wrapper invocations, default to `IOS_TEST_RAMDISK_MB=8192` so auto-managed DerivedData lives on a RAM disk. Do not use this in GitHub Actions, when memory pressure is high, or when intentionally setting `IOS_TEST_DERIVED_DATA_PATH`; keep the shared Swift package clone cache on normal disk.
 - The wrapper defaults to the shared `VVTermUnitTests` scheme, which contains `VVTermTests` but not `VVTermUITests`. Set `IOS_TEST_SCHEME=VVTerm` when intentionally exercising the full shared scheme or UI test target.
 - The default destination is `iPhone 17`. Override with `IOS_TEST_DEVICE_NAME` or `IOS_TEST_DESTINATION_ID` when needed. Override the package clone cache with `IOS_TEST_CLONED_SOURCE_PACKAGES_DIR` when isolation from the shared package cache is required. The default no-output watchdog is 900 seconds; use `IOS_TEST_NO_OUTPUT_TIMEOUT` for shorter focused diagnostics.
 - Do not leave fixed DerivedData directories under `/private/tmp`. The wrapper auto-cleans its default DerivedData path, and explicit `IOS_TEST_DERIVED_DATA_PATH` values are auto-cleaned only when they are safe `vvterm-*` temp directories. Set `IOS_TEST_KEEP_DERIVED_DATA=1` only for intentional diagnostics, then delete the directory when finished. Use `dust -d 1 /private/tmp` when investigating local disk pressure.
