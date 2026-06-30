@@ -45,6 +45,7 @@ final class StoreManager: ObservableObject {
     private var updateListenerTaskID: UUID?
     private var reviewModeExpiryTask: Task<Void, Never>?
     private var reviewModeExpiresAt: Date?
+    private var entitlementRefreshGeneration = 0
     private let loadProductsAction: StoreLifecycleAction
     private let checkEntitlementsAction: StoreLifecycleAction
     private let transactionListenerAction: StoreTransactionListenerAction
@@ -358,10 +359,12 @@ final class StoreManager: ObservableObject {
 
     func checkEntitlements() async {
         refreshReviewModeState()
+        let refreshGeneration = beginEntitlementRefresh()
         var hasAccess = false
         var hasLifetime = false
 
         for await result in Transaction.currentEntitlements {
+            guard !Task.isCancelled else { return }
             if case .verified(let transaction) = result {
                 switch transaction.productID {
                 case VVTermProducts.proMonthly,
@@ -375,6 +378,8 @@ final class StoreManager: ObservableObject {
                 }
             }
         }
+
+        guard !Task.isCancelled else { return }
 
         // Check subscription status for billing retry / grace period
         var activeStatus: Product.SubscriptionInfo.Status?
@@ -395,7 +400,12 @@ final class StoreManager: ObservableObject {
             }
         }
 
-        applyEntitlements(hasAccess: hasAccess, hasLifetime: hasLifetime, status: activeStatus)
+        applyEntitlementsIfCurrent(
+            refreshGeneration: refreshGeneration,
+            hasAccess: hasAccess,
+            hasLifetime: hasLifetime,
+            status: activeStatus
+        )
     }
 
     // MARK: - Transaction Listener
@@ -568,6 +578,25 @@ final class StoreManager: ObservableObject {
         telemetry.trackAppLaunched(isPro: isPro)
         logger.info("Entitlements checked: isPro=\(hasAccess), isLifetime=\(hasLifetime), reviewMode=\(self.isReviewModeEnabled)")
     }
+
+    private func beginEntitlementRefresh() -> Int {
+        entitlementRefreshGeneration += 1
+        return entitlementRefreshGeneration
+    }
+
+    private func applyEntitlementsIfCurrent(
+        refreshGeneration: Int,
+        hasAccess: Bool,
+        hasLifetime: Bool,
+        status: Product.SubscriptionInfo.Status?
+    ) {
+        guard refreshGeneration == entitlementRefreshGeneration else {
+            logger.info("Ignored superseded entitlement refresh")
+            return
+        }
+
+        applyEntitlements(hasAccess: hasAccess, hasLifetime: hasLifetime, status: status)
+    }
 }
 
 #if DEBUG
@@ -641,6 +670,21 @@ extension StoreManager {
     func cancelProductLoadRequestForTesting(_ requestID: UUID) {
         guard productLoadRequestID == requestID else { return }
         productLoadRequestTask?.cancel()
+    }
+
+    func applyEntitlementRefreshForTesting(
+        hasAccess: Bool,
+        hasLifetime: Bool,
+        beforeApply: @escaping @MainActor () async -> Void
+    ) async {
+        let refreshGeneration = beginEntitlementRefresh()
+        await beforeApply()
+        applyEntitlementsIfCurrent(
+            refreshGeneration: refreshGeneration,
+            hasAccess: hasAccess,
+            hasLifetime: hasLifetime,
+            status: nil
+        )
     }
 }
 #endif

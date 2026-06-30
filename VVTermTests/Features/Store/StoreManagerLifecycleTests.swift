@@ -497,6 +497,56 @@ struct StoreManagerLifecycleTests {
     }
 
     @Test
+    func supersededEntitlementRefreshCannotRollbackNewerAccess() async {
+        let staleRefreshGate = StoreRequestGate()
+        let currentRefreshGate = StoreRequestGate()
+        let telemetry = StoreTelemetrySpy()
+        let manager = StoreManager.makeForTesting(telemetry: telemetry)
+
+        // Given an older entitlement refresh starts first but remains suspended
+        // before it can apply its stale Free result.
+        let staleRefresh = Task { @MainActor in
+            await manager.applyEntitlementRefreshForTesting(
+                hasAccess: false,
+                hasLifetime: false
+            ) {
+                await staleRefreshGate.waitForRelease()
+            }
+        }
+        await staleRefreshGate.waitForOperationStart()
+
+        // And a newer entitlement refresh starts later and applies active Pro
+        // access before the stale refresh resumes.
+        let currentRefresh = Task { @MainActor in
+            await manager.applyEntitlementRefreshForTesting(
+                hasAccess: true,
+                hasLifetime: true
+            ) {
+                await currentRefreshGate.waitForRelease()
+            }
+        }
+        await currentRefreshGate.waitForOperationStart()
+        await currentRefreshGate.release()
+        await currentRefresh.value
+
+        #expect(manager.isPro, "The newer active entitlement refresh should grant Pro access.")
+        #expect(manager.isLifetime, "The newer active entitlement refresh should preserve lifetime access.")
+
+        // When the older refresh finally resumes.
+        await staleRefreshGate.release()
+        await staleRefresh.value
+
+        // Then it must not roll StoreManager back to stale Free access or emit
+        // telemetry for an ignored stale snapshot.
+        #expect(manager.isPro, "A stale entitlement refresh must not roll Pro access back to Free.")
+        #expect(manager.isLifetime, "A stale entitlement refresh must not clear newer lifetime access.")
+        #expect(
+            telemetry.launchedProStates == [true],
+            "Ignored stale entitlement refreshes should not emit launch/pro telemetry."
+        )
+    }
+
+    @Test
     func deinitCancelsReviewModeExpiryTaskWithOtherStoreLifecycleTasks() throws {
         let root = try sourceRoot()
         let source = try source(
