@@ -42,7 +42,7 @@ nonisolated actor SSHClient {
     private var resolvedRemoteTerminalType: RemoteTerminalType?
     private var moshShells: [UUID: MoshShellRuntime] = [:]
     nonisolated private let moshTeardownTasks = SSHMoshTeardownTaskRegistry()
-    private let cloudflareTransportManager = CloudflareTransportManager()
+    private let cloudflareTransportManager: any CloudflareTransportManaging
     private let moshStartupTimeout: Duration = .seconds(8)
     private let connectTimeout: Duration = .seconds(30)
     private let disconnectTimeout: Duration = .seconds(4)
@@ -53,8 +53,12 @@ nonisolated actor SSHClient {
     private let abortState = SSHClientAbortState()
     private let sessionFactory: @Sendable (SSHSessionConfig) -> SSHSession
 
-    init(sessionFactory: @escaping @Sendable (SSHSessionConfig) -> SSHSession = { SSHSession(config: $0) }) {
+    init(
+        sessionFactory: @escaping @Sendable (SSHSessionConfig) -> SSHSession = { SSHSession(config: $0) },
+        cloudflareTransportManager: any CloudflareTransportManaging = CloudflareTransportManager()
+    ) {
         self.sessionFactory = sessionFactory
+        self.cloudflareTransportManager = cloudflareTransportManager
     }
 
     /// Immediately abort the connection by closing the socket (non-blocking, can be called from any thread)
@@ -238,6 +242,7 @@ nonisolated actor SSHClient {
 
         let pendingConnectTask = connectTask
         let pendingConnectSession = pendingConnectSession
+        let shouldWaitForPendingConnectCleanup = pendingConnectSession != nil
         connectTask = nil
         self.pendingConnectSession = nil
         activeConnectRequestID = nil
@@ -252,7 +257,12 @@ nonisolated actor SSHClient {
 
         pendingConnectTask?.cancel()
         pendingConnectSession?.abort()
-        _ = await pendingConnectTask?.result
+        if !shouldWaitForPendingConnectCleanup {
+            await disconnectCloudflareTransport(reason: "client disconnect before SSH session")
+        }
+        if shouldWaitForPendingConnectCleanup {
+            _ = await pendingConnectTask?.result
+        }
 
         await disconnectSSHSession(activeSession)
         await disconnectCloudflareTransport(reason: "client disconnect")

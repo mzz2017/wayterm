@@ -160,6 +160,65 @@ final class SSHClientConnectionLifecycleTests: XCTestCase {
         XCTAssertTrue(hasReturnedAfterRelease)
         _ = await connectTask.result
     }
+
+    func testDisconnectTearsDownCloudflarePreSessionConnectWithoutWaitingForConnectTask() async throws {
+        // Given SSHClient is blocked in Cloudflare tunnel setup before any
+        // SSHSession exists.
+        let cloudflareTransport = BlockingCloudflareTransportManager()
+        let client = SSHClient(
+            sessionFactory: { SSHSession(config: $0) },
+            cloudflareTransportManager: cloudflareTransport
+        )
+        let target = SSHConnectionTarget(
+            host: "ssh.example.com",
+            username: "root",
+            connectionMode: .cloudflare,
+            authMethod: .password,
+            cloudflareAccessMode: .serviceToken,
+            cloudflareTeamDomainOverride: "team.cloudflareaccess.com"
+        )
+        let credentials = ServerCredentials(
+            serverId: UUID(),
+            password: "secret",
+            privateKey: nil,
+            publicKey: nil,
+            passphrase: nil,
+            cloudflareClientID: "client-id",
+            cloudflareClientSecret: "client-secret"
+        )
+
+        let connectTask = Task {
+            try await client.connect(to: target, credentials: credentials)
+        }
+        defer {
+            connectTask.cancel()
+        }
+        await cloudflareTransport.waitUntilConnectStarted()
+
+        // When disconnect is requested while Cloudflare connect is still
+        // blocked and no pending SSHSession cleanup exists yet.
+        let marker = DisconnectReturnMarker()
+        let disconnectTask = Task {
+            await client.disconnect()
+            await marker.markReturned()
+        }
+
+        // Then SSHClient must ask the Cloudflare owner to disconnect without
+        // waiting for the pre-session connect task to return first.
+        await cloudflareTransport.waitUntilDisconnectStarted()
+        for _ in 0..<50 where !(await marker.hasReturned) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let hasReturnedBeforeConnectRelease = await marker.hasReturned
+        XCTAssertTrue(
+            hasReturnedBeforeConnectRelease,
+            "SSHClient.disconnect should not wait for a pre-session Cloudflare connect task before tearing down the tunnel owner."
+        )
+
+        await cloudflareTransport.releaseConnect()
+        await disconnectTask.value
+        _ = await connectTask.result
+    }
 }
 
 private final class RecordingSSHSessionFactory: @unchecked Sendable {
@@ -190,5 +249,50 @@ private actor DisconnectReturnMarker {
 
     func markReturned() {
         hasReturned = true
+    }
+}
+
+private actor BlockingCloudflareTransportManager: CloudflareTransportManaging {
+    private var connectStarted = false
+    private var disconnectStarted = false
+    private var connectStartedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var disconnectStartedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var connectReleaseContinuation: CheckedContinuation<Void, Never>?
+
+    func connect(target: SSHConnectionTarget, credentials: ServerCredentials) async throws -> UInt16 {
+        connectStarted = true
+        connectStartedWaiters.forEach { $0.resume() }
+        connectStartedWaiters.removeAll()
+
+        await withCheckedContinuation { continuation in
+            connectReleaseContinuation = continuation
+        }
+        try Task.checkCancellation()
+        return 2200
+    }
+
+    func disconnect() async {
+        disconnectStarted = true
+        disconnectStartedWaiters.forEach { $0.resume() }
+        disconnectStartedWaiters.removeAll()
+    }
+
+    func waitUntilConnectStarted() async {
+        if connectStarted { return }
+        await withCheckedContinuation { continuation in
+            connectStartedWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilDisconnectStarted() async {
+        if disconnectStarted { return }
+        await withCheckedContinuation { continuation in
+            disconnectStartedWaiters.append(continuation)
+        }
+    }
+
+    func releaseConnect() {
+        connectReleaseContinuation?.resume()
+        connectReleaseContinuation = nil
     }
 }

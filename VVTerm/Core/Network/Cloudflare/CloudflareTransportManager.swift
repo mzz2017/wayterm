@@ -9,7 +9,12 @@ nonisolated protocol CloudflareTransportSession: AnyObject, Sendable {
 
 extension SessionActor: CloudflareTransportSession {}
 
-actor CloudflareTransportManager {
+nonisolated protocol CloudflareTransportManaging: Sendable {
+    func connect(target: SSHConnectionTarget, credentials: ServerCredentials) async throws -> UInt16
+    func disconnect() async
+}
+
+actor CloudflareTransportManager: CloudflareTransportManaging {
     private typealias SessionFactory = @Sendable (any AuthProviding) -> any CloudflareTransportSession
 
     private struct AccessMetadata: Sendable {
