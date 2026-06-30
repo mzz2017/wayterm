@@ -24,6 +24,53 @@ actor CloudflareTransportManager {
         let teamDomain: String
         let appDomain: String
     }
+    private actor TimeoutContinuation<T: Sendable> {
+        private var continuation: CheckedContinuation<T, Error>?
+
+        init(_ continuation: CheckedContinuation<T, Error>) {
+            self.continuation = continuation
+        }
+
+        func resume(returning value: T) {
+            guard let continuation else { return }
+            self.continuation = nil
+            continuation.resume(returning: value)
+        }
+
+        func resume(throwing error: any Error) {
+            guard let continuation else { return }
+            self.continuation = nil
+            continuation.resume(throwing: error)
+        }
+    }
+    private final class TimeoutTaskBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var tasks: [Task<Void, Never>] = []
+        private var isCancelled = false
+
+        func store(_ tasks: [Task<Void, Never>]) {
+            lock.lock()
+            let shouldCancel = isCancelled
+            if !shouldCancel {
+                self.tasks = tasks
+            }
+            lock.unlock()
+
+            if shouldCancel {
+                tasks.forEach { $0.cancel() }
+            }
+        }
+
+        func cancelAll() {
+            lock.lock()
+            isCancelled = true
+            let tasks = self.tasks
+            self.tasks = []
+            lock.unlock()
+
+            tasks.forEach { $0.cancel() }
+        }
+    }
     private final class RedirectBlockingDelegate: NSObject, URLSessionTaskDelegate {
         func urlSession(
             _ session: URLSession,
@@ -39,7 +86,7 @@ actor CloudflareTransportManager {
     private let callbackScheme = "vvterm-cfaccess"
     private let userAgent = "VVTerm"
     private let discoveryTimeout: TimeInterval = 12
-    private let disconnectTimeout: Duration = .seconds(4)
+    private let disconnectTimeout: Duration
     private let metadataKeychain = KeychainStore(service: "app.vivy.vvterm.cloudflare.metadata")
     private let metadataStorageKey = "cache.v1"
     private let makeSession: SessionFactory
@@ -51,6 +98,7 @@ actor CloudflareTransportManager {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "CloudflareTransport")
 
     init(
+        disconnectTimeout: Duration = .seconds(4),
         makeSession: @escaping @Sendable (any AuthProviding) -> any CloudflareTransportSession = { authProvider in
             SessionActor(
                 authProvider: authProvider,
@@ -63,6 +111,7 @@ actor CloudflareTransportManager {
             )
         }
     ) {
+        self.disconnectTimeout = disconnectTimeout
         self.makeSession = makeSession
     }
 
@@ -232,20 +281,33 @@ actor CloudflareTransportManager {
         _ timeout: Duration,
         operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask {
-                try await operation()
+        let taskBox = TimeoutTaskBox()
+        return try await withTaskCancellationHandler {
+            defer { taskBox.cancelAll() }
+            return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<T, Error>) in
+                let gate = TimeoutContinuation(continuation)
+                let operationTask = Task {
+                    do {
+                        let value = try await operation()
+                        await gate.resume(returning: value)
+                    } catch {
+                        await gate.resume(throwing: error)
+                    }
+                }
+                let timeoutTask = Task {
+                    do {
+                        try await Task.sleep(for: timeout)
+                        await gate.resume(throwing: SSHError.timeout)
+                    } catch is CancellationError {
+                        // The operation completed before the timeout fired.
+                    } catch {
+                        await gate.resume(throwing: error)
+                    }
+                }
+                taskBox.store([operationTask, timeoutTask])
             }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                throw SSHError.timeout
-            }
-
-            guard let result = try await group.next() else {
-                throw SSHError.timeout
-            }
-            group.cancelAll()
-            return result
+        } onCancel: {
+            taskBox.cancelAll()
         }
     }
 

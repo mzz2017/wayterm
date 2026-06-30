@@ -215,6 +215,51 @@ struct CloudflareTransportManagerLifecycleTests {
     }
 
     @Test
+    func disconnectTimeoutReturnsWhenSessionDisconnectDoesNotResume() async throws {
+        let fakeSession = FakeCloudflareTransportSession(disconnectStartsReleased: false)
+        let manager = CloudflareTransportManager(disconnectTimeout: .milliseconds(100)) { _ in
+            fakeSession
+        }
+        let target = makeCloudflareTarget()
+        let credentials = ServerCredentials(
+            serverId: UUID(),
+            password: nil,
+            privateKey: nil,
+            publicKey: nil,
+            passphrase: nil,
+            cloudflareClientID: "client-id",
+            cloudflareClientSecret: "client-secret"
+        )
+        let disconnectCompletion = AsyncCompletionProbe()
+
+        // Given Cloudflare connect has published an active tunnel session.
+        let connectTask = Task {
+            try await manager.connect(target: target, credentials: credentials)
+        }
+        await fakeSession.waitForConnectStart()
+        await fakeSession.releaseConnect()
+        _ = try await connectTask.value
+
+        // When the underlying Cloudflared session never returns from disconnect.
+        let disconnectTask = Task {
+            await manager.disconnect()
+            await disconnectCompletion.markCompleted()
+        }
+        await fakeSession.waitForDisconnectStart()
+        try await Task.sleep(for: .milliseconds(250))
+
+        // Then the manager-level timeout still returns to its caller instead of
+        // waiting forever for a cancellation-uncooperative child task.
+        #expect(
+            await disconnectCompletion.isCompleted,
+            "Cloudflare disconnect timeout should return even if the session disconnect task does not resume."
+        )
+
+        await fakeSession.releaseDisconnect()
+        await disconnectTask.value
+    }
+
+    @Test
     func oauthCompletionCallbacksAreTrackedAndSessionScoped() throws {
         let source = try source(
             at: sourceRoot().appendingPathComponent("VVTerm/Core/Network/Cloudflare/CloudflareOAuthFlow.swift")
@@ -320,12 +365,17 @@ private actor FakeCloudflareTransportSession: CloudflareTransportSession {
     private let localPort: UInt16
     private var connectStarted = false
     private var connectReleased = false
+    private var disconnectStarted = false
+    private var disconnectReleased: Bool
     private var connectStartContinuations: [CheckedContinuation<Void, Never>] = []
     private var connectReleaseContinuations: [CheckedContinuation<Void, Never>] = []
+    private var disconnectStartContinuations: [CheckedContinuation<Void, Never>] = []
+    private var disconnectReleaseContinuations: [CheckedContinuation<Void, Never>] = []
     private var disconnects = 0
 
-    init(localPort: UInt16 = 12345) {
+    init(localPort: UInt16 = 12345, disconnectStartsReleased: Bool = true) {
         self.localPort = localPort
+        self.disconnectReleased = disconnectStartsReleased
     }
 
     func connect(hostname: String, method: Cloudflared.AuthMethod) async throws -> UInt16 {
@@ -345,6 +395,15 @@ private actor FakeCloudflareTransportSession: CloudflareTransportSession {
 
     func disconnect() async {
         disconnects += 1
+        disconnectStarted = true
+        disconnectStartContinuations.forEach { $0.resume() }
+        disconnectStartContinuations.removeAll()
+
+        if !disconnectReleased {
+            await withCheckedContinuation { continuation in
+                disconnectReleaseContinuations.append(continuation)
+            }
+        }
     }
 
     func waitForConnectStart() async {
@@ -360,7 +419,32 @@ private actor FakeCloudflareTransportSession: CloudflareTransportSession {
         connectReleaseContinuations.removeAll()
     }
 
+    func waitForDisconnectStart() async {
+        guard !disconnectStarted else { return }
+        await withCheckedContinuation { continuation in
+            disconnectStartContinuations.append(continuation)
+        }
+    }
+
+    func releaseDisconnect() {
+        disconnectReleased = true
+        disconnectReleaseContinuations.forEach { $0.resume() }
+        disconnectReleaseContinuations.removeAll()
+    }
+
     func disconnectCallCount() -> Int {
         disconnects
+    }
+}
+
+private actor AsyncCompletionProbe {
+    private var completed = false
+
+    var isCompleted: Bool {
+        completed
+    }
+
+    func markCompleted() {
+        completed = true
     }
 }
