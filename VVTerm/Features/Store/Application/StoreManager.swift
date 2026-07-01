@@ -50,7 +50,7 @@ final class StoreManager: ObservableObject {
     }
 
     private var reviewModeExpiresAt: Date?
-    private var entitlementRefreshGeneration = 0
+    private var entitlementRefreshGenerationGate = StoreEntitlementRefreshGenerationGate()
     private let loadProductsAction: StoreLifecycleAction
     private let checkEntitlementsAction: StoreLifecycleAction
     private let transactionListenerAction: StoreTransactionListenerAction
@@ -522,18 +522,17 @@ final class StoreManager: ObservableObject {
         return transaction.expirationDate
     }
 
-    private func beginEntitlementRefresh() -> Int {
-        entitlementRefreshGeneration += 1
-        return entitlementRefreshGeneration
+    private func beginEntitlementRefresh() -> StoreEntitlementRefreshGenerationGate.Token {
+        entitlementRefreshGenerationGate.beginRefresh()
     }
 
     private func applyEntitlementsIfCurrent(
-        refreshGeneration: Int,
+        refreshGeneration: StoreEntitlementRefreshGenerationGate.Token,
         hasAccess: Bool,
         hasLifetime: Bool,
         status: Product.SubscriptionInfo.Status?
     ) {
-        guard refreshGeneration == entitlementRefreshGeneration else {
+        guard entitlementRefreshGenerationGate.isCurrent(refreshGeneration) else {
             logger.info("Ignored superseded entitlement refresh")
             return
         }
