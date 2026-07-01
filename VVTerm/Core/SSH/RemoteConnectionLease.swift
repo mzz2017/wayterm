@@ -106,14 +106,9 @@ private actor RemoteConnectionLeaseState {
         case closed
     }
 
-    private struct OperationWaiter {
-        let id: UUID
-        let continuation: CheckedContinuation<Void, Error>
-    }
-
     private var closeState: CloseState = .open
     private var isOperationInFlight = false
-    private var operationWaiters: [OperationWaiter] = []
+    private var operationWaiters = RemoteConnectionLeaseOperationWaiterQueue()
     private var closeWaiters: [CheckedContinuation<Void, Never>] = []
     private var closeCompletionWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -178,8 +173,15 @@ private actor RemoteConnectionLeaseState {
                     return
                 }
 
-                operationWaiters.append(
-                    OperationWaiter(id: waiterId, continuation: continuation)
+                operationWaiters.enqueue(
+                    RemoteConnectionLeaseOperationWaiter(id: waiterId) { resolution in
+                        switch resolution {
+                        case .acquired:
+                            continuation.resume()
+                        case .canceled:
+                            continuation.resume(throwing: CancellationError())
+                        }
+                    }
                 )
             }
         } onCancel: {
@@ -203,8 +205,8 @@ private actor RemoteConnectionLeaseState {
             return
         }
 
-        let next = operationWaiters.removeFirst()
-        next.continuation.resume()
+        let next = operationWaiters.popFirst()
+        next?.resume()
     }
 
     private func waitForExclusiveOperationsToFinish() async {
@@ -229,19 +231,13 @@ private actor RemoteConnectionLeaseState {
     }
 
     private func cancelOperationWaiter(_ waiterId: UUID) {
-        guard let index = operationWaiters.firstIndex(where: { $0.id == waiterId }) else {
-            return
-        }
-
-        let waiter = operationWaiters.remove(at: index)
-        waiter.continuation.resume(throwing: CancellationError())
+        operationWaiters.remove(id: waiterId)?.cancel()
     }
 
     private func cancelQueuedOperationWaiters() {
-        let waiters = operationWaiters
-        operationWaiters.removeAll()
+        let waiters = operationWaiters.removeAll()
         for waiter in waiters {
-            waiter.continuation.resume(throwing: CancellationError())
+            waiter.cancel()
         }
     }
 
