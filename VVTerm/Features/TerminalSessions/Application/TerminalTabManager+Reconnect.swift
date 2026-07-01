@@ -2,7 +2,8 @@ import Foundation
 
 extension TerminalTabManager {
     func reconnectPane(_ paneId: UUID) async {
-        guard paneStates[paneId] != nil else { return }
+        guard let paneState = paneStates[paneId] else { return }
+        await waitForServerTeardownTasks(paneState.serverId)
         if terminalConnectionRegistry.isOpeningOrStreaming(.pane(paneId)) {
             return
         }

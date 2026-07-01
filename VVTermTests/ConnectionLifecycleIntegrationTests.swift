@@ -251,6 +251,57 @@ struct ConnectionLifecycleIntegrationTests {
     }
 
     @Test
+    func tabManagerReconnectPaneWaitsForRejectedLateShellCleanup() async {
+        await withCleanTabManager { manager in
+            let server = makeServer(name: "Tencent", connectionMode: .standard)
+            let tab = TerminalTab(serverId: server.id, title: "Retry Pane")
+            let staleClient = SSHClient()
+            let staleShellId = UUID()
+            manager.tabsByServer[server.id] = [tab]
+            manager.selectedTabByServer[server.id] = tab.id
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+
+            let staleGeneration = manager.beginShellStartForTesting(
+                paneId: tab.rootPaneId,
+                serverId: server.id,
+                client: staleClient
+            )
+            manager.closeShellRegistrationForTesting(paneId: tab.rootPaneId)
+
+            var cleanupFinished = false
+            manager.setRejectedShellCleanupOperationForTesting {
+                try? await Task.sleep(for: .milliseconds(100))
+                cleanupFinished = true
+            }
+
+            manager.registerSSHClient(
+                staleClient,
+                shellId: staleShellId,
+                for: tab.rootPaneId,
+                serverId: server.id,
+                generation: staleGeneration,
+                skipTmuxLifecycle: true
+            )
+
+            // Given reconnect is requested while cleanup for a rejected late
+            // pane shell is still tracked for the same server.
+            await manager.reconnectPane(tab.rootPaneId)
+
+            // Then split-pane reconnect must honor the same teardown gate as
+            // openTab before restarting terminal runtime.
+            #expect(
+                cleanupFinished,
+                "Pane reconnect must wait for same-server teardown before restarting terminal runtime."
+            )
+            #expect(manager.paneStates[tab.rootPaneId]?.connectionState == .reconnecting(attempt: 1))
+        }
+    }
+
+    @Test
     func tabManagerOpenTabWaitsForManagedTmuxKillBeforeCreatingTab() async throws {
         try await withCleanTabManager { manager in
             let server = makeServer(name: "Tencent", connectionMode: .standard)
