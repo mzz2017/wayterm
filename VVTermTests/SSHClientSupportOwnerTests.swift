@@ -72,6 +72,49 @@ struct SSHClientSupportOwnerTests {
     }
 
     @Test
+    func pendingConnectCoordinatorPublishesCurrentSessionAndCancelsForDisconnect() {
+        let coordinator = SSHPendingConnectCoordinator()
+        let requestID = UUID()
+        let staleRequestID = UUID()
+        let session = SSHSession(config: .libSSH2LifecycleTest)
+        let staleSession = SSHSession(config: .libSSH2LifecycleTest)
+        let task = Task<SSHSession, Error> {
+            try await Task.sleep(for: .seconds(30))
+            return session
+        }
+        defer {
+            task.cancel()
+        }
+
+        // Given a pending connect request is the current owner.
+        coordinator.begin(requestID: requestID, task: task)
+
+        // When an older request tries to publish a session.
+        let didRegisterStaleSession = coordinator.register(
+            staleSession,
+            requestID: staleRequestID
+        )
+
+        // Then stale sessions are rejected and only the active request can
+        // publish the abortable pending session.
+        #expect(!didRegisterStaleSession)
+        #expect(coordinator.register(session, requestID: requestID))
+        #expect(coordinator.isCurrentRequest(requestID))
+        #expect(coordinator.isCurrentSession(session))
+        #expect(!coordinator.isCurrentSession(staleSession))
+
+        // And disconnect atomically detaches ownership, cancels the task, and
+        // exposes whether pending session cleanup must be awaited.
+        let snapshot = coordinator.cancelForDisconnect()
+        #expect(snapshot.shouldWaitForPendingSessionCleanup)
+        #expect(snapshot.task != nil)
+        #expect(snapshot.session.map(ObjectIdentifier.init) == ObjectIdentifier(session))
+        #expect(task.isCancelled)
+        #expect(!coordinator.isCurrentRequest(requestID))
+        #expect(!coordinator.isCurrentSession(session))
+    }
+
+    @Test
     func moshShellStreamTerminationIsOwnedByClientTeardownRegistry() throws {
         let source = try source(at: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift"))
         let moshShellSource = try slice(
