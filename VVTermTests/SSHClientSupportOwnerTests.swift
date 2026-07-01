@@ -1,4 +1,5 @@
 import Foundation
+import MoshCore
 import Testing
 @testable import VVTerm
 
@@ -69,6 +70,33 @@ struct SSHClientSupportOwnerTests {
             try? await Task.sleep(for: .milliseconds(10))
         }
         #expect(registry.tasks().isEmpty, "Registry should remove completed teardown tasks.")
+    }
+
+    @Test
+    func moshShellRuntimeCancelsAndClearsStreamTask() async {
+        let runtime = SSHMoshShellRuntime(
+            session: MoshClientSession(
+                endpoint: MoshEndpoint(host: "127.0.0.1", port: 60001, keyBase64_22: "abcdefghijklmnopqrstuv")
+            )
+        )
+        let cancellationRecorder = TaskCancellationRecorder()
+        let streamTask = Task {
+            await cancellationRecorder.waitForCancellation()
+        }
+
+        // Given a Mosh shell runtime owns the host stream task.
+        runtime.setStreamTask(streamTask)
+
+        // When disconnect or stream termination cancels the runtime stream.
+        runtime.cancelStreamTask()
+
+        // Then the task is canceled and the runtime forgets it so repeated
+        // teardown cannot retain or cancel stale stream work.
+        for _ in 0..<20 where !(await cancellationRecorder.didCancel) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await cancellationRecorder.didCancel)
+        #expect(runtime.streamTaskForTesting == nil)
     }
 
     @Test
@@ -181,6 +209,17 @@ private actor TeardownGate {
         let pending = continuations
         continuations.removeAll()
         pending.forEach { $0.resume() }
+    }
+}
+
+private actor TaskCancellationRecorder {
+    private(set) var didCancel = false
+
+    func waitForCancellation() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        didCancel = true
     }
 }
 

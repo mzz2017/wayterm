@@ -6,29 +6,6 @@ import MoshBootstrap
 // MARK: - SSH Client using libssh2
 
 nonisolated actor SSHClient {
-    private final class MoshShellRuntime: @unchecked Sendable {
-        let session: MoshClientSession
-        private let lock = NSLock()
-        private var streamTask: Task<Void, Never>?
-
-        init(session: MoshClientSession) {
-            self.session = session
-        }
-
-        func setStreamTask(_ task: Task<Void, Never>) {
-            lock.lock()
-            streamTask = task
-            lock.unlock()
-        }
-
-        func cancelStreamTask() {
-            lock.lock()
-            let task = streamTask
-            streamTask = nil
-            lock.unlock()
-            task?.cancel()
-        }
-    }
     private var session: SSHSession?
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "SSH")
     private var keepAliveTask: Task<Void, Never>?
@@ -37,7 +14,7 @@ nonisolated actor SSHClient {
     private var connectedTarget: SSHConnectionTarget?
     private var resolvedRemoteEnvironment: RemoteEnvironment?
     private var resolvedRemoteTerminalType: RemoteTerminalType?
-    private var moshShells: [UUID: MoshShellRuntime] = [:]
+    private var moshShells: [UUID: SSHMoshShellRuntime] = [:]
     nonisolated private let moshTeardownTasks = SSHMoshTeardownTaskRegistry()
     private let cloudflareTransportManager: any CloudflareTransportManaging
     private let moshStartupTimeout: Duration = .seconds(8)
@@ -828,7 +805,7 @@ nonisolated actor SSHClient {
         }
         let hostOpStream = await moshSession.hostOpStream()
         let moshLogger = logger
-        let runtime = MoshShellRuntime(session: moshSession)
+        let runtime = SSHMoshShellRuntime(session: moshSession)
         moshShells[shellId] = runtime
         let stream = AsyncStream<Data> { continuation in
             // Replay any ops that arrived before the stream was created
