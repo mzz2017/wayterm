@@ -63,6 +63,7 @@ enum ConnectionSessionManagerSupport {
 
     struct ActiveConnectionOpenRequest {
         let sessionId: UUID
+        var preferredViewId: String
         var task: Task<Void, Never>?
         var onOpened: [@MainActor () -> Void]
     }

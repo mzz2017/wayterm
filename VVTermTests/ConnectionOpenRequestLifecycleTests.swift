@@ -386,6 +386,57 @@ struct ConnectionOpenRequestLifecycleTests {
     }
 
     @Test
+    func duplicateActiveConnectionOpenUsesLatestPreferredView() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .failed("Disconnected")
+            )
+            manager.sessions = [session]
+            let reconnectGate = OpenRequestTaskGate()
+            var reconnectCalls: [UUID] = []
+            var callbacks: [String] = []
+
+            manager.setActiveConnectionOpenReconnectOperationForTesting { requestSession in
+                reconnectCalls.append(requestSession.id)
+                await reconnectGate.waitForRelease()
+                return true
+            }
+
+            // Given duplicate Active Connection open intents target different
+            // views while the first reconnect/liveness check is still pending.
+            let firstID = manager.requestActiveConnectionOpen(
+                session: session,
+                preferredViewId: "terminal"
+            ) {
+                callbacks.append("first")
+            }
+            let secondID = manager.requestActiveConnectionOpen(
+                session: session,
+                preferredViewId: "stats"
+            ) {
+                callbacks.append("second")
+            }
+
+            // Then the duplicate intent joins the same lifecycle owner but
+            // updates the final presentation intent to the newest view.
+            #expect(firstID == secondID)
+
+            await reconnectGate.release()
+            await manager.waitForActiveConnectionOpenRequest(firstID)
+
+            #expect(reconnectCalls == [session.id])
+            #expect(callbacks == ["first", "second"])
+            #expect(
+                manager.selectedViewByServer[server.id] == "stats",
+                "Coalesced Active Connection open should apply the latest preferred view intent."
+            )
+        }
+    }
+
+    @Test
     func activeConnectionOpenCancellationDoesNotSelectOrCallback() async {
         await withCleanConnectionManager { manager in
             let server = makeServer()

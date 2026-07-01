@@ -40,7 +40,10 @@ extension ConnectionSessionManager {
         onOpened: @escaping @MainActor () -> Void = {}
     ) -> UUID {
         if let requestID = activeConnectionOpenRequestStore.requestID(forScope: session.id) {
-            activeConnectionOpenRequestStore.update(requestID) { $0.onOpened.append(onOpened) }
+            activeConnectionOpenRequestStore.update(requestID) {
+                $0.preferredViewId = preferredViewId
+                $0.onOpened.append(onOpened)
+            }
             return requestID
         }
 
@@ -48,6 +51,7 @@ extension ConnectionSessionManager {
         activeConnectionOpenRequestStore.insert(
             ActiveConnectionOpenRequest(
                 sessionId: session.id,
+                preferredViewId: preferredViewId,
                 task: nil,
                 onOpened: [onOpened]
             ),
@@ -75,9 +79,10 @@ extension ConnectionSessionManager {
             guard self.sessionWithID(session.id) != nil else { return }
 
             self.selectSession(session)
-            self.selectedViewByServer[session.serverId] = preferredViewId
+            let request = self.activeConnectionOpenRequestStore[requestID]
+            self.selectedViewByServer[session.serverId] = request?.preferredViewId ?? preferredViewId
 
-            let callbacks = self.activeConnectionOpenRequestStore[requestID]?.onOpened ?? []
+            let callbacks = request?.onOpened ?? []
             callbacks.forEach { $0() }
         }
 
