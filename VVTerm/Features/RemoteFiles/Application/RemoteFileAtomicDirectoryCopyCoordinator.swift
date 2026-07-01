@@ -8,9 +8,14 @@ nonisolated struct RemoteFileAtomicDirectoryCopyCoordinator: Sendable {
     ) async throws -> Void
 
     let atomicUploader: RemoteFileAtomicUploader
+    let cleanupCoordinator: RemoteFileAtomicCleanupCoordinator
 
-    init(atomicUploader: RemoteFileAtomicUploader = RemoteFileAtomicUploader()) {
+    init(
+        atomicUploader: RemoteFileAtomicUploader = RemoteFileAtomicUploader(),
+        cleanupCoordinator: RemoteFileAtomicCleanupCoordinator = RemoteFileAtomicCleanupCoordinator()
+    ) {
         self.atomicUploader = atomicUploader
+        self.cleanupCoordinator = cleanupCoordinator
     }
 
     func copyDirectory(
@@ -46,7 +51,7 @@ nonisolated struct RemoteFileAtomicDirectoryCopyCoordinator: Sendable {
             )
             await progressTracker?.advance(currentItemName: targetName)
         } catch {
-            await removeAtomicRemoteDirectory(temporaryRemotePath, using: destinationService)
+            await cleanupCoordinator.removeTemporaryDirectory(temporaryRemotePath, using: destinationService)
             throw error
         }
     }
@@ -54,42 +59,6 @@ nonisolated struct RemoteFileAtomicDirectoryCopyCoordinator: Sendable {
     private func modeBits(from permissions: UInt32?, fallback: Int32) -> Int32 {
         guard let permissions else { return fallback }
         return Int32(permissions & 0o7777)
-    }
-
-    private func removeAtomicRemoteDirectory(
-        _ temporaryRemotePath: String,
-        using service: any RemoteFileService
-    ) async {
-        let cleanupTask = Task.detached {
-            await Self.deleteRemoteDirectoryRecursivelyIgnoringCancellation(
-                at: temporaryRemotePath,
-                using: service
-            )
-        }
-        await cleanupTask.value
-    }
-
-    private nonisolated static func deleteRemoteDirectoryRecursivelyIgnoringCancellation(
-        at remotePath: String,
-        using service: any RemoteFileService
-    ) async {
-        do {
-            let normalizedPath = RemoteFilePath.normalize(remotePath)
-            let entries = try await service.listDirectory(at: normalizedPath, maxEntries: nil)
-
-            for entry in entries {
-                switch entry.type {
-                case .directory:
-                    await deleteRemoteDirectoryRecursivelyIgnoringCancellation(at: entry.path, using: service)
-                case .file, .symlink, .other:
-                    try? await service.deleteFile(at: entry.path)
-                }
-            }
-
-            try? await service.deleteDirectory(at: normalizedPath)
-        } catch {
-            try? await service.deleteDirectory(at: RemoteFilePath.normalize(remotePath))
-        }
     }
 
     private func makeAtomicRemoteDirectoryCopyPath(for remotePath: String) -> String {

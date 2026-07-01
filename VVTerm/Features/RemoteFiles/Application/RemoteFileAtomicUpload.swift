@@ -6,6 +6,12 @@ enum RemoteFileAtomicPublishMode: Sendable {
 }
 
 nonisolated struct RemoteFileAtomicUploader: Sendable {
+    let cleanupCoordinator: RemoteFileAtomicCleanupCoordinator
+
+    init(cleanupCoordinator: RemoteFileAtomicCleanupCoordinator = RemoteFileAtomicCleanupCoordinator()) {
+        self.cleanupCoordinator = cleanupCoordinator
+    }
+
     func uploadAtomically(
         _ data: Data,
         to remotePath: String,
@@ -25,7 +31,7 @@ nonisolated struct RemoteFileAtomicUploader: Sendable {
                 using: service
             )
         } catch {
-            await removeAtomicUploadTemporaryFile(temporaryRemotePath, using: service)
+            await cleanupCoordinator.removeTemporaryFile(temporaryRemotePath, using: service)
             throw error
         }
     }
@@ -42,16 +48,6 @@ nonisolated struct RemoteFileAtomicUploader: Sendable {
         case .failIfDestinationExists:
             try await service.renameItemIfDestinationMissing(at: temporaryRemotePath, to: remotePath)
         }
-    }
-
-    private func removeAtomicUploadTemporaryFile(
-        _ temporaryRemotePath: String,
-        using service: any RemoteFileService
-    ) async {
-        let cleanupTask = Task.detached {
-            try? await service.deleteFile(at: temporaryRemotePath)
-        }
-        await cleanupTask.value
     }
 
     private func makeAtomicRemoteUploadPath(for remotePath: String) -> String {
