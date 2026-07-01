@@ -9,6 +9,16 @@ extension TerminalTabManager {
         onOpened: @escaping @MainActor (TerminalTab) -> Void = { _ in },
         onFailed: @escaping @MainActor (Error) -> Void = { _ in }
     ) -> UUID {
+        let scope = TerminalOpenRequestScope(serverId: server.id, kind: .tabOpen)
+        if let requestID = tabOpenRequestStore.requestID(forScope: scope) {
+            tabOpenRequestStore.update(requestID) { request in
+                request.selectTerminalViewOnSuccess = request.selectTerminalViewOnSuccess || selectTerminalViewOnSuccess
+                request.onOpened.append(onOpened)
+                request.onFailed.append(onFailed)
+            }
+            return requestID
+        }
+
         let requestID = UUID()
         lastTabOpenFailure = nil
 
@@ -18,19 +28,30 @@ extension TerminalTabManager {
 
             do {
                 let tab = try await self.openTab(for: server)
-                if selectTerminalViewOnSuccess {
+                let request = self.tabOpenRequestStore[requestID]
+                if request?.selectTerminalViewOnSuccess == true {
                     self.selectedViewByServer[server.id] = self.defaultViewProvider()
                 }
-                onOpened(tab)
+                request?.onOpened.forEach { $0(tab) }
             } catch is CancellationError {
                 return
             } catch {
                 self.lastTabOpenFailure = error
-                onFailed(error)
+                self.tabOpenRequestStore[requestID]?.onFailed.forEach { $0(error) }
             }
         }
 
-        tabOpenRequestStore.insert(task, id: requestID)
+        tabOpenRequestStore.insert(
+            TabOpenRequest(
+                serverId: server.id,
+                task: task,
+                selectTerminalViewOnSuccess: selectTerminalViewOnSuccess,
+                onOpened: [onOpened],
+                onFailed: [onFailed]
+            ),
+            id: requestID,
+            scope: scope
+        )
         return requestID
     }
 
@@ -41,6 +62,16 @@ extension TerminalTabManager {
         onOpened: @escaping @MainActor (TerminalTab) -> Void = { _ in },
         onFailed: @escaping @MainActor (Error) -> Void = { _ in }
     ) -> UUID {
+        let scope = TerminalOpenRequestScope(serverId: server.id, kind: .serverTerminalOpen)
+        if let requestID = tabOpenRequestStore.requestID(forScope: scope) {
+            tabOpenRequestStore.update(requestID) { request in
+                request.selectTerminalViewOnSuccess = request.selectTerminalViewOnSuccess || selectTerminalViewOnSuccess
+                request.onOpened.append(onOpened)
+                request.onFailed.append(onFailed)
+            }
+            return requestID
+        }
+
         let requestID = UUID()
         lastTabOpenFailure = nil
 
@@ -54,32 +85,44 @@ extension TerminalTabManager {
                 }
 
                 if let tab = self.selectedTab(for: server.id) ?? self.tabs(for: server.id).first {
-                    if selectTerminalViewOnSuccess {
+                    let request = self.tabOpenRequestStore[requestID]
+                    if request?.selectTerminalViewOnSuccess == true {
                         self.selectedViewByServer[server.id] = self.defaultViewProvider()
                     }
-                    onOpened(tab)
+                    request?.onOpened.forEach { $0(tab) }
                     return
                 }
 
                 let tab = try await self.openTab(for: server, shouldEnsureUnlocked: false)
-                if selectTerminalViewOnSuccess {
+                let request = self.tabOpenRequestStore[requestID]
+                if request?.selectTerminalViewOnSuccess == true {
                     self.selectedViewByServer[server.id] = self.defaultViewProvider()
                 }
-                onOpened(tab)
+                request?.onOpened.forEach { $0(tab) }
             } catch is CancellationError {
                 return
             } catch {
                 self.lastTabOpenFailure = error
-                onFailed(error)
+                self.tabOpenRequestStore[requestID]?.onFailed.forEach { $0(error) }
             }
         }
 
-        tabOpenRequestStore.insert(task, id: requestID)
+        tabOpenRequestStore.insert(
+            TabOpenRequest(
+                serverId: server.id,
+                task: task,
+                selectTerminalViewOnSuccess: selectTerminalViewOnSuccess,
+                onOpened: [onOpened],
+                onFailed: [onFailed]
+            ),
+            id: requestID,
+            scope: scope
+        )
         return requestID
     }
 
     func waitForTabOpenRequest(_ requestID: UUID) async {
-        await tabOpenRequestStore[requestID]?.value
+        await tabOpenRequestStore[requestID]?.task.value
     }
 
     /// Open a new tab for a server

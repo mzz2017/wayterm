@@ -9,7 +9,7 @@ import XCTest
 final class TerminalOpenRequestStoreTests: XCTestCase {
     func testInsertTracksPendingRequestTask() {
         // Given an empty open request store.
-        var store = TerminalOpenRequestStore()
+        var store = TerminalOpenRequestStore<Task<Void, Never>>()
         let requestID = UUID()
         let task = Task<Void, Never> {}
 
@@ -23,7 +23,7 @@ final class TerminalOpenRequestStoreTests: XCTestCase {
 
     func testBeginOpenRejectsDuplicateScopeUntilFinished() {
         // Given an empty open request store.
-        var store = TerminalOpenRequestStore()
+        var store = TerminalOpenRequestStore<Task<Void, Never>>()
         let scopeID = UUID()
 
         // When opening begins for a scope.
@@ -38,9 +38,27 @@ final class TerminalOpenRequestStoreTests: XCTestCase {
         XCTAssertTrue(store.beginOpen(forScope: scopeID))
     }
 
+    func testRequestScopeMapsDuplicateIntentToExistingRequest() {
+        // Given an open request store with a scoped request.
+        var store = TerminalOpenRequestStore<Task<Void, Never>>()
+        let serverID = UUID()
+        let requestID = UUID()
+        let scope = TerminalOpenRequestScope(serverId: serverID, kind: .tabOpen)
+        let task = Task<Void, Never> {}
+
+        store.insert(task, id: requestID, scope: scope)
+
+        // Then the same user intent can join the existing request until it is removed.
+        XCTAssertEqual(store.requestID(forScope: scope), requestID)
+
+        store.remove(id: requestID)
+
+        XCTAssertNil(store.requestID(forScope: scope))
+    }
+
     func testRemoveAllCancelsRequestsAndClearsInFlightScopes() {
         // Given pending requests and in-flight scopes.
-        var store = TerminalOpenRequestStore()
+        var store = TerminalOpenRequestStore<Task<Void, Never>>()
         let requestID = UUID()
         let scopeID = UUID()
         let task = Task<Void, Never> {

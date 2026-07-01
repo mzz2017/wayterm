@@ -34,7 +34,7 @@ extension TerminalTabManager {
         tmuxAttachPrompt = nil
         terminalRegistryVersion = 0
         shellRegistry.removeAll()
-        tabOpenRequestStore.removeAll().forEach { $0.cancel() }
+        tabOpenRequestStore.removeAll().forEach { $0.task.cancel() }
         lastTabOpenFailure = nil
         tmuxInstallRequestStore.allRequests.forEach { $0.task.cancel() }
         tmuxInstallRequestStore.removeAll()

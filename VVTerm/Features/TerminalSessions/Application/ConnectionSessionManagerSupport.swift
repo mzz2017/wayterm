@@ -41,6 +41,13 @@ enum ConnectionSessionManagerSupport {
         let task: Task<Void, Never>
     }
 
+    struct ConnectionOpenRequest {
+        let serverId: UUID
+        let task: Task<Void, Never>
+        var onOpened: [@MainActor (ConnectionSession) -> Void]
+        var onFailed: [@MainActor (Error) -> Void]
+    }
+
     struct MoshInstallRequest {
         let sessionId: UUID
         let task: Task<Void, Never>

@@ -20,6 +20,14 @@ enum TerminalTabManagerSupport {
         let paneCloseResults: [PaneCloseResult]
     }
 
+    struct TabOpenRequest {
+        let serverId: UUID
+        let task: Task<Void, Never>
+        var selectTerminalViewOnSuccess: Bool
+        var onOpened: [@MainActor (TerminalTab) -> Void]
+        var onFailed: [@MainActor (Error) -> Void]
+    }
+
     struct TmuxInstallRequest {
         let paneId: UUID
         let task: Task<Void, Never>

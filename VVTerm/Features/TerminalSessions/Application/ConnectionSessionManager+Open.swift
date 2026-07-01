@@ -9,6 +9,18 @@ extension ConnectionSessionManager {
         onOpened: @escaping @MainActor (ConnectionSession) -> Void = { _ in },
         onFailed: @escaping @MainActor (Error) -> Void = { _ in }
     ) -> UUID {
+        let scope = TerminalOpenRequestScope(
+            serverId: server.id,
+            kind: .connectionOpen(forceNew: forceNew)
+        )
+        if let requestID = connectionOpenRequestStore.requestID(forScope: scope) {
+            connectionOpenRequestStore.update(requestID) { request in
+                request.onOpened.append(onOpened)
+                request.onFailed.append(onFailed)
+            }
+            return requestID
+        }
+
         let requestID = UUID()
         lastConnectionOpenFailure = nil
 
@@ -18,21 +30,30 @@ extension ConnectionSessionManager {
 
             do {
                 let session = try await self.openConnection(to: server, forceNew: forceNew)
-                onOpened(session)
+                self.connectionOpenRequestStore[requestID]?.onOpened.forEach { $0(session) }
             } catch is CancellationError {
                 return
             } catch {
                 self.lastConnectionOpenFailure = error
-                onFailed(error)
+                self.connectionOpenRequestStore[requestID]?.onFailed.forEach { $0(error) }
             }
         }
 
-        connectionOpenRequestStore.insert(task, id: requestID)
+        connectionOpenRequestStore.insert(
+            ConnectionOpenRequest(
+                serverId: server.id,
+                task: task,
+                onOpened: [onOpened],
+                onFailed: [onFailed]
+            ),
+            id: requestID,
+            scope: scope
+        )
         return requestID
     }
 
     func waitForConnectionOpenRequest(_ requestID: UUID) async {
-        await connectionOpenRequestStore[requestID]?.value
+        await connectionOpenRequestStore[requestID]?.task.value
     }
 
     /// Opens a connection to a server

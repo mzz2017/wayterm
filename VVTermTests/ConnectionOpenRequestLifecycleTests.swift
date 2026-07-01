@@ -107,6 +107,51 @@ struct ConnectionOpenRequestLifecycleTests {
     }
 
     @Test
+    func duplicateTabOpenRequestsCoalesceUntilCompletion() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let unlockGate = OpenRequestTaskGate()
+            var unlockCalls: [UUID] = []
+            var callbacks: [String] = []
+            var failures: [String] = []
+
+            manager.setServerUnlockerForTesting { unlockedServer in
+                unlockCalls.append(unlockedServer.id)
+                await unlockGate.waitForRelease()
+                return true
+            }
+
+            // Given tab-open intent is sent twice while the first unlock/open
+            // operation is still pending.
+            let firstID = manager.requestTabOpen(
+                for: server,
+                onOpened: { _ in callbacks.append("first") },
+                onFailed: { error in failures.append(error.localizedDescription) }
+            )
+            let secondID = manager.requestTabOpen(
+                for: server,
+                onOpened: { _ in callbacks.append("second") },
+                onFailed: { error in failures.append(error.localizedDescription) }
+            )
+
+            // Then duplicate same-server intent joins the existing open owner
+            // instead of creating a second task that reports "already opening".
+            #expect(firstID == secondID)
+            #expect(manager.pendingTabOpenRequestIDs == [firstID])
+
+            await unlockGate.release()
+            await manager.waitForTabOpenRequest(firstID)
+
+            #expect(unlockCalls == [server.id])
+            #expect(callbacks == ["first", "second"])
+            #expect(failures.isEmpty)
+            #expect(manager.tabs(for: server.id).count == 1)
+            #expect(manager.lastTabOpenFailure == nil)
+            #expect(!manager.pendingTabOpenRequestIDs.contains(firstID))
+        }
+    }
+
+    @Test
     func serverTerminalOpenRequestAuthenticatesBeforeSelectingExistingTab() async {
         await withCleanTabManager { manager in
             let server = makeServer()
@@ -189,6 +234,53 @@ struct ConnectionOpenRequestLifecycleTests {
                     manager.lastConnectionOpenFailure == nil,
                     "Successful connection open requests should not leave stale failure state."
                 )
+            }
+        }
+    }
+
+    @Test
+    func duplicateConnectionOpenRequestsCoalesceUntilCompletion() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let unlockGate = OpenRequestTaskGate()
+            var unlockCalls: [UUID] = []
+            var callbacks: [String] = []
+            var failures: [String] = []
+
+            manager.setServerUnlockerForTesting { unlockedServer in
+                unlockCalls.append(unlockedServer.id)
+                await unlockGate.waitForRelease()
+                return true
+            }
+
+            await withServerList([server]) {
+                // Given iOS connection-open intent is sent twice while the
+                // first unlock/open operation is still pending.
+                let firstID = manager.requestConnectionOpen(
+                    to: server,
+                    onOpened: { _ in callbacks.append("first") },
+                    onFailed: { error in failures.append(error.localizedDescription) }
+                )
+                let secondID = manager.requestConnectionOpen(
+                    to: server,
+                    onOpened: { _ in callbacks.append("second") },
+                    onFailed: { error in failures.append(error.localizedDescription) }
+                )
+
+                // Then duplicate same-server intent joins the existing open
+                // owner instead of creating a second failed request.
+                #expect(firstID == secondID)
+                #expect(manager.pendingConnectionOpenRequestIDs == [firstID])
+
+                await unlockGate.release()
+                await manager.waitForConnectionOpenRequest(firstID)
+
+                #expect(unlockCalls == [server.id])
+                #expect(callbacks == ["first", "second"])
+                #expect(failures.isEmpty)
+                #expect(manager.sessions.count == 1)
+                #expect(manager.lastConnectionOpenFailure == nil)
+                #expect(!manager.pendingConnectionOpenRequestIDs.contains(firstID))
             }
         }
     }

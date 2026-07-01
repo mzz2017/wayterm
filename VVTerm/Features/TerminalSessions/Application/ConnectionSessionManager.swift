@@ -9,6 +9,7 @@ final class ConnectionSessionManager: ObservableObject {
     typealias SSHUnregisterResult = ConnectionSessionManagerSupport.SSHUnregisterResult
     typealias SessionCloseResult = ConnectionSessionManagerSupport.SessionCloseResult
     typealias ShellTeardownRequest = ConnectionSessionManagerSupport.ShellTeardownRequest
+    typealias ConnectionOpenRequest = ConnectionSessionManagerSupport.ConnectionOpenRequest
     typealias TmuxInstallRequest = ConnectionSessionManagerSupport.TmuxInstallRequest
     typealias TmuxLifecycleRequest = ConnectionSessionManagerSupport.TmuxLifecycleRequest
     typealias MoshInstallRequest = ConnectionSessionManagerSupport.MoshInstallRequest
@@ -204,7 +205,7 @@ final class ConnectionSessionManager: ObservableObject {
     /// Shell lifecycle handlers indexed by session ID.
     var shellHandlerStore = TerminalShellHandlerStore()
     /// Server IDs and request tasks with an in-flight open request, used to collapse repeated clicks.
-    var connectionOpenRequestStore = TerminalOpenRequestStore()
+    var connectionOpenRequestStore = TerminalOpenRequestStore<ConnectionOpenRequest>()
     var lastConnectionOpenFailure: Error?
     var pendingConnectionOpenRequestIDs: Set<UUID> { connectionOpenRequestStore.pendingRequestIDs }
     var tmuxInstallRequestStore = TerminalScopedRequestStore<TmuxInstallRequest>()

@@ -7,25 +7,56 @@
 
 import Foundation
 
-nonisolated struct TerminalOpenRequestStore {
-    private var requests: [UUID: Task<Void, Never>] = [:]
+nonisolated struct TerminalOpenRequestScope: Hashable {
+    enum Kind: Hashable {
+        case connectionOpen(forceNew: Bool)
+        case serverTerminalOpen
+        case tabOpen
+    }
+
+    let serverId: UUID
+    let kind: Kind
+}
+
+nonisolated struct TerminalOpenRequestStore<Request> {
+    private var requests: [UUID: Request] = [:]
+    private var scopeByRequestID: [UUID: TerminalOpenRequestScope] = [:]
+    private var requestIDByScope: [TerminalOpenRequestScope: UUID] = [:]
     private var scopesInFlight: Set<UUID> = []
 
     var pendingRequestIDs: Set<UUID> {
         Set(requests.keys)
     }
 
-    subscript(_ requestID: UUID) -> Task<Void, Never>? {
+    subscript(_ requestID: UUID) -> Request? {
         requests[requestID]
     }
 
-    mutating func insert(_ task: Task<Void, Never>, id requestID: UUID) {
-        requests[requestID] = task
+    func requestID(forScope scope: TerminalOpenRequestScope) -> UUID? {
+        requestIDByScope[scope]
+    }
+
+    mutating func insert(_ request: Request, id requestID: UUID, scope: TerminalOpenRequestScope? = nil) {
+        requests[requestID] = request
+        if let scope {
+            scopeByRequestID[requestID] = scope
+            requestIDByScope[scope] = requestID
+        }
+    }
+
+    mutating func update(_ requestID: UUID, _ update: (inout Request) -> Void) {
+        guard var request = requests[requestID] else { return }
+        update(&request)
+        requests[requestID] = request
     }
 
     @discardableResult
-    mutating func remove(id requestID: UUID) -> Task<Void, Never>? {
-        requests.removeValue(forKey: requestID)
+    mutating func remove(id requestID: UUID) -> Request? {
+        if let scope = scopeByRequestID.removeValue(forKey: requestID),
+           requestIDByScope[scope] == requestID {
+            requestIDByScope.removeValue(forKey: scope)
+        }
+        return requests.removeValue(forKey: requestID)
     }
 
     mutating func beginOpen(forScope scopeID: UUID) -> Bool {
@@ -39,10 +70,12 @@ nonisolated struct TerminalOpenRequestStore {
     }
 
     @discardableResult
-    mutating func removeAll() -> [Task<Void, Never>] {
-        let tasks = Array(requests.values)
+    mutating func removeAll() -> [Request] {
+        let allRequests = Array(requests.values)
         requests.removeAll()
+        scopeByRequestID.removeAll()
+        requestIDByScope.removeAll()
         scopesInFlight.removeAll()
-        return tasks
+        return allRequests
     }
 }

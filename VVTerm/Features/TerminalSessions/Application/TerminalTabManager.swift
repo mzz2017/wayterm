@@ -18,6 +18,7 @@ final class TerminalTabManager: ObservableObject {
 
     typealias PaneCloseResult = TerminalTabManagerSupport.PaneCloseResult
     typealias TabCloseResult = TerminalTabManagerSupport.TabCloseResult
+    typealias TabOpenRequest = TerminalTabManagerSupport.TabOpenRequest
     typealias TmuxInstallRequest = TerminalTabManagerSupport.TmuxInstallRequest
     typealias TmuxLifecycleRequest = TerminalTabManagerSupport.TmuxLifecycleRequest
     typealias MoshInstallRequest = TerminalTabManagerSupport.MoshInstallRequest
@@ -135,7 +136,7 @@ final class TerminalTabManager: ObservableObject {
     let terminalSurfaceRegistry = TerminalSurfaceRegistry()
     var shellRegistry = SSHShellRegistry(staleThreshold: 120)
     /// Server IDs with an in-flight tab-open request to avoid queued duplicates.
-    var tabOpenRequestStore = TerminalOpenRequestStore()
+    var tabOpenRequestStore = TerminalOpenRequestStore<TabOpenRequest>()
     var lastTabOpenFailure: Error?
     var pendingTabOpenRequestIDs: Set<UUID> { tabOpenRequestStore.pendingRequestIDs }
     var tmuxInstallRequestStore = TerminalScopedRequestStore<TmuxInstallRequest>()

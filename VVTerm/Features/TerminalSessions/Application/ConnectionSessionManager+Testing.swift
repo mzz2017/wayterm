@@ -32,7 +32,7 @@ extension ConnectionSessionManager {
         tmuxAttachPrompt = nil
         shellRegistry.removeAll()
         shellHandlerStore.removeAll()
-        connectionOpenRequestStore.removeAll().forEach { $0.cancel() }
+        connectionOpenRequestStore.removeAll().forEach { $0.task.cancel() }
         lastConnectionOpenFailure = nil
         tmuxInstallRequestStore.allRequests.forEach { $0.task.cancel() }
         tmuxInstallRequestStore.removeAll()
