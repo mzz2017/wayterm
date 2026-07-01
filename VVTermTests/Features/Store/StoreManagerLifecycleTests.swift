@@ -523,6 +523,33 @@ struct StoreManagerLifecycleTests {
     }
 
     @Test
+    func reviewModeExpiryWaitsUntilScheduledExpiryOperationCompletes() async {
+        let sleepGate = StoreRequestGate()
+        let manager = StoreManager.makeForTesting(
+            sleepForReviewModeExpiry: { _ in
+                await sleepGate.waitForRelease()
+            }
+        )
+
+        // Given review mode is enabled and schedules a Store-owned expiry
+        // operation.
+        #expect(manager.enableReviewMode(code: StoreManager.reviewModeCode))
+        await sleepGate.waitForOperationStart()
+
+        // Then StoreManager keeps the expiry lifecycle tracked while the fake
+        // clock is waiting.
+        #expect(
+            manager.hasPendingReviewModeExpiryForTesting,
+            "Review-mode expiry must stay tracked while waiting for its expiration date."
+        )
+
+        await sleepGate.release()
+        await manager.waitForReviewModeExpiryForTesting()
+
+        #expect(!manager.hasPendingReviewModeExpiryForTesting)
+    }
+
+    @Test
     func transactionListenerIsTrackedUntilListenerOperationCompletes() async {
         let listenerGate = StoreRequestGate()
         let manager = StoreManager.makeForTesting(
@@ -761,7 +788,7 @@ struct StoreManagerLifecycleTests {
     }
 
     @Test
-    func deinitCancelsReviewModeExpiryTaskWithOtherStoreLifecycleTasks() throws {
+    func deinitCancelsReviewModeExpiryOwnerWithOtherStoreLifecycleTasks() throws {
         let root = try sourceRoot()
         let source = try source(
             at: root.appendingPathComponent("VVTerm/Features/Store/Application/StoreManager.swift")
@@ -773,7 +800,7 @@ struct StoreManagerLifecycleTests {
         )
 
         // Given StoreManager owns StoreKit listeners, request tasks, startup
-        // refresh, and the review-mode expiry timer.
+        // refresh, and the review-mode expiry owner.
         #expect(deinitSource.contains("updateListenerTask?.cancel()"))
         #expect(deinitSource.contains("startupRefreshTask?.cancel()"))
         #expect(deinitSource.contains("reviewModeRefreshTask?.cancel()"))
@@ -781,11 +808,11 @@ struct StoreManagerLifecycleTests {
         #expect(deinitSource.contains("purchaseRequestCoordinator.cancelAllFromAnyContext()"))
         #expect(deinitSource.contains("restoreRequestCoordinator.cancelAllFromAnyContext()"))
 
-        // Then review-mode expiry must be canceled by the same owner cleanup
+        // Then review-mode expiry must be canceled through its owner cleanup
         // path instead of outliving the StoreManager instance.
         #expect(
-            deinitSource.contains("reviewModeExpiryTask?.cancel()"),
-            "StoreManager deinit must cancel the review-mode expiry task it owns."
+            deinitSource.contains("reviewModeExpiryCoordinator.cancelAllFromAnyContext()"),
+            "StoreManager deinit must cancel the review-mode expiry owner."
         )
     }
 

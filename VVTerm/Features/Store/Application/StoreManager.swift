@@ -15,6 +15,7 @@ final class StoreManager: ObservableObject {
     private typealias StoreLifecycleAction = @MainActor (StoreManager) async -> Void
     private typealias StoreTransactionListenerAction = @MainActor (StoreManager) async -> Void
     private typealias StoreEntitlementRefreshSleepAction = @Sendable (Duration) async -> Void
+    private typealias StoreReviewModeExpirySleepAction = @Sendable (Duration) async -> Void
 
     static let shared = StoreManager()
     static let reviewModeCode = ReviewModeCode.value
@@ -34,6 +35,7 @@ final class StoreManager: ObservableObject {
     private let entitlementRefreshCoordinator = StoreEntitlementRefreshCoordinator()
     private let productLoadCoordinator = StoreProductLoadCoordinator()
     private let subscriptionExpirationRefreshCoordinator: StoreSubscriptionExpirationRefreshCoordinator
+    private let reviewModeExpiryCoordinator: StoreReviewModeExpiryCoordinator
     var lastPurchaseRequestFailure: Error? { purchaseRequestCoordinator.lastRequestFailure }
     var lastRestoreRequestFailure: Error? { restoreRequestCoordinator.lastRequestFailure }
     var pendingPurchaseRequestIDs: Set<UUID> { purchaseRequestCoordinator.pendingRequestIDs }
@@ -51,7 +53,6 @@ final class StoreManager: ObservableObject {
     private var reviewModeRefreshTaskID: UUID?
     private var updateListenerTask: Task<Void, Never>?
     private var updateListenerTaskID: UUID?
-    private var reviewModeExpiryTask: Task<Void, Never>?
     private var reviewModeExpiresAt: Date?
     private var entitlementRefreshGeneration = 0
     private let loadProductsAction: StoreLifecycleAction
@@ -83,6 +84,7 @@ final class StoreManager: ObservableObject {
         checkEntitlementsAction: StoreLifecycleAction? = nil,
         transactionListenerAction: StoreTransactionListenerAction? = nil,
         sleepForEntitlementRefresh: StoreEntitlementRefreshSleepAction? = nil,
+        sleepForReviewModeExpiry: StoreReviewModeExpirySleepAction? = nil,
         telemetry: (any StoreTelemetry)? = nil
     ) {
         self.loadProductsAction = loadProductsAction ?? { manager in
@@ -100,6 +102,12 @@ final class StoreManager: ObservableObject {
         self.subscriptionExpirationRefreshCoordinator = StoreSubscriptionExpirationRefreshCoordinator(
             sleepAction: entitlementRefreshSleep
         )
+        let reviewModeExpirySleep = sleepForReviewModeExpiry ?? { duration in
+            try? await Task.sleep(for: duration)
+        }
+        self.reviewModeExpiryCoordinator = StoreReviewModeExpiryCoordinator(
+            sleepAction: reviewModeExpirySleep
+        )
         self.telemetry = telemetry ?? LiveStoreTelemetry.shared
 
         if startBackgroundTasks {
@@ -114,7 +122,7 @@ final class StoreManager: ObservableObject {
         reviewModeRefreshTask?.cancel()
         entitlementRefreshCoordinator.cancelAllFromAnyContext()
         subscriptionExpirationRefreshCoordinator.cancelAllFromAnyContext()
-        reviewModeExpiryTask?.cancel()
+        reviewModeExpiryCoordinator.cancelAllFromAnyContext()
         productLoadCoordinator.cancelAllFromAnyContext()
         purchaseRequestCoordinator.cancelAllFromAnyContext()
         restoreRequestCoordinator.cancelAllFromAnyContext()
@@ -124,8 +132,7 @@ final class StoreManager: ObservableObject {
         let trackedTasks = [
             updateListenerTask,
             startupRefreshTask,
-            reviewModeRefreshTask,
-            reviewModeExpiryTask
+            reviewModeRefreshTask
         ].compactMap { $0 }
 
         trackedTasks.forEach { $0.cancel() }
@@ -134,6 +141,7 @@ final class StoreManager: ObservableObject {
         await restoreRequestCoordinator.cancelAllAndWait()
         await entitlementRefreshCoordinator.cancelAllAndWait()
         await subscriptionExpirationRefreshCoordinator.cancelAllAndWait()
+        await reviewModeExpiryCoordinator.cancelAllAndWait()
         for task in trackedTasks {
             await task.value
         }
@@ -144,7 +152,6 @@ final class StoreManager: ObservableObject {
         startupRefreshTaskID = nil
         reviewModeRefreshTask = nil
         reviewModeRefreshTaskID = nil
-        reviewModeExpiryTask = nil
     }
 
     private func startStartupRefresh() {
@@ -454,8 +461,7 @@ final class StoreManager: ObservableObject {
             logger.info("Review mode enabled")
         } else {
             reviewModeExpiresAt = nil
-            reviewModeExpiryTask?.cancel()
-            reviewModeExpiryTask = nil
+            reviewModeExpiryCoordinator.cancelAll()
             logger.info("Review mode disabled")
             startReviewModeRefresh()
         }
@@ -475,14 +481,9 @@ final class StoreManager: ObservableObject {
     }
 
     private func scheduleReviewModeExpiry() {
-        reviewModeExpiryTask?.cancel()
         guard let expiresAt = reviewModeExpiresAt else { return }
-        let delay = max(0, expiresAt.timeIntervalSinceNow)
-        reviewModeExpiryTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            await MainActor.run {
-                self?.refreshReviewModeState()
-            }
+        reviewModeExpiryCoordinator.scheduleExpiry(at: expiresAt) { [weak self] in
+            self?.refreshReviewModeState()
         }
     }
 
@@ -601,6 +602,7 @@ extension StoreManager {
         checkEntitlementsAction: (@MainActor (StoreManager) async -> Void)? = nil,
         transactionListenerAction: (@MainActor (StoreManager) async -> Void)? = nil,
         sleepForEntitlementRefresh: (@Sendable (Duration) async -> Void)? = nil,
+        sleepForReviewModeExpiry: (@Sendable (Duration) async -> Void)? = nil,
         telemetry: (any StoreTelemetry)? = nil
     ) -> StoreManager {
         StoreManager(
@@ -609,6 +611,7 @@ extension StoreManager {
             checkEntitlementsAction: checkEntitlementsAction,
             transactionListenerAction: transactionListenerAction,
             sleepForEntitlementRefresh: sleepForEntitlementRefresh,
+            sleepForReviewModeExpiry: sleepForReviewModeExpiry,
             telemetry: telemetry ?? NoopStoreTelemetry()
         )
     }
@@ -649,6 +652,15 @@ extension StoreManager {
 
     func waitForReviewModeRefreshForTesting() async {
         await reviewModeRefreshTask?.value
+    }
+
+    var hasPendingReviewModeExpiryForTesting: Bool {
+        !reviewModeExpiryCoordinator.pendingRequestIDs.isEmpty
+    }
+
+    func waitForReviewModeExpiryForTesting() async {
+        guard let requestID = reviewModeExpiryCoordinator.pendingRequestIDs.first else { return }
+        await reviewModeExpiryCoordinator.waitForExpiry(requestID)
     }
 
     var hasPendingTransactionListenerForTesting: Bool {
