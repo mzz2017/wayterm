@@ -405,7 +405,9 @@ extension ConnectionSessionManager {
             #endif
 
             guard !Task.isCancelled else { return }
-            let callbacks = self.tmuxInstallRequestStore[requestID]?.onCompleted ?? []
+            let callbacks = self.tmuxInstallRequestStore
+                .remove(id: requestID, ifMappedTo: sessionId)?
+                .onCompleted ?? []
             callbacks.forEach { $0() }
         }
         tmuxInstallRequestStore.insert(
@@ -458,15 +460,21 @@ extension ConnectionSessionManager {
                 #endif
 
                 guard !Task.isCancelled else { return }
-                let callbacks = self.moshInstallRequestStore[requestID]?.onCompleted ?? []
+                let callbacks = self.moshInstallRequestStore
+                    .remove(id: requestID, ifMappedTo: session.id)?
+                    .onCompleted ?? []
                 callbacks.forEach { $0() }
             } catch is CancellationError {
-                let callbacks = self.moshInstallRequestStore[requestID]?.onCompleted ?? []
+                let callbacks = self.moshInstallRequestStore
+                    .remove(id: requestID, ifMappedTo: session.id)?
+                    .onCompleted ?? []
                 callbacks.forEach { $0() }
                 return
             } catch {
                 self.setLastMoshInstallFailure(error)
-                let callbacks = self.moshInstallRequestStore[requestID]?.onFailed ?? []
+                let callbacks = self.moshInstallRequestStore
+                    .remove(id: requestID, ifMappedTo: session.id)?
+                    .onFailed ?? []
                 callbacks.forEach { $0(error) }
             }
         }

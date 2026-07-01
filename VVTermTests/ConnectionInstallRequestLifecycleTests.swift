@@ -100,6 +100,39 @@ struct ConnectionInstallRequestLifecycleTests {
     }
 
     @Test
+    func connectionManagerTmuxInstallCompletionCanStartFreshInstallRequest() async {
+        await withCleanConnectionManager { manager in
+            let session = ConnectionSession(serverId: UUID(), title: "Session")
+            let gate = InstallRequestOperationGate()
+            manager.sessions = [session]
+            manager.setTmuxInstallOperationForTesting { _ in
+                await gate.run()
+            }
+            var callbackTriggeredRequestID: UUID?
+
+            // Given tmux install completion immediately asks the application
+            // owner to install again.
+            let firstRequestID = manager.requestTmuxInstall(for: session.id) {
+                callbackTriggeredRequestID = manager.requestTmuxInstall(for: session.id)
+            }
+            await gate.waitForCallCount(1)
+
+            // When the first install request finishes.
+            await gate.release()
+            await manager.waitForTmuxInstallRequest(firstRequestID)
+            for _ in 0..<50 where await gate.callCount < 2 {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+
+            // Then the callback-triggered install owns a new lifecycle instead
+            // of joining the completed request that is about to clear.
+            #expect(callbackTriggeredRequestID != nil)
+            #expect(callbackTriggeredRequestID != firstRequestID)
+            #expect(await gate.callCount == 2)
+        }
+    }
+
+    @Test
     func connectionManagerCompletesMoshInstallRequestAfterReconnectOperationFinishes() async {
         await withCleanConnectionManager { manager in
             let session = ConnectionSession(serverId: UUID(), title: "Session")
@@ -139,6 +172,51 @@ struct ConnectionInstallRequestLifecycleTests {
             #expect(completedCount == 1)
             #expect(failedCount == 0)
             #expect(manager.pendingMoshInstallRequestIDs.isEmpty)
+        }
+    }
+
+    @Test
+    func connectionManagerMoshInstallFailureCallbackCanStartFreshRetryRequest() async {
+        await withCleanConnectionManager { manager in
+            let session = ConnectionSession(serverId: UUID(), title: "Session")
+            var attempt = 0
+            let retryGate = InstallRequestOperationGate()
+            manager.sessions = [session]
+            manager.setMoshInstallAndReconnectOperationForTesting { _ in
+                attempt += 1
+                if attempt == 1 {
+                    throw TestMoshInstallError.failed
+                }
+                await retryGate.run()
+            }
+            var callbackTriggeredRequestID: UUID?
+
+            // Given the mosh install failure callback immediately sends retry
+            // intent back to the application owner.
+            let firstRequestID = manager.requestMoshInstallAndReconnect(
+                session: session,
+                onCompleted: {},
+                onFailed: { _ in
+                    callbackTriggeredRequestID = manager.requestMoshInstallAndReconnect(session: session)
+                }
+            )
+
+            // When the first install request fails.
+            await manager.waitForMoshInstallRequest(firstRequestID)
+            for _ in 0..<50 where await retryGate.callCount < 1 {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+
+            // Then the callback-triggered retry owns a new lifecycle instead
+            // of joining the completed request that is about to clear.
+            #expect(callbackTriggeredRequestID != nil)
+            #expect(callbackTriggeredRequestID != firstRequestID)
+            #expect(attempt == 2)
+
+            await retryGate.release()
+            if let callbackTriggeredRequestID {
+                await manager.waitForMoshInstallRequest(callbackTriggeredRequestID)
+            }
         }
     }
 
@@ -342,6 +420,94 @@ struct ConnectionInstallRequestLifecycleTests {
             #expect(manager.pendingTmuxInstallRequestIDs.isEmpty)
             #expect(manager.pendingMoshInstallRequestIDs.isEmpty)
             #expect(moshCompletedCount == 1)
+        }
+    }
+
+    @Test
+    func tabManagerTmuxInstallCompletionCanStartFreshInstallRequest() async {
+        await withCleanTabManager { manager in
+            let tab = TerminalTab(serverId: UUID(), title: "Tab")
+            let gate = InstallRequestOperationGate()
+            manager.tabsByServer[tab.serverId] = [tab]
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: tab.serverId
+            )
+            manager.setTmuxInstallOperationForTesting { _ in
+                await gate.run()
+            }
+            var callbackTriggeredRequestID: UUID?
+
+            // Given pane tmux install completion immediately asks the
+            // application owner to install again.
+            let firstRequestID = manager.requestTmuxInstall(for: tab.rootPaneId) {
+                callbackTriggeredRequestID = manager.requestTmuxInstall(for: tab.rootPaneId)
+            }
+            await gate.waitForCallCount(1)
+
+            // When the first install request finishes.
+            await gate.release()
+            await manager.waitForTmuxInstallRequest(firstRequestID)
+            for _ in 0..<50 where await gate.callCount < 2 {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+
+            // Then the callback-triggered install owns a new lifecycle instead
+            // of joining the completed request that is about to clear.
+            #expect(callbackTriggeredRequestID != nil)
+            #expect(callbackTriggeredRequestID != firstRequestID)
+            #expect(await gate.callCount == 2)
+        }
+    }
+
+    @Test
+    func tabManagerMoshInstallFailureCallbackCanStartFreshRetryRequest() async {
+        await withCleanTabManager { manager in
+            let tab = TerminalTab(serverId: UUID(), title: "Tab")
+            var attempt = 0
+            let retryGate = InstallRequestOperationGate()
+            manager.tabsByServer[tab.serverId] = [tab]
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: tab.serverId
+            )
+            manager.setMoshInstallAndReconnectOperationForTesting { _ in
+                attempt += 1
+                if attempt == 1 {
+                    throw TestMoshInstallError.failed
+                }
+                await retryGate.run()
+            }
+            var callbackTriggeredRequestID: UUID?
+
+            // Given pane mosh install failure immediately sends retry intent
+            // back to the application owner.
+            let firstRequestID = manager.requestMoshInstallAndReconnect(
+                for: tab.rootPaneId,
+                onCompleted: {},
+                onFailed: { _ in
+                    callbackTriggeredRequestID = manager.requestMoshInstallAndReconnect(for: tab.rootPaneId)
+                }
+            )
+
+            // When the first install request fails.
+            await manager.waitForMoshInstallRequest(firstRequestID)
+            for _ in 0..<50 where await retryGate.callCount < 1 {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+
+            // Then the callback-triggered retry owns a new lifecycle instead
+            // of joining the completed request that is about to clear.
+            #expect(callbackTriggeredRequestID != nil)
+            #expect(callbackTriggeredRequestID != firstRequestID)
+            #expect(attempt == 2)
+
+            await retryGate.release()
+            if let callbackTriggeredRequestID {
+                await manager.waitForMoshInstallRequest(callbackTriggeredRequestID)
+            }
         }
     }
 
