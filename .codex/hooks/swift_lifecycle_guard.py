@@ -36,6 +36,7 @@ STATE_DIR = repo_root() / ".codex" / "state"
 BEST_PRACTICES_MARKER = "swift-best-practices-read"
 BEST_PRACTICES_DOCUMENT = "docs/engineering/swift-best-practices.md"
 BEST_PRACTICES_DOCUMENT_NAME = "swift-best-practices.md"
+SWIFT_PATH_PATTERN = re.compile(r"(?m)(?:^|\s|['\"])([^'\"\s]+\.swift)(?:$|\s|['\"]|:)")
 
 
 def best_practices_marker_path() -> pathlib.Path:
@@ -154,6 +155,86 @@ def mark_best_practices_read_from_tool_use() -> int:
     return 0
 
 
+def string_mentions_swift_path(value: str) -> bool:
+    normalized = value.replace("\\", "/")
+    return ".swift" in normalized and SWIFT_PATH_PATTERN.search(normalized) is not None
+
+
+def tool_use_touches_swift(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+
+    tool_name = str(
+        payload.get("tool_name")
+        or payload.get("tool")
+        or payload.get("name")
+        or payload.get("recipient_name")
+        or payload.get("recipient")
+        or ""
+    )
+    tool_input = (
+        payload.get("tool_input")
+        or payload.get("input")
+        or payload.get("parameters")
+        or payload.get("arguments")
+        or payload.get("args")
+        or {}
+    )
+
+    if "apply_patch" in tool_name:
+        if isinstance(tool_input, str):
+            return string_mentions_swift_path(tool_input)
+        return any_nested_value_mentions_swift(tool_input)
+
+    if re.search(r"(^|\.)(Edit|Write)$", tool_name):
+        return any_nested_value_mentions_swift(tool_input)
+
+    return any_nested_value_mentions_swift(tool_input)
+
+
+def any_nested_value_mentions_swift(value: object) -> bool:
+    if isinstance(value, str):
+        return string_mentions_swift_path(value)
+    if isinstance(value, dict):
+        return any(any_nested_value_mentions_swift(item) for item in value.values())
+    if isinstance(value, list):
+        return any(any_nested_value_mentions_swift(item) for item in value)
+    return False
+
+
+def print_blocked_best_practices_notice() -> None:
+    print("", file=sys.stderr)
+    print("VVTERM HOOK BLOCKED: Swift edit needs lifecycle prep", file=sys.stderr)
+    print("---------------------------------------------------", file=sys.stderr)
+    print(
+        "Read docs/engineering/swift-best-practices.md before editing Swift files.",
+        file=sys.stderr,
+    )
+    print(
+        "Then mark the session:",
+        file=sys.stderr,
+    )
+    print(
+        "  python3 .codex/hooks/swift_lifecycle_guard.py --mark-best-practices-read",
+        file=sys.stderr,
+    )
+
+
+def preflight_swift_edit_from_tool_use() -> int:
+    try:
+        payload = json.load(sys.stdin)
+    except Exception:
+        return 0
+
+    if not tool_use_touches_swift(payload):
+        return 0
+    if has_best_practices_marker():
+        return 0
+
+    print_blocked_best_practices_notice()
+    return 1
+
+
 def swift_diff() -> str:
     unstaged = run_git(["diff", "--", "*.swift"])
     staged = run_git(["diff", "--cached", "--", "*.swift"])
@@ -185,6 +266,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Record the marker when PostToolUse input shows the best-practices doc was read.",
     )
+    parser.add_argument(
+        "--preflight-swift-edit-from-tool-use",
+        action="store_true",
+        help="Block Swift edit tool use before the best-practices marker exists.",
+    )
     return parser.parse_args(argv)
 
 
@@ -196,21 +282,15 @@ def main(argv: list[str] | None = None) -> int:
         return reset_best_practices_marker()
     if args.mark_best_practices_read_from_tool_use:
         return mark_best_practices_read_from_tool_use()
+    if args.preflight_swift_edit_from_tool_use:
+        return preflight_swift_edit_from_tool_use()
 
     diff = swift_diff()
     if not diff:
         return 0
 
     if not has_best_practices_marker():
-        print("\nSwift best-practices guard:", file=sys.stderr)
-        print(
-            "- Swift files changed, but this session has not recorded reading docs/engineering/swift-best-practices.md.",
-            file=sys.stderr,
-        )
-        print(
-            "- Read the document, then run: python3 .codex/hooks/swift_lifecycle_guard.py --mark-best-practices-read",
-            file=sys.stderr,
-        )
+        print_blocked_best_practices_notice()
         return 1
 
     added = "\n".join(added_lines(diff))

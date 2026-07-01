@@ -192,6 +192,62 @@ class SwiftLifecycleGuardTests(unittest.TestCase):
                 self.assertEqual(exit_code, 0)
                 self.assertFalse(self.guard.best_practices_marker_path().exists())
 
+    def test_preflight_swift_apply_patch_without_marker_blocks_loudly(self) -> None:
+        payload = """{
+  "tool_name": "apply_patch",
+  "tool_input": "*** Begin Patch\\n*** Update File: VVTerm/Foo.swift\\n@@\\n+Task {}\\n*** End Patch\\n"
+}
+"""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = pathlib.Path(tmpdir)
+            stderr = io.StringIO()
+            with mock.patch.object(self.guard, "STATE_DIR", state_dir), \
+                mock.patch.object(sys, "stdin", io.StringIO(payload)), \
+                redirect_stderr(stderr):
+                exit_code = self.guard.main(["--preflight-swift-edit-from-tool-use"])
+
+        self.assertEqual(exit_code, 1)
+        notice = stderr.getvalue()
+        self.assertIn("VVTERM HOOK BLOCKED", notice)
+        self.assertIn("docs/engineering/swift-best-practices.md", notice)
+
+    def test_preflight_swift_edit_with_marker_passes(self) -> None:
+        payload = """{
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "VVTerm/Foo.swift"
+  }
+}
+"""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = pathlib.Path(tmpdir)
+            with mock.patch.object(self.guard, "STATE_DIR", state_dir), \
+                mock.patch.object(sys, "stdin", io.StringIO(payload)):
+                self.guard.best_practices_marker_path().parent.mkdir(parents=True, exist_ok=True)
+                self.guard.best_practices_marker_path().write_text("read\\n", encoding="utf-8")
+                exit_code = self.guard.main(["--preflight-swift-edit-from-tool-use"])
+
+        self.assertEqual(exit_code, 0)
+
+    def test_preflight_non_swift_edit_without_marker_passes(self) -> None:
+        payload = """{
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": ".codex/hooks.json"
+  }
+}
+"""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = pathlib.Path(tmpdir)
+            with mock.patch.object(self.guard, "STATE_DIR", state_dir), \
+                mock.patch.object(sys, "stdin", io.StringIO(payload)):
+                exit_code = self.guard.main(["--preflight-swift-edit-from-tool-use"])
+
+        self.assertEqual(exit_code, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
