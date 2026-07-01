@@ -96,6 +96,7 @@ enum ConnectionSessionManagerSupport {
         var context: TerminalSurfaceAttachContext
         var attachOperation: @MainActor () async -> Void
         let task: Task<Void, Never>
+        var generation: Int = 0
     }
 
     struct InputRequest {

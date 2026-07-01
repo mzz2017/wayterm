@@ -76,12 +76,16 @@ extension TerminalTabManager {
     ) -> UUID? {
         if let requestID = surfaceAttachRequestStore.requestID(forScope: paneId) {
             guard shouldAcceptSurfaceAttach(paneId: paneId, context: context) else {
-                surfaceAttachRequestStore.update(requestID) { $0.context = context }
+                surfaceAttachRequestStore.update(requestID) {
+                    $0.context = context
+                    $0.generation += 1
+                }
                 return nil
             }
             surfaceAttachRequestStore.update(requestID) {
                 $0.context = context
                 $0.attachOperation = attachOperation
+                $0.generation += 1
             }
             return requestID
         }
@@ -95,10 +99,18 @@ extension TerminalTabManager {
                 self.surfaceAttachRequestStore.remove(id: requestID, ifMappedTo: paneId)
             }
 
-            let latestRequest = self.surfaceAttachRequestStore[requestID]
-            let latestContext = latestRequest?.context ?? context
-            guard self.shouldAcceptSurfaceAttach(paneId: paneId, context: latestContext) else { return }
-            await (latestRequest?.attachOperation ?? attachOperation)()
+            var appliedGeneration: Int?
+            while !Task.isCancelled {
+                let latestRequest = self.surfaceAttachRequestStore[requestID]
+                let latestContext = latestRequest?.context ?? context
+                guard self.shouldAcceptSurfaceAttach(paneId: paneId, context: latestContext) else { return }
+
+                let latestGeneration = latestRequest?.generation ?? 0
+                guard appliedGeneration != latestGeneration else { return }
+                appliedGeneration = latestGeneration
+
+                await (latestRequest?.attachOperation ?? attachOperation)()
+            }
         }
 
         surfaceAttachRequestStore.insert(

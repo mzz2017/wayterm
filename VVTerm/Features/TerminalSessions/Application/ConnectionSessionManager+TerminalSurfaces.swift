@@ -160,12 +160,16 @@ extension ConnectionSessionManager {
     ) -> UUID? {
         if let requestID = surfaceAttachRequestStore.requestID(forScope: sessionId) {
             guard shouldAcceptSurfaceAttach(sessionId: sessionId, context: context) else {
-                surfaceAttachRequestStore.update(requestID) { $0.context = context }
+                surfaceAttachRequestStore.update(requestID) {
+                    $0.context = context
+                    $0.generation += 1
+                }
                 return nil
             }
             surfaceAttachRequestStore.update(requestID) {
                 $0.context = context
                 $0.attachOperation = attachOperation
+                $0.generation += 1
             }
             return requestID
         }
@@ -179,13 +183,25 @@ extension ConnectionSessionManager {
                 self.surfaceAttachRequestStore.remove(id: requestID, ifMappedTo: sessionId)
             }
 
-            let latestContext = self.surfaceAttachRequestStore[requestID]?.context ?? context
-            guard self.shouldAcceptSurfaceAttach(sessionId: sessionId, context: latestContext) else { return }
-            if self.consumeTerminalReconnectReset(for: sessionId) {
-                resetTerminal()
+            var appliedGeneration: Int?
+            while !Task.isCancelled {
+                let latestRequest = self.surfaceAttachRequestStore[requestID]
+                let latestContext = latestRequest?.context ?? context
+                guard self.shouldAcceptSurfaceAttach(sessionId: sessionId, context: latestContext) else { return }
+
+                let latestGeneration = latestRequest?.generation ?? 0
+                guard appliedGeneration != latestGeneration else { return }
+                appliedGeneration = latestGeneration
+
+                if self.consumeTerminalReconnectReset(for: sessionId) {
+                    resetTerminal()
+                    if self.surfaceAttachRequestStore[requestID]?.generation != latestGeneration {
+                        continue
+                    }
+                }
+                let latestAttachOperation = latestRequest?.attachOperation ?? attachOperation
+                await latestAttachOperation()
             }
-            let latestAttachOperation = self.surfaceAttachRequestStore[requestID]?.attachOperation ?? attachOperation
-            await latestAttachOperation()
         }
 
         surfaceAttachRequestStore.insert(

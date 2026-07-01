@@ -166,6 +166,58 @@ struct TerminalSurfaceAttachIntentTests {
     }
 
     @Test
+    func rootSurfaceAttachRunsLatestDuplicateOperationAfterAttachSuspends() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: "Tencent",
+                connectionState: .connecting
+            )
+            manager.sessions = [session]
+
+            let recorder = SurfaceAttachRecorder()
+            let gate = SurfaceAttachGate()
+            var duplicateRequestID: UUID?
+
+            // Given the first attach operation has started and is suspended
+            // inside runtime attach work.
+            guard let requestID = manager.requestSurfaceAttach(
+                sessionId: session.id,
+                context: .active,
+                attachOperation: {
+                    recorder.record("stale-start")
+                    duplicateRequestID = manager.requestSurfaceAttach(
+                        sessionId: session.id,
+                        context: .active,
+                        attachOperation: {
+                            recorder.record("latest-attach")
+                        }
+                    )
+                    await gate.wait()
+                    recorder.record("stale-end")
+                }
+            ) else {
+                Issue.record("Expected active root surface attach to be accepted before duplicate replacement.")
+                return
+            }
+
+            await recorder.waitForCount(1)
+            #expect(duplicateRequestID == requestID)
+            #expect(manager.pendingSurfaceAttachRequestIDs == [requestID])
+
+            // When the stale attach operation completes.
+            await gate.open()
+            await manager.waitForSurfaceAttachRequest(requestID)
+
+            // Then the same request remains awaitable and applies the latest
+            // duplicate operation before clearing pending state.
+            #expect(recorder.events == ["stale-start", "stale-end", "latest-attach"])
+            #expect(manager.pendingSurfaceAttachRequestIDs.isEmpty)
+        }
+    }
+
+    @Test
     func rootSurfaceAttachRejectsExistingShellAndShellStartInFlight() async {
         await withCleanConnectionManager { manager in
             let server = makeServer()
@@ -367,6 +419,59 @@ struct TerminalSurfaceAttachIntentTests {
             // the operation that binds runtime work to the latest pane surface.
             #expect(duplicateRequestID == requestID)
             #expect(recorder.events == ["latest-pane-attach"])
+        }
+    }
+
+    @Test
+    func paneSurfaceAttachRunsLatestDuplicateOperationAfterAttachSuspends() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tab = TerminalTab(serverId: server.id, title: "Tencent")
+            manager.tabsByServer[server.id] = [tab]
+            manager.selectedTabByServer[server.id] = tab.id
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+
+            let recorder = SurfaceAttachRecorder()
+            let gate = SurfaceAttachGate()
+            var duplicateRequestID: UUID?
+
+            // Given pane attach has already entered app-owned runtime work.
+            guard let requestID = manager.requestSurfaceAttach(
+                paneId: tab.rootPaneId,
+                context: .active,
+                attachOperation: {
+                    recorder.record("stale-pane-start")
+                    duplicateRequestID = manager.requestSurfaceAttach(
+                        paneId: tab.rootPaneId,
+                        context: .active,
+                        attachOperation: {
+                            recorder.record("latest-pane-attach")
+                        }
+                    )
+                    await gate.wait()
+                    recorder.record("stale-pane-end")
+                }
+            ) else {
+                Issue.record("Expected active pane surface attach to be accepted before duplicate replacement.")
+                return
+            }
+
+            await recorder.waitForCount(1)
+            #expect(duplicateRequestID == requestID)
+            #expect(manager.pendingSurfaceAttachRequestIDs == [requestID])
+
+            // When the stale pane attach operation exits.
+            await gate.open()
+            await manager.waitForSurfaceAttachRequest(requestID)
+
+            // Then the latest pane operation still runs under the same
+            // awaitable request before pending state is cleared.
+            #expect(recorder.events == ["stale-pane-start", "stale-pane-end", "latest-pane-attach"])
+            #expect(manager.pendingSurfaceAttachRequestIDs.isEmpty)
         }
     }
 
