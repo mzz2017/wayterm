@@ -275,6 +275,51 @@ struct PaneRetryCredentialLifecycleTests {
     }
 
     @Test
+    func tabManagerHostRetrustCompletionCanStartFreshRetrustRequest() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tabId = UUID()
+            let paneId = UUID()
+            let gate = PaneRetryOperationGate()
+            var paneState = TerminalPaneState(paneId: paneId, tabId: tabId, serverId: server.id)
+            paneState.connectionState = .failed("Host key verification failed")
+            manager.paneStates[paneId] = paneState
+            manager.setPaneHostRetrustOperationForTesting { _, _ in
+                await gate.run()
+                return true
+            }
+            var callbackTriggeredRequestID: UUID?
+
+            // Given pane host-retrust completion immediately asks the
+            // application owner to retry trust and reconnect again.
+            let firstRequestID = manager.requestPaneHostRetrust(
+                paneId: paneId,
+                server: server,
+                onCompleted: { _ in
+                    callbackTriggeredRequestID = manager.requestPaneHostRetrust(
+                        paneId: paneId,
+                        server: server
+                    )
+                }
+            )
+            await gate.waitForCallCount(1)
+
+            // When the first retrust request finishes.
+            await gate.release()
+            await manager.waitForPaneHostRetrustRequest(firstRequestID)
+            for _ in 0..<50 where await gate.callCount < 2 {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+
+            // Then the callback-triggered retrust intent starts a fresh owner
+            // request instead of joining the completing request.
+            #expect(callbackTriggeredRequestID != nil)
+            #expect(callbackTriggeredRequestID != firstRequestID)
+            #expect(await gate.callCount == 2)
+        }
+    }
+
+    @Test
     func tabManagerLoadsCredentialsThroughApplicationBoundary() async {
         await withCleanTabManager { manager in
             let server = makeServer()
@@ -339,6 +384,52 @@ struct PaneRetryCredentialLifecycleTests {
             #expect(firstResult?.credentials?.serverId == server.id)
             #expect(secondResult?.credentials?.serverId == server.id)
             #expect(manager.pendingPaneCredentialLoadRequestIDs.isEmpty)
+        }
+    }
+
+    @Test
+    func tabManagerCredentialLoadCompletionCanStartFreshLoadRequest() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tab = TerminalTab(serverId: server.id, title: server.name)
+            let credentialGate = PaneCredentialProviderGate(credentials: makeCredentials(serverId: server.id))
+            manager.tabsByServer[server.id] = [tab]
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: server.id
+            )
+            manager.setCredentialsProviderForTesting { _ in
+                await credentialGate.load()
+            }
+            var callbackTriggeredRequestID: UUID?
+
+            // Given pane credential-load completion immediately asks the
+            // application owner to load credentials again.
+            let firstRequestID = manager.requestPaneCredentialLoad(
+                paneId: tab.rootPaneId,
+                server: server,
+                onCompleted: { _ in
+                    callbackTriggeredRequestID = manager.requestPaneCredentialLoad(
+                        paneId: tab.rootPaneId,
+                        server: server
+                    )
+                }
+            )
+            await credentialGate.waitForLoadCount(1)
+
+            // When the first Keychain-backed load finishes.
+            await credentialGate.release()
+            await manager.waitForPaneCredentialLoadRequest(firstRequestID)
+            for _ in 0..<50 where await credentialGate.loadCount < 2 {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+
+            // Then the callback-triggered credential intent starts a fresh
+            // owner request instead of joining the completing request.
+            #expect(callbackTriggeredRequestID != nil)
+            #expect(callbackTriggeredRequestID != firstRequestID)
+            #expect(await credentialGate.loadCount == 2)
         }
     }
 

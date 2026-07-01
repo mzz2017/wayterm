@@ -275,7 +275,9 @@ extension ConnectionSessionManager {
             let result = await self.loadCredentials(for: server)
             guard self.canRunSessionCredentialLoad(session: session, server: server) else { return }
 
-            let callbacks = self.sessionCredentialLoadRequestStore[requestID]?.onCompleted ?? []
+            let callbacks = self.sessionCredentialLoadRequestStore
+                .remove(id: requestID, ifMappedTo: session.id)?
+                .onCompleted ?? []
             callbacks.forEach { $0(result) }
         }
         sessionCredentialLoadRequestStore.insert(
@@ -329,7 +331,9 @@ extension ConnectionSessionManager {
             }
 
             guard self.canRunSessionHostRetrust(session: session, server: server) else {
-                let callbacks = self.sessionHostRetrustRequestStore[requestID]?.onCompleted ?? []
+                let callbacks = self.sessionHostRetrustRequestStore
+                    .remove(id: requestID, ifMappedTo: session.id)?
+                    .onCompleted ?? []
                 callbacks.forEach { $0(false) }
                 return
             }
@@ -345,7 +349,9 @@ extension ConnectionSessionManager {
             let didReconnect = await self.retrustHostAndReconnect(session: session, server: server)
             #endif
 
-            let callbacks = self.sessionHostRetrustRequestStore[requestID]?.onCompleted ?? []
+            let callbacks = self.sessionHostRetrustRequestStore
+                .remove(id: requestID, ifMappedTo: session.id)?
+                .onCompleted ?? []
             callbacks.forEach {
                 $0(self.canRunSessionHostRetrust(session: session, server: server) ? didReconnect : false)
             }

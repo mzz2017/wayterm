@@ -348,6 +348,52 @@ struct ConnectionRetryCredentialLifecycleTests {
     }
 
     @Test
+    func connectionManagerHostRetrustCompletionCanStartFreshRetrustRequest() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .failed("Host key verification failed")
+            )
+            let gate = RetryOperationGate()
+            manager.sessions = [session]
+            manager.setSessionHostRetrustOperationForTesting { _, _ in
+                await gate.run()
+                return true
+            }
+            var callbackTriggeredRequestID: UUID?
+
+            // Given host-retrust completion immediately asks the application
+            // owner to retry trust and reconnect again.
+            let firstRequestID = manager.requestSessionHostRetrust(
+                session: session,
+                server: server,
+                onCompleted: { _ in
+                    callbackTriggeredRequestID = manager.requestSessionHostRetrust(
+                        session: session,
+                        server: server
+                    )
+                }
+            )
+            await gate.waitForCallCount(1)
+
+            // When the first retrust request finishes.
+            await gate.release()
+            await manager.waitForSessionHostRetrustRequest(firstRequestID)
+            for _ in 0..<50 where await gate.callCount < 2 {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+
+            // Then the callback-triggered retrust intent starts a fresh owner
+            // request instead of joining the completing request.
+            #expect(callbackTriggeredRequestID != nil)
+            #expect(callbackTriggeredRequestID != firstRequestID)
+            #expect(await gate.callCount == 2)
+        }
+    }
+
+    @Test
     func connectionManagerLoadsCredentialsThroughApplicationBoundary() async {
         await withCleanConnectionManager { manager in
             let server = makeServer()
@@ -414,6 +460,47 @@ struct ConnectionRetryCredentialLifecycleTests {
                 manager.pendingSessionCredentialLoadRequestIDs.isEmpty,
                 "Session credential-load request state should clear after callbacks receive the final result."
             )
+        }
+    }
+
+    @Test
+    func connectionManagerCredentialLoadCompletionCanStartFreshLoadRequest() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(serverId: server.id, title: server.name)
+            let credentialGate = RetryCredentialProviderGate(credentials: makeCredentials(serverId: server.id))
+            manager.sessions = [session]
+            manager.setCredentialsProviderForTesting { _ in
+                await credentialGate.load()
+            }
+            var callbackTriggeredRequestID: UUID?
+
+            // Given credential-load completion immediately asks the
+            // application owner to load credentials again.
+            let firstRequestID = manager.requestSessionCredentialLoad(
+                session: session,
+                server: server,
+                onCompleted: { _ in
+                    callbackTriggeredRequestID = manager.requestSessionCredentialLoad(
+                        session: session,
+                        server: server
+                    )
+                }
+            )
+            await credentialGate.waitForLoadCount(1)
+
+            // When the first Keychain-backed load finishes.
+            await credentialGate.release()
+            await manager.waitForSessionCredentialLoadRequest(firstRequestID)
+            for _ in 0..<50 where await credentialGate.loadCount < 2 {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+
+            // Then the callback-triggered credential intent starts a fresh
+            // owner request instead of joining the completing request.
+            #expect(callbackTriggeredRequestID != nil)
+            #expect(callbackTriggeredRequestID != firstRequestID)
+            #expect(await credentialGate.loadCount == 2)
         }
     }
 

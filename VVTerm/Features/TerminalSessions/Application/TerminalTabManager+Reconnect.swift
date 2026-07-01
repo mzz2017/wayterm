@@ -121,7 +121,9 @@ extension TerminalTabManager {
             let result = await self.loadCredentials(for: server)
             guard self.canRunPaneCredentialLoad(paneId: paneId, server: server) else { return }
 
-            let callbacks = self.paneCredentialLoadRequestStore[requestID]?.onCompleted ?? []
+            let callbacks = self.paneCredentialLoadRequestStore
+                .remove(id: requestID, ifMappedTo: paneId)?
+                .onCompleted ?? []
             callbacks.forEach { $0(result) }
         }
         paneCredentialLoadRequestStore.insert(
@@ -167,7 +169,9 @@ extension TerminalTabManager {
             }
 
             guard self.canRunPaneHostRetrust(paneId: paneId, server: server) else {
-                let callbacks = self.paneHostRetrustRequestStore[requestID]?.onCompleted ?? []
+                let callbacks = self.paneHostRetrustRequestStore
+                    .remove(id: requestID, ifMappedTo: paneId)?
+                    .onCompleted ?? []
                 callbacks.forEach { $0(false) }
                 return
             }
@@ -183,7 +187,9 @@ extension TerminalTabManager {
             let didReconnect = await self.retrustHostAndReconnect(paneId: paneId, server: server)
             #endif
 
-            let callbacks = self.paneHostRetrustRequestStore[requestID]?.onCompleted ?? []
+            let callbacks = self.paneHostRetrustRequestStore
+                .remove(id: requestID, ifMappedTo: paneId)?
+                .onCompleted ?? []
             callbacks.forEach {
                 $0(self.canRunPaneHostRetrust(paneId: paneId, server: server) ? didReconnect : false)
             }
