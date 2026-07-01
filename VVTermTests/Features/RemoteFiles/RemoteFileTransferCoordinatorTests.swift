@@ -257,7 +257,7 @@ struct RemoteFileTransferCoordinatorTests {
         // path: copy writes a hidden temporary file and renames it into place.
         let operations = destinationService.operations
         let uploadPaths = operations.compactMap { operation -> String? in
-            guard case .upload(let path, _) = operation else { return nil }
+            guard case .upload(let path, _, _) = operation else { return nil }
             return path
         }
         let uploadedPath = try #require(uploadPaths.first)
@@ -265,6 +265,39 @@ struct RemoteFileTransferCoordinatorTests {
         #expect(uploadedPath.hasPrefix("/destination/.file.txt.vvterm-upload-"))
         #expect(operations.contains(.renameItem(source: uploadedPath, destination: "/destination/file.txt")))
         #expect(!operations.contains(.deleteFile(uploadedPath)))
+    }
+
+    @Test
+    func copyFileUploadMasksRemoteFileTypeBitsFromDestinationPermissions() async throws {
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            serverProvider: { _ in nil }
+        )
+        let sourceService = RecordingRemoteFileService(
+            directoryContents: [:],
+            downloadData: Data("copied payload".utf8)
+        )
+        let destinationService = RecordingRemoteFileService(directoryContents: [:])
+        let sourceEntry = makeEntry(
+            name: "script.sh",
+            path: "/source/script.sh",
+            type: .file,
+            permissions: UInt32(LIBSSH2_SFTP_S_IFREG) | 0o750
+        )
+
+        // Given the source SFTP attributes include both file type bits and
+        // access bits, as libssh2 commonly reports for remote entries.
+        try await store.copyRemoteEntry(
+            sourceEntry,
+            to: "/destination",
+            sourceService: sourceService,
+            destinationService: destinationService,
+            progressTracker: nil
+        )
+
+        // Then the destination upload receives only chmod-style permission
+        // bits; file type bits must not leak into the create mode.
+        #expect(destinationService.uploadPermissions == [0o750])
     }
 
     @Test
@@ -541,7 +574,7 @@ struct RemoteFileTransferCoordinatorTests {
 
         let operations = service.operations
         let uploadPaths = operations.compactMap { operation -> String? in
-            guard case .upload(let path, _) = operation else { return nil }
+            guard case .upload(let path, _, _) = operation else { return nil }
             return path
         }
         let uploadedPath = try #require(uploadPaths.first)
@@ -657,14 +690,19 @@ struct RemoteFileTransferCoordinatorTests {
         }
     }
 
-    private func makeEntry(name: String, path: String, type: RemoteFileType = .file) -> RemoteFileEntry {
+    private func makeEntry(
+        name: String,
+        path: String,
+        type: RemoteFileType = .file,
+        permissions: UInt32? = nil
+    ) -> RemoteFileEntry {
         RemoteFileEntry(
             name: name,
             path: path,
             type: type,
             size: nil,
             modifiedAt: nil,
-            permissions: nil,
+            permissions: permissions,
             symlinkTarget: nil
         )
     }
@@ -700,7 +738,7 @@ struct RemoteFileTransferCoordinatorTests {
 private final class RecordingRemoteFileService: RemoteFileService, @unchecked Sendable {
     enum Operation: Equatable, Sendable {
         case downloadFile(String)
-        case upload(path: String, text: String)
+        case upload(path: String, text: String, permissions: Int32)
         case createDirectory(String)
         case renameItem(source: String, destination: String)
         case deleteFile(String)
@@ -732,6 +770,15 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         lock.lock()
         defer { lock.unlock() }
         return downloadObservedSecurityScopeStorage
+    }
+
+    var uploadPermissions: [Int32] {
+        lock.lock()
+        defer { lock.unlock() }
+        return operationStorage.compactMap { operation in
+            guard case .upload(_, _, let permissions) = operation else { return nil }
+            return permissions
+        }
     }
 
     init(
@@ -801,7 +848,8 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         let normalizedPath = RemoteFilePath.normalize(remotePath)
         record(.upload(
             path: normalizedPath,
-            text: String(data: data, encoding: .utf8) ?? "<binary>"
+            text: String(data: data, encoding: .utf8) ?? "<binary>",
+            permissions: permissions
         ))
         await uploadBlocker?.waitIfNeeded(path: normalizedPath)
     }

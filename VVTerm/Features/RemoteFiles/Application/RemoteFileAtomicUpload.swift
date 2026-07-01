@@ -5,8 +5,8 @@ enum RemoteFileAtomicPublishMode: Sendable {
     case failIfDestinationExists
 }
 
-extension RemoteFileBrowserStore {
-    nonisolated func uploadAtomically(
+nonisolated struct RemoteFileAtomicUploader: Sendable {
+    func uploadAtomically(
         _ data: Data,
         to remotePath: String,
         permissions: Int32,
@@ -30,7 +30,7 @@ extension RemoteFileBrowserStore {
         }
     }
 
-    nonisolated func publishAtomicRemoteItem(
+    func publishAtomicRemoteItem(
         at temporaryRemotePath: String,
         to remotePath: String,
         publishMode: RemoteFileAtomicPublishMode,
@@ -44,7 +44,7 @@ extension RemoteFileBrowserStore {
         }
     }
 
-    private nonisolated func removeAtomicUploadTemporaryFile(
+    private func removeAtomicUploadTemporaryFile(
         _ temporaryRemotePath: String,
         using service: any RemoteFileService
     ) async {
@@ -54,13 +54,47 @@ extension RemoteFileBrowserStore {
         await cleanupTask.value
     }
 
-    private nonisolated func makeAtomicRemoteUploadPath(for remotePath: String) -> String {
+    private func makeAtomicRemoteUploadPath(for remotePath: String) -> String {
         let normalizedPath = RemoteFilePath.normalize(remotePath)
         let parentPath = RemoteFilePath.parent(of: normalizedPath)
         let targetName = normalizedPath.split(separator: "/").last.map(String.init) ?? "upload"
         return RemoteFilePath.appending(
             ".\(targetName).vvterm-upload-\(UUID().uuidString).tmp",
             to: parentPath
+        )
+    }
+}
+
+extension RemoteFileBrowserStore {
+    nonisolated func uploadAtomically(
+        _ data: Data,
+        to remotePath: String,
+        permissions: Int32,
+        strategy: SSHUploadStrategy = .automatic,
+        publishMode: RemoteFileAtomicPublishMode = .replaceExisting,
+        using service: any RemoteFileService
+    ) async throws {
+        try await RemoteFileAtomicUploader().uploadAtomically(
+            data,
+            to: remotePath,
+            permissions: permissions,
+            strategy: strategy,
+            publishMode: publishMode,
+            using: service
+        )
+    }
+
+    nonisolated func publishAtomicRemoteItem(
+        at temporaryRemotePath: String,
+        to remotePath: String,
+        publishMode: RemoteFileAtomicPublishMode,
+        using service: any RemoteFileService
+    ) async throws {
+        try await RemoteFileAtomicUploader().publishAtomicRemoteItem(
+            at: temporaryRemotePath,
+            to: remotePath,
+            publishMode: publishMode,
+            using: service
         )
     }
 }
