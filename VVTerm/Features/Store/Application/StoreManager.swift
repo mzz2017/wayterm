@@ -454,11 +454,10 @@ final class StoreManager: ObservableObject {
         productId: String,
         finishTransaction: @MainActor () async -> Void
     ) async throws {
-        await finishTransaction()
-        try Task.checkCancellation()
         await checkEntitlementsAction(self)
         try Task.checkCancellation()
         applySuccessfulPurchase(productId: productId)
+        await finishTransaction()
     }
 
     private func applySuccessfulPurchase(productId: String) {

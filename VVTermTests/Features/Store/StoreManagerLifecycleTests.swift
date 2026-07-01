@@ -348,15 +348,18 @@ struct StoreManagerLifecycleTests {
         )
         manager.purchaseState = .purchasing
 
-        // Given a verified purchase has finished its StoreKit transaction and
-        // is suspended while refreshing entitlements.
+        // Given a verified purchase is suspended while refreshing entitlements
+        // before StoreKit transaction finish.
         let task = Task { @MainActor in
             await manager.completeVerifiedPurchaseForTesting(productId: "vvterm.pro.monthly") {
                 didFinishTransaction = true
             }
         }
         await entitlementGate.waitForOperationStart()
-        #expect(didFinishTransaction, "Verified purchases should finish the StoreKit transaction before refreshing entitlements.")
+        #expect(
+            !didFinishTransaction,
+            "Verified purchases should refresh and publish entitlements before finishing the StoreKit transaction."
+        )
 
         // When lifecycle cancellation arrives before entitlement refresh can
         // publish fresh access state.
@@ -378,6 +381,39 @@ struct StoreManagerLifecycleTests {
             telemetry.purchasedProducts.isEmpty,
             "Canceled purchase must not emit purchase telemetry."
         )
+        #expect(
+            !didFinishTransaction,
+            "Canceled purchase must not finish the StoreKit transaction before entitlement refresh can publish access."
+        )
+    }
+
+    @Test
+    func verifiedPurchasePublishesAccessBeforeFinishingTransaction() async {
+        let telemetry = StoreTelemetrySpy()
+        let manager = StoreManager.makeForTesting(telemetry: telemetry)
+        manager.purchaseState = .purchasing
+        var purchaseStateAtFinish: PurchaseState?
+        var purchasedProductAtFinish: String?
+
+        // Given a verified purchase completes its entitlement refresh.
+        await manager.completeVerifiedPurchaseForTesting(productId: "vvterm.pro.monthly") {
+            purchaseStateAtFinish = manager.purchaseState
+            purchasedProductAtFinish = manager.lastPurchasedProductId
+        }
+
+        // Then StoreManager records durable purchase success before finishing
+        // the StoreKit transaction.
+        #expect(
+            purchaseStateAtFinish == .purchased,
+            "Verified purchase success should be published before transaction finish."
+        )
+        #expect(
+            purchasedProductAtFinish == "vvterm.pro.monthly",
+            "Verified purchase product id should be recorded before transaction finish."
+        )
+        #expect(telemetry.purchasedProducts.count == 1)
+        #expect(telemetry.purchasedProducts.first?.productId == "vvterm.pro.monthly")
+        #expect(telemetry.purchasedProducts.first?.source == .general)
     }
 
     @Test
