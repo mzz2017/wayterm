@@ -2,7 +2,7 @@ import Foundation
 
 @MainActor
 final class StoreRequestLifecycleCoordinator {
-    nonisolated private let cancellationBox = StoreRequestLifecycleCancellationBox()
+    nonisolated private let cancellationBox = StoreTaskCancellationBox()
     private var requestTask: Task<Void, Never>?
     private var requestID: UUID?
     private(set) var lastRequestFailure: Error?
@@ -76,7 +76,7 @@ final class StoreRequestLifecycleCoordinator {
     }
 }
 
-nonisolated final class StoreRequestLifecycleCancellationBox: @unchecked Sendable {
+nonisolated final class StoreTaskCancellationBox: @unchecked Sendable {
     private let lock = NSLock()
     private var task: Task<Void, Never>?
 

@@ -31,6 +31,7 @@ final class StoreManager: ObservableObject {
     private(set) var hasPresentedPaywallThisLaunch = false
     private let purchaseRequestCoordinator = StoreRequestLifecycleCoordinator()
     private let restoreRequestCoordinator = StoreRequestLifecycleCoordinator()
+    private let entitlementRefreshCoordinator = StoreEntitlementRefreshCoordinator()
     var lastPurchaseRequestFailure: Error? { purchaseRequestCoordinator.lastRequestFailure }
     var lastRestoreRequestFailure: Error? { restoreRequestCoordinator.lastRequestFailure }
     var pendingPurchaseRequestIDs: Set<UUID> { purchaseRequestCoordinator.pendingRequestIDs }
@@ -40,16 +41,13 @@ final class StoreManager: ObservableObject {
         return [productLoadRequestID]
     }
     var pendingEntitlementRefreshRequestIDs: Set<UUID> {
-        guard let entitlementRefreshRequestID else { return [] }
-        return [entitlementRefreshRequestID]
+        entitlementRefreshCoordinator.pendingRequestIDs
     }
 
     private var startupRefreshTask: Task<Void, Never>?
     private var startupRefreshTaskID: UUID?
     private var reviewModeRefreshTask: Task<Void, Never>?
     private var reviewModeRefreshTaskID: UUID?
-    private var entitlementRefreshTask: Task<Void, Never>?
-    private var entitlementRefreshRequestID: UUID?
     private var subscriptionExpirationRefreshTask: Task<Void, Never>?
     private var subscriptionExpirationRefreshTaskID: UUID?
     private var productLoadRequestTask: Task<Void, Never>?
@@ -60,7 +58,6 @@ final class StoreManager: ObservableObject {
     private var reviewModeExpiryTask: Task<Void, Never>?
     private var reviewModeExpiresAt: Date?
     private var entitlementRefreshGeneration = 0
-    private var shouldRefreshEntitlementsAfterCurrent = false
     private let loadProductsAction: StoreLifecycleAction
     private let checkEntitlementsAction: StoreLifecycleAction
     private let transactionListenerAction: StoreTransactionListenerAction
@@ -117,7 +114,7 @@ final class StoreManager: ObservableObject {
         updateListenerTask?.cancel()
         startupRefreshTask?.cancel()
         reviewModeRefreshTask?.cancel()
-        entitlementRefreshTask?.cancel()
+        entitlementRefreshCoordinator.cancelAllFromAnyContext()
         subscriptionExpirationRefreshTask?.cancel()
         reviewModeExpiryTask?.cancel()
         productLoadRequestTask?.cancel()
@@ -130,7 +127,6 @@ final class StoreManager: ObservableObject {
             updateListenerTask,
             startupRefreshTask,
             reviewModeRefreshTask,
-            entitlementRefreshTask,
             subscriptionExpirationRefreshTask,
             reviewModeExpiryTask,
             productLoadRequestTask
@@ -139,6 +135,7 @@ final class StoreManager: ObservableObject {
         trackedTasks.forEach { $0.cancel() }
         await purchaseRequestCoordinator.cancelAllAndWait()
         await restoreRequestCoordinator.cancelAllAndWait()
+        await entitlementRefreshCoordinator.cancelAllAndWait()
         for task in trackedTasks {
             await task.value
         }
@@ -149,9 +146,6 @@ final class StoreManager: ObservableObject {
         startupRefreshTaskID = nil
         reviewModeRefreshTask = nil
         reviewModeRefreshTaskID = nil
-        entitlementRefreshTask = nil
-        entitlementRefreshRequestID = nil
-        shouldRefreshEntitlementsAfterCurrent = false
         subscriptionExpirationRefreshTask = nil
         subscriptionExpirationRefreshTaskID = nil
         reviewModeExpiryTask = nil
@@ -249,43 +243,14 @@ final class StoreManager: ObservableObject {
 
     @discardableResult
     func requestEntitlementRefresh(reason: StoreEntitlementRefreshReason) -> UUID {
-        if let entitlementRefreshRequestID {
-            if reason == .subscriptionExpiration {
-                shouldRefreshEntitlementsAfterCurrent = true
-            }
-            return entitlementRefreshRequestID
-        }
-
-        let requestID = UUID()
-        entitlementRefreshRequestID = requestID
-
-        let task = Task { @MainActor [weak self] in
+        entitlementRefreshCoordinator.requestRefresh(reason: reason) { [weak self] in
             guard let self else { return }
-            defer {
-                if self.entitlementRefreshRequestID == requestID {
-                    self.entitlementRefreshRequestID = nil
-                    self.entitlementRefreshTask = nil
-                    self.shouldRefreshEntitlementsAfterCurrent = false
-                }
-            }
-
-            repeat {
-                self.shouldRefreshEntitlementsAfterCurrent = false
-                guard !Task.isCancelled else { return }
-                await self.checkEntitlementsAction(self)
-                guard !Task.isCancelled else { return }
-            } while self.shouldRefreshEntitlementsAfterCurrent
+            await self.checkEntitlementsAction(self)
         }
-
-        if entitlementRefreshRequestID == requestID {
-            entitlementRefreshTask = task
-        }
-        return requestID
     }
 
     func waitForEntitlementRefreshRequest(_ requestID: UUID) async {
-        guard entitlementRefreshRequestID == requestID else { return }
-        await entitlementRefreshTask?.value
+        await entitlementRefreshCoordinator.waitForRefresh(requestID)
     }
 
     func loadProducts() async {
