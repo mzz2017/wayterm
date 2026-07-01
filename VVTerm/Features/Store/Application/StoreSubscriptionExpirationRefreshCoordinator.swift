@@ -9,6 +9,7 @@ final class StoreSubscriptionExpirationRefreshCoordinator {
     private let sleepAction: StoreSubscriptionExpirationSleepAction
     private var refreshTask: Task<Void, Never>?
     private var requestID: UUID?
+    private var supersededRefreshTasks: [UUID: Task<Void, Never>] = [:]
 
     init(
         sleepAction: @escaping StoreSubscriptionExpirationSleepAction = { duration in
@@ -28,6 +29,10 @@ final class StoreSubscriptionExpirationRefreshCoordinator {
         at expirationDate: Date,
         operation: @escaping StoreSubscriptionExpirationRefreshAction
     ) -> UUID {
+        if let supersededRequestID = requestID,
+           let supersededTask = refreshTask {
+            supersededRefreshTasks[supersededRequestID] = supersededTask
+        }
         cancellationBox.cancel()
 
         let requestID = UUID()
@@ -43,6 +48,7 @@ final class StoreSubscriptionExpirationRefreshCoordinator {
                     self.refreshTask = nil
                     self.cancellationBox.clear()
                 }
+                self.supersededRefreshTasks[requestID] = nil
             }
 
             await self.sleepAction(.nanoseconds(delayNanoseconds))
@@ -60,8 +66,12 @@ final class StoreSubscriptionExpirationRefreshCoordinator {
     }
 
     func waitForRefresh(_ requestID: UUID) async {
-        guard self.requestID == requestID else { return }
-        await refreshTask?.value
+        if self.requestID == requestID {
+            await refreshTask?.value
+            return
+        }
+
+        await supersededRefreshTasks[requestID]?.value
     }
 
     func cancelAll() {
@@ -73,11 +83,14 @@ final class StoreSubscriptionExpirationRefreshCoordinator {
     }
 
     func cancelAllAndWait() async {
-        let task = refreshTask
+        let tasks = [refreshTask].compactMap { $0 } + Array(supersededRefreshTasks.values)
         cancellationBox.cancel()
-        await task?.value
+        for task in tasks {
+            await task.value
+        }
         refreshTask = nil
         requestID = nil
+        supersededRefreshTasks.removeAll()
         cancellationBox.clear()
     }
 }

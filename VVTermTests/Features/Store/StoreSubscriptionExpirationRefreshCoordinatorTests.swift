@@ -86,6 +86,53 @@ struct StoreSubscriptionExpirationRefreshCoordinatorTests {
         #expect(refreshes == ["second"])
         #expect(coordinator.pendingRequestIDs.isEmpty)
     }
+
+    @Test
+    func waitForSupersededExpirationRefreshAwaitsCanceledDelayCleanup() async {
+        let sleepSequence = SubscriptionExpirationCleanupSleepSequence()
+        let refreshGate = SubscriptionExpirationGate()
+        let coordinator = StoreSubscriptionExpirationRefreshCoordinator { _ in
+            await sleepSequence.sleep()
+        }
+
+        // Given an expiration refresh is waiting on its delay and performs
+        // async cancellation cleanup before the old lifecycle is finished.
+        let firstID = coordinator.scheduleRefresh(at: Date().addingTimeInterval(60)) {}
+        await sleepSequence.waitForFirstStart()
+
+        // When a newer expiration refresh replaces it.
+        let secondID = coordinator.scheduleRefresh(at: Date().addingTimeInterval(120)) {
+            await refreshGate.waitForRelease()
+        }
+        await sleepSequence.waitForSecondStart()
+
+        // Then waiting for the superseded request remains tied to the old task
+        // rather than returning only because the visible request ID changed.
+        var didFinishWaitingForFirst = false
+        let waiter = Task { @MainActor in
+            await coordinator.waitForRefresh(firstID)
+            didFinishWaitingForFirst = true
+        }
+        await Task.yield()
+
+        #expect(
+            !didFinishWaitingForFirst,
+            "Waiting for a superseded expiration refresh should wait for the canceled delay task to exit."
+        )
+
+        await sleepSequence.releaseFirstCleanup()
+        await waiter.value
+
+        #expect(didFinishWaitingForFirst)
+        #expect(coordinator.pendingRequestIDs == [secondID])
+
+        await sleepSequence.releaseSecond()
+        await refreshGate.waitForOperationStart()
+        await refreshGate.release()
+        await coordinator.waitForRefresh(secondID)
+
+        #expect(coordinator.pendingRequestIDs.isEmpty)
+    }
 }
 
 private actor SubscriptionExpirationGate {
@@ -155,5 +202,50 @@ private actor SubscriptionExpirationSleepSequence {
 
     func releaseSecond() async {
         await secondGate.release()
+    }
+}
+
+private actor SubscriptionExpirationCleanupSleepSequence {
+    private let firstGate = SubscriptionExpirationGate()
+    private let firstCleanupGate = SubscriptionExpirationGate()
+    private let secondGate = SubscriptionExpirationGate()
+    private var sleepCount = 0
+
+    func sleep() async {
+        sleepCount += 1
+        if sleepCount == 1 {
+            await withTaskCancellationHandler {
+                await firstGate.waitForRelease()
+                if Task.isCancelled {
+                    await firstCleanupGate.waitForRelease()
+                }
+            } onCancel: {
+                Task {
+                    await self.releaseFirstDelay()
+                }
+            }
+        } else {
+            await secondGate.waitForRelease()
+        }
+    }
+
+    func waitForFirstStart() async {
+        await firstGate.waitForOperationStart()
+    }
+
+    func waitForSecondStart() async {
+        await secondGate.waitForOperationStart()
+    }
+
+    func releaseFirstCleanup() async {
+        await firstCleanupGate.release()
+    }
+
+    func releaseSecond() async {
+        await secondGate.release()
+    }
+
+    private func releaseFirstDelay() async {
+        await firstGate.release()
     }
 }
