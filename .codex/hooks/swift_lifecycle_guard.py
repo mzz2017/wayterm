@@ -35,6 +35,7 @@ def repo_root() -> pathlib.Path:
 STATE_DIR = repo_root() / ".codex" / "state"
 BEST_PRACTICES_MARKER = "swift-best-practices-read"
 BEST_PRACTICES_DOCUMENT = "docs/engineering/swift-best-practices.md"
+BEST_PRACTICES_DOCUMENT_NAME = "swift-best-practices.md"
 
 
 def best_practices_marker_path() -> pathlib.Path:
@@ -62,15 +63,39 @@ def reset_best_practices_marker() -> int:
     return 0
 
 
+def string_mentions_best_practices_document(value: str) -> bool:
+    normalized = value.replace("\\", "/")
+    return (
+        normalized.endswith(BEST_PRACTICES_DOCUMENT)
+        or normalized.endswith(BEST_PRACTICES_DOCUMENT_NAME)
+        or BEST_PRACTICES_DOCUMENT in normalized
+    )
+
+
+def command_reads_best_practices_document(command: str) -> bool:
+    if not string_mentions_best_practices_document(command):
+        return False
+    return bool(re.search(r"\b(rtk\s+read|read|sed|cat|nl)\b", command))
+
+
 def tool_use_marks_best_practices_read(payload: object) -> bool:
     if not isinstance(payload, dict):
         return False
 
-    tool_name = str(payload.get("tool_name") or payload.get("tool") or payload.get("name") or "")
+    tool_name = str(
+        payload.get("tool_name")
+        or payload.get("tool")
+        or payload.get("name")
+        or payload.get("recipient_name")
+        or payload.get("recipient")
+        or ""
+    )
     tool_input = (
         payload.get("tool_input")
         or payload.get("input")
         or payload.get("parameters")
+        or payload.get("arguments")
+        or payload.get("args")
         or {}
     )
 
@@ -94,26 +119,37 @@ def tool_use_marks_best_practices_read(payload: object) -> bool:
             tool_input.get("file_path")
             or tool_input.get("path")
             or tool_input.get("uri")
+            or tool_input.get("ref_id")
             or ""
         )
-        return file_path.endswith(BEST_PRACTICES_DOCUMENT)
+        return string_mentions_best_practices_document(file_path)
 
     if "exec_command" in tool_name:
         command = str(tool_input.get("cmd") or tool_input.get("command") or "")
-        if BEST_PRACTICES_DOCUMENT not in command:
-            return False
-        return bool(re.search(r"\b(rtk\s+read|read|sed|cat|nl)\b", command))
+        return command_reads_best_practices_document(command)
 
+    return False
+
+
+def any_nested_tool_use_marks_best_practices_read(value: object) -> bool:
+    if tool_use_marks_best_practices_read(value):
+        return True
+    if isinstance(value, dict):
+        return any(any_nested_tool_use_marks_best_practices_read(item) for item in value.values())
+    if isinstance(value, list):
+        return any(any_nested_tool_use_marks_best_practices_read(item) for item in value)
+    if isinstance(value, str):
+        return command_reads_best_practices_document(value)
     return False
 
 
 def mark_best_practices_read_from_tool_use() -> int:
     try:
         payload = json.load(sys.stdin)
-    except json.JSONDecodeError:
+    except Exception:
         return 0
 
-    if tool_use_marks_best_practices_read(payload):
+    if any_nested_tool_use_marks_best_practices_read(payload):
         return mark_best_practices_read()
     return 0
 

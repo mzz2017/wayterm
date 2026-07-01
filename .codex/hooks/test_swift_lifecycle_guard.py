@@ -128,6 +128,44 @@ class SwiftLifecycleGuardTests(unittest.TestCase):
                 self.assertEqual(exit_code, 0)
                 self.assertTrue(self.guard.best_practices_marker_path().exists())
 
+    def test_arguments_payload_marks_best_practices_as_read(self) -> None:
+        payload = """{
+  "tool": "functions.exec_command",
+  "arguments": {
+    "cmd": "rtk sed -n '1,120p' docs/engineering/swift-best-practices.md"
+  }
+}
+"""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = pathlib.Path(tmpdir)
+            with mock.patch.object(self.guard, "STATE_DIR", state_dir), \
+                mock.patch.object(sys, "stdin", io.StringIO(payload)):
+                exit_code = self.guard.main(["--mark-best-practices-read-from-tool-use"])
+                self.assertEqual(exit_code, 0)
+                self.assertTrue(self.guard.best_practices_marker_path().exists())
+
+    def test_nested_event_payload_marks_best_practices_as_read(self) -> None:
+        payload = """{
+  "event": {
+    "payload": {
+      "tool_name": "Read",
+      "tool_input": {
+        "file_path": "/Users/mzz/projects/vvterm/docs/engineering/swift-best-practices.md"
+      }
+    }
+  }
+}
+"""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = pathlib.Path(tmpdir)
+            with mock.patch.object(self.guard, "STATE_DIR", state_dir), \
+                mock.patch.object(sys, "stdin", io.StringIO(payload)):
+                exit_code = self.guard.main(["--mark-best-practices-read-from-tool-use"])
+                self.assertEqual(exit_code, 0)
+                self.assertTrue(self.guard.best_practices_marker_path().exists())
+
     def test_unrelated_read_does_not_mark_best_practices_as_read(self) -> None:
         payload = """{
   "tool_name": "Read",
@@ -141,6 +179,15 @@ class SwiftLifecycleGuardTests(unittest.TestCase):
             state_dir = pathlib.Path(tmpdir)
             with mock.patch.object(self.guard, "STATE_DIR", state_dir), \
                 mock.patch.object(sys, "stdin", io.StringIO(payload)):
+                exit_code = self.guard.main(["--mark-best-practices-read-from-tool-use"])
+                self.assertEqual(exit_code, 0)
+                self.assertFalse(self.guard.best_practices_marker_path().exists())
+
+    def test_invalid_tool_payload_does_not_fail_post_tool_use(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = pathlib.Path(tmpdir)
+            with mock.patch.object(self.guard, "STATE_DIR", state_dir), \
+                mock.patch.object(sys, "stdin", io.StringIO("not json")):
                 exit_code = self.guard.main(["--mark-best-practices-read-from-tool-use"])
                 self.assertEqual(exit_code, 0)
                 self.assertFalse(self.guard.best_practices_marker_path().exists())
