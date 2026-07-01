@@ -37,7 +37,7 @@ nonisolated struct RemoteFileAtomicDirectoryCopyCoordinator: Sendable {
                 at: temporaryRemotePath,
                 permissions: modeBits(from: effectiveEntry.permissions, fallback: 0o755)
             )
-            let children = try await sourceService.listDirectory(at: entry.path, maxEntries: nil)
+            let children = try await sourceService.listDirectory(at: effectiveEntry.path, maxEntries: nil)
             for child in children {
                 try Task.checkCancellation()
                 try await copyChild(child, temporaryRemotePath)

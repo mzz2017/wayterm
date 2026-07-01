@@ -84,7 +84,7 @@ struct RemoteFileRecursiveTransferCoordinator {
             do {
                 try await createLocalDirectory(at: temporaryURL)
                 try await downloadDirectoryContents(
-                    of: entry,
+                    of: effectiveEntry,
                     to: temporaryURL,
                     using: service
                 )
@@ -171,7 +171,7 @@ struct RemoteFileRecursiveTransferCoordinator {
         let effectiveEntry = try await resolvedTransferEntry(for: entry, using: client)
         guard effectiveEntry.type == .directory else { return 1 }
 
-        let children = try await client.listDirectory(at: entry.path, maxEntries: nil)
+        let children = try await client.listDirectory(at: effectiveEntry.path, maxEntries: nil)
         var totalUnitCount = 1
 
         for child in children {
@@ -191,7 +191,7 @@ struct RemoteFileRecursiveTransferCoordinator {
         let resolvedEntry = try await client.stat(at: entry.path)
         return RemoteFileEntry(
             name: entry.name,
-            path: entry.path,
+            path: resolvedEntry.path,
             type: resolvedEntry.type,
             size: resolvedEntry.size,
             modifiedAt: resolvedEntry.modifiedAt,

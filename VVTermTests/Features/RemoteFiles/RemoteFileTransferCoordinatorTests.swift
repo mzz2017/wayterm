@@ -255,6 +255,100 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func downloadSymlinkToDirectoryUsesResolvedDirectoryPathForChildren() async throws {
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            serverProvider: { _ in nil }
+        )
+        let symlink = makeDirectorySymlinkEntry()
+        let service = RecordingRemoteFileService(
+            directoryContents: resolvedDirectoryContents(),
+            downloadData: Data("log".utf8),
+            statEntries: resolvedDirectoryStatEntries()
+        )
+        let parentURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RemoteFileTransferCoordinatorTests-\(UUID().uuidString)", isDirectory: true)
+        let destinationURL = parentURL.appendingPathComponent("current", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: parentURL) }
+
+        // Given a remote symlink resolves to a directory at a different SFTP
+        // path than the link itself.
+        try await store.downloadItem(symlink, to: destinationURL, using: service)
+
+        // Then recursive download follows the resolved directory owner for
+        // child listing and file transfer, while keeping the requested local
+        // destination name.
+        #expect(service.operations == [
+            .downloadFile("/source/releases/v1/app.log")
+        ])
+        #expect(
+            FileManager.default.fileExists(atPath: destinationURL.appendingPathComponent("app.log").path),
+            "Directory symlink downloads should materialize children under the requested destination folder."
+        )
+    }
+
+    @Test
+    func copySymlinkToDirectoryUsesResolvedDirectoryPathForChildren() async throws {
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            serverProvider: { _ in nil }
+        )
+        let symlink = makeDirectorySymlinkEntry()
+        let sourceService = RecordingRemoteFileService(
+            directoryContents: resolvedDirectoryContents(),
+            downloadData: Data("copied log".utf8),
+            statEntries: resolvedDirectoryStatEntries()
+        )
+        let destinationService = RecordingRemoteFileService(directoryContents: [:])
+
+        // Given a remote-to-remote copy starts from a symlink that resolves to
+        // a directory elsewhere on the source server.
+        try await store.copyRemoteEntry(
+            symlink,
+            to: "/destination",
+            sourceService: sourceService,
+            destinationService: destinationService,
+            progressTracker: nil
+        )
+
+        // Then child traversal reads from the resolved source directory, while
+        // the published destination keeps the symlink entry's requested name.
+        #expect(sourceService.operations == [
+            .downloadFile("/source/releases/v1/app.log")
+        ])
+        let operations = destinationService.operations
+        let stagingPath = try #require(operations.compactMap { operation -> String? in
+            guard case .createDirectory(let path) = operation else { return nil }
+            return path
+        }.first)
+        #expect(operations.contains(.renameItem(
+            source: stagingPath,
+            destination: "/destination/current"
+        )))
+    }
+
+    @Test
+    func countSymlinkToDirectoryUsesResolvedDirectoryPathForChildren() async throws {
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            serverProvider: { _ in nil }
+        )
+        let symlink = makeDirectorySymlinkEntry()
+        let service = RecordingRemoteFileService(
+            directoryContents: resolvedDirectoryContents(),
+            statEntries: resolvedDirectoryStatEntries()
+        )
+
+        // Given progress planning counts a symlink that resolves to a
+        // directory at a different path.
+        let unitCount = try await store.countRemoteTransferUnits(for: symlink, using: service)
+
+        // Then planning counts the resolved directory and its child, instead
+        // of treating the original link path as an empty directory.
+        #expect(unitCount == 2)
+    }
+
+    @Test
     func copyFileCancellationStopsAfterSourceDownloadBeforeDestinationUpload() async throws {
         let store = RemoteFileBrowserStore(
             persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
@@ -1047,6 +1141,36 @@ struct RemoteFileTransferCoordinatorTests {
         )
     }
 
+    private func makeDirectorySymlinkEntry() -> RemoteFileEntry {
+        RemoteFileEntry(
+            name: "current",
+            path: "/source/current",
+            type: .symlink,
+            size: nil,
+            modifiedAt: nil,
+            permissions: nil,
+            symlinkTarget: "/source/releases/v1"
+        )
+    }
+
+    private func resolvedDirectoryContents() -> [String: [RemoteFileEntry]] {
+        [
+            "/source/releases/v1": [
+                makeEntry(name: "app.log", path: "/source/releases/v1/app.log", type: .file)
+            ]
+        ]
+    }
+
+    private func resolvedDirectoryStatEntries() -> [String: RemoteFileEntry] {
+        [
+            "/source/current": makeEntry(
+                name: "v1",
+                path: "/source/releases/v1",
+                type: .directory
+            )
+        ]
+    }
+
     private func makeDefaults() -> UserDefaults {
         let suiteName = "RemoteFileTransferCoordinatorTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -1096,6 +1220,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
     private let lock = NSLock()
     private var operationStorage: [Operation] = []
     private var downloadObservedSecurityScopeStorage: Bool?
+    private let statEntries: [String: RemoteFileEntry]
     private var existingEntryStorage: [String: RemoteFileEntry]
     private let publishConflictDestinations: Set<String>
     private var triggeredPublishConflictDestinations: Set<String> = []
@@ -1129,6 +1254,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         downloadData: Data? = nil,
         renameBlocker: RemoteFileRenameBlocker? = nil,
         deleteBlocker: RemoteFileDeleteBlocker? = nil,
+        statEntries: [String: RemoteFileEntry] = [:],
         existingEntries: [String: RemoteFileEntry] = [:],
         publishConflictDestinations: Set<String> = [],
         downloadAccessProbe: (@Sendable () async -> Bool)? = nil
@@ -1140,6 +1266,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         self.downloadData = downloadData
         self.renameBlocker = renameBlocker
         self.deleteBlocker = deleteBlocker
+        self.statEntries = statEntries
         self.existingEntryStorage = existingEntries
         self.publishConflictDestinations = publishConflictDestinations
         self.downloadAccessProbe = downloadAccessProbe
@@ -1152,7 +1279,11 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
     }
 
     func stat(at path: String) async throws -> RemoteFileEntry {
-        throw RemoteFileBrowserError.failed("Unused in tests")
+        let normalizedPath = RemoteFilePath.normalize(path)
+        guard let entry = statEntries[normalizedPath] else {
+            throw RemoteFileBrowserError.failed("No stat entry for \(normalizedPath)")
+        }
+        return entry
     }
 
     func lstat(at path: String) async throws -> RemoteFileEntry {
