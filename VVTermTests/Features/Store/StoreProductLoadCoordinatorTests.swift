@@ -45,6 +45,57 @@ struct StoreProductLoadCoordinatorTests {
             "Product-load request tracking should clear after the coalesced load completes."
         )
     }
+
+    @Test
+    func completionTriggeredProductLoadStartsFreshLifecycleRequest() async {
+        let firstGate = ProductLoadGate()
+        let secondGate = ProductLoadGate()
+        var loadCount = 0
+        var completions: [String] = []
+        let coordinator = StoreProductLoadCoordinator {
+            loadCount += 1
+            if loadCount == 1 {
+                await firstGate.waitForRelease()
+            } else {
+                await secondGate.waitForRelease()
+            }
+        }
+        var secondID: UUID?
+
+        // Given a product-load completion immediately asks for products again,
+        // such as a paywall refreshing choices after presentation state changes.
+        let firstID = coordinator.requestLoad {
+            completions.append("first")
+            secondID = coordinator.requestLoad {
+                completions.append("second")
+            }
+        }
+        await firstGate.waitForOperationStart()
+
+        // When the first load finishes and runs its completion callback.
+        await firstGate.release()
+        for _ in 0..<50 where secondID == nil {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        // Then the new intent must start a fresh lifecycle request instead of
+        // being silently coalesced into the finishing request callback snapshot.
+        #expect(secondID != nil)
+        #expect(secondID != firstID)
+        #expect(loadCount == 2)
+        #expect(coordinator.pendingRequestIDs == Set(secondID.map { [$0] } ?? []))
+
+        await secondGate.release()
+        if let secondID {
+            await coordinator.waitForLoad(secondID)
+        }
+
+        #expect(
+            completions == ["first", "second"],
+            "A completion-triggered product load should run its own load operation and callback."
+        )
+        #expect(coordinator.pendingRequestIDs.isEmpty)
+    }
 }
 
 private actor ProductLoadGate {

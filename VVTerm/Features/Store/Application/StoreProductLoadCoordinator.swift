@@ -39,10 +39,7 @@ final class StoreProductLoadCoordinator {
             guard let self else { return }
             defer {
                 if self.requestID == requestID {
-                    self.requestID = nil
-                    self.requestTask = nil
-                    self.completionCallbacks = []
-                    self.cancellationBox.clear()
+                    self.clearRequest()
                 }
             }
 
@@ -51,6 +48,7 @@ final class StoreProductLoadCoordinator {
             guard self.requestID == requestID else { return }
 
             let callbacks = self.completionCallbacks
+            self.clearRequest()
             callbacks.forEach { $0() }
         }
 
@@ -85,6 +83,13 @@ final class StoreProductLoadCoordinator {
         await task?.value
         requestTask = nil
         requestID = nil
+        completionCallbacks = []
+        cancellationBox.clear()
+    }
+
+    private func clearRequest() {
+        requestID = nil
+        requestTask = nil
         completionCallbacks = []
         cancellationBox.clear()
     }
