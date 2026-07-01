@@ -15,6 +15,7 @@ nonisolated actor SSHClient {
     private var resolvedRemoteEnvironment: RemoteEnvironment?
     private var resolvedRemoteTerminalType: RemoteTerminalType?
     private var moshShells: [UUID: SSHMoshShellRuntime] = [:]
+    private var disconnectTask: Task<Void, Never>?
     nonisolated private let moshTeardownTasks = SSHMoshTeardownTaskRegistry()
     private let cloudflareTransportManager: any CloudflareTransportManaging
     private let moshStartupTimeout: Duration = .seconds(8)
@@ -54,6 +55,11 @@ nonisolated actor SSHClient {
     // MARK: - Connection
 
     func connect(to target: SSHConnectionTarget, credentials: ServerCredentials) async throws -> SSHSession {
+        if let disconnectTask {
+            await disconnectTask.value
+            try Task.checkCancellation()
+        }
+
         abortState.reset()
         try Task.checkCancellation()
 
@@ -205,6 +211,20 @@ nonisolated actor SSHClient {
     }
 
     func disconnect() async {
+        if let disconnectTask {
+            await disconnectTask.value
+            return
+        }
+
+        let task = Task { [self] in
+            await performDisconnect()
+        }
+        disconnectTask = task
+        await task.value
+        disconnectTask = nil
+    }
+
+    private func performDisconnect() async {
         abortState.abort()
 
         let activeMoshShells = Array(moshShells.values)

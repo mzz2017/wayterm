@@ -166,6 +166,84 @@ final class SSHClientConnectionLifecycleTests: XCTestCase {
         _ = await connectTask.result
     }
 
+    func testReconnectWaitsForActiveSessionDisconnectCleanup() async throws {
+        // Given SSHClient owns an active SSHSession whose disconnect cleanup is
+        // still running after the logical client has been marked disconnected.
+        let firstDriver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            shouldBlockDisconnect: true
+        )
+        let secondDriver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x2),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success
+        )
+        let sessionFactory = RecordingSSHSessionFactory([
+            SSHSession(config: .libSSH2AuthLifecycleTest, driver: firstDriver),
+            SSHSession(config: .libSSH2AuthLifecycleTest, driver: secondDriver)
+        ])
+        let client = SSHClient(
+            sessionFactory: { _ in
+                sessionFactory.makeSession()
+            },
+            disconnectTimeout: .seconds(2)
+        )
+        let target = SSHConnectionTarget(
+            host: "ssh.example.com",
+            username: "root",
+            authMethod: .sshKey
+        )
+        let credentials = ServerCredentials(
+            serverId: UUID(),
+            password: nil,
+            privateKey: Data("private-key".utf8),
+            publicKey: Data("public-key".utf8),
+            passphrase: nil,
+            cloudflareClientID: nil,
+            cloudflareClientSecret: nil
+        )
+
+        _ = try await client.connect(to: target, credentials: credentials)
+        let disconnectTask = Task {
+            await client.disconnect()
+        }
+        for _ in 0..<50 where firstDriver.disconnectCount() == 0 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(
+            firstDriver.disconnectCount(),
+            1,
+            "The first session should be inside disconnect cleanup before reconnect is requested."
+        )
+
+        // When reconnect is requested while the old session teardown is still
+        // blocked inside the low-level owner.
+        let reconnectTask = Task {
+            try await client.connect(to: target, credentials: credentials)
+        }
+        try await Task.sleep(for: .milliseconds(100))
+
+        // Then the new connect must wait for the active session cleanup owner
+        // instead of creating a replacement session during teardown.
+        XCTAssertEqual(
+            sessionFactory.createdCount(),
+            1,
+            "Reconnect must not create a new SSHSession until the previous active session disconnect has completed."
+        )
+
+        firstDriver.releaseDisconnect()
+        await disconnectTask.value
+        _ = try await reconnectTask.value
+        XCTAssertEqual(
+            sessionFactory.createdCount(),
+            2,
+            "Reconnect should create the replacement SSHSession after the previous teardown completes."
+        )
+        await client.disconnect()
+    }
+
     func testDisconnectTearsDownCloudflarePreSessionConnectWithoutWaitingForConnectTask() async throws {
         // Given SSHClient is blocked in Cloudflare tunnel setup before any
         // SSHSession exists.
