@@ -721,6 +721,60 @@ struct RemoteFileTransferCoordinatorTests {
         }
     }
 
+    @Test
+    func moveEntriesCoordinatorReportsPartialMutationOnCancellation() async throws {
+        let coordinator = RemoteFileMoveEntriesCoordinator()
+        let renameBlocker = RemoteFileRenameBlocker(blockedSourcePath: "/source/first.txt")
+        let service = RecordingRemoteFileService(
+            directoryContents: [:],
+            renameBlocker: renameBlocker
+        )
+        let moves = [
+            RemoteFileDropPolicy.MovePlan(
+                entry: makeEntry(name: "first.txt", path: "/source/first.txt", type: .file),
+                sourcePath: "/source/first.txt",
+                destinationPath: "/target/first.txt"
+            ),
+            RemoteFileDropPolicy.MovePlan(
+                entry: makeEntry(name: "second.txt", path: "/source/second.txt", type: .file),
+                sourcePath: "/source/second.txt",
+                destinationPath: "/target/second.txt"
+            )
+        ]
+        var progressEvents: [String] = []
+
+        // Given the dedicated move owner is blocked inside the first remote
+        // rename after SFTP has accepted the operation.
+        let task = Task {
+            try await coordinator.moveEntries(moves, using: service) { progress in
+                progressEvents.append(
+                    "\(progress.completedUnitCount)/\(progress.totalUnitCount):\(progress.currentItemName)"
+                )
+            }
+        }
+        await renameBlocker.waitUntilStarted()
+
+        // When the batch move is canceled before the first rename returns.
+        task.cancel()
+        await renameBlocker.release()
+
+        // Then the owner reports that a remote mutation already happened while
+        // preserving the underlying cancellation for the caller.
+        let result = await task.result
+        #expect(service.operations == [
+            .renameItem(source: "/source/first.txt", destination: "/target/first.txt")
+        ])
+        #expect(progressEvents == ["1/2:first.txt"])
+        switch result {
+        case .success:
+            Issue.record("Expected move owner to report partial mutation after cancellation")
+        case .failure(let error):
+            let failure = try #require(error as? RemoteFileMoveEntriesCoordinator.Failure)
+            #expect(failure.didMutate)
+            #expect(failure.underlyingError is CancellationError)
+        }
+    }
+
     private func makeEntry(
         name: String,
         path: String,

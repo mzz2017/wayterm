@@ -32,6 +32,10 @@ extension RemoteFileBrowserStore {
         RemoteFileDeletionCoordinator()
     }
 
+    private var moveEntriesCoordinator: RemoteFileMoveEntriesCoordinator {
+        RemoteFileMoveEntriesCoordinator()
+    }
+
     func upload(
         data: Data,
         to remotePath: String,
@@ -114,28 +118,20 @@ extension RemoteFileBrowserStore {
         }
         guard !moves.isEmpty else { return }
 
-        let totalUnitCount = max(1, moves.count)
-        var didMutate = false
-
         do {
-            for (index, move) in moves.enumerated() {
-                try Task.checkCancellation()
-                try await withRemoteFileService(for: server) { service in
-                    try await service.renameItem(at: move.sourcePath, to: move.destinationPath)
-                }
-                didMutate = true
-                onProgress?(
-                    TransferProgress(
-                        completedUnitCount: index + 1,
-                        totalUnitCount: totalUnitCount,
-                        currentItemName: move.entry.name
-                    )
+            try await withRemoteFileService(for: server) { [self] service in
+                try await moveEntriesCoordinator.moveEntries(
+                    moves,
+                    using: service,
+                    onProgress: onProgress
                 )
             }
-        } catch {
-            if didMutate {
+        } catch let failure as RemoteFileMoveEntriesCoordinator.Failure {
+            if failure.didMutate {
                 await refresh(server: server, tab: tab)
             }
+            throw failure.underlyingError
+        } catch {
             throw error
         }
 
