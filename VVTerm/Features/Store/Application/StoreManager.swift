@@ -14,6 +14,7 @@ nonisolated enum StoreEntitlementRefreshReason: Sendable {
 final class StoreManager: ObservableObject {
     private typealias StoreLifecycleAction = @MainActor (StoreManager) async -> Void
     private typealias StoreTransactionListenerAction = @MainActor (StoreManager) async -> Void
+    private typealias StoreRestoreSyncAction = @MainActor () async throws -> Void
     private typealias StoreEntitlementRefreshSleepAction = @Sendable (Duration) async -> Void
     private typealias StoreReviewModeExpirySleepAction = @Sendable (Duration) async -> Void
 
@@ -53,6 +54,7 @@ final class StoreManager: ObservableObject {
     private var entitlementStateCoordinator = StoreEntitlementStateCoordinator()
     private let loadProductsAction: StoreLifecycleAction
     private let checkEntitlementsAction: StoreLifecycleAction
+    private let syncPurchasesAction: StoreRestoreSyncAction
     private let transactionListenerAction: StoreTransactionListenerAction
     private let telemetry: any StoreTelemetry
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Store")
@@ -78,6 +80,7 @@ final class StoreManager: ObservableObject {
         startBackgroundTasks: Bool = true,
         loadProductsAction: StoreLifecycleAction? = nil,
         checkEntitlementsAction: StoreLifecycleAction? = nil,
+        syncPurchasesAction: StoreRestoreSyncAction? = nil,
         transactionListenerAction: StoreTransactionListenerAction? = nil,
         sleepForEntitlementRefresh: StoreEntitlementRefreshSleepAction? = nil,
         sleepForReviewModeExpiry: StoreReviewModeExpirySleepAction? = nil,
@@ -88,6 +91,9 @@ final class StoreManager: ObservableObject {
         }
         self.checkEntitlementsAction = checkEntitlementsAction ?? { manager in
             await manager.checkEntitlements()
+        }
+        self.syncPurchasesAction = syncPurchasesAction ?? {
+            try await AppStore.sync()
         }
         self.transactionListenerAction = transactionListenerAction ?? { manager in
             await manager.listenForLiveTransactions()
@@ -274,8 +280,10 @@ final class StoreManager: ObservableObject {
         restoreState = .restoring
         logger.info("Restoring purchases")
         do {
-            try await AppStore.sync()
-            await checkEntitlements()
+            try await syncPurchasesAction()
+            try Task.checkCancellation()
+            await checkEntitlementsAction(self)
+            try Task.checkCancellation()
             applyRestoreResult(hasAccess: isPro)
         } catch {
             applyRestoreError(error)
@@ -554,6 +562,7 @@ extension StoreManager {
         startBackgroundTasks: Bool = false,
         loadProductsAction: (@MainActor (StoreManager) async -> Void)? = nil,
         checkEntitlementsAction: (@MainActor (StoreManager) async -> Void)? = nil,
+        syncPurchasesAction: (@MainActor () async throws -> Void)? = nil,
         transactionListenerAction: (@MainActor (StoreManager) async -> Void)? = nil,
         sleepForEntitlementRefresh: (@Sendable (Duration) async -> Void)? = nil,
         sleepForReviewModeExpiry: (@Sendable (Duration) async -> Void)? = nil,
@@ -563,6 +572,7 @@ extension StoreManager {
             startBackgroundTasks: startBackgroundTasks,
             loadProductsAction: loadProductsAction,
             checkEntitlementsAction: checkEntitlementsAction,
+            syncPurchasesAction: syncPurchasesAction,
             transactionListenerAction: transactionListenerAction,
             sleepForEntitlementRefresh: sleepForEntitlementRefresh,
             sleepForReviewModeExpiry: sleepForReviewModeExpiry,

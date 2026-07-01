@@ -302,6 +302,40 @@ struct StoreManagerLifecycleTests {
     }
 
     @Test
+    func restoreCancellationDuringEntitlementRefreshDoesNotPublishStaleResult() async {
+        let entitlementGate = StoreRequestGate()
+        var didSyncPurchases = false
+        let manager = StoreManager.makeForTesting(
+            checkEntitlementsAction: { _ in
+                await entitlementGate.waitForRelease()
+            },
+            syncPurchasesAction: {
+                didSyncPurchases = true
+            }
+        )
+
+        // Given a restore request has synced purchases and is suspended while
+        // refreshing StoreKit entitlements.
+        let requestID = manager.requestRestorePurchases()
+        await entitlementGate.waitForOperationStart()
+        #expect(didSyncPurchases, "Restore should sync App Store purchases before checking entitlements.")
+        #expect(manager.restoreState == .restoring)
+
+        // When lifecycle cancellation arrives before entitlement refresh can
+        // publish fresh access state.
+        manager.cancelRestoreRequestForTesting(requestID)
+        await entitlementGate.release()
+        await manager.waitForRestoreRequest(requestID)
+
+        // Then StoreManager must not publish a stale restored result based on
+        // pre-refresh isPro state.
+        #expect(
+            manager.restoreState == .idle,
+            "Canceled restore should return to idle instead of publishing a stale restored result."
+        )
+    }
+
+    @Test
     func dismissRestoreResultClearsOnlyCompletedPresentationState() {
         let manager = StoreManager.makeForTesting()
 
