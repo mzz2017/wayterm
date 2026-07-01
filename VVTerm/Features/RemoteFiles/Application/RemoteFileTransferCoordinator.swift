@@ -32,6 +32,10 @@ extension RemoteFileBrowserStore {
         RemoteFileDeletionCoordinator()
     }
 
+    private var deleteEntriesCoordinator: RemoteFileDeleteEntriesCoordinator {
+        RemoteFileDeleteEntriesCoordinator(deletionCoordinator: deletionCoordinator)
+    }
+
     private var moveEntriesCoordinator: RemoteFileMoveEntriesCoordinator {
         RemoteFileMoveEntriesCoordinator()
     }
@@ -185,19 +189,16 @@ extension RemoteFileBrowserStore {
         let uniqueEntries = transferPolicy.uniqueTransferEntries(entries)
         guard !uniqueEntries.isEmpty else { return }
 
-        var didMutate = false
         do {
-            for entry in uniqueEntries {
-                try Task.checkCancellation()
-                try await withRemoteFileService(for: server) { [self] service in
-                    try await deletionCoordinator.deleteEntry(entry, using: service)
-                }
-                didMutate = true
+            try await withRemoteFileService(for: server) { [self] service in
+                try await deleteEntriesCoordinator.deleteEntries(uniqueEntries, using: service)
             }
-        } catch {
-            if didMutate {
+        } catch let failure as RemoteFileDeleteEntriesCoordinator.Failure {
+            if failure.didMutate {
                 await refresh(server: server, tab: tab)
             }
+            throw failure.underlyingError
+        } catch {
             throw error
         }
 

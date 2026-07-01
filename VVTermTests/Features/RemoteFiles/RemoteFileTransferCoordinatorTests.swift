@@ -665,6 +665,46 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func deleteEntriesCoordinatorReportsPartialMutationOnCancellation() async throws {
+        let coordinator = RemoteFileDeleteEntriesCoordinator()
+        let deleteBlocker = RemoteFileDeleteBlocker(blockedPath: "/remote/first.txt")
+        let service = RecordingRemoteFileService(
+            directoryContents: [:],
+            deleteBlocker: deleteBlocker
+        )
+        let entries = [
+            makeEntry(name: "first.txt", path: "/remote/first.txt", type: .file),
+            makeEntry(name: "second.txt", path: "/remote/second.txt", type: .file)
+        ]
+
+        // Given the dedicated delete-batch owner is blocked inside the first
+        // selected item after SFTP has accepted the delete.
+        let task = Task {
+            try await coordinator.deleteEntries(entries, using: service)
+        }
+        await deleteBlocker.waitUntilStarted()
+
+        // When the batch delete is canceled before the first delete returns.
+        task.cancel()
+        await deleteBlocker.release()
+
+        // Then the owner reports that a remote mutation already happened while
+        // preserving the underlying cancellation for the caller.
+        let result = await task.result
+        #expect(service.operations == [
+            .deleteFile("/remote/first.txt")
+        ])
+        switch result {
+        case .success:
+            Issue.record("Expected delete owner to report partial mutation after cancellation")
+        case .failure(let error):
+            let failure = try #require(error as? RemoteFileDeleteEntriesCoordinator.Failure)
+            #expect(failure.didMutate)
+            #expect(failure.underlyingError is CancellationError)
+        }
+    }
+
+    @Test
     func moveEntriesCancellationStopsBeforeNextRename() async throws {
         let server = Server(
             workspaceId: UUID(),
