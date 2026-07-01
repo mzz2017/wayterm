@@ -92,6 +92,8 @@ final class CloudKitSyncCoordinator {
         }
 
         while true {
+            guard SyncSettings.isEnabled else { return }
+
             let drainRequestedDuringIteration = drainState == .drainAgainRequested
             drainState = .draining
             let snapshot = queue.snapshot()
@@ -101,6 +103,8 @@ final class CloudKitSyncCoordinator {
             let orderedMutations = snapshot.sorted(by: pendingSyncDrainOrder)
 
             for mutation in orderedMutations {
+                guard SyncSettings.isEnabled else { return }
+
                 guard !queue.isBlockedByEarlierPendingMutation(mutation) else {
                     continue
                 }

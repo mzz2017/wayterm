@@ -77,6 +77,7 @@ final class MLXModelManager: NSObject, ObservableObject {
     private var isCleanedUp = false
     private let modelSizeProvider: any MLXModelSizing
     private let downloadOperation: DownloadOperation?
+    private static let downloadInProgressMarkerName = ".vvterm-download-in-progress"
 
     init(
         kind: MLXModelKind,
@@ -192,6 +193,7 @@ final class MLXModelManager: NSObject, ObservableObject {
 
         do {
             try FileManager.default.createDirectory(at: downloadDirectory, withIntermediateDirectories: true)
+            try Self.markDownloadStarted(at: downloadDirectory)
 
             completedBytes = 0
             currentFileBytes = 0
@@ -202,6 +204,7 @@ final class MLXModelManager: NSObject, ObservableObject {
             if let downloadOperation {
                 try await downloadOperation(DownloadContext(kind: kind, modelId: modelId))
                 try validateDownloadIsCurrent(for: modelId)
+                try Self.markDownloadCompleted(at: downloadDirectory)
                 state = .ready
                 refreshStorageUsage()
                 return
@@ -217,6 +220,7 @@ final class MLXModelManager: NSObject, ObservableObject {
                 completedBytes += currentFileBytes
             }
 
+            try Self.markDownloadCompleted(at: downloadDirectory)
             state = .ready
             refreshStorageUsage()
         } catch is CancellationError {
@@ -266,6 +270,7 @@ final class MLXModelManager: NSObject, ObservableObject {
         let normalized = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return false }
         let directory = modelDirectory(for: kind, modelId: normalized)
+        guard !hasIncompleteDownloadMarker(in: directory) else { return false }
         let config = directory.appendingPathComponent("config.json")
         let weights = weightFiles(in: directory, allowedExtensions: allowedWeightExtensions(for: kind))
         return FileManager.default.fileExists(atPath: config.path) && !weights.isEmpty
@@ -287,6 +292,25 @@ final class MLXModelManager: NSObject, ObservableObject {
 
     static func allowedWeightExtensions(for kind: MLXModelKind) -> Set<String> {
         return Set(["safetensors", "npz"])
+    }
+
+    private static func downloadInProgressMarker(in directory: URL) -> URL {
+        directory.appendingPathComponent(downloadInProgressMarkerName)
+    }
+
+    private static func hasIncompleteDownloadMarker(in directory: URL) -> Bool {
+        FileManager.default.fileExists(atPath: downloadInProgressMarker(in: directory).path)
+    }
+
+    private static func markDownloadStarted(at directory: URL) throws {
+        try Data().write(to: downloadInProgressMarker(in: directory), options: .atomic)
+    }
+
+    private static func markDownloadCompleted(at directory: URL) throws {
+        let marker = downloadInProgressMarker(in: directory)
+        if FileManager.default.fileExists(atPath: marker.path) {
+            try FileManager.default.removeItem(at: marker)
+        }
     }
 
     private var normalizedModelId: String {

@@ -56,6 +56,42 @@ struct MLXModelManagerLifecycleTests {
             "A canceled old model download must not mark the newly selected model ready when it returns late."
         )
     }
+
+    @Test
+    func failedPartialDownloadDirectoryIsNotReportedAvailable() async {
+        let modelId = "test/partial-whisper-\(UUID().uuidString)"
+        let modelDirectory = MLXModelManager.modelDirectory(for: .whisper, modelId: modelId)
+        defer {
+            try? FileManager.default.removeItem(at: modelDirectory)
+        }
+
+        let manager = MLXModelManager(
+            kind: .whisper,
+            modelId: modelId,
+            downloadOperation: { context in
+                let directory = MLXModelManager.modelDirectory(for: context.kind, modelId: context.modelId)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try Data("{}".utf8).write(to: directory.appendingPathComponent("config.json"))
+                try Data("partial weights".utf8).write(to: directory.appendingPathComponent("model.safetensors"))
+                throw NSError(
+                    domain: "MLXModelManagerLifecycleTests",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "simulated partial download failure"]
+                )
+            }
+        )
+
+        // Given a model download writes enough files to satisfy the old
+        // availability heuristic, but does not finish the full download.
+        await manager.downloadModel()
+
+        // Then later availability checks must not treat the partial directory as
+        // an installed model.
+        #expect(
+            !MLXModelManager.isModelAvailable(kind: .whisper, modelId: modelId),
+            "Failed partial downloads must not be reported as available models."
+        )
+    }
 }
 
 private actor MLXModelDownloadProbe {

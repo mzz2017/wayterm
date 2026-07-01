@@ -15,7 +15,13 @@ final class SSHSFTPAdapter {
         }
     }
 
+    private struct PendingClientRegistration {
+        let id: UUID
+        let task: Task<ClientRegistration, Error>
+    }
+
     private var clients: [UUID: ClientRegistration] = [:]
+    private var pendingClientRegistrations: [UUID: PendingClientRegistration] = [:]
     private let remoteConnectionLeaseProvider: RemoteConnectionLeaseProvider
     private let credentialsProvider: CredentialsProvider
     private let ownedClientFactory: OwnedClientFactory
@@ -50,8 +56,11 @@ final class SSHSFTPAdapter {
         for server: Server,
         operation: @Sendable @escaping (any RemoteFileService) async throws -> T
     ) async throws -> T {
-        let registration = clientRegistration(for: server)
+        let registration = try await clientRegistration(for: server)
         let credentials = try credentialsProvider(server)
+        guard isCurrentRegistration(registration, for: server.id) else {
+            throw CancellationError()
+        }
 
         do {
             return try await registration.lease.withExclusiveClient { _ in
@@ -63,18 +72,32 @@ final class SSHSFTPAdapter {
             }
         } catch {
             if registration.lease.ownership == .borrowed {
-                clients.removeValue(forKey: server.id)
+                removeBorrowedRegistrationIfCurrent(registration, for: server.id)
             }
             throw error
         }
     }
 
     func disconnect(serverId: UUID) async {
-        guard let registration = clients.removeValue(forKey: serverId) else { return }
-        await registration.lease.close()
+        let pendingRegistration = pendingClientRegistrations.removeValue(forKey: serverId)
+        pendingRegistration?.task.cancel()
+        let registration = clients.removeValue(forKey: serverId)
+        if let registration {
+            await registration.lease.close()
+        }
+        if let pendingRegistration {
+            if case .success(let replacement) = await pendingRegistration.task.result {
+                await replacement.lease.close()
+            }
+        }
     }
 
     func disconnectAll() async {
+        let pendingRegistrations = Array(pendingClientRegistrations.values)
+        pendingClientRegistrations.removeAll()
+        for pendingRegistration in pendingRegistrations {
+            pendingRegistration.task.cancel()
+        }
         let registrations = Array(clients.values)
         clients.removeAll()
         let closeTasks = registrations.map { registration in
@@ -86,13 +109,22 @@ final class SSHSFTPAdapter {
         for closeTask in closeTasks {
             await closeTask.value
         }
+        for pendingRegistration in pendingRegistrations {
+            if case .success(let replacement) = await pendingRegistration.task.result {
+                await replacement.lease.close()
+            }
+        }
     }
 
     private func borrowedLease(for serverId: UUID) -> RemoteConnectionLease? {
         remoteConnectionLeaseProvider.lease(for: serverId)
     }
 
-    private func clientRegistration(for server: Server) -> ClientRegistration {
+    private func clientRegistration(for server: Server) async throws -> ClientRegistration {
+        if let pendingRegistration = pendingClientRegistrations[server.id] {
+            return try await pendingRegistration.task.value
+        }
+
         if let borrowedLease = borrowedLease(for: server.id),
            let borrowedClient = borrowedLease.client as? any SFTPRemoteFileClient {
             if let existing = clients[server.id],
@@ -104,8 +136,7 @@ final class SSHSFTPAdapter {
                 client: borrowedClient,
                 lease: borrowedLease
             )
-            clients[server.id] = registration
-            return registration
+            return try await replaceRegistration(for: server.id, with: registration)
         }
 
         if let existing = clients[server.id], existing.lease.ownership == .owned {
@@ -117,8 +148,62 @@ final class SSHSFTPAdapter {
             client: client,
             lease: RemoteConnectionLease(client: client, ownership: .owned)
         )
-        clients[server.id] = registration
-        return registration
+        return try await replaceRegistration(for: server.id, with: registration)
+    }
+
+    private func replaceRegistration(
+        for serverId: UUID,
+        with replacement: ClientRegistration
+    ) async throws -> ClientRegistration {
+        if let pendingRegistration = pendingClientRegistrations[serverId] {
+            return try await pendingRegistration.task.value
+        }
+
+        let existing = clients[serverId]
+        let replacementID = UUID()
+        let replacementTask = Task { @MainActor in
+            if let existing {
+                await existing.lease.close()
+            }
+            do {
+                try Task.checkCancellation()
+            } catch {
+                await replacement.lease.close()
+                throw error
+            }
+            guard pendingClientRegistrations[serverId]?.id == replacementID else {
+                await replacement.lease.close()
+                throw CancellationError()
+            }
+            clients[serverId] = replacement
+            pendingClientRegistrations.removeValue(forKey: serverId)
+            return replacement
+        }
+        pendingClientRegistrations[serverId] = PendingClientRegistration(
+            id: replacementID,
+            task: replacementTask
+        )
+
+        return try await replacementTask.value
+    }
+
+    private func isCurrentRegistration(
+        _ registration: ClientRegistration,
+        for serverId: UUID
+    ) -> Bool {
+        guard let current = clients[serverId] else { return false }
+        return current.clientID == registration.clientID
+    }
+
+    private func removeBorrowedRegistrationIfCurrent(
+        _ registration: ClientRegistration,
+        for serverId: UUID
+    ) {
+        guard let current = clients[serverId],
+              current.lease.ownership == .borrowed,
+              current.clientID == registration.clientID
+        else { return }
+        clients.removeValue(forKey: serverId)
     }
 }
 

@@ -5,6 +5,8 @@ import LocalAuthentication
 final class BiometricAuthService: BiometricAuthServing {
     static let shared = BiometricAuthService()
 
+    private var activeContext: LAContext?
+
     private init() {}
 
     func availability() -> BiometricAvailability {
@@ -25,6 +27,13 @@ final class BiometricAuthService: BiometricAuthServing {
         }
 
         let context = LAContext()
+        activeContext = context
+        defer {
+            if activeContext === context {
+                activeContext = nil
+            }
+        }
+
         let policy: LAPolicy = allowPasscodeFallback
             ? .deviceOwnerAuthentication
             : .deviceOwnerAuthenticationWithBiometrics
@@ -34,6 +43,11 @@ final class BiometricAuthService: BiometricAuthServing {
         } catch {
             throw Self.mapEvaluateError(error)
         }
+    }
+
+    func cancelAuthentication() {
+        activeContext?.invalidate()
+        activeContext = nil
     }
 
     private static func mapBiometryType(_ type: LABiometryType) -> BiometryKind {

@@ -52,7 +52,8 @@ final class SyncSettingsCloudKitStatusProvider: SyncSettingsCloudStatusProviding
 
 @MainActor
 protocol SyncSettingsCoordinating: AnyObject {
-    func handleSyncSettingsChanged(_ enabled: Bool) -> Task<Void, Never>
+    func handleSyncSettingsChanged(_ enabled: Bool) -> Task<Bool, Never>
+    func restoreSyncSettingsAfterFailedChange(_ enabled: Bool) -> Task<Void, Never>
     func refreshCloudKitStatusFromSettings() -> Task<Void, Never>
 }
 
@@ -79,6 +80,7 @@ final class SyncSettingsStore: ObservableObject {
     private let preferences: any SyncSettingsPreferencePersisting
     private var statusCancellable: AnyCancellable?
     private var syncSettingsChangeTasks: [UUID: Task<Void, Never>] = [:]
+    private var latestSyncSettingsChangeID: UUID?
     private var cloudKitStatusRefreshTask: (id: UUID, task: Task<Void, Never>)?
 
     var pendingSyncSettingsChangeIDs: Set<UUID> {
@@ -127,13 +129,22 @@ final class SyncSettingsStore: ObservableObject {
 
     @discardableResult
     func handleSyncEnabledChanged(_ enabled: Bool) -> UUID {
+        for task in syncSettingsChangeTasks.values {
+            task.cancel()
+        }
+
+        let previousValue = isSyncEnabled
         isSyncEnabled = enabled
         preferences.setSyncEnabled(enabled)
 
         let requestID = UUID()
+        latestSyncSettingsChangeID = requestID
         let coordinatorTask = coordinator.handleSyncSettingsChanged(enabled)
         let task = Task { [weak self] in
-            await coordinatorTask.value
+            let didApply = await coordinatorTask.value
+            if !didApply {
+                await self?.restoreSyncEnabled(previousValue, requestID: requestID)
+            }
             self?.clearSyncSettingsChangeTask(id: requestID)
         }
         syncSettingsChangeTasks[requestID] = task
@@ -174,6 +185,22 @@ final class SyncSettingsStore: ObservableObject {
 
     private func clearSyncSettingsChangeTask(id: UUID) {
         syncSettingsChangeTasks.removeValue(forKey: id)
+        if latestSyncSettingsChangeID == id {
+            latestSyncSettingsChangeID = nil
+        }
+    }
+
+    private func restoreSyncEnabled(_ enabled: Bool, requestID: UUID) async {
+        guard latestSyncSettingsChangeID == requestID else { return }
+        guard isSyncEnabled != enabled else { return }
+        isSyncEnabled = enabled
+        preferences.setSyncEnabled(enabled)
+        let rollbackTask = coordinator.restoreSyncSettingsAfterFailedChange(enabled)
+        await withTaskCancellationHandler {
+            await rollbackTask.value
+        } onCancel: {
+            rollbackTask.cancel()
+        }
     }
 
     private func clearCloudKitStatusRefreshTask(id: UUID) {

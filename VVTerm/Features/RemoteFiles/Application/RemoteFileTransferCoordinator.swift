@@ -372,11 +372,20 @@ extension RemoteFileBrowserStore {
 
         try await withRemoteFileService(for: sourceServer) { sourceService in
             try await self.withRemoteFileService(for: destinationServer) { destinationService in
+                var reservedNames: Set<String> = []
                 for entry in uniqueEntries {
                     try Task.checkCancellation()
+                    let resolution = try await self.conflictResolver.resolveName(
+                        for: entry.name,
+                        in: destinationDirectory,
+                        policy: .keepBoth,
+                        using: destinationService,
+                        reservedNames: &reservedNames
+                    )
                     try await self.copyRemoteEntry(
                         entry,
                         to: destinationDirectory,
+                        remoteName: resolution.resolvedName,
                         sourceService: sourceService,
                         destinationService: destinationService,
                         progressTracker: progressTracker
@@ -567,30 +576,39 @@ extension RemoteFileBrowserStore {
     func copyRemoteEntry(
         _ entry: RemoteFileEntry,
         to remoteDirectoryPath: String,
+        remoteName: String? = nil,
         sourceService: any RemoteFileService,
         destinationService: any RemoteFileService,
         progressTracker: TransferProgressTracker?
     ) async throws {
         let effectiveEntry = try await resolvedTransferEntry(for: entry, using: sourceService)
-        let remotePath = RemoteFilePath.appending(entry.name, to: remoteDirectoryPath)
+        let targetName = remoteName ?? entry.name
+        let remotePath = RemoteFilePath.appending(targetName, to: remoteDirectoryPath)
 
         if effectiveEntry.type == .directory {
-            try await ensureRemoteDirectoryExists(
-                at: remotePath,
-                permissions: Int32(effectiveEntry.permissions ?? 0o755),
-                using: destinationService
-            )
-            progressTracker?.advance(currentItemName: entry.name)
-            let children = try await sourceService.listDirectory(at: entry.path, maxEntries: nil)
-            for child in children {
-                try Task.checkCancellation()
-                try await copyRemoteEntry(
-                    child,
-                    to: remotePath,
-                    sourceService: sourceService,
-                    destinationService: destinationService,
-                    progressTracker: progressTracker
+            let temporaryRemotePath = makeAtomicRemoteDirectoryCopyPath(for: remotePath)
+            do {
+                try await destinationService.createDirectory(
+                    at: temporaryRemotePath,
+                    permissions: Int32(effectiveEntry.permissions ?? 0o755)
                 )
+                progressTracker?.advance(currentItemName: targetName)
+                let children = try await sourceService.listDirectory(at: entry.path, maxEntries: nil)
+                for child in children {
+                    try Task.checkCancellation()
+                    try await copyRemoteEntry(
+                        child,
+                        to: temporaryRemotePath,
+                        sourceService: sourceService,
+                        destinationService: destinationService,
+                        progressTracker: progressTracker
+                    )
+                }
+                try Task.checkCancellation()
+                try await destinationService.renameItem(at: temporaryRemotePath, to: remotePath)
+            } catch {
+                await removeAtomicRemoteDirectory(temporaryRemotePath, using: destinationService)
+                throw error
             }
             return
         }
@@ -601,13 +619,14 @@ extension RemoteFileBrowserStore {
         try await sourceService.downloadFile(at: entry.path, to: temporaryURL)
         try Task.checkCancellation()
         let data = try await loadLocalFileData(from: temporaryURL)
-        try await destinationService.upload(
+        try await uploadAtomically(
             data,
             to: remotePath,
             permissions: Int32(effectiveEntry.permissions ?? 0o644),
-            strategy: .automatic
+            strategy: .automatic,
+            using: destinationService
         )
-        progressTracker?.advance(currentItemName: entry.name)
+        progressTracker?.advance(currentItemName: targetName)
     }
 
     func countLocalTransferUnits(at urls: [URL]) async throws -> Int {
@@ -707,6 +726,52 @@ extension RemoteFileBrowserStore {
         } catch {
             throw error
         }
+    }
+
+    private nonisolated func removeAtomicRemoteDirectory(
+        _ temporaryRemotePath: String,
+        using service: any RemoteFileService
+    ) async {
+        let cleanupTask = Task.detached {
+            await Self.deleteRemoteDirectoryRecursivelyIgnoringCancellation(
+                at: temporaryRemotePath,
+                using: service
+            )
+        }
+        await cleanupTask.value
+    }
+
+    private nonisolated static func deleteRemoteDirectoryRecursivelyIgnoringCancellation(
+        at remotePath: String,
+        using service: any RemoteFileService
+    ) async {
+        do {
+            let normalizedPath = RemoteFilePath.normalize(remotePath)
+            let entries = try await service.listDirectory(at: normalizedPath, maxEntries: nil)
+
+            for entry in entries {
+                switch entry.type {
+                case .directory:
+                    await deleteRemoteDirectoryRecursivelyIgnoringCancellation(at: entry.path, using: service)
+                case .file, .symlink, .other:
+                    try? await service.deleteFile(at: entry.path)
+                }
+            }
+
+            try? await service.deleteDirectory(at: normalizedPath)
+        } catch {
+            try? await service.deleteDirectory(at: RemoteFilePath.normalize(remotePath))
+        }
+    }
+
+    private nonisolated func makeAtomicRemoteDirectoryCopyPath(for remotePath: String) -> String {
+        let normalizedPath = RemoteFilePath.normalize(remotePath)
+        let parentPath = RemoteFilePath.parent(of: normalizedPath)
+        let targetName = normalizedPath.split(separator: "/").last.map(String.init) ?? "copy"
+        return RemoteFilePath.appending(
+            ".\(targetName).vvterm-copy-\(UUID().uuidString).tmp",
+            to: parentPath
+        )
     }
 
     func uniqueTransferEntries(_ entries: [RemoteFileEntry]) -> [RemoteFileEntry] {

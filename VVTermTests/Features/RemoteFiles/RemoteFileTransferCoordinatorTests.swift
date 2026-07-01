@@ -232,6 +232,165 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func copyFileUploadsDestinationAtomically() async throws {
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            serverProvider: { _ in nil }
+        )
+        let sourceService = RecordingRemoteFileService(
+            directoryContents: [:],
+            downloadData: Data("copied payload".utf8)
+        )
+        let destinationService = RecordingRemoteFileService(directoryContents: [:])
+
+        // Given a remote-to-remote copy transfers a file through local temporary
+        // storage before writing the destination server.
+        try await store.copyRemoteEntry(
+            makeEntry(name: "file.txt", path: "/source/file.txt", type: .file),
+            to: "/destination",
+            sourceService: sourceService,
+            destinationService: destinationService,
+            progressTracker: nil
+        )
+
+        // Then the destination server never sees partial bytes at the final
+        // path: copy writes a hidden temporary file and renames it into place.
+        let operations = destinationService.operations
+        let uploadPaths = operations.compactMap { operation -> String? in
+            guard case .upload(let path, _) = operation else { return nil }
+            return path
+        }
+        let uploadedPath = try #require(uploadPaths.first)
+        #expect(uploadedPath != "/destination/file.txt")
+        #expect(uploadedPath.hasPrefix("/destination/.file.txt.vvterm-upload-"))
+        #expect(operations.contains(.renameItem(source: uploadedPath, destination: "/destination/file.txt")))
+        #expect(!operations.contains(.deleteFile(uploadedPath)))
+    }
+
+    @Test
+    func copyDirectoryCancellationDoesNotExposePartialDestinationDirectory() async throws {
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            serverProvider: { _ in nil }
+        )
+        let listBlocker = RemoteFileListBlocker(blockedPath: "/source/folder")
+        let sourceService = RecordingRemoteFileService(
+            directoryContents: [
+                "/source/folder": [
+                    makeEntry(name: "child.txt", path: "/source/folder/child.txt", type: .file)
+                ]
+            ],
+            listBlocker: listBlocker,
+            downloadData: Data("copied child".utf8)
+        )
+        let destinationService = RecordingRemoteFileService(directoryContents: [:])
+
+        // Given a remote-to-remote directory copy has created its destination
+        // staging directory but has not copied children yet.
+        let task = Task {
+            try await store.copyRemoteEntry(
+                makeEntry(name: "folder", path: "/source/folder", type: .directory),
+                to: "/destination",
+                sourceService: sourceService,
+                destinationService: destinationService,
+                progressTracker: nil
+            )
+        }
+        await listBlocker.waitUntilStarted()
+
+        // When cancellation arrives before child entries are copied.
+        task.cancel()
+        await listBlocker.release()
+
+        // Then the final destination directory is never exposed, and the
+        // temporary staging directory is removed instead of being renamed.
+        let result = await task.result
+        switch result {
+        case .success:
+            Issue.record("Expected directory copy cancellation before final replacement")
+        case .failure(is CancellationError):
+            break
+        case .failure(let error):
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+
+        let operations = destinationService.operations
+        let createdPaths = operations.compactMap { operation -> String? in
+            guard case .createDirectory(let path) = operation else { return nil }
+            return path
+        }
+        let stagingPath = try #require(createdPaths.first)
+        #expect(stagingPath != "/destination/folder")
+        #expect(stagingPath.hasPrefix("/destination/.folder.vvterm-copy-"))
+        #expect(operations.contains(.deleteDirectory(stagingPath)))
+        #expect(!operations.contains(.renameItem(source: stagingPath, destination: "/destination/folder")))
+    }
+
+    @Test
+    func copyEntriesResolvesDirectoryConflictBeforeAtomicRename() async throws {
+        let sourceServer = Server(
+            workspaceId: UUID(),
+            name: "Source",
+            host: "source.example.com",
+            username: "root"
+        )
+        let destinationServer = Server(
+            workspaceId: UUID(),
+            name: "Destination",
+            host: "destination.example.com",
+            username: "root"
+        )
+        let sourceEntry = makeEntry(name: "folder", path: "/source/folder", type: .directory)
+        let sourceService = RecordingRemoteFileService(
+            directoryContents: [
+                "/source/folder": []
+            ]
+        )
+        let destinationService = RecordingRemoteFileService(
+            directoryContents: [:],
+            existingEntries: [
+                "/destination/folder": makeEntry(name: "folder", path: "/destination/folder", type: .directory)
+            ]
+        )
+        let services = ServerScopedRemoteFileServiceAccess(services: [
+            sourceServer.id: sourceService,
+            destinationServer.id: destinationService
+        ])
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            remoteFileServiceAccess: services,
+            serverProvider: { id in
+                if id == sourceServer.id { return sourceServer }
+                if id == destinationServer.id { return destinationServer }
+                return nil
+            }
+        )
+        let tab = RemoteFileTab(serverId: destinationServer.id, seedPath: "/destination")
+
+        // Given the destination already contains a directory with the copied
+        // entry's original name.
+        try await store.copyEntries(
+            [sourceEntry],
+            from: sourceServer.id,
+            to: "/destination",
+            destinationTab: tab,
+            destinationServer: destinationServer
+        )
+
+        // Then copy planning keeps both directories and atomically publishes the
+        // staged copy under the resolved name.
+        let operations = destinationService.operations
+        let createdPaths = operations.compactMap { operation -> String? in
+            guard case .createDirectory(let path) = operation else { return nil }
+            return path
+        }
+        let stagingPath = try #require(createdPaths.first)
+        #expect(stagingPath.hasPrefix("/destination/.folder 2.vvterm-copy-"))
+        #expect(operations.contains(.renameItem(source: stagingPath, destination: "/destination/folder 2")))
+        #expect(!operations.contains(.renameItem(source: stagingPath, destination: "/destination/folder")))
+    }
+
+    @Test
     func downloadFileUsesSecurityScopedAccessForDestination() async throws {
         let server = Server(
             workspaceId: UUID(),
@@ -475,6 +634,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
     enum Operation: Equatable, Sendable {
         case downloadFile(String)
         case upload(path: String, text: String)
+        case createDirectory(String)
         case renameItem(source: String, destination: String)
         case deleteFile(String)
         case deleteDirectory(String)
@@ -487,6 +647,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
     let downloadData: Data?
     let renameBlocker: RemoteFileRenameBlocker?
     let deleteBlocker: RemoteFileDeleteBlocker?
+    let existingEntries: [String: RemoteFileEntry]
     let downloadAccessProbe: (@Sendable () async -> Bool)?
     private let lock = NSLock()
     private var operationStorage: [Operation] = []
@@ -512,6 +673,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         downloadData: Data? = nil,
         renameBlocker: RemoteFileRenameBlocker? = nil,
         deleteBlocker: RemoteFileDeleteBlocker? = nil,
+        existingEntries: [String: RemoteFileEntry] = [:],
         downloadAccessProbe: (@Sendable () async -> Bool)? = nil
     ) {
         self.directoryContents = directoryContents
@@ -521,6 +683,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         self.downloadData = downloadData
         self.renameBlocker = renameBlocker
         self.deleteBlocker = deleteBlocker
+        self.existingEntries = existingEntries
         self.downloadAccessProbe = downloadAccessProbe
     }
 
@@ -535,7 +698,11 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
     }
 
     func lstat(at path: String) async throws -> RemoteFileEntry {
-        throw RemoteFileBrowserError.failed("Unused in tests")
+        let normalizedPath = RemoteFilePath.normalize(path)
+        guard let entry = existingEntries[normalizedPath] else {
+            throw RemoteFileBrowserError.pathNotFound
+        }
+        return entry
     }
 
     func readFile(at path: String, maxBytes: Int) async throws -> Data {
@@ -568,7 +735,9 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         await uploadBlocker?.waitIfNeeded(path: normalizedPath)
     }
 
-    func createDirectory(at path: String, permissions: Int32) async throws {}
+    func createDirectory(at path: String, permissions: Int32) async throws {
+        record(.createDirectory(RemoteFilePath.normalize(path)))
+    }
 
     func renameItem(at sourcePath: String, to destinationPath: String) async throws {
         let normalizedSource = RemoteFilePath.normalize(sourcePath)
@@ -578,6 +747,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
     }
 
     func deleteFile(at path: String) async throws {
+        try Task.checkCancellation()
         let normalizedPath = RemoteFilePath.normalize(path)
         record(.deleteFile(normalizedPath))
         await deleteBlocker?.waitIfNeeded(path: normalizedPath)
@@ -735,6 +905,29 @@ private final class DirectRemoteFileServiceAccess: RemoteFileServiceAccessing {
         operation: @Sendable @escaping (any RemoteFileService) async throws -> T
     ) async throws -> T {
         try await operation(service)
+    }
+
+    func disconnect(serverId: UUID) async {}
+
+    func disconnectAll() async {}
+}
+
+@MainActor
+private final class ServerScopedRemoteFileServiceAccess: RemoteFileServiceAccessing {
+    private let services: [UUID: any RemoteFileService]
+
+    init(services: [UUID: any RemoteFileService]) {
+        self.services = services
+    }
+
+    func withService<T: Sendable>(
+        for server: Server,
+        operation: @Sendable @escaping (any RemoteFileService) async throws -> T
+    ) async throws -> T {
+        guard let service = services[server.id] else {
+            throw RemoteFileBrowserError.disconnected
+        }
+        return try await operation(service)
     }
 
     func disconnect(serverId: UUID) async {}

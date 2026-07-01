@@ -13,6 +13,8 @@ final class AppLockManagerTests: XCTestCase {
         var availabilityResult: BiometricAvailability
         var authenticateError: Error?
         var delayAuthentication = false
+        var cancelCompletesDelayedAuthentication = false
+        private(set) var cancelAuthenticationCallCount = 0
         private(set) var authenticateReasons: [String] = []
         private var authenticationStartedWaiters: [CheckedContinuation<Void, Never>] = []
         private var authenticationContinuation: CheckedContinuation<Void, Never>?
@@ -40,6 +42,13 @@ final class AppLockManagerTests: XCTestCase {
             if let authenticateError {
                 throw authenticateError
             }
+        }
+
+        func cancelAuthentication() {
+            cancelAuthenticationCallCount += 1
+            guard cancelCompletesDelayedAuthentication else { return }
+            authenticateError = CancellationError()
+            finishAuthentication()
         }
 
         func waitUntilAuthenticationStarted() async {
@@ -530,6 +539,48 @@ final class AppLockManagerTests: XCTestCase {
             "Canceled server unlock cleanup must not leave a server access grant."
         )
     }
+
+    func testCancelAllAndWaitCancelsUnderlyingBiometricPrompt() async {
+        // Given app unlock is blocked inside a delayed biometric prompt that
+        // only exits when the biometric service receives explicit cancellation.
+        let defaults = makeDefaults()
+        defaults.set(true, forKey: "security.fullAppLockEnabled")
+        let authService = StubBiometricAuthService(
+            availabilityResult: .available(.faceID)
+        )
+        authService.delayAuthentication = true
+        authService.cancelCompletesDelayedAuthentication = true
+        let manager = AppLockManager(defaults: defaults, authService: authService)
+
+        let requestID = manager.requestAppUnlock()
+        await authService.waitUntilAuthenticationStarted()
+
+        // When app-level teardown cancels all auth work.
+        let cleanupCompleted = AuthCleanupProbe()
+        let cleanupTask = Task {
+            await manager.cancelAllAndWait()
+            await cleanupCompleted.mark()
+        }
+
+        // Then cleanup must cancel the underlying biometric prompt so the
+        // awaited task can exit without a user manually dismissing LocalAuth UI.
+        let cleanupMarked = await waitForAuthCleanupMarked(cleanupCompleted)
+        XCTAssertTrue(
+            cleanupMarked,
+            "Auth cleanup should complete after canceling the underlying biometric prompt."
+        )
+        XCTAssertEqual(
+            authService.cancelAuthenticationCallCount,
+            1,
+            "Auth cleanup must invalidate or cancel the underlying biometric prompt."
+        )
+
+        if !(await cleanupCompleted.isMarked()) {
+            authService.finishAuthentication()
+        }
+        await cleanupTask.value
+        await manager.waitForAppLockRequest(requestID)
+    }
 }
 
 private actor AuthCleanupProbe {
@@ -542,4 +593,14 @@ private actor AuthCleanupProbe {
     func isMarked() -> Bool {
         marked
     }
+}
+
+private func waitForAuthCleanupMarked(_ probe: AuthCleanupProbe) async -> Bool {
+    for _ in 0..<50 {
+        if await probe.isMarked() {
+            return true
+        }
+        try? await Task.sleep(for: .milliseconds(10))
+    }
+    return false
 }

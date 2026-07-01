@@ -1,4 +1,5 @@
 import Foundation
+import os.log
 
 @MainActor
 final class AppSyncCoordinator {
@@ -9,6 +10,7 @@ final class AppSyncCoordinator {
     }
 
     typealias SyncToggleAction = @MainActor @Sendable (Bool) async -> Void
+    typealias CredentialSecretMigrationAction = @MainActor @Sendable (Bool) async throws -> Void
     typealias ChangeSubscriptionAction = @MainActor @Sendable () async -> Void
     typealias ServerReloadAction = @MainActor @Sendable () async -> Void
     typealias TerminalAccessoryRefreshAction = @MainActor @Sendable () async -> Void
@@ -17,6 +19,7 @@ final class AppSyncCoordinator {
     static let shared = AppSyncCoordinator()
 
     private let applySyncToggle: SyncToggleAction
+    private let migrateCredentialSecrets: CredentialSecretMigrationAction
     private let subscribeToChanges: ChangeSubscriptionAction
     private let reloadServerData: ServerReloadAction
     private let refreshTerminalAccessories: TerminalAccessoryRefreshAction
@@ -24,13 +27,20 @@ final class AppSyncCoordinator {
 
     private var subscriptionTask: Task<Void, Never>?
     private var serverRefreshTask: (id: UUID, task: Task<Void, Never>)?
-    private var settingsSyncTask: (id: UUID, task: Task<Void, Never>)?
+    private var settingsSyncTask: (id: UUID, task: Task<Bool, Never>)?
     private var cloudKitStatusRefreshTask: (id: UUID, task: Task<Void, Never>)?
     private var remoteNotificationCompletionTasks: [UUID: Task<Bool, Never>] = [:]
 
     private init(
         applySyncToggle: @escaping SyncToggleAction = { enabled in
             await CloudKitManager.shared.handleSyncToggle(enabled)
+        },
+        migrateCredentialSecrets: @escaping CredentialSecretMigrationAction = { enabled in
+            guard !enabled else { return }
+            try KeychainStore(service: "app.vivy.vvterm")
+                .migrateAllItems(toICloudSync: false)
+            try KeychainStore(service: "app.vivy.vvterm.cloudflare.tokens")
+                .migrateAllItems(toICloudSync: false)
         },
         subscribeToChanges: @escaping ChangeSubscriptionAction = {
             await CloudKitManager.shared.subscribeToChanges()
@@ -46,6 +56,7 @@ final class AppSyncCoordinator {
         }
     ) {
         self.applySyncToggle = applySyncToggle
+        self.migrateCredentialSecrets = migrateCredentialSecrets
         self.subscribeToChanges = subscribeToChanges
         self.reloadServerData = reloadServerData
         self.refreshTerminalAccessories = refreshTerminalAccessories
@@ -55,6 +66,7 @@ final class AppSyncCoordinator {
     #if DEBUG
     static func makeForTesting(
         applySyncToggle: @escaping SyncToggleAction = { _ in },
+        migrateCredentialSecrets: @escaping CredentialSecretMigrationAction = { _ in },
         subscribeToChanges: @escaping ChangeSubscriptionAction = {},
         reloadServerData: @escaping ServerReloadAction = {},
         refreshTerminalAccessories: @escaping TerminalAccessoryRefreshAction = {},
@@ -62,6 +74,7 @@ final class AppSyncCoordinator {
     ) -> AppSyncCoordinator {
         AppSyncCoordinator(
             applySyncToggle: applySyncToggle,
+            migrateCredentialSecrets: migrateCredentialSecrets,
             subscribeToChanges: subscribeToChanges,
             reloadServerData: reloadServerData,
             refreshTerminalAccessories: refreshTerminalAccessories,
@@ -129,27 +142,45 @@ final class AppSyncCoordinator {
     }
 
     @discardableResult
-    func handleSyncSettingsChanged(_ enabled: Bool) -> Task<Void, Never> {
+    func handleSyncSettingsChanged(_ enabled: Bool) -> Task<Bool, Never> {
         settingsSyncTask?.task.cancel()
         let taskID = UUID()
-        let task = Task { [applySyncToggle, refreshTerminalAccessories] in
+        let task = Task { [applySyncToggle, migrateCredentialSecrets, refreshTerminalAccessories] in
             await applySyncToggle(enabled)
             guard !Task.isCancelled else {
                 clearSettingsSyncTask(id: taskID)
-                return
+                return false
+            }
+            do {
+                try await migrateCredentialSecrets(enabled)
+            } catch {
+                Logger.settings.error("Failed to migrate credential secrets after sync setting change: \(error.localizedDescription)")
+                clearSettingsSyncTask(id: taskID)
+                return false
+            }
+            guard !Task.isCancelled else {
+                clearSettingsSyncTask(id: taskID)
+                return false
             }
             if enabled {
                 await refreshServerData(reason: .settingsEnabled).value
                 guard !Task.isCancelled else {
                     clearSettingsSyncTask(id: taskID)
-                    return
+                    return false
                 }
                 await refreshTerminalAccessories()
             }
             clearSettingsSyncTask(id: taskID)
+            return true
         }
         settingsSyncTask = (taskID, task)
         return task
+    }
+
+    func restoreSyncSettingsAfterFailedChange(_ enabled: Bool) -> Task<Void, Never> {
+        Task { [applySyncToggle] in
+            await applySyncToggle(enabled)
+        }
     }
 
     @discardableResult
@@ -169,8 +200,9 @@ final class AppSyncCoordinator {
 
     func cancelAllAndWait() async {
         let tasks =
-            [subscriptionTask, serverRefreshTask?.task, settingsSyncTask?.task, cloudKitStatusRefreshTask?.task]
+            [subscriptionTask, serverRefreshTask?.task, cloudKitStatusRefreshTask?.task]
                 .compactMap { $0 }
+        let settingsTask = settingsSyncTask?.task
         let remoteNotificationTasks = Array(remoteNotificationCompletionTasks.values)
 
         subscriptionTask?.cancel()
@@ -188,6 +220,7 @@ final class AppSyncCoordinator {
         for task in tasks {
             await task.value
         }
+        _ = await settingsTask?.value
         for task in remoteNotificationTasks {
             _ = await task.value
         }

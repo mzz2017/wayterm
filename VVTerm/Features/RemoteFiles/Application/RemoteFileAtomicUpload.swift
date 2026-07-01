@@ -14,9 +14,19 @@ extension RemoteFileBrowserStore {
             try Task.checkCancellation()
             try await service.renameItem(at: temporaryRemotePath, to: remotePath)
         } catch {
-            try? await service.deleteFile(at: temporaryRemotePath)
+            await removeAtomicUploadTemporaryFile(temporaryRemotePath, using: service)
             throw error
         }
+    }
+
+    private nonisolated func removeAtomicUploadTemporaryFile(
+        _ temporaryRemotePath: String,
+        using service: any RemoteFileService
+    ) async {
+        let cleanupTask = Task.detached {
+            try? await service.deleteFile(at: temporaryRemotePath)
+        }
+        await cleanupTask.value
     }
 
     private nonisolated func makeAtomicRemoteUploadPath(for remotePath: String) -> String {

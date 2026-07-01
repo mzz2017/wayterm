@@ -362,6 +362,52 @@ struct CloudKitSyncCoordinatorLifecycleTests {
             "CloudKit pending-drain state should return to idle only after all waiting callers complete."
         )
     }
+
+    @Test
+    func pendingDrainStopsBeforeNextMutationWhenSyncIsDisabledMidDrain() async throws {
+        let syncSettingsRestore = SyncSettingsRestore()
+        syncSettingsRestore.setEnabled(true)
+        defer { syncSettingsRestore.restore() }
+
+        let probe = CloudKitDrainProbe()
+        let coordinator = CloudKitSyncCoordinator.makeForTesting(
+            storageKey: "CloudKitSyncCoordinatorLifecycleTests.\(UUID().uuidString)",
+            syncPendingMutation: { mutation in
+                await probe.record("sync:\(mutation.entityKey)")
+                syncSettingsRestore.setEnabled(false)
+            }
+        )
+        let firstServer = Server(
+            workspaceId: UUID(),
+            name: "First Pending",
+            host: "first.example.test",
+            username: "user"
+        )
+        let secondServer = Server(
+            workspaceId: UUID(),
+            name: "Second Pending",
+            host: "second.example.test",
+            username: "user"
+        )
+
+        // Given two metadata mutations are queued while sync is enabled.
+        coordinator.enqueueServerUpsert(firstServer)
+        coordinator.enqueueServerUpsert(secondServer)
+
+        // When the user disables sync while the first mutation is being sent.
+        await coordinator.drainPendingMutations()
+
+        // Then the active drain stops before sending later metadata after the
+        // cross-device sync control has been disabled.
+        #expect(
+            await probe.events() == ["sync:\(firstServer.id.uuidString)"],
+            "CloudKit pending drain must re-check SyncSettings before each mutation so disabling sync stops later uploads."
+        )
+        #expect(
+            coordinator.snapshot().map(\.entityKey) == [secondServer.id.uuidString],
+            "Mutations not sent because sync was disabled should remain queued for a later explicit sync-enable drain."
+        )
+    }
 }
 
 private struct LegacyPendingServerMutation: Encodable {

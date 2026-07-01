@@ -179,6 +179,7 @@ final class AppLockManager: ObservableObject {
 
         appLockRequestTasks.values.forEach { $0.cancel() }
         serverUnlockRequestsByServerID.values.compactMap(\.task).forEach { $0.cancel() }
+        authService.cancelAuthentication()
         appLockRequestTasks.removeAll()
         serverUnlockRequestsByServerID.removeAll()
 

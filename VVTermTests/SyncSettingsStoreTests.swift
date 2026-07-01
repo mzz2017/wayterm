@@ -133,6 +133,117 @@ struct SyncSettingsStoreTests {
     }
 
     @Test
+    func syncToggleFailureRestoresPreviousPreferenceState() async {
+        // Given sync is currently enabled and the app-level disable workflow
+        // cannot finish because credential migration failed.
+        let statusProvider = FakeSyncSettingsCloudStatusProvider()
+        let coordinator = FakeSyncSettingsCoordinator()
+        coordinator.toggleResult = false
+        let preferences = FakeSyncSettingsPreferencePersistence(isEnabled: true)
+        let store = SyncSettingsStore(
+            statusProvider: statusProvider,
+            coordinator: coordinator,
+            preferences: preferences
+        )
+
+        // When Settings optimistically sends disable intent.
+        let requestID = store.handleSyncEnabledChanged(false)
+        await store.waitForSyncSettingsChange(requestID)
+
+        // Then UI state and persisted preference roll back to enabled, so the
+        // app does not claim sync is disabled while secrets may still be in
+        // iCloud Keychain. The CloudKit toggle is restored only after the
+        // preference has been persisted back to enabled.
+        #expect(store.isSyncEnabled == true)
+        #expect(preferences.savedValues == [false, true])
+        #expect(coordinator.toggleRequests == [false])
+        #expect(coordinator.rollbackRequests == [true])
+    }
+
+    @Test
+    func staleCanceledSyncToggleDoesNotRestoreOverNewerIntent() async {
+        // Given sync is enabled and the first disable workflow will later
+        // report cancellation after a newer disable intent has already won.
+        let statusProvider = FakeSyncSettingsCloudStatusProvider()
+        let coordinator = FakeSyncSettingsCoordinator()
+        let releaseStaleCancellation = AsyncGate()
+        var requestIndex = 0
+        coordinator.toggleTaskFactory = { _ in
+            requestIndex += 1
+            if requestIndex == 1 {
+                return Task {
+                    await releaseStaleCancellation.wait()
+                    return false
+                }
+            }
+            return Task { true }
+        }
+        let preferences = FakeSyncSettingsPreferencePersistence(isEnabled: true)
+        let store = SyncSettingsStore(
+            statusProvider: statusProvider,
+            coordinator: coordinator,
+            preferences: preferences
+        )
+
+        // When the same disable intent is sent again before the first
+        // coordinator task reports cancellation.
+        let staleRequestID = store.handleSyncEnabledChanged(false)
+        let winningRequestID = store.handleSyncEnabledChanged(false)
+        await store.waitForSyncSettingsChange(winningRequestID)
+        await releaseStaleCancellation.open()
+        await store.waitForSyncSettingsChange(staleRequestID)
+
+        // Then the stale false result must not restore the pre-first-toggle
+        // enabled state over the latest user intent.
+        #expect(store.isSyncEnabled == false)
+        #expect(preferences.savedValues == [false, false])
+        #expect(coordinator.toggleRequests == [false, false])
+        #expect(coordinator.rollbackRequests.isEmpty)
+    }
+
+    @Test
+    func newerSyncToggleCancelsStaleRollbackAfterFailure() async {
+        // Given a failed disable has restored the preference and is still
+        // waiting for app-level CloudKit rollback to finish.
+        let statusProvider = FakeSyncSettingsCloudStatusProvider()
+        let coordinator = FakeSyncSettingsCoordinator()
+        coordinator.toggleResult = false
+        let rollbackProbe = RollbackProbe()
+        coordinator.rollbackTaskFactory = { _ in
+            Task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(5))
+                }
+                await rollbackProbe.recordCancellation()
+            }
+        }
+        let preferences = FakeSyncSettingsPreferencePersistence(isEnabled: true)
+        let store = SyncSettingsStore(
+            statusProvider: statusProvider,
+            coordinator: coordinator,
+            preferences: preferences
+        )
+
+        let staleRequestID = store.handleSyncEnabledChanged(false)
+        try? await Task.sleep(for: .milliseconds(20))
+
+        // When the user sends a newer disable intent while the stale rollback
+        // task is still running.
+        coordinator.toggleResult = true
+        let winningRequestID = store.handleSyncEnabledChanged(false)
+        await store.waitForSyncSettingsChange(winningRequestID)
+        await store.waitForSyncSettingsChange(staleRequestID)
+
+        // Then the old rollback cannot publish CloudKit toggle state after the
+        // newer disable intent has won.
+        #expect(store.isSyncEnabled == false)
+        #expect(preferences.savedValues == [false, true, false])
+        #expect(coordinator.toggleRequests == [false, false])
+        #expect(coordinator.rollbackRequests == [true])
+        #expect(await rollbackProbe.cancellationCount() == 1)
+    }
+
+    @Test
     func cloudKitStatusRefreshReusesPendingCoordinatorTask() async {
         // Given CloudKit status recheck is still running.
         let statusProvider = FakeSyncSettingsCloudStatusProvider()
@@ -255,13 +366,28 @@ private final class FakeSyncSettingsCloudStatusProvider: SyncSettingsCloudStatus
 @MainActor
 private final class FakeSyncSettingsCoordinator: SyncSettingsCoordinating {
     var toggleRequests: [Bool] = []
+    var toggleResult = true
+    var toggleTaskFactory: ((Bool) -> Task<Bool, Never>)?
+    var rollbackRequests: [Bool] = []
+    var rollbackTaskFactory: ((Bool) -> Task<Void, Never>)?
     var refreshRequestCount = 0
     var refreshTaskFactory: () -> Task<Void, Never> = {
         Task {}
     }
 
-    func handleSyncSettingsChanged(_ enabled: Bool) -> Task<Void, Never> {
+    func handleSyncSettingsChanged(_ enabled: Bool) -> Task<Bool, Never> {
         toggleRequests.append(enabled)
+        if let toggleTaskFactory {
+            return toggleTaskFactory(enabled)
+        }
+        return Task { toggleResult }
+    }
+
+    func restoreSyncSettingsAfterFailedChange(_ enabled: Bool) -> Task<Void, Never> {
+        rollbackRequests.append(enabled)
+        if let rollbackTaskFactory {
+            return rollbackTaskFactory(enabled)
+        }
         return Task {}
     }
 
@@ -289,5 +415,17 @@ private actor AsyncGate {
         await withCheckedContinuation { continuation in
             continuations.append(continuation)
         }
+    }
+}
+
+private actor RollbackProbe {
+    private var cancellations = 0
+
+    func recordCancellation() {
+        cancellations += 1
+    }
+
+    func cancellationCount() -> Int {
+        cancellations
     }
 }

@@ -86,6 +86,45 @@ struct KeychainStoreSyncMigrationTests {
         )
     }
 
+    @Test
+    func migrateAllSynchronizableItemsForServiceToDeviceLocal() throws {
+        let client = RecordingSecItemClient()
+        let service = "app.vivy.vvterm.tests"
+        let store = KeychainStore(service: service, secItemClient: client)
+        try client.seed(
+            service: service,
+            account: "server.one.password",
+            synchronizable: true,
+            data: Data("one".utf8)
+        )
+        try client.seed(
+            service: service,
+            account: "oauth.team.example",
+            synchronizable: true,
+            data: Data("oauth".utf8)
+        )
+        try client.seed(
+            service: "app.vivy.vvterm.other",
+            account: "server.two.password",
+            synchronizable: true,
+            data: Data("other".utf8)
+        )
+
+        // Given a Keychain service has existing iCloud Keychain secrets.
+
+        // When sync is disabled and the service is migrated to device-local
+        // storage.
+        try store.migrateAllItems(toICloudSync: false)
+
+        // Then every secret in that service is rewritten to the device-local
+        // class, and unrelated Keychain services are untouched.
+        #expect(try client.data(service: service, account: "server.one.password", synchronizable: false) == Data("one".utf8))
+        #expect(try client.data(service: service, account: "server.one.password", synchronizable: true) == nil)
+        #expect(try client.data(service: service, account: "oauth.team.example", synchronizable: false) == Data("oauth".utf8))
+        #expect(try client.data(service: service, account: "oauth.team.example", synchronizable: true) == nil)
+        #expect(try client.data(service: "app.vivy.vvterm.other", account: "server.two.password", synchronizable: true) == Data("other".utf8))
+    }
+
     private func realKeychainData(
         service: String,
         account: String,
@@ -151,6 +190,25 @@ private final class RecordingSecItemClient: SecItemClienting, @unchecked Sendabl
     }
 
     func copyMatching(_ query: [String: Any]) -> (OSStatus, CFTypeRef?) {
+        if let matchLimit = query[kSecMatchLimit as String],
+           CFEqual(matchLimit as CFTypeRef, kSecMatchLimitAll),
+           let service = query[kSecAttrService as String] as? String,
+           let synchronizableValue = query[kSecAttrSynchronizable as String],
+           let synchronizable = boolValue(from: synchronizableValue) {
+            let results: [[String: Any]] = items.compactMap { key, data in
+                guard key.service == service, key.synchronizable == synchronizable else {
+                    return nil
+                }
+                return [
+                    kSecAttrService as String: key.service,
+                    kSecAttrAccount as String: key.account,
+                    kSecAttrSynchronizable as String: (key.synchronizable ? kCFBooleanTrue : kCFBooleanFalse) as Any,
+                    kSecValueData as String: data
+                ]
+            }
+            return results.isEmpty ? (errSecItemNotFound, nil) : (errSecSuccess, results as CFArray)
+        }
+
         if let synchronizable = query[kSecAttrSynchronizable as String],
            isSynchronizableAny(synchronizable) {
             guard let service = query[kSecAttrService as String] as? String,

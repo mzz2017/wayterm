@@ -162,13 +162,79 @@ struct AppSyncCoordinatorTests {
 
         // When settings sends enable intent to the application-layer owner.
         let task = coordinator.handleSyncSettingsChanged(true)
-        await task.value
+        _ = await task.value
 
         // Then the full settings-triggered sync workflow is owned and ordered
         // by the coordinator instead of ad hoc SwiftUI tasks.
         #expect(
             await probe.events() == ["toggle:true", "reload", "accessories"],
             "Enabling sync from settings must run toggle, server reload, and accessory refresh in order."
+        )
+    }
+
+    @Test
+    func syncSettingsDisableMigratesCredentialSecretsDeviceLocal() async {
+        // Given the settings UI disables iCloud sync.
+        let probe = AppSyncProbe()
+        let coordinator = AppSyncCoordinator.makeForTesting(
+            applySyncToggle: { enabled in
+                await probe.record("toggle:\(enabled)")
+            },
+            migrateCredentialSecrets: { enabled in
+                await probe.record("migrate:\(enabled)")
+            },
+            reloadServerData: {
+                await probe.record("reload")
+            },
+            refreshTerminalAccessories: {
+                await probe.record("accessories")
+            }
+        )
+
+        // When settings sends disable intent to the application-layer owner.
+        let task = coordinator.handleSyncSettingsChanged(false)
+        _ = await task.value
+
+        // Then the coordinator migrates existing credential secrets out of
+        // iCloud Keychain and does not run enabled-only CloudKit refresh work.
+        #expect(
+            await probe.events() == ["toggle:false", "migrate:false"],
+            "Disabling sync must migrate existing credential secrets to device-local Keychain storage."
+        )
+    }
+
+    @Test
+    func syncSettingsDisableReportsFailureWhenCredentialMigrationFails() async {
+        // Given disabling sync reaches credential migration, but Keychain
+        // migration fails before secrets can be made device-local.
+        let probe = AppSyncProbe()
+        let coordinator = AppSyncCoordinator.makeForTesting(
+            applySyncToggle: { enabled in
+                await probe.record("toggle:\(enabled)")
+            },
+            migrateCredentialSecrets: { enabled in
+                await probe.record("migrate:\(enabled)")
+                throw AppSyncTestError.migrationFailed
+            },
+            reloadServerData: {
+                await probe.record("reload")
+            },
+            refreshTerminalAccessories: {
+                await probe.record("accessories")
+            }
+        )
+
+        // When settings sends disable intent to the application-layer owner.
+        let task = coordinator.handleSyncSettingsChanged(false)
+        let didApply = await task.value
+
+        // Then the failure is visible to the caller. SettingsStore owns
+        // preference rollback and will restore the CloudKit toggle after the
+        // persisted sync preference has been restored.
+        #expect(!didApply)
+        #expect(
+            await probe.events() == ["toggle:false", "migrate:false"],
+            "Failed credential migration should stop the disable workflow before enabled-only refresh work."
         )
     }
 
@@ -200,7 +266,7 @@ struct AppSyncCoordinatorTests {
         await probe.waitForCount(2)
         await releaseForegroundRefresh.open()
         await foregroundTask.value
-        await settingsTask.value
+        _ = await settingsTask.value
 
         // Then settings enable performs its own post-toggle server reload
         // before accessory refresh instead of treating the earlier foreground
@@ -252,8 +318,8 @@ struct AppSyncCoordinatorTests {
             "A later settings disable intent must start its own tracked task instead of reusing the in-flight enable task."
         )
         await releaseEnable.open()
-        await enableTask.value
-        await disableTask.value
+        _ = await enableTask.value
+        _ = await disableTask.value
         #expect(
             await probe.events() == ["toggle:true", "toggle:false"],
             "Canceled enable intent must not run server/accessory refresh after disable intent wins."
@@ -434,6 +500,10 @@ private actor AppSyncProbe {
             continuation.resume()
         }
     }
+}
+
+private enum AppSyncTestError: Error {
+    case migrationFailed
 }
 
 private actor AsyncGate {

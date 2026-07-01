@@ -107,6 +107,43 @@ final class KeychainStore: @unchecked Sendable {
         }
     }
 
+    nonisolated func migrateAllItems(toICloudSync iCloudSync: Bool) throws {
+        let sourceICloudSync = !iCloudSync
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrSynchronizable as String: (sourceICloudSync ? kCFBooleanTrue : kCFBooleanFalse) as Any,
+            kSecReturnAttributes as String: kCFBooleanTrue as Any,
+            kSecReturnData as String: kCFBooleanTrue as Any,
+            kSecMatchLimit as String: kSecMatchLimitAll
+        ]
+
+        let (status, item) = secItemClient.copyMatching(query)
+        guard status != errSecItemNotFound else {
+            return
+        }
+        guard status == errSecSuccess else {
+            throw KeychainError.unhandled(status)
+        }
+
+        let items: [[String: Any]]
+        if let itemArray = item as? [[String: Any]] {
+            items = itemArray
+        } else if let singleItem = item as? [String: Any] {
+            items = [singleItem]
+        } else {
+            throw KeychainError.decodingFailed
+        }
+
+        for item in items {
+            guard let key = item[kSecAttrAccount as String] as? String,
+                  let data = item[kSecValueData as String] as? Data else {
+                throw KeychainError.decodingFailed
+            }
+            try set(data, forKey: key, iCloudSync: iCloudSync)
+        }
+    }
+
     private nonisolated func baseQuery(forKey key: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
@@ -150,29 +187,29 @@ final class KeychainStore: @unchecked Sendable {
 
 extension KeychainStore: KeychainStoring {}
 
-protocol SecItemClienting {
-    func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus
-    func add(_ attributes: [String: Any]) -> OSStatus
-    func copyMatching(_ query: [String: Any]) -> (OSStatus, CFTypeRef?)
-    func delete(_ query: [String: Any]) -> OSStatus
+protocol SecItemClienting: Sendable {
+    nonisolated func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus
+    nonisolated func add(_ attributes: [String: Any]) -> OSStatus
+    nonisolated func copyMatching(_ query: [String: Any]) -> (OSStatus, CFTypeRef?)
+    nonisolated func delete(_ query: [String: Any]) -> OSStatus
 }
 
-private struct SecuritySecItemClient: SecItemClienting {
-    func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus {
+private nonisolated struct SecuritySecItemClient: SecItemClienting {
+    nonisolated func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus {
         SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
     }
 
-    func add(_ attributes: [String: Any]) -> OSStatus {
+    nonisolated func add(_ attributes: [String: Any]) -> OSStatus {
         SecItemAdd(attributes as CFDictionary, nil)
     }
 
-    func copyMatching(_ query: [String: Any]) -> (OSStatus, CFTypeRef?) {
+    nonisolated func copyMatching(_ query: [String: Any]) -> (OSStatus, CFTypeRef?) {
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         return (status, item)
     }
 
-    func delete(_ query: [String: Any]) -> OSStatus {
+    nonisolated func delete(_ query: [String: Any]) -> OSStatus {
         SecItemDelete(query as CFDictionary)
     }
 }

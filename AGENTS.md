@@ -271,6 +271,16 @@ IOS_TEST_RAMDISK_MB=8192 ./scripts/test-ios.sh \
   -only-testing:VVTermTests/<TestClass>
 ```
 
+- For long test runs, inspect/report results through `rg` filters so build
+  noise does not flood context. Prefer failure/success-focused patterns and
+  rerun unfiltered only when the filtered output is missing needed detail:
+
+```bash
+IOS_TEST_RAMDISK_MB=8192 rtk ./scripts/test-ios.sh \
+  -only-testing:VVTermTests/<TestClass> 2>&1 \
+  | rtk rg -n "failed|Failure|error:|XCTAssert|Test Case|TEST SUCCEEDED|TEST FAILED"
+```
+
 - For local agent-run iOS wrapper invocations, default to `IOS_TEST_RAMDISK_MB=8192` so auto-managed DerivedData lives on a RAM disk while the default Swift package checkout cache stays in the ignored repo-local `.build/vvterm-ios-source-packages` cache for warm focused runs. The wrapper also favors lower simulator churn by reusing an already booted simulator and disabling extra XCTest diagnostics by default; use `IOS_TEST_REUSE_BOOTED_SIMULATOR=0` or `IOS_TEST_COLLECT_DIAGNOSTICS=on-failure` when debugging simulator boot/install state or failure diagnostics, and avoid RAM disk mode when memory pressure is high.
 - The wrapper defaults to the shared `VVTermUnitTests` scheme, which contains `VVTermTests` but not `VVTermUITests`. Set `IOS_TEST_SCHEME=VVTerm` when intentionally exercising the full shared scheme or UI test target.
 - The default destination is `iPhone 17`. Override with `IOS_TEST_DEVICE_NAME` or `IOS_TEST_DESTINATION_ID` when needed. Override the package clone cache with `IOS_TEST_CLONED_SOURCE_PACKAGES_DIR` when isolation from the shared package cache is required. The default no-output watchdog is 900 seconds; use `IOS_TEST_NO_OUTPUT_TIMEOUT` for shorter focused diagnostics.
