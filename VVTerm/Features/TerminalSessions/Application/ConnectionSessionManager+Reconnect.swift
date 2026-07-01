@@ -3,6 +3,7 @@ import Foundation
 extension ConnectionSessionManager {
     func reconnect(session: ConnectionSession) async throws {
         guard !isSuspendingForBackground else { return }
+        await waitForServerTeardownTasks(session.serverId)
         guard serverProvider(session.serverId) != nil else {
             throw SSHError.connectionFailed("Server not found")
         }
