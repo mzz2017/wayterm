@@ -337,6 +337,61 @@ struct ConnectionForegroundReconnectLifecycleTests {
     }
 
     @Test
+    func foregroundReconnectCompletionCanStartFreshReconnectRequest() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .disconnected
+            )
+            manager.sessions = [session]
+            manager.selectedSessionId = session.id
+            let reconnectGate = ForegroundReconnectTaskGate()
+            var callbackTriggeredRequestID: UUID?
+
+            manager.setForegroundReconnectOperationForTesting { _ in
+                await reconnectGate.waitForRelease()
+                return true
+            }
+
+            // Given foreground reconnect completion immediately sends another
+            // selected-session reconnect intent to the application owner.
+            guard let firstRequestID = manager.requestForegroundReconnectForSelectedSession(
+                selectedViewId: "terminal",
+                terminalViewId: "terminal",
+                refreshTerminal: true,
+                autoReconnectEnabled: true,
+                onAction: { _ in
+                    callbackTriggeredRequestID = manager.requestForegroundReconnectForSelectedSession(
+                        selectedViewId: "terminal",
+                        terminalViewId: "terminal",
+                        refreshTerminal: true,
+                        autoReconnectEnabled: true
+                    )
+                }
+            ) else {
+                Issue.record("Foreground reconnect intent should produce a tracked request.")
+                return
+            }
+            await reconnectGate.waitForCallCount(1)
+
+            // When the first foreground reconnect finishes.
+            await reconnectGate.release()
+            await manager.waitForForegroundReconnectRequest(firstRequestID)
+            for _ in 0..<50 where await reconnectGate.callCount < 2 {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+
+            // Then the callback-triggered intent owns a new reconnect lifecycle
+            // instead of joining the completed request that is about to clear.
+            #expect(callbackTriggeredRequestID != nil)
+            #expect(callbackTriggeredRequestID != firstRequestID)
+            #expect(await reconnectGate.callCount == 2)
+        }
+    }
+
+    @Test
     func closeSessionCancelsPendingForegroundReconnectRequest() async {
         await withCleanConnectionManager { manager in
             let server = makeServer()
@@ -404,12 +459,24 @@ struct ConnectionForegroundReconnectLifecycleTests {
 
 private actor ForegroundReconnectTaskGate {
     private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var callContinuations: [CheckedContinuation<Void, Never>] = []
     private var isReleased = false
+    private(set) var callCount = 0
 
     func waitForRelease() async {
+        callCount += 1
+        callContinuations.forEach { $0.resume() }
+        callContinuations.removeAll()
         guard !isReleased else { return }
         await withCheckedContinuation { continuation in
             releaseContinuation = continuation
+        }
+    }
+
+    func waitForCallCount(_ expectedCount: Int) async {
+        guard callCount < expectedCount else { return }
+        await withCheckedContinuation { continuation in
+            callContinuations.append(continuation)
         }
     }
 

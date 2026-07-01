@@ -153,7 +153,9 @@ extension ConnectionSessionManager {
             guard self.selectedSessionId == action.sessionId else { return }
             guard self.sessionWithID(action.sessionId) != nil else { return }
 
-            let callbacks = self.foregroundReconnectRequestStore[requestID]?.callbacks ?? []
+            let callbacks = self.foregroundReconnectRequestStore
+                .remove(id: requestID, ifMappedTo: action.sessionId)?
+                .callbacks ?? []
             callbacks.forEach { $0.onAction($0.action) }
         }
 
