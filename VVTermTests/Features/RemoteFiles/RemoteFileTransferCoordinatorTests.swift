@@ -522,6 +522,37 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func copyEntriesCoordinatorRetriesReservedNameAfterPublishConflict() async throws {
+        let coordinator = RemoteFileCopyEntriesCoordinator()
+        let sourceEntry = makeEntry(name: "folder", path: "/source/folder", type: .directory)
+        let destinationService = RecordingRemoteFileService(
+            directoryContents: [:],
+            existingEntries: [
+                "/destination/folder": makeEntry(name: "folder", path: "/destination/folder", type: .directory)
+            ]
+        )
+        var attemptedNames: [String] = []
+
+        // Given the first resolved keep-both destination is taken between
+        // conflict resolution and atomic publish.
+        try await coordinator.copyEntries(
+            [sourceEntry],
+            to: "/destination",
+            using: destinationService,
+            progressTracker: nil
+        ) { _, remoteName, _ in
+            attemptedNames.append(remoteName)
+            if remoteName == "folder 2" {
+                throw RemoteFilePublishError.destinationExists("/destination/folder 2")
+            }
+        }
+
+        // Then the copy owner keeps the first failed name reserved and retries
+        // conflict resolution to the next safe destination.
+        #expect(attemptedNames == ["folder 2", "folder 3"])
+    }
+
+    @Test
     func downloadFileUsesSecurityScopedAccessForDestination() async throws {
         let server = Server(
             workspaceId: UUID(),

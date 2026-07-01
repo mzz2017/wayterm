@@ -40,6 +40,10 @@ extension RemoteFileBrowserStore {
         RemoteFileMoveEntriesCoordinator()
     }
 
+    private var copyEntriesCoordinator: RemoteFileCopyEntriesCoordinator {
+        RemoteFileCopyEntriesCoordinator(conflictResolver: conflictResolver)
+    }
+
     func upload(
         data: Data,
         to remotePath: String,
@@ -369,31 +373,20 @@ extension RemoteFileBrowserStore {
 
         try await withRemoteFileService(for: sourceServer) { sourceService in
             try await self.withRemoteFileService(for: destinationServer) { destinationService in
-                var reservedNames: Set<String> = []
-                for entry in uniqueEntries {
-                    try Task.checkCancellation()
-                    while true {
-                        let resolution = try await self.conflictResolver.resolveName(
-                            for: entry.name,
-                            in: destinationDirectory,
-                            policy: .keepBoth,
-                            using: destinationService,
-                            reservedNames: &reservedNames
-                        )
-                        do {
-                            try await self.copyRemoteEntry(
-                                entry,
-                                to: destinationDirectory,
-                                remoteName: resolution.resolvedName,
-                                sourceService: sourceService,
-                                destinationService: destinationService,
-                                progressTracker: progressTracker
-                            )
-                            break
-                        } catch RemoteFilePublishError.destinationExists(_) {
-                            continue
-                        }
-                    }
+                try await self.copyEntriesCoordinator.copyEntries(
+                    uniqueEntries,
+                    to: destinationDirectory,
+                    using: destinationService,
+                    progressTracker: progressTracker
+                ) { entry, remoteName, progressTracker in
+                    try await self.copyRemoteEntry(
+                        entry,
+                        to: destinationDirectory,
+                        remoteName: remoteName,
+                        sourceService: sourceService,
+                        destinationService: destinationService,
+                        progressTracker: progressTracker
+                    )
                 }
             }
         }
