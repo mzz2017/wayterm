@@ -778,8 +778,8 @@ struct StoreManagerLifecycleTests {
         #expect(deinitSource.contains("startupRefreshTask?.cancel()"))
         #expect(deinitSource.contains("reviewModeRefreshTask?.cancel()"))
         #expect(deinitSource.contains("productLoadRequestTask?.cancel()"))
-        #expect(deinitSource.contains("purchaseRequestTasks.values.forEach { $0.cancel() }"))
-        #expect(deinitSource.contains("restoreRequestTasks.values.forEach { $0.cancel() }"))
+        #expect(deinitSource.contains("purchaseRequestCoordinator.cancelAllFromAnyContext()"))
+        #expect(deinitSource.contains("restoreRequestCoordinator.cancelAllFromAnyContext()"))
 
         // Then review-mode expiry must be canceled by the same owner cleanup
         // path instead of outliving the StoreManager instance.
