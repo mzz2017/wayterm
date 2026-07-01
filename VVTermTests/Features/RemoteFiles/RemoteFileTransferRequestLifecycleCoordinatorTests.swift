@@ -70,6 +70,52 @@ struct RemoteFileTransferRequestLifecycleCoordinatorTests {
         #expect(events == ["cancel"])
         #expect(coordinator.pendingRequestIDs.isEmpty)
     }
+
+    @Test
+    func lateServerBindingCancellationRemainsAwaitableUntilOperationExits() async {
+        let bindGate = RemoteFileTransferRequestGate()
+        let finishGate = RemoteFileTransferRequestGate()
+        let waitProbe = RemoteFileTransferRequestWaitProbe()
+        let serverID = UUID()
+        let coordinator = RemoteFileTransferRequestLifecycleCoordinator()
+
+        // Given a transfer starts before it knows the remote server that will
+        // own its eventual SFTP work.
+        let requestID = coordinator.requestTransfer(serverIds: []) { _, bindServers in
+            await bindGate.waitForRelease()
+            bindServers([serverID])
+            await finishGate.waitForRelease()
+            try Task.checkCancellation()
+            return "copied"
+        } onSuccess: { _ in
+            Issue.record("Canceled late-bound transfer should not publish success.")
+        }
+        await bindGate.waitForOperationStart()
+
+        // When the server is disconnected before the transfer late-binds to it.
+        let canceledTasks = coordinator.cancelTransferRequests(for: serverID)
+        #expect(canceledTasks.isEmpty)
+        await bindGate.release()
+
+        let waitTask = Task {
+            await coordinator.waitForTransferCancellationTasks()
+            await waitProbe.markReturned()
+        }
+        try? await Task.sleep(for: .milliseconds(20))
+
+        // Then cancellation completion should still be owned and awaitable
+        // until the underlying transfer operation exits.
+        #expect(
+            await !waitProbe.didReturn,
+            "Late server-binding cancellation must remain awaitable while transfer work is still blocked."
+        )
+
+        await finishGate.release()
+        await coordinator.waitForTransferRequest(requestID)
+        await waitTask.value
+
+        #expect(await waitProbe.didReturn)
+    }
 }
 
 private actor RemoteFileTransferRequestGate {
@@ -108,5 +154,13 @@ private actor RemoteFileTransferRequestGate {
         await withCheckedContinuation { continuation in
             releaseContinuation = continuation
         }
+    }
+}
+
+private actor RemoteFileTransferRequestWaitProbe {
+    private(set) var didReturn = false
+
+    func markReturned() {
+        didReturn = true
     }
 }

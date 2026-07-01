@@ -105,6 +105,7 @@ final class RemoteFileTransferRequestLifecycleCoordinator {
         }) {
             request.isCancelled = true
             request.task.cancel()
+            trackTransferCancellationCompletion(requestID, task: request.task)
         }
         transferRequests[requestID] = request
     }
@@ -128,7 +129,17 @@ final class RemoteFileTransferRequestLifecycleCoordinator {
             return task
         }
         guard let transferTask = cancelTransferRequest(requestID) else { return nil }
+        return trackTransferCancellationCompletion(requestID, task: transferTask)
+    }
 
+    @discardableResult
+    private func trackTransferCancellationCompletion(
+        _ requestID: UUID,
+        task transferTask: Task<Void, Never>
+    ) -> Task<Void, Never> {
+        if let task = transferCancellationTasks[requestID] {
+            return task
+        }
         let cancellationTask = Task { @MainActor [self] in
             await transferTask.value
             transferCancellationTasks.removeValue(forKey: requestID)
