@@ -24,6 +24,45 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func recursiveTransferCoordinatorRemainsOffMainActorExceptProgressCallback() throws {
+        let root = try sourceRoot()
+        let recursiveTransferSource = try source(
+            at: root.appendingPathComponent(
+                "VVTerm/Features/RemoteFiles/Application/RemoteFileRecursiveTransferCoordinator.swift"
+            )
+        )
+        let atomicDirectoryCopySource = try source(
+            at: root.appendingPathComponent(
+                "VVTerm/Features/RemoteFiles/Application/RemoteFileAtomicDirectoryCopyCoordinator.swift"
+            )
+        )
+        let transferCoordinatorSource = try source(
+            at: root.appendingPathComponent(
+                "VVTerm/Features/RemoteFiles/Application/RemoteFileTransferCoordinator.swift"
+            )
+        )
+
+        // Given recursive transfer coordination performs SFTP traversal,
+        // local file replacement, upload/download, and unit counting.
+        #expect(
+            !recursiveTransferSource.contains("@MainActor\nstruct RemoteFileRecursiveTransferCoordinator"),
+            "RemoteFileRecursiveTransferCoordinator should not inherit UI-actor isolation; keep only progress publishing on MainActor."
+        )
+        #expect(
+            !atomicDirectoryCopySource.contains("typealias ChildCopyOperation = @MainActor"),
+            "Recursive copy callbacks should not force child transfer work back onto MainActor."
+        )
+        #expect(
+            recursiveTransferSource.contains("await progressTracker?.advance"),
+            "Progress updates should still cross to the MainActor-owned tracker explicitly."
+        )
+        #expect(
+            transferCoordinatorSource.contains("nonisolated final class TransferProgressTracker"),
+            "Progress tracker construction should remain available to non-UI transfer owners."
+        )
+    }
+
+    @Test
     func deleteDirectoryRecursivelyRemovesNestedContentsBeforeParent() async throws {
         let store = RemoteFileBrowserStore(persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()), serverProvider: { _ in nil })
         let service = RecordingRemoteFileService(
@@ -531,7 +570,7 @@ struct RemoteFileTransferCoordinatorTests {
                 "/destination/folder": makeEntry(name: "folder", path: "/destination/folder", type: .directory)
             ]
         )
-        var attemptedNames: [String] = []
+        let attemptedNames = StringRecorder()
 
         // Given the first resolved keep-both destination is taken between
         // conflict resolution and atomic publish.
@@ -541,7 +580,7 @@ struct RemoteFileTransferCoordinatorTests {
             using: destinationService,
             progressTracker: nil
         ) { _, remoteName, _ in
-            attemptedNames.append(remoteName)
+            await attemptedNames.record(remoteName)
             if remoteName == "folder 2" {
                 throw RemoteFilePublishError.destinationExists("/destination/folder 2")
             }
@@ -549,7 +588,7 @@ struct RemoteFileTransferCoordinatorTests {
 
         // Then the copy owner keeps the first failed name reserved and retries
         // conflict resolution to the next safe destination.
-        #expect(attemptedNames == ["folder 2", "folder 3"])
+        #expect(await attemptedNames.values == ["folder 2", "folder 3"])
     }
 
     @Test
@@ -1399,6 +1438,18 @@ private actor RemoteFileUploadBlocker {
 }
 
 private actor UploadPlanRecorder {
+    private var storage: [String] = []
+
+    var values: [String] {
+        storage
+    }
+
+    func record(_ value: String) {
+        storage.append(value)
+    }
+}
+
+private actor StringRecorder {
     private var storage: [String] = []
 
     var values: [String] {

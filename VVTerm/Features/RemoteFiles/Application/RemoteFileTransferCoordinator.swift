@@ -2,8 +2,8 @@ import Combine
 import Foundation
 
 extension RemoteFileBrowserStore {
-    final class TransferProgressTracker {
-        private(set) var completedUnitCount = 0
+    nonisolated final class TransferProgressTracker: @unchecked Sendable {
+        @MainActor private var completedUnitCount = 0
         let totalUnitCount: Int
         let onProgress: (@MainActor @Sendable (TransferProgress) -> Void)?
 

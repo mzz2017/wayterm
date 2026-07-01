@@ -1,6 +1,6 @@
 import Foundation
 
-@MainActor
+nonisolated
 struct RemoteFileRecursiveTransferCoordinator {
     typealias TransferProgressTracker = RemoteFileBrowserStore.TransferProgressTracker
 
@@ -38,7 +38,7 @@ struct RemoteFileRecursiveTransferCoordinator {
                 permissions: 0o755,
                 using: client
             )
-            progressTracker?.advance(currentItemName: targetName)
+            await progressTracker?.advance(currentItemName: targetName)
             let children = try await localDirectoryContents(at: localURL)
             for child in children {
                 try Task.checkCancellation()
@@ -54,7 +54,7 @@ struct RemoteFileRecursiveTransferCoordinator {
 
         let data = try await loadLocalFileData(from: localURL)
         try await atomicUploader.uploadAtomically(data, to: remotePath, permissions: Int32(0o644), using: client)
-        progressTracker?.advance(currentItemName: targetName)
+        await progressTracker?.advance(currentItemName: targetName)
     }
 
     func downloadItem(
@@ -132,7 +132,7 @@ struct RemoteFileRecursiveTransferCoordinator {
             publishMode: .failIfDestinationExists,
             using: destinationService
         )
-        progressTracker?.advance(currentItemName: targetName)
+        await progressTracker?.advance(currentItemName: targetName)
     }
 
     func countRemoteTransferUnits(

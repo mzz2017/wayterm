@@ -2,7 +2,7 @@ import Foundation
 
 nonisolated struct RemoteFileAtomicDirectoryCopyCoordinator: Sendable {
     typealias TransferProgressTracker = RemoteFileBrowserStore.TransferProgressTracker
-    typealias ChildCopyOperation = @MainActor (
+    typealias ChildCopyOperation = @Sendable (
         _ entry: RemoteFileEntry,
         _ temporaryRemoteDirectoryPath: String
     ) async throws -> Void
