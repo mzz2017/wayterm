@@ -15,6 +15,17 @@
     ],
     "PostToolUse": [
       {
+        "matcher": "Read|functions.exec_command|exec_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/swift_lifecycle_guard.py\" --mark-best-practices-read-from-tool-use",
+            "timeout": 30,
+            "statusMessage": "Recording Swift best-practices read marker"
+          }
+        ]
+      },
+      {
         "matcher": "apply_patch|Edit|Write",
         "hooks": [
           {

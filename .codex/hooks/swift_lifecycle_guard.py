@@ -9,6 +9,7 @@ workflow action; this hook enforces the auditable marker that records it.
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 import re
 import subprocess
@@ -33,6 +34,7 @@ def repo_root() -> pathlib.Path:
 
 STATE_DIR = repo_root() / ".codex" / "state"
 BEST_PRACTICES_MARKER = "swift-best-practices-read"
+BEST_PRACTICES_DOCUMENT = "docs/engineering/swift-best-practices.md"
 
 
 def best_practices_marker_path() -> pathlib.Path:
@@ -57,6 +59,50 @@ def reset_best_practices_marker() -> int:
         best_practices_marker_path().unlink()
     except FileNotFoundError:
         pass
+    return 0
+
+
+def tool_use_marks_best_practices_read(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+
+    tool_name = str(payload.get("tool_name") or payload.get("tool") or payload.get("name") or "")
+    tool_input = (
+        payload.get("tool_input")
+        or payload.get("input")
+        or payload.get("parameters")
+        or {}
+    )
+
+    if not isinstance(tool_input, dict):
+        return False
+
+    if re.search(r"(^|\.)Read$", tool_name):
+        file_path = str(
+            tool_input.get("file_path")
+            or tool_input.get("path")
+            or tool_input.get("uri")
+            or ""
+        )
+        return file_path.endswith(BEST_PRACTICES_DOCUMENT)
+
+    if "exec_command" in tool_name:
+        command = str(tool_input.get("cmd") or tool_input.get("command") or "")
+        if BEST_PRACTICES_DOCUMENT not in command:
+            return False
+        return bool(re.search(r"\b(rtk\s+read|read|sed|cat|nl)\b", command))
+
+    return False
+
+
+def mark_best_practices_read_from_tool_use() -> int:
+    try:
+        payload = json.load(sys.stdin)
+    except json.JSONDecodeError:
+        return 0
+
+    if tool_use_marks_best_practices_read(payload):
+        return mark_best_practices_read()
     return 0
 
 
@@ -86,6 +132,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Clear the Swift best-practices read marker for a new session.",
     )
+    parser.add_argument(
+        "--mark-best-practices-read-from-tool-use",
+        action="store_true",
+        help="Record the marker when PostToolUse input shows the best-practices doc was read.",
+    )
     return parser.parse_args(argv)
 
 
@@ -95,6 +146,8 @@ def main(argv: list[str] | None = None) -> int:
         return mark_best_practices_read()
     if args.reset_best_practices_marker:
         return reset_best_practices_marker()
+    if args.mark_best_practices_read_from_tool_use:
+        return mark_best_practices_read_from_tool_use()
 
     diff = swift_diff()
     if not diff:
