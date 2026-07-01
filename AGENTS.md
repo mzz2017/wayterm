@@ -1,4 +1,4 @@
-# VVTerm
+# Waterm
 
 Cross-platform (iOS/macOS) SSH terminal app with iCloud sync and Keychain credential storage.
 
@@ -12,7 +12,7 @@ Cross-platform (iOS/macOS) SSH terminal app with iCloud sync and Keychain creden
 
 ```
 .
-├── VVTerm/                       # Main app target source
+├── Waterm/                       # Main app target source
 │   ├── App/                      # App entry, composition roots, app shell
 │   │   ├── Application/
 │   │   ├── Localization/
@@ -66,11 +66,11 @@ Cross-platform (iOS/macOS) SSH terminal app with iCloud sync and Keychain creden
 │   ├── Generated/                # Build-time generated sources
 │   ├── Resources/                # Bundled assets, themes, terminfo, l10n
 │   └── Assets.xcassets/          # App asset catalog
-├── VVTermLiveActivity/           # Live Activity extension target
-├── VVTermShared/                 # Shared target folder
-├── VVTermTests/                  # Unit and architecture/boundary tests
-├── VVTermUITests/                # UI tests
-├── VVTermLinuxTests/             # Linux-compatible test coverage
+├── WatermLiveActivity/           # Live Activity extension target
+├── WatermShared/                 # Shared target folder
+├── WatermTests/                  # Unit and architecture/boundary tests
+├── WatermUITests/                # UI tests
+├── WatermLinuxTests/             # Linux-compatible test coverage
 ├── Vendor/                       # Prebuilt third-party native dependencies
 ├── scripts/                      # Build/test/packaging automation
 ├── docs/                         # Engineering docs and specs
@@ -79,7 +79,7 @@ Cross-platform (iOS/macOS) SSH terminal app with iCloud sync and Keychain creden
 
 ## Architecture Direction
 
-VVTerm uses a **feature-first architecture** for app-owned source code.
+Waterm uses a **feature-first architecture** for app-owned source code.
 
 Current architecture:
 - `App` owns app entry, composition roots, shared root containers, localization preferences, and iOS app-shell navigation.
@@ -202,7 +202,7 @@ Safe refactor expectation:
 
 ### Data Sync
 - **CloudKit** for server/workspace sync across devices
-- Container: `iCloud.app.vivy.VivyTerm`
+- Container: `iCloud.app.vivy.Waterm`
 - Local fallback via UserDefaults
 
 ### Pro Tier (StoreKit 2)
@@ -268,7 +268,7 @@ IOS_TEST_RAMDISK_MB=8192 ./scripts/test-ios.sh
 
 ```bash
 IOS_TEST_RAMDISK_MB=8192 ./scripts/test-ios.sh \
-  -only-testing:VVTermTests/<TestClass>
+  -only-testing:WatermTests/<TestClass>
 ```
 
 - For long test runs, inspect/report results through `rg` filters so build
@@ -277,7 +277,7 @@ IOS_TEST_RAMDISK_MB=8192 ./scripts/test-ios.sh \
 
 ```bash
 IOS_TEST_RAMDISK_MB=8192 rtk ./scripts/test-ios.sh \
-  -only-testing:VVTermTests/<TestClass> 2>&1 \
+  -only-testing:WatermTests/<TestClass> 2>&1 \
   | rtk rg -n "warning:|error:|Testing failed|BUILD FAILED|TEST FAILED|Test Suite|Test run with|Executed test count|Issue|<TestClass>"
 ```
 
@@ -288,19 +288,19 @@ IOS_TEST_RAMDISK_MB=8192 rtk ./scripts/test-ios.sh \
   to the same directory:
 
 ```bash
-IOS_TEST_LOG_DIR=/tmp/vvterm-ios-logs IOS_TEST_RAMDISK_MB=8192 \
-  rtk ./scripts/test-ios.sh -only-testing:VVTermTests/<TestClass>
+IOS_TEST_LOG_DIR=/tmp/waterm-ios-logs IOS_TEST_RAMDISK_MB=8192 \
+  rtk ./scripts/test-ios.sh -only-testing:WatermTests/<TestClass>
 
 rtk rg -n "warning:|error:|Testing failed|BUILD FAILED|TEST FAILED|Test run with|Executed test count|<TestClass>" \
-  /tmp/vvterm-ios-logs/xcodebuild-test-attempt-*-*.log
-rtk rm -f /tmp/vvterm-ios-logs/xcodebuild-test-attempt-1-passed.log \
-  /tmp/vvterm-ios-logs/xcodebuild-test-attempt-1-metadata.txt
+  /tmp/waterm-ios-logs/xcodebuild-test-attempt-*-*.log
+rtk rm -f /tmp/waterm-ios-logs/xcodebuild-test-attempt-1-passed.log \
+  /tmp/waterm-ios-logs/xcodebuild-test-attempt-1-metadata.txt
 ```
 
-- For local agent-run iOS wrapper invocations, default to `IOS_TEST_RAMDISK_MB=8192` so auto-managed DerivedData lives on a RAM disk while the default Swift package checkout cache stays in the ignored repo-local `.build/vvterm-ios-source-packages` cache for warm focused runs. The wrapper also favors lower simulator churn by reusing an already booted simulator and disabling extra XCTest diagnostics by default; use `IOS_TEST_REUSE_BOOTED_SIMULATOR=0` or `IOS_TEST_COLLECT_DIAGNOSTICS=on-failure` when debugging simulator boot/install state or failure diagnostics, and avoid RAM disk mode when memory pressure is high.
-- The wrapper defaults to the shared `VVTermUnitTests` scheme, which contains `VVTermTests` but not `VVTermUITests`. Set `IOS_TEST_SCHEME=VVTerm` when intentionally exercising the full shared scheme or UI test target.
+- For local agent-run iOS wrapper invocations, default to `IOS_TEST_RAMDISK_MB=8192` so auto-managed DerivedData lives on a RAM disk while the default Swift package checkout cache stays in the ignored repo-local `.build/waterm-ios-source-packages` cache for warm focused runs. The wrapper also favors lower simulator churn by reusing an already booted simulator and disabling extra XCTest diagnostics by default; use `IOS_TEST_REUSE_BOOTED_SIMULATOR=0` or `IOS_TEST_COLLECT_DIAGNOSTICS=on-failure` when debugging simulator boot/install state or failure diagnostics, and avoid RAM disk mode when memory pressure is high.
+- The wrapper defaults to the shared `WatermUnitTests` scheme, which contains `WatermTests` but not `WatermUITests`. Set `IOS_TEST_SCHEME=Waterm` when intentionally exercising the full shared scheme or UI test target.
 - The default destination is `iPhone 17`. Override with `IOS_TEST_DEVICE_NAME` or `IOS_TEST_DESTINATION_ID` when needed. Override the package clone cache with `IOS_TEST_CLONED_SOURCE_PACKAGES_DIR` when isolation from the shared package cache is required. The default no-output watchdog is 900 seconds; use `IOS_TEST_NO_OUTPUT_TIMEOUT` for shorter focused diagnostics.
-- Do not leave fixed DerivedData directories under `/private/tmp`. The wrapper auto-cleans its default DerivedData path, and explicit `IOS_TEST_DERIVED_DATA_PATH` values are auto-cleaned only when they are safe `vvterm-*` temp directories. Set `IOS_TEST_KEEP_DERIVED_DATA=1` only for intentional diagnostics, then delete the directory when finished. Use `dust -d 1 /private/tmp` when investigating local disk pressure.
+- Do not leave fixed DerivedData directories under `/private/tmp`. The wrapper auto-cleans its default DerivedData path, and explicit `IOS_TEST_DERIVED_DATA_PATH` values are auto-cleaned only when they are safe `waterm-*` temp directories. Set `IOS_TEST_KEEP_DERIVED_DATA=1` only for intentional diagnostics, then delete the directory when finished. Use `dust -d 1 /private/tmp` when investigating local disk pressure.
 
 ### iOS simulator tests
 - On macOS 26.5.1 / Xcode 26.5, app-hosted iOS unit tests can hang before XCTest output when Xcode's debug dylib layout is enabled (`ENABLE_DEBUG_DYLIB=YES`, the default app-debug layout). The app launches, but the host process has no `XCTestConfigurationFilePath` and no `DYLD_INSERT_LIBRARIES=...libXCTestBundleInject...`, so XCTest never injects the test bundle.
@@ -308,15 +308,15 @@ rtk rm -f /tmp/vvterm-ios-logs/xcodebuild-test-attempt-1-passed.log \
 
 ```bash
 xcodebuild test \
-  -project VVTerm.xcodeproj \
-  -scheme VVTermUnitTests \
+  -project Waterm.xcodeproj \
+  -scheme WatermUnitTests \
   -destination 'platform=iOS Simulator,name=iPhone 17' \
   -parallel-testing-enabled NO \
-  -only-testing:VVTermTests/<TestClass> \
+  -only-testing:WatermTests/<TestClass> \
   ENABLE_DEBUG_DYLIB=NO
 ```
 
-- The shared `VVTerm` scheme includes both `VVTermTests` and `VVTermUITests`; `-skip-testing:VVTermUITests` prevents running UI tests but Xcode may still prepare/build the UI test target. Use `VVTermUnitTests` for unit gates unless the UI test runner is intentionally part of the run.
+- The shared `Waterm` scheme includes both `WatermTests` and `WatermUITests`; `-skip-testing:WatermUITests` prevents running UI tests but Xcode may still prepare/build the UI test target. Use `WatermUnitTests` for unit gates unless the UI test runner is intentionally part of the run.
 
 ## Swift Lifecycle Rules
 
@@ -328,7 +328,7 @@ xcodebuild test \
 - Avoid untracked `Task {}` and `Task.detached {}` for lifecycle-critical work. If a call site cannot await, store or return a `Task` and make later operations wait on it.
 - Non-trivial lifecycles should use explicit states such as `idle`, `connecting`, `connected`, `closing`, `disconnected`, and `failed`; do not infer business lifecycle from SwiftUI view existence.
 - Mutable shared state should be actor-isolated or `@MainActor`; keep heavy parsing, crypto, file IO, and network IO off the main actor.
-- VVTerm enables default MainActor isolation for app code. Before fixing Swift concurrency warnings, classify the type first:
+- Waterm enables default MainActor isolation for app code. Before fixing Swift concurrency warnings, classify the type first:
   - resource owners, UI state, observable stores, and lifecycle coordinators should stay actor-isolated or `@MainActor`
   - pure domain values, policy structs/enums, parsers, formatters, validators, and synchronous conversion helpers should usually be explicit `nonisolated`
   - do not add `@MainActor` to production or test code merely to silence a warning

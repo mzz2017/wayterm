@@ -1,6 +1,6 @@
-# Contributing to VVTerm
+# Contributing to Waterm
 
-Thanks for your interest in contributing to VVTerm.
+Thanks for your interest in contributing to Waterm.
 
 ## Code of Conduct
 
@@ -22,10 +22,10 @@ Requirements:
 Setup:
 
 ```bash
-git clone https://github.com/vivy-company/vvterm.git
-cd vvterm
+git clone https://github.com/mzz2017/waterm.git
+cd waterm
 ./scripts/build.sh all
-open VVTerm.xcodeproj
+open Waterm.xcodeproj
 ```
 
 ## Pull Request Guidelines
@@ -39,5 +39,5 @@ open VVTerm.xcodeproj
 ## License
 
 This fork is distributed under GPL-3.0. Contributions are not submitted under
-the VVTerm CLA. No additional commercial or proprietary relicensing rights are
+the Waterm CLA. No additional commercial or proprietary relicensing rights are
 granted.

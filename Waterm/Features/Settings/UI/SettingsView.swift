@@ -1,0 +1,354 @@
+//
+//  SettingsView.swift
+//  Waterm
+//
+
+import SwiftUI
+#if os(macOS)
+import AppKit
+
+private extension View {
+    @ViewBuilder
+    func removingSidebarToggle() -> some View {
+        if #available(macOS 14.0, *) {
+            toolbar(removing: .sidebarToggle)
+        } else {
+            self
+        }
+    }
+}
+#endif
+
+// MARK: - Settings Selection
+
+enum SettingsSelection: Hashable {
+    case pro
+    case general
+    case terminal
+    case transcription
+    case keychain
+    case sync
+    case about
+}
+
+struct SettingsViewDependencies {
+    let storeManager: StoreManager
+    let serverManager: ServerManager
+    let generalSettings: GeneralSettingsPreferenceStore
+    let terminalSettings: TerminalSettingsPreferenceStore
+    let syncStore: SyncSettingsStore
+    let voiceSettings: TranscriptionSettingsPreferenceStore
+    let voiceModelDownloads: VoiceModelDownloadStore
+    let viewTabConfig: ViewTabConfigurationManager
+    let keyStore: SSHKeySettingsStore
+    let trustedHostsStore: TrustedHostsSettingsStore
+}
+
+// MARK: - Settings View
+
+struct SettingsView: View {
+    @State private var selection: SettingsSelection? = .pro
+    @ObservedObject private var storeManager: StoreManager
+    @ObservedObject private var serverManager: ServerManager
+    @ObservedObject private var generalSettings: GeneralSettingsPreferenceStore
+    @ObservedObject private var terminalSettings: TerminalSettingsPreferenceStore
+    @ObservedObject private var syncStore: SyncSettingsStore
+    @ObservedObject private var voiceSettings: TranscriptionSettingsPreferenceStore
+    @ObservedObject private var voiceModelDownloads: VoiceModelDownloadStore
+    @ObservedObject private var viewTabConfig: ViewTabConfigurationManager
+    @ObservedObject private var keyStore: SSHKeySettingsStore
+    @ObservedObject private var trustedHostsStore: TrustedHostsSettingsStore
+
+    #if os(iOS)
+    @Environment(\.dismiss) private var dismiss
+    #endif
+
+    init(dependencies: SettingsViewDependencies) {
+        _storeManager = ObservedObject(wrappedValue: dependencies.storeManager)
+        _serverManager = ObservedObject(wrappedValue: dependencies.serverManager)
+        _generalSettings = ObservedObject(wrappedValue: dependencies.generalSettings)
+        _terminalSettings = ObservedObject(wrappedValue: dependencies.terminalSettings)
+        _syncStore = ObservedObject(wrappedValue: dependencies.syncStore)
+        _voiceSettings = ObservedObject(wrappedValue: dependencies.voiceSettings)
+        _voiceModelDownloads = ObservedObject(wrappedValue: dependencies.voiceModelDownloads)
+        _viewTabConfig = ObservedObject(wrappedValue: dependencies.viewTabConfig)
+        _keyStore = ObservedObject(wrappedValue: dependencies.keyStore)
+        _trustedHostsStore = ObservedObject(wrappedValue: dependencies.trustedHostsStore)
+    }
+
+    var body: some View {
+        #if os(macOS)
+        NavigationSplitView {
+            List(selection: $selection) {
+                // Pro at top (not part of selection - has its own styling)
+                Button {
+                    selection = .pro
+                } label: {
+                    proNavigationRow
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+
+                Divider()
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+
+                settingsRow("General", icon: "gear", tag: .general)
+                settingsRow("Terminal", icon: "terminal", tag: .terminal)
+                settingsRow("Transcription", icon: "waveform", tag: .transcription)
+                settingsRow("SSH Keys", icon: "key", tag: .keychain)
+                settingsRow("Sync", icon: "icloud", tag: .sync)
+                settingsRow("About", icon: "info.circle", tag: .about)
+            }
+            .listStyle(.sidebar)
+            .frame(minWidth: 240, maxHeight: .infinity)
+            .navigationSplitViewColumnWidth(240)
+            .removingSidebarToggle()
+        } detail: {
+            detailView
+        }
+        .toolbar {
+            ToolbarItem(placement: .principal) { Text("") }
+        }
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 700, minHeight: 500)
+        #else
+        NavigationStack {
+            List {
+                // Pro card at top
+                Section {
+                    NavigationLink {
+                        ProSettingsView(storeManager: storeManager, serverManager: serverManager)
+                            .navigationTitle("Waterm Pro")
+                            .navigationBarTitleDisplayMode(.inline)
+                    } label: {
+                        HStack(spacing: 12) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(LinearGradient(
+                                        colors: [Color.orange, Color(red: 0.95, green: 0.5, blue: 0.2)],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ))
+                                    .frame(width: 36, height: 36)
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundStyle(.white)
+                            }
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Waterm Pro")
+                                    .font(.headline)
+                                Text(storeManager.isPro ? String(localized: "Manage subscription") : String(localized: "Upgrade for unlimited features"))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer()
+
+                            Text(storeManager.isPro ? String(localized: "PRO") : String(localized: "FREE_PLAN"))
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(storeManager.isPro ? .white : .primary.opacity(0.7))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule()
+                                        .fill(storeManager.isPro
+                                            ? Color.orange
+                                            : Color.primary.opacity(0.12)
+                                        )
+                                )
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+
+                Section {
+                    NavigationLink {
+                        GeneralSettingsView(
+                            settingsStore: generalSettings,
+                            viewTabConfig: viewTabConfig
+                        )
+                            .navigationTitle("General")
+                            .navigationBarTitleDisplayMode(.inline)
+                    } label: {
+                        Label("General", systemImage: "gear")
+                    }
+
+                    NavigationLink {
+                        TerminalSettingsView(
+                            settingsStore: terminalSettings,
+                            trustedHostsStore: trustedHostsStore
+                        )
+                            .navigationTitle("Terminal")
+                            .navigationBarTitleDisplayMode(.inline)
+                    } label: {
+                        Label("Terminal", systemImage: "terminal")
+                    }
+
+                    NavigationLink {
+                        TranscriptionSettingsView(
+                            settingsStore: voiceSettings,
+                            modelDownloads: voiceModelDownloads
+                        )
+                            .navigationTitle("Transcription")
+                            .navigationBarTitleDisplayMode(.inline)
+                    } label: {
+                        Label("Transcription", systemImage: "waveform")
+                    }
+
+                    NavigationLink {
+                        KeychainSettingsView(keyStore: keyStore)
+                            .navigationTitle("SSH Keys")
+                            .navigationBarTitleDisplayMode(.inline)
+                    } label: {
+                        Label("SSH Keys", systemImage: "key")
+                    }
+
+                    NavigationLink {
+                        SyncSettingsView(syncStore: syncStore, serverManager: serverManager)
+                            .navigationTitle("Sync")
+                            .navigationBarTitleDisplayMode(.inline)
+                    } label: {
+                        Label("Sync", systemImage: "icloud")
+                    }
+
+                    NavigationLink {
+                        AboutSettingsView(storeManager: storeManager)
+                            .navigationTitle("About")
+                            .navigationBarTitleDisplayMode(.inline)
+                    } label: {
+                        Label("About", systemImage: "info.circle")
+                    }
+                }
+            }
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 16, weight: .semibold))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        #endif
+    }
+
+    #if os(macOS)
+    @ViewBuilder
+    private var detailView: some View {
+        switch selection {
+        case .pro:
+                            ProSettingsView(storeManager: storeManager, serverManager: serverManager)
+                                .navigationTitle("Waterm Pro")
+                                .navigationSubtitle(storeManager.isPro
+                                    ? String(localized: "Manage your subscription")
+                                    : String(localized: "Upgrade for unlimited features")
+                                )
+        case .general:
+                            GeneralSettingsView(
+                                settingsStore: generalSettings,
+                                viewTabConfig: viewTabConfig
+                            )
+                                .navigationTitle("General")
+                                .navigationSubtitle(String(localized: "Appearance and preferences"))
+        case .terminal:
+                            TerminalSettingsView(
+                                settingsStore: terminalSettings,
+                                trustedHostsStore: trustedHostsStore
+                            )
+                                .navigationTitle("Terminal")
+                                .navigationSubtitle(String(localized: "Font, theme, and connection settings"))
+        case .transcription:
+                            TranscriptionSettingsView(
+                                settingsStore: voiceSettings,
+                                modelDownloads: voiceModelDownloads
+                            )
+                                .navigationTitle("Transcription")
+                                .navigationSubtitle(String(localized: "Speech-to-text engine and models"))
+        case .keychain:
+                            KeychainSettingsView(keyStore: keyStore)
+                                .navigationTitle("SSH Keys")
+                                .navigationSubtitle(String(localized: "Manage stored SSH keys"))
+        case .sync:
+                            SyncSettingsView(syncStore: syncStore, serverManager: serverManager)
+                                .navigationTitle("Sync")
+                                .navigationSubtitle(String(localized: "iCloud sync and data management"))
+        case .about:
+                            AboutSettingsView(storeManager: storeManager)
+                                .navigationTitle("About")
+                                .navigationSubtitle(String(localized: "Version and links"))
+        case .none:
+                            ProSettingsView(storeManager: storeManager, serverManager: serverManager)
+                                .navigationTitle("Waterm Pro")
+                                .navigationSubtitle(storeManager.isPro
+                                    ? String(localized: "Manage your subscription")
+                                    : String(localized: "Upgrade for unlimited features")
+                                )
+        }
+    }
+
+    private var proNavigationRow: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(LinearGradient(
+                        colors: [Color.orange, Color(red: 0.95, green: 0.5, blue: 0.2)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ))
+                    .frame(width: 24, height: 24)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+
+            Text("Premium")
+                .fontWeight(.medium)
+
+            Spacer()
+
+            Text(storeManager.isPro ? String(localized: "PRO") : String(localized: "FREE_PLAN"))
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(storeManager.isPro ? .white : .primary.opacity(0.7))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule()
+                        .fill(storeManager.isPro
+                            ? Color.orange
+                            : Color.primary.opacity(0.12)
+                        )
+                )
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                )
+        )
+    }
+
+    private func settingsRow(_ title: LocalizedStringKey, icon: String, tag: SettingsSelection) -> some View {
+        Label(title, systemImage: icon)
+            .tag(tag)
+    }
+    #endif
+}
+
+// MARK: - Preview
+
+#Preview {
+    SettingsView()
+}

@@ -1,7 +1,7 @@
 # Remote Rich Clipboard Forwarding (Draft Spec)
 
 ## Summary
-Add host-to-remote clipboard forwarding for non-text payloads, starting with images, so a user can press paste in VVTerm and have the image become usable on the remote machine.
+Add host-to-remote clipboard forwarding for non-text payloads, starting with images, so a user can press paste in Waterm and have the image become usable on the remote machine.
 
 Path note: this draft predates the feature-first migration. Any legacy `Models/`, `Managers/`, `Services/`, or `Views/` file paths in this document should be mapped to the current `App/`, `Core/`, and `Features/` tree.
 
@@ -10,7 +10,7 @@ Draft date: 2026-03-25
 Core V1 behavior:
 - Text clipboard keeps using normal terminal paste.
 - If terminal-native rich clipboard is unavailable, image clipboard is uploaded to the remote host as a temporary file.
-- VVTerm uses a layered fallback strategy:
+- Waterm uses a layered fallback strategy:
   - future terminal-native rich clipboard path via Kitty `OSC 5522` when supported
   - temporary remote file upload over SSH side channel
   - optional remote machine clipboard seeding from the temporary file
@@ -19,7 +19,7 @@ Core V1 behavior:
 This is aimed at modern agent workflows where a future terminal-native rich clipboard path can preserve true paste semantics, while the shipped V1 path still makes the image immediately usable by inserting a remote file path.
 
 ## Problem
-Today VVTerm forwards clipboard reads through Ghostty as text only.
+Today Waterm forwards clipboard reads through Ghostty as text only.
 
 That is correct for normal terminal paste, but it breaks down for rich clipboard content:
 - `Cmd+V` / `Ctrl+V` works for plain text.
@@ -27,8 +27,8 @@ That is correct for normal terminal paste, but it breaks down for rich clipboard
 - Users increasingly want to paste screenshots and other images into remote coding/agent workflows.
 
 The current pipeline is explicitly text-only:
-- [Clipboard.swift](/Users/uyakauleu/vivy/development/VivyTerm/VVTerm/Utilities/Clipboard.swift)
-- [Ghostty.App.swift](/Users/uyakauleu/vivy/development/VivyTerm/VVTerm/GhosttyTerminal/Ghostty.App.swift)
+- [Clipboard.swift](/Users/uyakauleu/vivy/development/Waterm/Waterm/Utilities/Clipboard.swift)
+- [Ghostty.App.swift](/Users/uyakauleu/vivy/development/Waterm/Waterm/GhosttyTerminal/Ghostty.App.swift)
 
 ## Why Normal Paste Cannot Solve This
 Terminal paste is fundamentally a byte stream into stdin, not a file transfer channel.
@@ -68,7 +68,7 @@ Conclusion:
 ## User Stories
 - As a user, when my clipboard contains text, paste behaves exactly like today.
 - As a user, when my clipboard contains a screenshot, paste uploads it to the remote host and inserts a usable remote file path.
-- As a user, when the remote environment supports it, VVTerm also seeds the remote machine clipboard as a best-effort convenience.
+- As a user, when the remote environment supports it, Waterm also seeds the remote machine clipboard as a best-effort convenience.
 - As a user, after image paste completes, I can immediately reference the uploaded file in Codex or another agent running on the server.
 - As a user on Mosh, image paste still works even though terminal traffic is not going through the SSH shell channel.
 
@@ -77,24 +77,24 @@ Conclusion:
 ### Default behavior
 When the terminal is focused and the user triggers paste:
 
-1. VVTerm inspects the host clipboard.
+1. Waterm inspects the host clipboard.
 2. If clipboard has text and no richer supported payload, use existing `paste_from_clipboard`.
-3. If clipboard has an image, VVTerm first checks whether terminal-native rich clipboard transfer is available for this session.
-4. If Kitty `OSC 5522` is supported and succeeds, VVTerm completes a true rich paste without creating a remote temp file.
-5. Otherwise VVTerm uploads the image to a temporary file on the remote host.
-6. VVTerm optionally tries to copy that image into the remote machine clipboard.
-7. VVTerm inserts the temporary remote absolute path as text into the terminal.
+3. If clipboard has an image, Waterm first checks whether terminal-native rich clipboard transfer is available for this session.
+4. If Kitty `OSC 5522` is supported and succeeds, Waterm completes a true rich paste without creating a remote temp file.
+5. Otherwise Waterm uploads the image to a temporary file on the remote host.
+6. Waterm optionally tries to copy that image into the remote machine clipboard.
+7. Waterm inserts the temporary remote absolute path as text into the terminal.
 
 Example pasted text:
 ```text
-/tmp/vvterm-clipboard-a1b2c3.png
+/tmp/waterm-clipboard-a1b2c3.png
 ```
 
 ### User feedback
 - While uploading: lightweight non-terminal progress UI.
 - On success: optional toast, no modal interruption.
 - On failure: show actionable error and do not inject partial text.
-- If VVTerm had to fall back from Kitty `5522` to upload/path insertion, or if remote clipboard seeding succeeded or failed along the way, the UI should say so clearly.
+- If Waterm had to fall back from Kitty `5522` to upload/path insertion, or if remote clipboard seeding succeeded or failed along the way, the UI should say so clearly.
 
 ### Settings
 Add terminal settings:
@@ -128,9 +128,9 @@ Add a higher-level paste router in the terminal view layer:
   - `remoteRichPaste`
 
 Likely touchpoints:
-- [GhosttyTerminalView+iOS.swift](/Users/uyakauleu/vivy/development/VivyTerm/VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift)
-- [GhosttyTerminalView+macOS.swift](/Users/uyakauleu/vivy/development/VivyTerm/VVTerm/GhosttyTerminal/GhosttyTerminalView+macOS.swift)
-- [SSHTerminalWrapper.swift](/Users/uyakauleu/vivy/development/VivyTerm/VVTerm/Views/Terminal/SSHTerminalWrapper.swift)
+- [GhosttyTerminalView+iOS.swift](/Users/uyakauleu/vivy/development/Waterm/Waterm/GhosttyTerminal/GhosttyTerminalView+iOS.swift)
+- [GhosttyTerminalView+macOS.swift](/Users/uyakauleu/vivy/development/Waterm/Waterm/GhosttyTerminal/GhosttyTerminalView+macOS.swift)
+- [SSHTerminalWrapper.swift](/Users/uyakauleu/vivy/development/Waterm/Waterm/Views/Terminal/SSHTerminalWrapper.swift)
 
 Important distinction:
 - Ghostty clipboard callbacks remain for terminal-native text copy/paste.
@@ -208,7 +208,7 @@ enum RichPasteOutcome {
 Use the existing SSH connection as a control/transfer channel.
 
 V1 preferred implementation after Kitty capability has been ruled out or disabled:
-- add an SSH upload primitive in [SSHClient.swift](/Users/uyakauleu/vivy/development/VivyTerm/VVTerm/Services/SSH/SSHClient.swift)
+- add an SSH upload primitive in [SSHClient.swift](/Users/uyakauleu/vivy/development/Waterm/Waterm/Services/SSH/SSHClient.swift)
 - create remote directories with `execute(...)`
 - transfer file bytes with a dedicated SFTP or SCP-style implementation
 
@@ -236,22 +236,22 @@ Preferred strategy:
 
 Filename format:
 ```text
-vvterm-clipboard-XXXXXX.{ext}
+waterm-clipboard-XXXXXX.{ext}
 ```
 
 Example:
 ```text
-/tmp/vvterm-clipboard-a1b2c3.png
+/tmp/waterm-clipboard-a1b2c3.png
 ```
 
 Example command shape:
 ```sh
-tmp_base="${TMPDIR:-/tmp}"; mktemp "${tmp_base%/}/vvterm-clipboard-XXXXXX.png"
+tmp_base="${TMPDIR:-/tmp}"; mktemp "${tmp_base%/}/waterm-clipboard-XXXXXX.png"
 ```
 
 Permissions:
 - uploaded files should default to `0600`
-- VVTerm should track and clean up files it created
+- Waterm should track and clean up files it created
 
 Cleanup policy:
 - delete only failed or abandoned uploads immediately
@@ -259,12 +259,12 @@ Cleanup policy:
 - add a TTL sweep for leftovers, for example files older than 24 hours
 
 Ownership:
-- VVTerm should track temp files per `sessionId` for provenance and cleanup hints
+- Waterm should track temp files per `sessionId` for provenance and cleanup hints
 - `ConnectionSessionManager` may coordinate best-effort cleanup of abandoned transfers, but should not treat session end as proof the file is no longer needed
-- a best-effort background sweeper can remove stale VVTerm temp files left behind after crashes
+- a best-effort background sweeper can remove stale Waterm temp files left behind after crashes
 
 ### 6) Use terminal-native rich clipboard when available; otherwise insert the uploaded path
-For image payloads, VVTerm has two distinct completion modes:
+For image payloads, Waterm has two distinct completion modes:
 1. true terminal-native rich clipboard via Kitty `OSC 5522`
 2. uploaded remote file path insertion, optionally after best-effort remote clipboard seeding
 
@@ -282,11 +282,11 @@ Priority order:
 6. Insert the temporary remote absolute path as text into the active terminal session.
 
 If Kitty `OSC 5522` succeeds:
-- VVTerm should complete the paste in-app without requiring a second user gesture
+- Waterm should complete the paste in-app without requiring a second user gesture
 - this is the only path that preserves true native paste semantics for image content
 
 If Kitty `OSC 5522` is unavailable or fails:
-- VVTerm should continue with upload and path-based completion
+- Waterm should continue with upload and path-based completion
 - remote clipboard seeding remains best-effort
 - regardless of seeding result, V1 completes by inserting the temp file path as text, because that is the only deterministic completion path available without end-to-end terminal rich clipboard support
 
@@ -351,15 +351,15 @@ Capability probing should be cached per session to avoid reprobe overhead on eve
 Example command families:
 - macOS GUI session:
 ```sh
-osascript -e 'set the clipboard to (read (POSIX file "/tmp/vvterm-clipboard-a1b2c3.png") as PNG picture)'
+osascript -e 'set the clipboard to (read (POSIX file "/tmp/waterm-clipboard-a1b2c3.png") as PNG picture)'
 ```
 - Linux Wayland:
 ```sh
-wl-copy < /tmp/vvterm-clipboard-a1b2c3.png
+wl-copy < /tmp/waterm-clipboard-a1b2c3.png
 ```
 - Linux X11:
 ```sh
-xclip -selection clipboard -t image/png -i /tmp/vvterm-clipboard-a1b2c3.png
+xclip -selection clipboard -t image/png -i /tmp/waterm-clipboard-a1b2c3.png
 ```
 
 These should be treated as implementation examples, not a fixed final command set.
@@ -378,7 +378,7 @@ Current constraints:
 - Mosh should be treated as incompatible with this path
 
 Architecture implication:
-- VVTerm should model Kitty support as a capability on the session
+- Waterm should model Kitty support as a capability on the session
 - successful use of Kitty `OSC 5522` should bypass remote upload and remote clipboard seeding
 - the temp-file upload path should remain available because it is the fallback input to remote system clipboard seeding and path insertion
 
@@ -426,7 +426,7 @@ V1 should target POSIX-style remote hosts first.
 
 For Windows SSH targets:
 - either disable rich paste in V1
-- or use a separate `%USERPROFILE%\\.vvterm\\clipboard` path design in V2
+- or use a separate `%USERPROFILE%\\.waterm\\clipboard` path design in V2
 
 Recommended V1 decision:
 - POSIX remote hosts only
@@ -489,10 +489,10 @@ Reasonable V1 constraints:
 ## Open Questions
 - Should V1 support only images, or images plus arbitrary files from the clipboard/share sheet?
 - Should uploaded files be cleaned up automatically after N days?
-- Should VVTerm offer a dedicated `Paste Image` action in the keyboard toolbar on iOS?
+- Should Waterm offer a dedicated `Paste Image` action in the keyboard toolbar on iOS?
 - Should we add app-specific insertion adapters later for tools like Codex, Claude Code, or Gemini CLI?
 - Is SCP easier to land quickly than SFTP in the current libssh2 wrapper, and is that acceptable for V1?
-- How should VVTerm detect future Ghostty `OSC 5522` support reliably from the embedded runtime?
+- How should Waterm detect future Ghostty `OSC 5522` support reliably from the embedded runtime?
 
 ## Recommended V1 Decision
 Implement image-only rich clipboard paste as:

@@ -7,7 +7,7 @@ export default defineConfig({
   vite: {
     plugins: [tailwindcss()],
   },
-  site: "https://vvterm.com",
+  site: "https://waterm.com",
   output: "static",
   build: {
     format: "directory",

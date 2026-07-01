@@ -63,8 +63,8 @@ jobs:
       - name: Configure macOS build paths
         run: |
           {
-            echo "MACOS_DERIVED_DATA_PATH=${RUNNER_TEMP}/vvterm-macos-derived-data"
-            echo "MACOS_XCODE_LOG_DIR=${RUNNER_TEMP}/vvterm-macos-build-logs"
+            echo "MACOS_DERIVED_DATA_PATH=${RUNNER_TEMP}/waterm-macos-derived-data"
+            echo "MACOS_XCODE_LOG_DIR=${RUNNER_TEMP}/waterm-macos-build-logs"
             echo "XCODE_CLONED_SOURCE_PACKAGES_DIR=${GITHUB_WORKSPACE}/.xcode-cloned-source-packages"
           } >> "${GITHUB_ENV}"
 
@@ -72,7 +72,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.xcode-cloned-source-packages
-          key: xcode-spm-${{ runner.os }}-macos-${{ hashFiles('VVTerm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          key: xcode-spm-${{ runner.os }}-macos-${{ hashFiles('Waterm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: |
             xcode-spm-${{ runner.os }}-macos-
             xcode-spm-${{ runner.os }}-
@@ -96,8 +96,8 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild build \
-            -project VVTerm.xcodeproj \
-            -scheme VVTerm \
+            -project Waterm.xcodeproj \
+            -scheme Waterm \
             -destination 'platform=macOS' \
             -derivedDataPath "${MACOS_DERIVED_DATA_PATH}" \
             -clonedSourcePackagesDirPath "${XCODE_CLONED_SOURCE_PACKAGES_DIR}" \
@@ -110,7 +110,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: macos-app-build-xcodebuild-logs
-          path: ${{ runner.temp }}/vvterm-macos-build-logs
+          path: ${{ runner.temp }}/waterm-macos-build-logs
           if-no-files-found: ignore
           retention-days: 7
 
@@ -138,21 +138,21 @@ jobs:
       IOS_TEST_KEEP_DERIVED_DATA: "1"
       IOS_TEST_RAMDISK_MB: "0"
       IOS_FOCUSED_RUNTIME_SYNC_CLOUDFLARE_FILTERS: |
-        -only-testing:VVTermTests/AppSyncCoordinatorTests
-        -only-testing:VVTermTests/CloudKitSyncCoordinatorLifecycleTests
-        -only-testing:VVTermTests/CloudflareTransportManagerLifecycleTests
+        -only-testing:WatermTests/AppSyncCoordinatorTests
+        -only-testing:WatermTests/CloudKitSyncCoordinatorLifecycleTests
+        -only-testing:WatermTests/CloudflareTransportManagerLifecycleTests
       IOS_FOCUSED_RUNTIME_TERMINAL_SSH_FILTERS: |
-        -only-testing:VVTermTests/ConnectionRuntimeRegistryLifecycleTests
-        -only-testing:VVTermTests/ConnectionRuntimeRunnerLifecycleTests
-        -only-testing:VVTermTests/LibSSH2SessionLifecycleTests
-        -only-testing:VVTermTests/SSHClientConnectionLifecycleTests
-        -only-testing:VVTermTests/TerminalConnectionRuntimeTests
-        -only-testing:VVTermTests/TerminalConnectionRunnerTests
+        -only-testing:WatermTests/ConnectionRuntimeRegistryLifecycleTests
+        -only-testing:WatermTests/ConnectionRuntimeRunnerLifecycleTests
+        -only-testing:WatermTests/LibSSH2SessionLifecycleTests
+        -only-testing:WatermTests/SSHClientConnectionLifecycleTests
+        -only-testing:WatermTests/TerminalConnectionRuntimeTests
+        -only-testing:WatermTests/TerminalConnectionRunnerTests
       IOS_FOCUSED_RUNTIME_REMOTEFILES_STATS_STORE_VOICE_FILTERS: |
-        -only-testing:VVTermTests/RemoteFileBrowserRequestLifecycleTests
-        -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests
-        -only-testing:VVTermTests/StoreManagerLifecycleTests
-        -only-testing:VVTermTests/TerminalVoiceInputStoreTests
+        -only-testing:WatermTests/RemoteFileBrowserRequestLifecycleTests
+        -only-testing:WatermTests/ServerStatsCollectorLifecycleTests
+        -only-testing:WatermTests/StoreManagerLifecycleTests
+        -only-testing:WatermTests/TerminalVoiceInputStoreTests
 
     steps:
       - name: Check out repository
@@ -167,8 +167,8 @@ jobs:
       - name: Configure focused runtime paths
         run: |
           {
-            echo "IOS_TEST_DERIVED_DATA_PATH=${RUNNER_TEMP}/vvterm-ios-focused-runtime-derived-data"
-            echo "IOS_TEST_LOG_DIR=${RUNNER_TEMP}/vvterm-ios-focused-runtime-logs/build"
+            echo "IOS_TEST_DERIVED_DATA_PATH=${RUNNER_TEMP}/waterm-ios-focused-runtime-derived-data"
+            echo "IOS_TEST_LOG_DIR=${RUNNER_TEMP}/waterm-ios-focused-runtime-logs/build"
             echo "IOS_TEST_CLONED_SOURCE_PACKAGES_DIR=${GITHUB_WORKSPACE}/.xcode-cloned-source-packages"
           } >> "${GITHUB_ENV}"
 
@@ -176,7 +176,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.xcode-cloned-source-packages
-          key: xcode-spm-${{ runner.os }}-focused-runtime-${{ hashFiles('VVTerm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          key: xcode-spm-${{ runner.os }}-focused-runtime-${{ hashFiles('Waterm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: |
             xcode-spm-${{ runner.os }}-focused-runtime-
             xcode-spm-${{ runner.os }}-
@@ -245,7 +245,7 @@ jobs:
           IOS_TEST_CONTEXT: focused-runtime-build
           IOS_TEST_XCODEBUILD_ACTION: build-for-testing
           IOS_TEST_RETRIES: "0"
-          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/build/result-bundles
+          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/waterm-ios-focused-runtime-logs/build/result-bundles
         run: |
           set -x
           ./scripts/test-ios.sh
@@ -256,8 +256,8 @@ jobs:
           IOS_TEST_XCODEBUILD_ACTION: test-without-building
           IOS_TEST_RETRIES: "2"
           IOS_TEST_NO_OUTPUT_TIMEOUT: "300"
-          IOS_TEST_LOG_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/sync-cloudflare
-          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/sync-cloudflare/result-bundles
+          IOS_TEST_LOG_DIR: ${{ runner.temp }}/waterm-ios-focused-runtime-logs/sync-cloudflare
+          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/waterm-ios-focused-runtime-logs/sync-cloudflare/result-bundles
         run: |
           set -x
           focused_args=()
@@ -272,8 +272,8 @@ jobs:
           IOS_TEST_XCODEBUILD_ACTION: test-without-building
           IOS_TEST_RETRIES: "2"
           IOS_TEST_NO_OUTPUT_TIMEOUT: "300"
-          IOS_TEST_LOG_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/terminal-ssh
-          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/terminal-ssh/result-bundles
+          IOS_TEST_LOG_DIR: ${{ runner.temp }}/waterm-ios-focused-runtime-logs/terminal-ssh
+          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/waterm-ios-focused-runtime-logs/terminal-ssh/result-bundles
         run: |
           set -x
           focused_args=()
@@ -288,8 +288,8 @@ jobs:
           IOS_TEST_XCODEBUILD_ACTION: test-without-building
           IOS_TEST_RETRIES: "2"
           IOS_TEST_NO_OUTPUT_TIMEOUT: "300"
-          IOS_TEST_LOG_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/remotefiles-stats-store-voice
-          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs/remotefiles-stats-store-voice/result-bundles
+          IOS_TEST_LOG_DIR: ${{ runner.temp }}/waterm-ios-focused-runtime-logs/remotefiles-stats-store-voice
+          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/waterm-ios-focused-runtime-logs/remotefiles-stats-store-voice/result-bundles
         run: |
           set -x
           focused_args=()
@@ -303,7 +303,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: focused-runtime-lifecycle-xcodebuild-logs
-          path: ${{ runner.temp }}/vvterm-ios-focused-runtime-logs
+          path: ${{ runner.temp }}/waterm-ios-focused-runtime-logs
           if-no-files-found: ignore
           retention-days: 7
 
@@ -350,8 +350,8 @@ jobs:
       - name: Configure strict build paths
         run: |
           {
-            echo "IOS_TEST_DERIVED_DATA_PATH=${RUNNER_TEMP}/vvterm-ios-strict-derived-data"
-            echo "IOS_TEST_LOG_DIR=${RUNNER_TEMP}/vvterm-ios-strict-logs"
+            echo "IOS_TEST_DERIVED_DATA_PATH=${RUNNER_TEMP}/waterm-ios-strict-derived-data"
+            echo "IOS_TEST_LOG_DIR=${RUNNER_TEMP}/waterm-ios-strict-logs"
             echo "IOS_TEST_CLONED_SOURCE_PACKAGES_DIR=${GITHUB_WORKSPACE}/.xcode-cloned-source-packages"
           } >> "${GITHUB_ENV}"
 
@@ -359,7 +359,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.xcode-cloned-source-packages
-          key: xcode-spm-${{ runner.os }}-strict-${{ hashFiles('VVTerm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          key: xcode-spm-${{ runner.os }}-strict-${{ hashFiles('Waterm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: |
             xcode-spm-${{ runner.os }}-strict-
             xcode-spm-${{ runner.os }}-
@@ -385,7 +385,7 @@ jobs:
       - name: Build iOS unit tests with strict concurrency
         env:
           IOS_TEST_CONTEXT: strict-swift-concurrency-build
-          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/vvterm-ios-strict-logs/result-bundles
+          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/waterm-ios-strict-logs/result-bundles
         run: |
           ./scripts/test-ios.sh SWIFT_STRICT_CONCURRENCY=complete
 
@@ -394,7 +394,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: strict-swift-concurrency-xcodebuild-logs
-          path: ${{ runner.temp }}/vvterm-ios-strict-logs
+          path: ${{ runner.temp }}/waterm-ios-strict-logs
           if-no-files-found: ignore
           retention-days: 7
 
@@ -440,8 +440,8 @@ jobs:
       - name: Configure iOS unit test paths
         run: |
           {
-            echo "IOS_TEST_DERIVED_DATA_PATH=${RUNNER_TEMP}/vvterm-ios-unit-derived-data"
-            echo "IOS_TEST_LOG_DIR=${RUNNER_TEMP}/vvterm-ios-unit-logs"
+            echo "IOS_TEST_DERIVED_DATA_PATH=${RUNNER_TEMP}/waterm-ios-unit-derived-data"
+            echo "IOS_TEST_LOG_DIR=${RUNNER_TEMP}/waterm-ios-unit-logs"
             echo "IOS_TEST_CLONED_SOURCE_PACKAGES_DIR=${GITHUB_WORKSPACE}/.xcode-cloned-source-packages"
           } >> "${GITHUB_ENV}"
 
@@ -449,7 +449,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.xcode-cloned-source-packages
-          key: xcode-spm-${{ runner.os }}-unit-${{ hashFiles('VVTerm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          key: xcode-spm-${{ runner.os }}-unit-${{ hashFiles('Waterm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: |
             xcode-spm-${{ runner.os }}-unit-
             xcode-spm-${{ runner.os }}-
@@ -475,7 +475,7 @@ jobs:
       - name: Run iOS unit tests
         env:
           IOS_TEST_CONTEXT: ios-unit-tests
-          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/vvterm-ios-unit-logs/result-bundles
+          IOS_TEST_RESULT_BUNDLE_DIR: ${{ runner.temp }}/waterm-ios-unit-logs/result-bundles
         run: ./scripts/test-ios.sh
 
       - name: Upload iOS unit test logs
@@ -483,7 +483,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ios-unit-xcodebuild-logs
-          path: ${{ runner.temp }}/vvterm-ios-unit-logs
+          path: ${{ runner.temp }}/waterm-ios-unit-logs
           if-no-files-found: ignore
           retention-days: 7
 

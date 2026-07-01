@@ -1,0 +1,386 @@
+import Foundation
+import Security
+import os.log
+
+// MARK: - Keychain Manager
+
+nonisolated struct KeychainCredentialLookupRequest: Sendable {
+    let serverId: UUID
+    let authMethod: AuthMethod
+    let connectionMode: SSHConnectionMode
+    let cloudflareAccessMode: CloudflareAccessMode?
+
+    init(
+        serverId: UUID,
+        authMethod: AuthMethod,
+        connectionMode: SSHConnectionMode,
+        cloudflareAccessMode: CloudflareAccessMode?
+    ) {
+        self.serverId = serverId
+        self.authMethod = authMethod
+        self.connectionMode = connectionMode
+        self.cloudflareAccessMode = cloudflareAccessMode
+    }
+}
+
+@MainActor
+final class KeychainManager {
+    static let shared = KeychainManager()
+
+    private let store: any KeychainStoring
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Keychain")
+    private let usesICloudKeychainSync: @MainActor () -> Bool
+
+    init(
+        store: any KeychainStoring = KeychainStore(service: "app.vivy.waterm"),
+        usesICloudKeychainSync: @escaping @MainActor () -> Bool = { KeychainSyncPolicy.usesICloudKeychainSync }
+    ) {
+        self.store = store
+        self.usesICloudKeychainSync = usesICloudKeychainSync
+    }
+
+    // MARK: - Password Operations
+
+    func storePassword(for serverId: UUID, password: String) throws {
+        let key = passwordKey(for: serverId)
+        guard let data = password.data(using: .utf8) else {
+            throw KeychainError.encodingFailed
+        }
+        try store.set(data, forKey: key, iCloudSync: usesICloudKeychainSync())
+        logger.info("Stored password for server \(serverId.uuidString)")
+    }
+
+    func getPassword(for serverId: UUID) throws -> String? {
+        let key = passwordKey(for: serverId)
+
+        // Try store first
+        if let data = try store.get(key) {
+            guard let password = String(data: data, encoding: .utf8) else {
+                throw KeychainError.decodingFailed
+            }
+            return password
+        }
+
+        logger.warning("Password credential missing [serverId: \(serverId.uuidString, privacy: .public)]")
+        return nil
+    }
+
+    // MARK: - SSH Key Operations
+
+    func storeSSHKey(for serverId: UUID, privateKey: Data, passphrase: String?, publicKey: Data? = nil) throws {
+        let keyKey = sshKeyKey(for: serverId)
+        try store.set(privateKey, forKey: keyKey, iCloudSync: usesICloudKeychainSync())
+
+        if let passphrase = passphrase {
+            let passphraseKey = sshPassphraseKey(for: serverId)
+            guard let passphraseData = passphrase.data(using: .utf8) else {
+                throw KeychainError.encodingFailed
+            }
+            try store.set(passphraseData, forKey: passphraseKey, iCloudSync: usesICloudKeychainSync())
+        } else {
+            try store.delete(sshPassphraseKey(for: serverId))
+        }
+
+        let publicKeyKey = sshPublicKeyKey(for: serverId)
+        if let publicKey, !publicKey.isEmpty {
+            try store.set(publicKey, forKey: publicKeyKey, iCloudSync: usesICloudKeychainSync())
+        } else {
+            try store.delete(publicKeyKey)
+        }
+
+        logger.info("Stored SSH key for server \(serverId.uuidString)")
+    }
+
+    func getSSHKey(for serverId: UUID) throws -> (key: Data, passphrase: String?, publicKey: Data?)? {
+        let keyKey = sshKeyKey(for: serverId)
+        let passphraseKey = sshPassphraseKey(for: serverId)
+        let publicKeyKey = sshPublicKeyKey(for: serverId)
+
+        // Try store first
+        if let keyData = try store.get(keyKey) {
+            var passphrase: String? = nil
+            if let passphraseData = try store.get(passphraseKey) {
+                passphrase = String(data: passphraseData, encoding: .utf8)
+            }
+            let publicKeyData = try store.get(publicKeyKey)
+            return (key: keyData, passphrase: passphrase, publicKey: publicKeyData)
+        }
+
+        logger.warning("SSH key credential missing [serverId: \(serverId.uuidString, privacy: .public)]")
+        return nil
+    }
+
+    // MARK: - Full Credentials
+
+    func getCredentials(for request: KeychainCredentialLookupRequest) throws -> ServerCredentials {
+        var credentials = ServerCredentials(serverId: request.serverId)
+
+        logger.info("Getting credentials for server \(request.serverId.uuidString), authMethod: \(String(describing: request.authMethod))")
+
+        if request.connectionMode == .tailscale {
+            logger.info("Server \(request.serverId.uuidString) uses tailscale mode; skipping keychain credential lookup")
+            return credentials
+        }
+
+        switch request.authMethod {
+        case .password:
+            credentials.password = try getPassword(for: request.serverId)
+            logger.info("Password retrieved: \(credentials.password != nil)")
+        case .sshKey:
+            if let sshData = try getSSHKey(for: request.serverId) {
+                credentials.privateKey = sshData.key
+                credentials.publicKey = sshData.publicKey
+            }
+        case .sshKeyWithPassphrase:
+            if let sshData = try getSSHKey(for: request.serverId) {
+                credentials.privateKey = sshData.key
+                credentials.passphrase = sshData.passphrase
+                credentials.publicKey = sshData.publicKey
+            }
+        }
+
+        if request.connectionMode == .cloudflare, request.cloudflareAccessMode == .serviceToken,
+           let cloudflareToken = try getCloudflareServiceToken(for: request.serverId) {
+            credentials.cloudflareClientID = cloudflareToken.clientID
+            credentials.cloudflareClientSecret = cloudflareToken.clientSecret
+        }
+
+        return credentials
+    }
+
+    // MARK: - Cloudflare Service Token
+
+    func storeCloudflareServiceToken(for serverId: UUID, clientID: String, clientSecret: String) throws {
+        let idKey = cloudflareClientIDKey(for: serverId)
+        let secretKey = cloudflareClientSecretKey(for: serverId)
+        let previousIDData = try store.get(idKey)
+        let previousSecretData = try store.get(secretKey)
+
+        guard let idData = clientID.data(using: .utf8),
+              let secretData = clientSecret.data(using: .utf8) else {
+            throw KeychainError.encodingFailed
+        }
+
+        do {
+            try store.set(idData, forKey: idKey, iCloudSync: usesICloudKeychainSync())
+            try store.set(secretData, forKey: secretKey, iCloudSync: usesICloudKeychainSync())
+        } catch {
+            restoreCloudflareServiceToken(
+                idKey: idKey,
+                secretKey: secretKey,
+                previousIDData: previousIDData,
+                previousSecretData: previousSecretData
+            )
+            throw error
+        }
+        logger.info("Stored Cloudflare service token for server \(serverId.uuidString)")
+    }
+
+    func getCloudflareServiceToken(for serverId: UUID) throws -> (clientID: String, clientSecret: String)? {
+        let idKey = cloudflareClientIDKey(for: serverId)
+        let secretKey = cloudflareClientSecretKey(for: serverId)
+
+        guard let idData = try store.get(idKey),
+              let secretData = try store.get(secretKey),
+              let clientID = String(data: idData, encoding: .utf8),
+              let clientSecret = String(data: secretData, encoding: .utf8) else {
+            return nil
+        }
+
+        return (clientID: clientID, clientSecret: clientSecret)
+    }
+
+    private func restoreCloudflareServiceToken(
+        idKey: String,
+        secretKey: String,
+        previousIDData: Data?,
+        previousSecretData: Data?
+    ) {
+        do {
+            if let previousIDData {
+                try store.set(previousIDData, forKey: idKey, iCloudSync: usesICloudKeychainSync())
+            } else {
+                try store.delete(idKey)
+            }
+
+            if let previousSecretData {
+                try store.set(previousSecretData, forKey: secretKey, iCloudSync: usesICloudKeychainSync())
+            } else {
+                try store.delete(secretKey)
+            }
+        } catch {
+            logger.error("Failed to restore Cloudflare service token after write failure: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - Delete Operations
+
+    func deletePassword(for serverId: UUID) throws {
+        try store.delete(passwordKey(for: serverId))
+    }
+
+    func deleteSSHKey(for serverId: UUID) throws {
+        try store.delete(sshKeyKey(for: serverId))
+        try store.delete(sshPassphraseKey(for: serverId))
+        try store.delete(sshPublicKeyKey(for: serverId))
+    }
+
+    func deleteCloudflareServiceToken(for serverId: UUID) throws {
+        try store.delete(cloudflareClientIDKey(for: serverId))
+        try store.delete(cloudflareClientSecretKey(for: serverId))
+    }
+
+    func deleteCredentials(for serverId: UUID) throws {
+        let passwordKey = passwordKey(for: serverId)
+        let keyKey = sshKeyKey(for: serverId)
+        let passphraseKey = sshPassphraseKey(for: serverId)
+        let publicKeyKey = sshPublicKeyKey(for: serverId)
+        let cloudflareIDKey = cloudflareClientIDKey(for: serverId)
+        let cloudflareSecretKey = cloudflareClientSecretKey(for: serverId)
+
+        try store.delete(passwordKey)
+        try store.delete(keyKey)
+        try store.delete(passphraseKey)
+        try store.delete(publicKeyKey)
+        try store.delete(cloudflareIDKey)
+        try store.delete(cloudflareSecretKey)
+
+        logger.info("Deleted credentials for server \(serverId.uuidString)")
+    }
+
+    // MARK: - iCloud Sync
+
+    func enableiCloudSync(for serverId: UUID) throws {
+        // Already enabled by default in store operations
+        logger.info("iCloud sync enabled for server \(serverId.uuidString)")
+    }
+
+    // MARK: - Key Generation
+
+    private func passwordKey(for serverId: UUID) -> String {
+        "server.\(serverId.uuidString).password"
+    }
+
+    private func sshKeyKey(for serverId: UUID) -> String {
+        "server.\(serverId.uuidString).sshkey"
+    }
+
+    private func sshPassphraseKey(for serverId: UUID) -> String {
+        "server.\(serverId.uuidString).passphrase"
+    }
+
+    private func sshPublicKeyKey(for serverId: UUID) -> String {
+        "server.\(serverId.uuidString).publickey"
+    }
+
+    private func cloudflareClientIDKey(for serverId: UUID) -> String {
+        "server.\(serverId.uuidString).cloudflare.clientid"
+    }
+
+    private func cloudflareClientSecretKey(for serverId: UUID) -> String {
+        "server.\(serverId.uuidString).cloudflare.clientsecret"
+    }
+
+    // MARK: - Reusable SSH Keys (Keychain Library)
+
+    private let sshKeysIndexKey = "waterm.sshkeys.index"
+
+    /// Get all stored SSH key entries (metadata only, not the actual keys)
+    func getStoredSSHKeys() -> [SSHKeyEntry] {
+        guard let data = try? store.get(sshKeysIndexKey),
+              let keys = try? JSONDecoder().decode([SSHKeyEntry].self, from: data) else {
+            return []
+        }
+        return keys.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    /// Save the SSH key index
+    private func saveSSHKeysIndex(_ keys: [SSHKeyEntry]) throws {
+        let data = try JSONEncoder().encode(keys)
+        try store.set(data, forKey: sshKeysIndexKey, iCloudSync: usesICloudKeychainSync())
+    }
+
+    /// Store a new SSH key in the keychain library
+    func storeSSHKeyEntry(
+        name: String,
+        privateKey: Data,
+        passphrase: String?,
+        keyType: SSHKeyType? = nil,
+        publicKey: String? = nil
+    ) throws -> SSHKeyEntry {
+        let entry = SSHKeyEntry(
+            name: name,
+            hasPassphrase: passphrase != nil && !passphrase!.isEmpty,
+            createdAt: Date(),
+            keyType: keyType,
+            publicKey: publicKey
+        )
+
+        // Store the actual key data
+        try store.set(privateKey, forKey: storedKeyDataKey(for: entry.id), iCloudSync: usesICloudKeychainSync())
+
+        // Store passphrase if provided
+        if let passphrase = passphrase, !passphrase.isEmpty,
+           let passphraseData = passphrase.data(using: .utf8) {
+            try store.set(passphraseData, forKey: storedKeyPassphraseKey(for: entry.id), iCloudSync: usesICloudKeychainSync())
+        }
+
+        // Update index
+        var keys = getStoredSSHKeys()
+        keys.append(entry)
+        try saveSSHKeysIndex(keys)
+
+        logger.info("Stored SSH key '\(name)' in keychain library")
+        return entry
+    }
+
+    /// Get the actual key data for a stored SSH key
+    func getStoredSSHKeyData(for keyId: UUID) throws -> (key: Data, passphrase: String?)? {
+        guard let keyData = try store.get(storedKeyDataKey(for: keyId)) else {
+            return nil
+        }
+
+        var passphrase: String? = nil
+        if let passphraseData = try store.get(storedKeyPassphraseKey(for: keyId)) {
+            passphrase = String(data: passphraseData, encoding: .utf8)
+        }
+
+        return (key: keyData, passphrase: passphrase)
+    }
+
+    /// Delete a stored SSH key from the library
+    func deleteStoredSSHKey(_ keyId: UUID) throws {
+        // Delete key data before hiding the entry from the visible index.
+        try store.delete(storedKeyDataKey(for: keyId))
+        try store.delete(storedKeyPassphraseKey(for: keyId))
+
+        // Update index
+        var keys = getStoredSSHKeys()
+        keys.removeAll { $0.id == keyId }
+        try saveSSHKeysIndex(keys)
+
+        logger.info("Deleted SSH key \(keyId.uuidString) from keychain library")
+    }
+
+    /// Update a stored SSH key's name
+    func updateStoredSSHKeyName(_ keyId: UUID, name: String) throws {
+        var keys = getStoredSSHKeys()
+        guard let index = keys.firstIndex(where: { $0.id == keyId }) else {
+            throw KeychainError.itemNotFound
+        }
+        keys[index].name = name
+        try saveSSHKeysIndex(keys)
+        logger.info("Updated SSH key name to '\(name)'")
+    }
+
+    private func storedKeyDataKey(for keyId: UUID) -> String {
+        "sshkey.\(keyId.uuidString).data"
+    }
+
+    private func storedKeyPassphraseKey(for keyId: UUID) -> String {
+        "sshkey.\(keyId.uuidString).passphrase"
+    }
+}
+
+// KeychainError is defined in KeychainStore.swift
+// ServerCredentials is defined with Core SSH connection primitives.

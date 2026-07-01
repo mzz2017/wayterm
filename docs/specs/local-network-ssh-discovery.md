@@ -46,7 +46,7 @@ Creating a server currently requires users to know host/IP details in advance an
 #### macOS
 - Sidebar footer (`ServerSidebarView`) keeps primary `Add Server` button.
 - Add adjacent discover icon button (same symbol) beside `Add Server`.
-- Add menu command in `VVTermCommands`:
+- Add menu command in `WatermCommands`:
   - `Discover Local Devices...`
   - shortcut: `Cmd+Shift+D`
 
@@ -71,7 +71,7 @@ Rationale:
 - New cross-platform sheet: `LocalDeviceDiscoverySheet`.
 - Presentation:
   - iOS: follow standard grouped sheet pattern used elsewhere in app.
-  - macOS: modal sheet reusing existing VVTerm sheet container conventions.
+  - macOS: modal sheet reusing existing Waterm sheet container conventions.
 - Sections:
 1. `Nearby SSH Hosts` (live updating)
 2. `Scanning Status` (Bonjour / Port scan progress)
@@ -118,7 +118,7 @@ Why both:
 - Combined gives higher hit rate with useful labels.
 
 ### Data Model
-Create `VVTerm/Models/DiscoveredSSHHost.swift`:
+Create `Waterm/Models/DiscoveredSSHHost.swift`:
 - `struct DiscoveredSSHHost: Identifiable, Equatable, Hashable`
   - `id: String` (`host:port`)
   - `displayName: String`
@@ -130,14 +130,14 @@ Create `VVTerm/Models/DiscoveredSSHHost.swift`:
 - `enum DiscoverySource { bonjour, portScan }`
 
 ### Services and Manager
-Create `VVTerm/Services/Discovery/LocalSSHDiscoveryService.swift`:
+Create `Waterm/Services/Discovery/LocalSSHDiscoveryService.swift`:
 - Owns scan tasks and cancellation.
 - API:
   - `startScan() -> AsyncStream<DiscoveryEvent>`
   - `stopScan()`
   - `rescan()`
 
-Create `VVTerm/Managers/LocalSSHDiscoveryManager.swift` (`@MainActor`, `ObservableObject`):
+Create `Waterm/Managers/LocalSSHDiscoveryManager.swift` (`@MainActor`, `ObservableObject`):
 - Publishes `hosts`, `isScanning`, `scanState`, `permissionState`, `error`.
 - Merges/deduplicates events by `host:port`.
 - Handles max result cap and sorting.
@@ -162,17 +162,17 @@ Update `ServerFormSheet`:
 - Preserve current defaults for auth/session/environment sections.
 
 ### Integration Points
-- `VVTerm/Views/iOS/iOSContentView.swift`
+- `Waterm/Views/iOS/iOSContentView.swift`
   - add discovery action in `+` menu
   - present `LocalDeviceDiscoverySheet`
-- `VVTerm/Views/Sidebar/ServerSidebarView.swift`
+- `Waterm/Views/Sidebar/ServerSidebarView.swift`
   - add discover icon button + sheet presentation
-- `VVTerm/Views/ServerDetail/ServerFormSheet.swift`
+- `Waterm/Views/ServerDetail/ServerFormSheet.swift`
   - add `Pick from Local Discovery...` action
   - accept and apply `ServerFormPrefill`
-- `VVTerm/VVTermApp.swift`
+- `Waterm/WatermApp.swift`
   - add macOS command and shortcut
-- `VVTerm-iOS/Info.plist` and `VVTerm-macOS/Info.plist`
+- `Waterm-iOS/Info.plist` and `Waterm-macOS/Info.plist`
   - add `NSBonjourServices` entries:
     - `_ssh._tcp`
     - `_sftp-ssh._tcp`

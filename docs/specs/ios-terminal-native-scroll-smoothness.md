@@ -5,13 +5,13 @@ Status: Proposed
 
 ## Summary
 
-VVTerm can make iOS terminal scrolling substantially smoother, and the clean path is technically feasible with the APIs already present in the app and the vendored Ghostty bridge.
+Waterm can make iOS terminal scrolling substantially smoother, and the clean path is technically feasible with the APIs already present in the app and the vendored Ghostty bridge.
 
 The fix should not be a larger multiplier, a different friction constant, or more `requestRender()` calls. The current iOS path is not native scrolling: a `UIPanGestureRecognizer` converts touch movement into Ghostty mouse wheel events, applies custom momentum, and forces layer display. That makes plain terminal scrollback feel less like Termius because UIKit is not owning the scroll gesture, deceleration, rubber-banding, or frame pacing.
 
 The proposed V1 is:
 
-- Use a native `UIScrollView` only when VVTerm/Ghostty owns the host scrollback.
+- Use a native `UIScrollView` only when Waterm/Ghostty owns the host scrollback.
 - Keep the existing terminal mouse event path when a remote program owns the scroll, such as tmux mouse mode, vim, less, full-screen TUIs, or a future Mosh/tmux flow.
 - Mirror the existing macOS `NSScrollView` design: build a virtual scroll document from Ghostty scrollbar state, map native `contentOffset` back to Ghostty `scroll_to_row`, and avoid custom iOS momentum for host scrollback.
 - Treat tmux/Mosh smooth remote history as a separate V2 overlay problem, not as a V1 native scroll wrapper problem.
@@ -37,7 +37,7 @@ The main engineering work is app-side gesture ownership and view containment. It
 
 ### Current iOS Path
 
-`VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift` currently installs a `UIPanGestureRecognizer` and handles scrolling in `handlePanGesture(_:)`.
+`Waterm/GhosttyTerminal/GhosttyTerminalView+iOS.swift` currently installs a `UIPanGestureRecognizer` and handles scrolling in `handlePanGesture(_:)`.
 
 Observed behavior:
 
@@ -49,11 +49,11 @@ Observed behavior:
 - Each scroll tick calls `requestRender()`.
 - `requestRender()` eventually marks IOSurface layers as needing display.
 
-This is the core reason the gesture cannot feel like Termius-style native iOS scrolling. UIKit is only providing raw touches; VVTerm is reimplementing scroll physics and then asking the terminal to redraw row-based scroll state.
+This is the core reason the gesture cannot feel like Termius-style native iOS scrolling. UIKit is only providing raw touches; Waterm is reimplementing scroll physics and then asking the terminal to redraw row-based scroll state.
 
 ### Current macOS Path
 
-`VVTerm/GhosttyTerminal/TerminalScrollView.swift` wraps the terminal view in an `NSScrollView`.
+`Waterm/GhosttyTerminal/TerminalScrollView.swift` wraps the terminal view in an `NSScrollView`.
 
 Important properties:
 
@@ -79,7 +79,7 @@ Ghostty also already handles `scroll_to_row` by updating viewport state and queu
 
 Mosh does not have the same local byte-stream scrollback model as SSH. Moshi's own article explains that Mosh synchronizes current screen state, while tmux provides server-side history and mouse scrolling. Source: https://getmoshi.app/articles/fix-mosh-scrollback
 
-VVTerm's generated tmux config currently enables:
+Waterm's generated tmux config currently enables:
 
 - `set -g history-limit 10000`
 - `set -g mouse on`
@@ -87,7 +87,7 @@ VVTerm's generated tmux config currently enables:
 
 The tmux manual describes mouse mode as tmux capturing mouse events and binding wheel actions. Source: https://man7.org/linux/man-pages/man1/tmux.1.html
 
-Therefore, tmux/Mosh smooth scrolling is not the same as host scrollback smoothing. When tmux mouse mode owns wheel input, VVTerm is sending input to a remote application. A `UIScrollView` cannot directly scroll the remote tmux history unless VVTerm also owns a local representation of that history.
+Therefore, tmux/Mosh smooth scrolling is not the same as host scrollback smoothing. When tmux mouse mode owns wheel input, Waterm is sending input to a remote application. A `UIScrollView` cannot directly scroll the remote tmux history unless Waterm also owns a local representation of that history.
 
 ### Apple Platform Basis
 
@@ -133,7 +133,7 @@ enum TerminalScrollOwner: Equatable {
 }
 ```
 
-Host scrollback means VVTerm/Ghostty owns the scrollback buffer. In this mode, native iOS scrolling should be active.
+Host scrollback means Waterm/Ghostty owns the scrollback buffer. In this mode, native iOS scrolling should be active.
 
 Remote mouse application means the remote terminal program owns the gesture. In this mode, the existing Ghostty mouse scroll path should remain active.
 
@@ -174,10 +174,10 @@ the gesture from `vim`, `less`, or similar TUIs.
 
 ### New iOS Native Scroll Container
 
-Add an iOS-only wrapper in `VVTerm/GhosttyTerminal`, for example:
+Add an iOS-only wrapper in `Waterm/GhosttyTerminal`, for example:
 
 ```text
-VVTerm/GhosttyTerminal/TerminalNativeScrollContainerView+iOS.swift
+Waterm/GhosttyTerminal/TerminalNativeScrollContainerView+iOS.swift
 ```
 
 Responsibility:
@@ -394,7 +394,7 @@ Plain SSH:
 
 tmux:
 
-- Start VVTerm-managed tmux with mouse enabled.
+- Start Waterm-managed tmux with mouse enabled.
 - Scroll in shell history and inside copy mode.
 - Expected: tmux behavior remains controlled by remote mouse/copy-mode bindings; no accidental host scroll hijack.
 
@@ -426,7 +426,7 @@ Performance:
 Preferred command:
 
 ```sh
-xcodebuild -scheme VVTerm -destination 'generic/platform=iOS' build
+xcodebuild -scheme Waterm -destination 'generic/platform=iOS' build
 ```
 
 If signing or local Xcode setup blocks generic iOS builds, run the closest available simulator build and document the limitation in the implementation notes.
@@ -551,7 +551,7 @@ After manual QA:
 1. Should V1 ship row-boundary native scroll only, or include fractional visual follow?
 2. When should the internal opt-out flag be removed for TestFlight or release?
 3. Which Ghostty state bridge should populate `remoteScrollOwnerActive` beyond mouse capture?
-4. Should V2 remote history overlay target tmux first, Mosh first, or only VVTerm-managed tmux sessions first?
+4. Should V2 remote history overlay target tmux first, Mosh first, or only Waterm-managed tmux sessions first?
 
 ## Recommended Decision
 

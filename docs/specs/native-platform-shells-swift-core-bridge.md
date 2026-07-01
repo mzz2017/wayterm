@@ -1,7 +1,7 @@
 # Native Platform Shells + Portable Core Bridge (Draft Idea Backlog)
 
 ## Summary
-Explore a future non-Apple expansion of VVTerm that keeps each platform UI fully native while moving shared connection and session logic into a headless portable core exposed through a small C ABI / FFI bridge.
+Explore a future non-Apple expansion of Waterm that keeps each platform UI fully native while moving shared connection and session logic into a headless portable core exposed through a small C ABI / FFI bridge.
 
 Path note: this draft predates the feature-first migration. Any legacy `Models/`, `Managers/`, `Services/`, or `Views/` file paths in this document should be mapped to the current `App/`, `Core/`, and `Features/` tree.
 
@@ -10,7 +10,7 @@ Draft date: 2026-03-08
 Status: Backlog idea only. This is not an approved roadmap item.
 
 ## Problem
-VVTerm is currently shaped around Apple platforms. The app lifecycle, UI shell, terminal embedding, secure storage, sync, purchases, biometrics, and several UX flows are tightly coupled to Apple frameworks and Apple runtime assumptions.
+Waterm is currently shaped around Apple platforms. The app lifecycle, UI shell, terminal embedding, secure storage, sync, purchases, biometrics, and several UX flows are tightly coupled to Apple frameworks and Apple runtime assumptions.
 
 That makes a direct non-Apple port unattractive:
 - Reusing the current SwiftUI/AppKit/UIKit surface would not feel native on HarmonyOS or Windows.
@@ -48,11 +48,11 @@ Each platform shell would:
 - Exposing raw Swift types directly to Windows code.
 
 ## Product Direction
-The product name should remain `VVTerm`.
+The product name should remain `Waterm`.
 
 This architecture assumes:
-- `VVTerm` remains the umbrella product brand
-- Apple remains one platform edition of VVTerm, not the entire product identity
+- `Waterm` remains the umbrella product brand
+- Apple remains one platform edition of Waterm, not the entire product identity
 - HarmonyOS can be the first non-Apple proving ground
 - Windows can follow using the same core and bridge model
 
@@ -73,18 +73,18 @@ Tradeoff:
 ## Proposed Architecture
 
 ### High-level split
-- `VVTermCore`
+- `WatermCore`
   - pure/headless portable systems module
   - preferred implementation candidate: Rust
   - no SwiftUI, AppKit, UIKit, CloudKit, StoreKit, Security, Metal, ActivityKit, or LocalAuthentication imports
-- `VVTermApple`
+- `WatermApple`
   - current Apple app shell and platform adapters
-- `VVTermHarmony`
+- `WatermHarmony`
   - future HarmonyOS app shell and Harmony adapters
-- `VVTermWindows`
+- `WatermWindows`
   - future Windows app shell and Windows adapters
-- `VVTermBridge`
-  - narrow C ABI wrapper around `VVTermCore`
+- `WatermBridge`
+  - narrow C ABI wrapper around `WatermCore`
 
 ### Expected rollout shape
 - Phase 1: define the portable core boundary without breaking the Apple app
@@ -266,55 +266,55 @@ Avoid across the boundary:
 ## Draft API Shape
 
 ### Core lifecycle
-- `vvterm_core_create`
-- `vvterm_core_destroy`
-- `vvterm_core_set_event_callback`
-- `vvterm_core_set_host_callbacks`
+- `waterm_core_create`
+- `waterm_core_destroy`
+- `waterm_core_set_event_callback`
+- `waterm_core_set_host_callbacks`
 
 ### Server and workspace operations
-- `vvterm_core_load_state_json`
-- `vvterm_core_export_state_json`
-- `vvterm_core_validate_server_json`
-- `vvterm_core_validate_workspace_json`
+- `waterm_core_load_state_json`
+- `waterm_core_export_state_json`
+- `waterm_core_validate_server_json`
+- `waterm_core_validate_workspace_json`
 
 ### Session operations
-- `vvterm_core_connect_json`
-- `vvterm_core_disconnect`
-- `vvterm_core_send_input`
-- `vvterm_core_resize`
-- `vvterm_core_send_signal`
+- `waterm_core_connect_json`
+- `waterm_core_disconnect`
+- `waterm_core_send_input`
+- `waterm_core_resize`
+- `waterm_core_send_signal`
 
 ### Utility
-- `vvterm_string_free`
-- `vvterm_buffer_free`
-- `vvterm_last_error_message`
+- `waterm_string_free`
+- `waterm_buffer_free`
+- `waterm_last_error_message`
 
 ## Example C ABI Sketch
 ```c
-typedef void* VVTermCoreHandle;
-typedef void* VVTermSessionHandle;
+typedef void* WatermCoreHandle;
+typedef void* WatermSessionHandle;
 
-typedef void (*vvterm_event_callback)(
+typedef void (*waterm_event_callback)(
     const char* event_name,
     const char* event_json,
     void* context
 );
 
-VVTermCoreHandle vvterm_core_create(void);
-void vvterm_core_destroy(VVTermCoreHandle core);
+WatermCoreHandle waterm_core_create(void);
+void waterm_core_destroy(WatermCoreHandle core);
 
-void vvterm_core_set_event_callback(
-    VVTermCoreHandle core,
-    vvterm_event_callback callback,
+void waterm_core_set_event_callback(
+    WatermCoreHandle core,
+    waterm_event_callback callback,
     void* context
 );
 
-char* vvterm_core_list_servers_json(VVTermCoreHandle core);
-VVTermSessionHandle vvterm_core_connect_json(VVTermCoreHandle core, const char* request_json);
-void vvterm_core_send_input(VVTermSessionHandle session, const uint8_t* bytes, int length);
-void vvterm_core_resize(VVTermSessionHandle session, int cols, int rows);
-void vvterm_core_disconnect(VVTermSessionHandle session);
-void vvterm_string_free(char* value);
+char* waterm_core_list_servers_json(WatermCoreHandle core);
+WatermSessionHandle waterm_core_connect_json(WatermCoreHandle core, const char* request_json);
+void waterm_core_send_input(WatermSessionHandle session, const uint8_t* bytes, int length);
+void waterm_core_resize(WatermSessionHandle session, int cols, int rows);
+void waterm_core_disconnect(WatermSessionHandle session);
+void waterm_string_free(char* value);
 ```
 
 ## Example Host Callback Direction
@@ -367,8 +367,8 @@ Probable Apple-only layers to keep out of core:
 - `GhosttyTerminal/*View*`
 
 ## First Architecture Questions To Answer
-- Can libghostty or an equivalent renderer strategy be hosted cleanly on HarmonyOS and Windows without polluting `VVTermCore`?
-- Which current managers contain real domain logic versus Apple-bound orchestration that should stay in `VVTermApple`?
+- Can libghostty or an equivalent renderer strategy be hosted cleanly on HarmonyOS and Windows without polluting `WatermCore`?
+- Which current managers contain real domain logic versus Apple-bound orchestration that should stay in `WatermApple`?
 - Should sync remain entirely host-owned in v1, with entitlements as a narrow optional capability only?
 - Which DTOs are stable enough to freeze early, and which should remain internal until the first bridge prototype works?
 - Is Rust the right systems layer for the first non-Apple clients, or is there a strong reason to keep the first core in Swift?
@@ -386,7 +386,7 @@ If the answer is no for HarmonyOS, that does not invalidate the product directio
 ## Suggested Next Steps
 - Rename this idea from a Windows-specific port concept into a platform-shell expansion concept
 - Inventory Apple-only dependencies currently mixed into domain and session code
-- Define a first-pass `VVTermCore` boundary in terms of modules, DTOs, and capabilities
+- Define a first-pass `WatermCore` boundary in terms of modules, DTOs, and capabilities
 - Decide the minimum host-driven state contract for servers, workspaces, and entitlement state
 - Prototype one thin end-to-end bridge path: create core, list servers, connect session, stream terminal output, disconnect
 - Validate Rust toolchain and FFI viability for HarmonyOS before committing to a shared-core implementation
@@ -433,7 +433,7 @@ Assumptions:
 - keep persistence and sync outside the core unless a concrete portability payoff is proven
 
 ### Milestone 2: Minimal bridge
-- create `VVTermBridge` with create/destroy/list/connect/send/resize/disconnect
+- create `WatermBridge` with create/destroy/list/connect/send/resize/disconnect
 - emit terminal output and connection-state events through callback
 
 ### Milestone 3: First non-Apple core client

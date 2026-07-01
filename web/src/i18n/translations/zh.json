@@ -16,12 +16,12 @@
     ],
     "title": "更适合 Apple 设备的原生 SSH 客户端",
     "subtitle": "连接服务器、浏览远程文件、保持有序，并通过 Keychain 保护的凭据在你的 iPhone、iPad 和 Mac 之间保持同步。",
-    "primaryCta": "免费试用 VVTerm",
+    "primaryCta": "免费试用 Waterm",
     "secondaryCta": "查看 GitHub",
     "meta": "需要 iOS 16+ 或 macOS 13+（Apple Silicon）。永久免费，也可<span class=\"text-orange-500 font-medium\">购买终身版</span>。"
   },
   "why": {
-    "title": "为什么选择 VVTerm",
+    "title": "为什么选择 Waterm",
     "subtitle": "它是一款专注的终端应用，适合想要原生 Apple 体验、现代 SSH 方式，以及对个人用户仍然合理定价的用户。",
     "native": {
       "title": "原生支持 iPhone、iPad 和 Mac",
@@ -42,7 +42,7 @@
   },
   "features": {
     "title": "为更快、更简单的远程工作而打造",
-    "subtitle": "VVTerm 的目标是让日常远程工作在 Apple 设备上更快、更简单，也更原生。",
+    "subtitle": "Waterm 的目标是让日常远程工作在 Apple 设备上更快、更简单，也更原生。",
     "rendering": {
       "title": "更快、更准确的终端渲染",
       "desc": "基于 libghostty，带来更灵敏的绘制表现、更准确的终端行为，以及更顺手的远程会话体验。"
@@ -81,7 +81,7 @@
     },
     "apple": {
       "title": "Apple 优先的技术用户",
-      "desc": "如果你的日常设备就是 iPhone、iPad 和 Mac，VVTerm 会更自然地融入这套环境。"
+      "desc": "如果你的日常设备就是 iPhone、iPad 和 Mac，Waterm 会更自然地融入这套环境。"
     },
     "ai": {
       "title": "远程 AI 与服务器工作流",
@@ -106,7 +106,7 @@
         "语音转命令",
         "Keychain 安全"
       ],
-      "cta": "下载 VVTerm"
+      "cta": "下载 Waterm"
     },
     "pro": {
       "name": "专业版",
@@ -149,8 +149,8 @@
   "faq": {
     "title": "常见问题",
     "q1": {
-      "question": "VVTerm 是什么？",
-      "answer": "VVTerm 是一款 iOS 和 macOS 上的 SSH 终端应用，让你可以在 Apple 设备之间通过 iCloud 同步管理并连接远程服务器。"
+      "question": "Waterm 是什么？",
+      "answer": "Waterm 是一款 iOS 和 macOS 上的 SSH 终端应用，让你可以在 Apple 设备之间通过 iCloud 同步管理并连接远程服务器。"
     },
     "q2": {
       "question": "iCloud 同步如何工作？",
@@ -158,15 +158,15 @@
     },
     "q3": {
       "question": "支持哪些连接方式？",
-      "answer": "VVTerm 支持标准 SSH，也支持 Mosh、Tailscale SSH 和 Cloudflare Tunnel SSH。需要时，凭据会安全保存在 Apple Keychain。"
+      "answer": "Waterm 支持标准 SSH，也支持 Mosh、Tailscale SSH 和 Cloudflare Tunnel SSH。需要时，凭据会安全保存在 Apple Keychain。"
     },
     "q4": {
-      "question": "VVTerm 能在 iPad 上使用吗？",
-      "answer": "可以。VVTerm 支持 iPhone、iPad 和 Mac，iOS 版本还提供 Esc、Tab、Ctrl 和方向键工具栏。"
+      "question": "Waterm 能在 iPad 上使用吗？",
+      "answer": "可以。Waterm 支持 iPhone、iPad 和 Mac，iOS 版本还提供 Esc、Tab、Ctrl 和方向键工具栏。"
     },
     "q5": {
       "question": "它使用什么终端引擎？",
-      "answer": "VVTerm 使用 libghostty，也就是 Ghostty 所使用的渲染引擎，带来快速且准确的终端模拟体验。"
+      "answer": "Waterm 使用 libghostty，也就是 Ghostty 所使用的渲染引擎，带来快速且准确的终端模拟体验。"
     },
     "q6": {
       "question": "免费版和专业版有什么区别？",
@@ -185,21 +185,21 @@
       "answer": "需要 iPhone 或 iPad 上的 iOS 16+，或 Apple Silicon Mac 上的 macOS 13+ Ventura。不支持 Intel Mac。"
     },
     "q10": {
-      "question": "VVTerm 支持远程文件浏览吗？",
-      "answer": "支持。VVTerm 内置基于 SFTP 的 Files 视图，可用于浏览文件夹、预览文本/图片/视频文件、上传和下载、重命名或移动项目、创建文件夹，并在服务器支持时编辑 POSIX 权限。"
+      "question": "Waterm 支持远程文件浏览吗？",
+      "answer": "支持。Waterm 内置基于 SFTP 的 Files 视图，可用于浏览文件夹、预览文本/图片/视频文件、上传和下载、重命名或移动项目、创建文件夹，并在服务器支持时编辑 POSIX 权限。"
     }
   },
   "closing": {
     "title": "你的服务器，随处可达。",
     "subtitle": "在 iPhone、iPad 和 Mac 上免费开始使用。",
-    "cta": "下载 VVTerm"
+    "cta": "下载 Waterm"
   },
   "footer": {
     "tagline": "适用于 iPhone、iPad 和 Mac 的原生 SSH 客户端",
     "description": "开源，永久免费，并提供可选的 Pro 与终身升级。",
     "productTitle": "产品",
     "resourcesTitle": "资源",
-    "navWhy": "为什么选择 VVTerm",
+    "navWhy": "为什么选择 Waterm",
     "navFeatures": "功能",
     "navPricing": "价格",
     "navFaq": "常见问题",

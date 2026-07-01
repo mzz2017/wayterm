@@ -2,20 +2,20 @@
 
 ## Summary
 
-Add Windows tmux-compatible session persistence in VVTerm by supporting [psmux](https://github.com/psmux/psmux) as the Windows tmux runtime.
+Add Windows tmux-compatible session persistence in Waterm by supporting [psmux](https://github.com/psmux/psmux) as the Windows tmux runtime.
 
-VVTerm already has shell-aware SSH startup for Windows, but it still treats tmux as a Unix-only capability. psmux changes that assumption: it exposes a tmux-compatible CLI on native Windows and ships `psmux.exe`, `pmux.exe`, and `tmux.exe` aliases. The implementation should keep the existing Unix tmux behavior intact while adding a separate Windows psmux backend with Windows-safe probing, config writing, quoting, attach/create, install, cleanup, and current-path commands.
+Waterm already has shell-aware SSH startup for Windows, but it still treats tmux as a Unix-only capability. psmux changes that assumption: it exposes a tmux-compatible CLI on native Windows and ships `psmux.exe`, `pmux.exe`, and `tmux.exe` aliases. The implementation should keep the existing Unix tmux behavior intact while adding a separate Windows psmux backend with Windows-safe probing, config writing, quoting, attach/create, install, cleanup, and current-path commands.
 
 Research date: 2026-06-03.
 
 ## Goals
 
-- Support tmux-style VVTerm-managed sessions on Windows OpenSSH hosts when psmux is installed.
+- Support tmux-style Waterm-managed sessions on Windows OpenSSH hosts when psmux is installed.
 - Preserve existing Unix tmux behavior and all mosh fallback behavior.
 - Keep saved server settings unchanged; runtime support is detected per connection.
 - Reuse the existing tmux user flows: ask/attach/create/skip, managed session names, cleanup, status, and install action.
 - Keep psmux support behind backend-specific command generation instead of adding Windows branches throughout UI code.
-- Support Windows default shells used by VVTerm today:
+- Support Windows default shells used by Waterm today:
   - PowerShell 5 (`powershell`)
   - PowerShell 7 (`pwsh`)
   - `cmd.exe`
@@ -25,7 +25,7 @@ Research date: 2026-06-03.
 - Windows mosh support.
 - Replacing psmux with a bundled binary.
 - Replacing the Unix tmux implementation.
-- Full control-mode integration in VVTerm.
+- Full control-mode integration in Waterm.
 - Importing or editing the user's own `.tmux.conf`.
 - Fixing psmux upstream rendering issues.
 
@@ -60,9 +60,9 @@ Documented install paths:
 - `cargo install psmux`
 - PowerShell install script: `irm https://raw.githubusercontent.com/psmux/psmux/master/scripts/install.ps1 | iex`
 
-### psmux tmux compatibility relevant to VVTerm
+### psmux tmux compatibility relevant to Waterm
 
-psmux claims and implements the tmux CLI surface VVTerm currently depends on:
+psmux claims and implements the tmux CLI surface Waterm currently depends on:
 
 - `new-session`
 - `attach-session`
@@ -78,7 +78,7 @@ psmux claims and implements the tmux CLI surface VVTerm currently depends on:
 - `-L <namespace>`
 - `-C` / `-CC` control mode
 
-The documented command reference includes the key flags VVTerm uses:
+The documented command reference includes the key flags Waterm uses:
 
 - `new-session -A -s <name> -c <dir>`
 - `attach-session -t <target>`
@@ -92,28 +92,28 @@ psmux supports tmux-style format variables, including session/window/pane values
 
 ### Important psmux caveats
 
-- `psmux -V`, `pmux -V`, and `tmux -V` intentionally print `tmux <version>` for compatibility. VVTerm should not rely on `tmux -V` output to distinguish real tmux from psmux.
-- psmux reads config from `~/.psmux.conf`, `~/.psmuxrc`, `~/.tmux.conf`, and `~/.config/psmux/psmux.conf`, but VVTerm should pass its own generated config with `-f`.
-- psmux supports `terminal-overrides` as a compatibility no-op. `terminal-features` is not a first-class option in the current source, but psmux stores unknown hyphenated tmux options in `user_options` instead of failing or injecting them as environment variables. VVTerm may include it for config parity, but must not depend on it for behavior.
-- psmux documents that `alternate_on` is always false because ConPTY consumes alternate-screen transitions. VVTerm's current Unix tmux mouse-scroll binding uses `#{alternate_on}`, so Windows psmux must not reuse that binding unchanged.
+- `psmux -V`, `pmux -V`, and `tmux -V` intentionally print `tmux <version>` for compatibility. Waterm should not rely on `tmux -V` output to distinguish real tmux from psmux.
+- psmux reads config from `~/.psmux.conf`, `~/.psmuxrc`, `~/.tmux.conf`, and `~/.config/psmux/psmux.conf`, but Waterm should pass its own generated config with `-f`.
+- psmux supports `terminal-overrides` as a compatibility no-op. `terminal-features` is not a first-class option in the current source, but psmux stores unknown hyphenated tmux options in `user_options` instead of failing or injecting them as environment variables. Waterm may include it for config parity, but must not depend on it for behavior.
+- psmux documents that `alternate_on` is always false because ConPTY consumes alternate-screen transitions. Waterm's current Unix tmux mouse-scroll binding uses `#{alternate_on}`, so Windows psmux must not reuse that binding unchanged.
 - psmux does not currently support tmux-style `WheelUpPane` / `WheelDownPane` bindings; issue `#193` added `scroll-enter-copy-mode` as the supported scroll customization path instead.
 - psmux supports `allow-set-title`, `set-titles`, `set-titles-string`, and `#{pane_title}`. Issue `#231` fixed OSC 0/2 propagation into `pane_title` for state queries. PowerShell 7 sends OSC 0 with the current working directory on every prompt when title propagation is allowed.
 - Mouse over SSH requires a Windows 11 server build 22523+ for full mouse support. Keyboard and session persistence should still work without that.
-- Issue `#73` remains open for mangled output in at least one Windows Server SSH setup. VVTerm should validate Windows Server explicitly before release and keep plain SSH fallback reliable when psmux cannot be used.
+- Issue `#73` remains open for mangled output in at least one Windows Server SSH setup. Waterm should validate Windows Server explicitly before release and keep plain SSH fallback reliable when psmux cannot be used.
 
-## Current VVTerm State
+## Current Waterm State
 
 Relevant files:
 
-- `VVTerm/Core/SSH/RemoteEnvironmentResolver.swift`
-- `VVTerm/Core/SSH/RemoteTerminalBootstrap.swift`
-- `VVTerm/Core/SSH/RemoteTmuxManager.swift`
-- `VVTerm/Core/SSH/SSHClient.swift`
-- `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- `VVTerm/Features/TerminalSessions/Application/TmuxAttachResolver.swift`
-- `VVTermTests/RemoteEnvironmentTests.swift`
-- `VVTermTests/RemoteTmuxManagerParserTests.swift`
+- `Waterm/Core/SSH/RemoteEnvironmentResolver.swift`
+- `Waterm/Core/SSH/RemoteTerminalBootstrap.swift`
+- `Waterm/Core/SSH/RemoteTmuxManager.swift`
+- `Waterm/Core/SSH/SSHClient.swift`
+- `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- `Waterm/Features/TerminalSessions/Application/TmuxAttachResolver.swift`
+- `WatermTests/RemoteEnvironmentTests.swift`
+- `WatermTests/RemoteTmuxManagerParserTests.swift`
 
 Current blockers:
 
@@ -130,7 +130,7 @@ Current blockers:
   - `uname -s`
   - `exec`
   - POSIX single-quote escaping
-- The generated config path is Unix-shaped: `~/.vvterm/tmux.conf`.
+- The generated config path is Unix-shaped: `~/.waterm/tmux.conf`.
 - The install script only knows Unix package managers and macOS package managers.
 
 This means Windows psmux support should not be implemented by flipping `supportsTmuxRuntime` to true. That would route Windows through POSIX command construction and keep failing.
@@ -186,7 +186,7 @@ Update runtime gating semantics:
 - Unix POSIX profile: tmux runtime can be probed.
 - Windows PowerShell profile: psmux runtime can be probed.
 - Windows cmd profile: psmux runtime can be probed.
-- Unknown Windows shell: do not probe unless PowerShell is available and VVTerm can run a PowerShell exec command safely.
+- Unknown Windows shell: do not probe unless PowerShell is available and Waterm can run a PowerShell exec command safely.
 - Windows mosh remains unsupported.
 
 The availability probe should prefer an explicit psmux executable:
@@ -211,30 +211,30 @@ For PowerShell:
 $cmd = Get-Command psmux,pmux -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($cmd) {
   & $cmd.Source -V | Out-Null
-  if ($LASTEXITCODE -eq 0) { Write-Output "__VVTERM_TMUX_OK__" }
+  if ($LASTEXITCODE -eq 0) { Write-Output "__WATERM_TMUX_OK__" }
 }
 ```
 
 For `cmd.exe`:
 
 ```cmd
-where psmux >NUL 2>NUL && psmux -V >NUL 2>NUL && echo __VVTERM_TMUX_OK__
-where pmux >NUL 2>NUL && pmux -V >NUL 2>NUL && echo __VVTERM_TMUX_OK__
+where psmux >NUL 2>NUL && psmux -V >NUL 2>NUL && echo __WATERM_TMUX_OK__
+where pmux >NUL 2>NUL && pmux -V >NUL 2>NUL && echo __WATERM_TMUX_OK__
 ```
 
 `tmux` fallback should be implemented as a separate confirmed-alias probe, not as part of the first-pass availability check.
 
-### 4) Use a Windows VVTerm config path
+### 4) Use a Windows Waterm config path
 
-Use a VVTerm-owned generated config file:
+Use a Waterm-owned generated config file:
 
-- PowerShell path: `$HOME\.vvterm\psmux.conf`
-- cmd path: `%USERPROFILE%\.vvterm\psmux.conf`
+- PowerShell path: `$HOME\.waterm\psmux.conf`
+- cmd path: `%USERPROFILE%\.waterm\psmux.conf`
 
 Always pass it through psmux's `-f` flag:
 
 ```powershell
-& $psmux -f "$HOME\.vvterm\psmux.conf" attach-session -t "=vvterm_..."
+& $psmux -f "$HOME\.waterm\psmux.conf" attach-session -t "=waterm_..."
 ```
 
 This avoids modifying or depending on the user's `~/.tmux.conf`.
@@ -242,10 +242,10 @@ This avoids modifying or depending on the user's `~/.tmux.conf`.
 The config writer needs a Windows implementation:
 
 ```powershell
-New-Item -ItemType Directory -Force -Path "$HOME\.vvterm" | Out-Null
+New-Item -ItemType Directory -Force -Path "$HOME\.waterm" | Out-Null
 @'
 ...tmux config...
-'@ | Set-Content -Encoding UTF8 -NoNewline "$HOME\.vvterm\psmux.conf"
+'@ | Set-Content -Encoding UTF8 -NoNewline "$HOME\.waterm\psmux.conf"
 ```
 
 For cmd, prefer invoking PowerShell for the config write if available. If PowerShell is unavailable, use a simpler cmd-safe `>` writer or skip config generation and log that only default psmux config is active.
@@ -269,10 +269,10 @@ The existing generated tmux config includes useful portable lines:
 
 The Windows psmux variant must audit or change:
 
-- `terminal-features`: psmux stores it as an unknown hyphenated option and does not fail, so it can stay for config parity, but VVTerm must not rely on it for hyperlink or terminal capability behavior.
+- `terminal-features`: psmux stores it as an unknown hyphenated option and does not fail, so it can stay for config parity, but Waterm must not rely on it for hyperlink or terminal capability behavior.
 - `terminal-overrides`: safe compatibility no-op.
 - mouse scroll bindings using `#{alternate_on}`: do not reuse unchanged because psmux documents `alternate_on` as always false and does not support `WheelUpPane` / `WheelDownPane` key bindings today.
-- `allow-set-title on`: keep it in the VVTerm-managed psmux config to preserve the existing VVTerm tmux behavior where the active pane title can propagate to the outer terminal title. Accept that PowerShell 7 will usually make that title the current working directory. This is less harmful in VVTerm because the psmux status bar is hidden; if the resulting outer title is noisy, handle that as a targeted follow-up rather than disabling title propagation in V1.
+- `allow-set-title on`: keep it in the Waterm-managed psmux config to preserve the existing Waterm tmux behavior where the active pane title can propagate to the outer terminal title. Accept that PowerShell 7 will usually make that title the current working directory. This is less harmful in Waterm because the psmux status bar is hidden; if the resulting outer title is noisy, handle that as a targeted follow-up rather than disabling title propagation in V1.
 
 V1 should use a Windows config that is as close to the Unix tmux config as psmux supports:
 
@@ -294,7 +294,7 @@ Use psmux's tmux-compatible commands but Windows-safe quoting.
 PowerShell attach-or-create shape:
 
 ```powershell
-$s = 'vvterm_session'
+$s = 'waterm_session'
 $exact = '=' + $s
 if (& $psmux -f $config has-session -t $exact 2>$null) {
   & $psmux -f $config source-file $config 2>$null
@@ -323,7 +323,7 @@ Keep using existing `TmuxAttachResolver` behavior:
 - create managed session
 - attach last selected session
 - skip tmux
-- cleanup detached VVTerm-managed sessions
+- cleanup detached Waterm-managed sessions
 
 The parser for `list-sessions -F '#{session_name} #{session_attached} #{session_windows}'` should remain valid for psmux.
 
@@ -331,7 +331,7 @@ Cleanup on Windows should use:
 
 ```powershell
 & $psmux list-sessions -F '#{session_name} #{session_attached}' |
-  ForEach-Object { ... } # filter vvterm prefix and attached count
+  ForEach-Object { ... } # filter waterm prefix and attached count
 ```
 
 But V1 can avoid a complex pipeline by reusing existing Swift-side filtering:
@@ -344,7 +344,7 @@ This is already how `cleanupDetachedSessions` works and is safer than writing sh
 
 ### 8) Add Windows psmux install support
 
-When psmux is missing on Windows and the user taps the existing install action, VVTerm should run a Windows psmux install script instead of the Unix tmux package-manager script.
+When psmux is missing on Windows and the user taps the existing install action, Waterm should run a Windows psmux install script instead of the Unix tmux package-manager script.
 
 Preferred install order:
 
@@ -359,7 +359,7 @@ After install, rerun the psmux availability probe and attach if available, mirro
 
 ## UX
 
-V1 should keep the normal tmux UX. psmux intentionally markets itself as a tmux-compatible Windows runtime, ships a `tmux.exe` alias, and supports the tmux CLI surface VVTerm needs. Existing VVTerm UI copy, settings, prompts, and localized strings should continue saying "tmux" wherever they describe the feature generically.
+V1 should keep the normal tmux UX. psmux intentionally markets itself as a tmux-compatible Windows runtime, ships a `tmux.exe` alias, and supports the tmux CLI surface Waterm needs. Existing Waterm UI copy, settings, prompts, and localized strings should continue saying "tmux" wherever they describe the feature generically.
 
 Mention "psmux" only where the user needs platform-specific action or diagnostics:
 
@@ -430,7 +430,7 @@ Do not gate Windows psmux support behind a user-facing feature flag. Ship it beh
 - Windows mosh remains unsupported.
 - psmux availability probe prefers `psmux` over `pmux` over `tmux`.
 - Windows `tmux.exe` is rejected when it cannot be confirmed as psmux-compatible.
-- psmux config path is Windows-shaped and VVTerm-owned.
+- psmux config path is Windows-shaped and Waterm-owned.
 - psmux attach/create command contains no `sh -lc`, `export`, `mkdir -p`, `printf`, `uname`, or POSIX `exec`.
 - psmux session parser accepts expected `list-sessions -F` output.
 - psmux current-path command uses `list-panes -F '#{pane_current_path}'`.
@@ -443,7 +443,7 @@ Do not gate Windows psmux support behind a user-facing feature flag. Ship it beh
   - disconnect/reconnect
   - attach existing managed session
   - attach user-selected psmux session
-  - cleanup detached VVTerm-managed sessions
+  - cleanup detached Waterm-managed sessions
   - current working directory restore from psmux pane path
 - SSH to Windows host without psmux:
   - status becomes missing
@@ -464,14 +464,14 @@ Do not gate Windows psmux support behind a user-facing feature flag. Ship it beh
 
 - Keep the normal tmux UX. Use "psmux" only for Windows install/missing copy and diagnostics.
 - Prefer explicit `psmux` / `pmux` over any `tmux.exe` on Windows. Accept `tmux.exe` only after a psmux-specific alias probe succeeds.
-- Keep most VVTerm-generated tmux config parity. `terminal-features` is accepted/stored by psmux as an unknown hyphenated option, but should be treated as best-effort/no-op under psmux.
-- Keep `allow-set-title on` and `set-titles on` for VVTerm-managed psmux sessions. PowerShell 7 CWD titles are acceptable for V1 because VVTerm hides the psmux status bar and uses title propagation for outer terminal metadata.
+- Keep most Waterm-generated tmux config parity. `terminal-features` is accepted/stored by psmux as an unknown hyphenated option, but should be treated as best-effort/no-op under psmux.
+- Keep `allow-set-title on` and `set-titles on` for Waterm-managed psmux sessions. PowerShell 7 CWD titles are acceptable for V1 because Waterm hides the psmux status bar and uses title propagation for outer terminal metadata.
 - Do not hide Windows psmux support behind a user-facing feature flag. Use runtime detection, safe fallback, and manual Windows Server validation before release.
 
 ## Remaining Unknowns
 
-- Whether Windows Server issue `#73` reproduces in VVTerm/Ghostty specifically.
-- Whether psmux should grow first-class `terminal-features` handling upstream; VVTerm does not need to block on this.
+- Whether Windows Server issue `#73` reproduces in Waterm/Ghostty specifically.
+- Whether psmux should grow first-class `terminal-features` handling upstream; Waterm does not need to block on this.
 - Whether a later release should add a user-facing "backend details" diagnostic panel for tmux/psmux/mosh runtime choices.
 
 ## References
@@ -487,4 +487,4 @@ Do not gate Windows psmux support behind a user-facing feature flag. Ship it beh
 - psmux Windows Server SSH output issue: `https://github.com/psmux/psmux/issues/73`
 - psmux mouse scroll issue: `https://github.com/psmux/psmux/issues/193`
 - psmux OSC pane title issue: `https://github.com/psmux/psmux/issues/231`
-- Existing VVTerm shell profile spec: `docs/specs/remote-shell-profiles.md`
+- Existing Waterm shell profile spec: `docs/specs/remote-shell-profiles.md`

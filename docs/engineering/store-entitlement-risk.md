@@ -14,9 +14,9 @@ valid Apple purchase credential + valid app session = paid access
 That check is not enough for account-backed entitlements. The purchase evidence
 must be bound to the account that receives access.
 
-## Current VVTerm Position
+## Current Waterm Position
 
-VVTerm currently grants Pro from local StoreKit 2 state, not from a VVTerm
+Waterm currently grants Pro from local StoreKit 2 state, not from a Waterm
 server endpoint:
 
 - purchases use StoreKit verification before finishing transactions
@@ -25,8 +25,8 @@ server endpoint:
 - there is no app-owned backend that accepts a receipt, JWS transaction, or
   signed purchase blob and converts it into server-side Pro
 
-So the specific "intercept credential and replay it against another VVTerm
-account" class is not currently exposed by VVTerm's Store architecture.
+So the specific "intercept credential and replay it against another Waterm
+account" class is not currently exposed by Waterm's Store architecture.
 
 ## Guardrail
 
@@ -38,17 +38,17 @@ For any future server-backed entitlement path, review must confirm:
 
 - Apple-signed purchase data is validated server-side with App Store Server API
   or Apple's server library.
-- `appAccountToken`, when available, is generated per VVTerm account and checked
+- `appAccountToken`, when available, is generated per Waterm account and checked
   against the account receiving access.
 - `transactionId` is single-use for activation and idempotent only for the same
   account.
 - `originalTransactionId` subscription lineage cannot silently move to another
-  VVTerm account.
+  Waterm account.
 - restore refreshes the original owner; it does not become an automatic account
   transfer flow.
 - refunds, revocations, expiration, billing retry failure, and family sharing
   removal revoke or downgrade server access.
-- behavior tests prove one Apple purchase cannot activate two VVTerm accounts.
+- behavior tests prove one Apple purchase cannot activate two Waterm accounts.
 
 Keep review mode separate from customer entitlement. It should remain local,
 time-limited, and unsuitable as a server or synced entitlement source.

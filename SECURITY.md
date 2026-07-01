@@ -5,7 +5,7 @@
 Security fixes are applied to:
 
 - The latest code on `main`
-- The latest App Store release of VVTerm
+- The latest App Store release of Waterm
 
 Older versions may not receive security updates.
 
@@ -13,7 +13,7 @@ Older versions may not receive security updates.
 
 Please report vulnerabilities privately to:
 
-- `vvterm@vivy.company`
+- `waterm@vivy.company`
 
 Use the subject prefix `"[Security]"` and include:
 

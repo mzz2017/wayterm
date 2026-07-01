@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard Swift edits with VVTerm lifecycle review prompts.
+"""Guard Swift edits with Waterm lifecycle review prompts.
 
 Swift edits must happen after the agent has read
 docs/engineering/swift-best-practices.md. The read itself is a human/agent
@@ -204,7 +204,7 @@ def any_nested_value_mentions_swift(value: object) -> bool:
 
 def print_blocked_best_practices_notice() -> None:
     print("", file=sys.stderr)
-    print("VVTERM HOOK BLOCKED: Swift edit needs lifecycle prep", file=sys.stderr)
+    print("WATERM HOOK BLOCKED: Swift edit needs lifecycle prep", file=sys.stderr)
     print("---------------------------------------------------", file=sys.stderr)
     print(
         "Read docs/engineering/swift-best-practices.md before editing Swift files.",

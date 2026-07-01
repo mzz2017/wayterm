@@ -1,0 +1,193 @@
+//
+//  SyncSettingsView.swift
+//  Waterm
+//
+
+import SwiftUI
+
+// MARK: - Sync Settings View
+
+struct SyncSettingsView: View {
+    @ObservedObject private var syncStore: SyncSettingsStore
+    @ObservedObject private var serverManager: ServerManager
+    @EnvironmentObject private var terminalThemeManager: TerminalThemeManager
+    @EnvironmentObject private var terminalAccessory: TerminalAccessoryPreferencesManager
+
+    init(syncStore: SyncSettingsStore, serverManager: ServerManager) {
+        _syncStore = ObservedObject(wrappedValue: syncStore)
+        _serverManager = ObservedObject(wrappedValue: serverManager)
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Enable iCloud Sync", isOn: syncEnabledBinding)
+
+                HStack {
+                    Label("iCloud Account", systemImage: "icloud")
+                    Spacer()
+                    statusBadge
+                }
+            } header: {
+                Text("iCloud")
+            } footer: {
+                Text("Sync servers, workspaces, themes, and keyboard accessory settings across all your Apple devices.")
+            }
+
+            if syncStore.isSyncEnabled {
+                Section("Sync Status") {
+                    HStack {
+                        Text("Status")
+                        Spacer()
+                        syncStatusView
+                    }
+
+                    if let lastSync = syncStore.lastSyncDate {
+                        HStack {
+                            Text("Last Synced")
+                            Spacer()
+                            Text(lastSync, style: .relative)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if case .error(let message) = syncStore.syncStatus {
+                        HStack {
+                            Text("Error")
+                            Spacer()
+                            Text(message)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .multilineTextAlignment(.trailing)
+                        }
+                    }
+                }
+
+                Section("Data") {
+                    HStack {
+                        Label("Workspaces", systemImage: "folder")
+                        Spacer()
+                        Text(serverManager.workspaces.count, format: .number)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack {
+                        Label("Servers", systemImage: "server.rack")
+                        Spacer()
+                        Text(serverManager.servers.count, format: .number)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack {
+                        Label("Custom Themes", systemImage: "paintpalette")
+                        Spacer()
+                        Text(customThemeCount, format: .number)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack {
+                        Label("Accessory Items", systemImage: "keyboard")
+                        Spacer()
+                        Text(terminalAccessory.profile.layout.activeItems.count, format: .number)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack {
+                        Label("Custom Actions", systemImage: "command.square")
+                        Spacer()
+                        Text(terminalAccessory.customActions.count, format: .number)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+            }
+
+            // Debug section when CloudKit is unavailable
+            if syncStore.isSyncEnabled && !syncStore.isAvailable {
+                Section {
+                    HStack {
+                        Text("Account Status")
+                        Spacer()
+                        Text(syncStore.accountStatusDetail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.trailing)
+                    }
+
+                    HStack {
+                        Text("Container")
+                        Spacer()
+                        Text(String(localized: "iCloud.app.vivy.Waterm"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button {
+                        syncStore.refreshCloudKitStatus()
+                    } label: {
+                        Label("Re-check iCloud Status", systemImage: "arrow.clockwise")
+                    }
+                } header: {
+                    Text("Troubleshooting")
+                } footer: {
+                    Text("Make sure you are signed into iCloud in Settings and iCloud Drive is enabled. Check Console.app for 'CloudKit' logs for more details.")
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var customThemeCount: Int {
+        terminalThemeManager.customThemes.filter { !$0.isDeleted }.count
+    }
+
+    private var syncEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { syncStore.isSyncEnabled },
+            set: { syncStore.handleSyncEnabledChanged($0) }
+        )
+    }
+
+    @ViewBuilder
+    private var statusBadge: some View {
+        if !syncStore.isSyncEnabled {
+            Label("Disabled", systemImage: "pause.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else if syncStore.isAvailable {
+            Label("Connected", systemImage: "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.green)
+        } else {
+            Label("Not Available", systemImage: "xmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.red)
+        }
+    }
+
+    @ViewBuilder
+    private var syncStatusView: some View {
+        switch syncStore.syncStatus {
+        case .idle:
+            Label("Synced", systemImage: "checkmark.circle")
+                .foregroundStyle(.green)
+        case .syncing:
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Syncing...")
+            }
+            .foregroundStyle(.orange)
+        case .error:
+            Label("Error", systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.red)
+        case .offline:
+            Label("Offline", systemImage: "wifi.slash")
+                .foregroundStyle(.secondary)
+        case .disabled:
+            Label("Disabled", systemImage: "pause.circle")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+}

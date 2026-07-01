@@ -6,7 +6,7 @@ Add first-class custom terminal themes with a single entry point in settings: `C
 Path note: this spec predates the feature-first migration. Any legacy `Models/`, `Managers/`, `Services/`, or `Views/` file paths in this document should be mapped to the current `App/`, `Core/`, and `Features/` tree.
 
 ## Problem
-VVTerm ships many built-in Ghostty themes, but users cannot create or import their own themes. Theme choice is currently name-based and built-in-oriented, which blocks:
+Waterm ships many built-in Ghostty themes, but users cannot create or import their own themes. Theme choice is currently name-based and built-in-oriented, which blocks:
 - importing popular Ghostty-compatible theme files
 - quick sharing via clipboard
 - simple in-app theme authoring
@@ -105,7 +105,7 @@ For each custom theme:
 ## Technical Design
 
 ### Data Model
-Create `VVTerm/Models/TerminalTheme.swift`:
+Create `Waterm/Models/TerminalTheme.swift`:
 - `struct TerminalTheme: Identifiable, Codable, Equatable`
   - `id: UUID`
   - `name: String`
@@ -124,7 +124,7 @@ Persisted selection keys:
 - `terminalUsePerAppearanceTheme` (existing)
 
 ### Managers
-Create `VVTerm/Managers/TerminalThemeManager.swift` (`@MainActor`, `ObservableObject`):
+Create `Waterm/Managers/TerminalThemeManager.swift` (`@MainActor`, `ObservableObject`):
 - Source of truth for custom themes.
 - CRUD operations + validation.
 - Helpers:
@@ -159,13 +159,13 @@ Rules:
 - Canonicalize output order before save for stable sync/merges.
 
 ### Ghostty Integration
-Update `VVTerm/GhosttyTerminal/Ghostty.App.swift`:
+Update `Waterm/GhosttyTerminal/Ghostty.App.swift`:
 - During `setupThemes(...)`, materialize both built-in and custom themes into the temp Ghostty themes directory.
 - Ensure copy/write behavior updates existing files (overwrite allowed for updated custom themes).
 - Continue using `theme = <effective name>` in generated config.
 
 ### ThemeColorParser Integration
-Update `VVTerm/Utilities/ThemeColorParser.swift`:
+Update `Waterm/Utilities/ThemeColorParser.swift`:
 - Resolve custom themes through `TerminalThemeManager` or shared resolver before bundled lookup.
 - Keep fallback behavior for missing themes.
 
@@ -177,7 +177,7 @@ Update `VVTerm/Utilities/ThemeColorParser.swift`:
   - UI keeps distinct picker values
 
 ## CloudKit Sync (V1)
-Use existing container `iCloud.app.vivy.VivyTerm` and current custom zone.
+Use existing container `iCloud.app.vivy.Waterm` and current custom zone.
 
 Add record type:
 - `TerminalTheme`

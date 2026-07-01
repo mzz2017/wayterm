@@ -16,12 +16,12 @@
     ],
     "title": "A better native SSH client for Apple devices",
     "subtitle": "Connect to servers, keep them organized, browse remote files, and stay in sync with Keychain-secured credentials across your iPhone, iPad, and Mac.",
-    "primaryCta": "Try VVTerm free",
+    "primaryCta": "Try Waterm free",
     "secondaryCta": "View on GitHub",
     "meta": "Requires iOS 16+ or macOS 13+ (Apple Silicon). Free forever, or <span class=\"text-orange-500 font-medium\">buy lifetime</span>."
   },
   "why": {
-    "title": "Why choose VVTerm",
+    "title": "Why choose Waterm",
     "subtitle": "A focused terminal app for people who want native Apple UX, modern SSH options, and pricing that still makes sense for solo users.",
     "native": {
       "title": "Native on iPhone, iPad, and Mac",
@@ -42,7 +42,7 @@
   },
   "features": {
     "title": "Built for faster, simpler remote work",
-    "subtitle": "VVTerm is built to make everyday remote work feel faster, simpler, and more native on Apple devices.",
+    "subtitle": "Waterm is built to make everyday remote work feel faster, simpler, and more native on Apple devices.",
     "rendering": {
       "title": "Fast, accurate terminal rendering",
       "desc": "Powered by libghostty for responsive drawing, correct terminal behavior, and a better feeling remote session."
@@ -81,7 +81,7 @@
     },
     "apple": {
       "title": "Apple-first technical users",
-      "desc": "If you live on iPhone, iPad, and Mac, VVTerm fits that environment instead of fighting it."
+      "desc": "If you live on iPhone, iPad, and Mac, Waterm fits that environment instead of fighting it."
     },
     "ai": {
       "title": "Remote AI and server workflows",
@@ -106,7 +106,7 @@
         "Voice-to-command",
         "Keychain security"
       ],
-      "cta": "Download VVTerm"
+      "cta": "Download Waterm"
     },
     "pro": {
       "name": "Pro",
@@ -149,8 +149,8 @@
   "faq": {
     "title": "Frequently asked questions",
     "q1": {
-      "question": "What is VVTerm?",
-      "answer": "VVTerm is an SSH terminal app for iOS and macOS. It lets you manage and connect to remote servers with iCloud sync across your Apple devices."
+      "question": "What is Waterm?",
+      "answer": "Waterm is an SSH terminal app for iOS and macOS. It lets you manage and connect to remote servers with iCloud sync across your Apple devices."
     },
     "q2": {
       "question": "How does iCloud sync work?",
@@ -158,15 +158,15 @@
     },
     "q3": {
       "question": "Which connection methods are supported?",
-      "answer": "VVTerm supports standard SSH plus Mosh, Tailscale SSH, and Cloudflare Tunnel SSH. Credentials stay secured in Apple Keychain when required."
+      "answer": "Waterm supports standard SSH plus Mosh, Tailscale SSH, and Cloudflare Tunnel SSH. Credentials stay secured in Apple Keychain when required."
     },
     "q4": {
-      "question": "Does VVTerm work on iPad?",
-      "answer": "Yes. VVTerm works on iPhone, iPad, and Mac, and the iOS version includes a keyboard toolbar with Esc, Tab, Ctrl, and arrow keys."
+      "question": "Does Waterm work on iPad?",
+      "answer": "Yes. Waterm works on iPhone, iPad, and Mac, and the iOS version includes a keyboard toolbar with Esc, Tab, Ctrl, and arrow keys."
     },
     "q5": {
       "question": "What terminal engine does it use?",
-      "answer": "VVTerm uses libghostty, the same rendering engine from Ghostty, for fast and accurate terminal emulation."
+      "answer": "Waterm uses libghostty, the same rendering engine from Ghostty, for fast and accurate terminal emulation."
     },
     "q6": {
       "question": "What is included in Free vs Pro?",
@@ -185,21 +185,21 @@
       "answer": "iOS 16+ on iPhone and iPad, or macOS 13+ Ventura on Apple Silicon Macs. Intel Macs are not supported."
     },
     "q10": {
-      "question": "Does VVTerm include remote file browsing?",
-      "answer": "Yes. VVTerm includes a built-in SFTP Files view for browsing folders, previewing text, image, and video files, uploading and downloading, renaming or moving items, creating folders, and editing POSIX permissions on supported servers."
+      "question": "Does Waterm include remote file browsing?",
+      "answer": "Yes. Waterm includes a built-in SFTP Files view for browsing folders, previewing text, image, and video files, uploading and downloading, renaming or moving items, creating folders, and editing POSIX permissions on supported servers."
     }
   },
   "closing": {
     "title": "Your servers. Anywhere.",
     "subtitle": "Start free on iPhone, iPad, and Mac.",
-    "cta": "Download VVTerm"
+    "cta": "Download Waterm"
   },
   "footer": {
     "tagline": "Native SSH client for iPhone, iPad, and Mac",
     "description": "Open source, free forever, with optional Pro and lifetime upgrade.",
     "productTitle": "Product",
     "resourcesTitle": "Resources",
-    "navWhy": "Why VVTerm",
+    "navWhy": "Why Waterm",
     "navFeatures": "Features",
     "navPricing": "Pricing",
     "navFaq": "FAQ",

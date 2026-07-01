@@ -103,11 +103,11 @@ Feature-first is preferred here because:
 - future changes affect one subtree instead of several top-level buckets
 - tests naturally mirror feature boundaries
 
-This refactor is intentionally scoped to the Files feature only. It does not require converting the rest of VVTerm immediately.
+This refactor is intentionally scoped to the Files feature only. It does not require converting the rest of Waterm immediately.
 
 ### Target Folder Structure
 ```text
-VVTerm/
+Waterm/
 ├── Features/
 │   └── RemoteFiles/
 │       ├── Domain/
@@ -146,7 +146,7 @@ VVTerm/
 │           ├── Fakes/
 │           ├── Fixtures/
 │           └── Helpers/
-└── VVTermTests/
+└── WatermTests/
     └── Features/
         └── RemoteFiles/
 ```
@@ -497,7 +497,7 @@ If a behavior correction is required:
 
 ### Unit Tests
 Create:
-`VVTermTests/Features/RemoteFiles/`
+`WatermTests/Features/RemoteFiles/`
 
 Add tests for:
 - `RemoteFilePathTests`

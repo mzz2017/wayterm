@@ -5,7 +5,7 @@ description: Use for Swift, SwiftUI, iOS, macOS, Apple platform, SSH/resource li
 
 # Swift Apple Lifecycle
 
-Use this skill to keep Swift and SwiftUI changes aligned with VVTerm's ownership, lifecycle, and concurrency rules.
+Use this skill to keep Swift and SwiftUI changes aligned with Waterm's ownership, lifecycle, and concurrency rules.
 
 ## References
 

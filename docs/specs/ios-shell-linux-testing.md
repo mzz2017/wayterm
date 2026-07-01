@@ -1,6 +1,6 @@
 # iOS Shell Linux Testing Boundary
 
-VVTerm's iOS shell still requires Xcode, Apple SDKs, and an iOS simulator or device for platform validation. The Linux SwiftPM package is intentionally limited to Foundation-only decision logic extracted from `VVTerm/App/iOS`.
+Waterm's iOS shell still requires Xcode, Apple SDKs, and an iOS simulator or device for platform validation. The Linux SwiftPM package is intentionally limited to Foundation-only decision logic extracted from `Waterm/App/iOS`.
 
 ## Linux-Covered Logic
 

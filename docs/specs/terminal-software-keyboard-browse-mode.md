@@ -6,7 +6,7 @@ Status: draft, updated for current vendored Ghostty baseline
 ## Summary
 This spec defines the iPhone terminal interaction work we will do next.
 
-- Phase 1 stays entirely in VVTerm app code and finishes the software-keyboard browse-mode behavior.
+- Phase 1 stays entirely in Waterm app code and finishes the software-keyboard browse-mode behavior.
 - Phase 2 moves iPhone touch selection toward a native-feeling app-owned interaction model while keeping Ghostty as the renderer.
 - No additional Ghostty fork work is planned up front.
 - We only reopen fork work later if the app-side selection spike proves that the current APIs are still missing a concrete geometry primitive we need.
@@ -32,7 +32,7 @@ The recent Ghostty vendor update changes the plan in one important way: we now h
 - Selection gestures still call keyboard-focus helpers and can reopen the keyboard.
 - iPhone selection is still Ghostty-style terminal selection plus a custom menu, not a native-feeling text-selection flow.
 - `supports_selection_clipboard` is still enabled, so touch selection still behaves too much like copy-on-select.
-- `selectionRects(for:)` still returns `[]`, so UIKit does not yet have real selection geometry from VVTerm.
+- `selectionRects(for:)` still returns `[]`, so UIKit does not yet have real selection geometry from Waterm.
 
 ## Product Goals
 - After explicit keyboard dismissal, keep the software keyboard hidden until the user explicitly asks for it again.
@@ -70,7 +70,7 @@ Scope:
 - use the newer vendored Ghostty selection metadata as a primitive
 
 Outcome:
-- touch selection ownership moves toward VVTerm instead of Ghostty mouse-selection semantics
+- touch selection ownership moves toward Waterm instead of Ghostty mouse-selection semantics
 - explicit `Copy` replaces implicit copy-on-select
 - selection can evolve toward native handles, loupe, and native actions
 
@@ -87,7 +87,7 @@ Trigger:
 Use an explicit post-dismiss browse mode.
 
 Rules:
-1. When a terminal first opens or becomes active, VVTerm may still auto-focus the keyboard.
+1. When a terminal first opens or becomes active, Waterm may still auto-focus the keyboard.
 2. When the user explicitly hides the software keyboard, that session enters `browse`.
 3. While in `browse`, incidental touch interactions do not reopen the keyboard.
 4. The keyboard returns only from an explicit `Show Keyboard` action.
@@ -177,8 +177,8 @@ Phase 2 will be app-owned on iPhone.
 
 That means:
 - Ghostty stays the renderer
-- VVTerm owns touch selection interaction
-- VVTerm owns the visible selection state and action menu behavior
+- Waterm owns touch selection interaction
+- Waterm owns the visible selection state and action menu behavior
 - Ghostty is used as a text-read primitive, not as the sole owner of phone selection UX
 
 Proposed local model:
@@ -261,7 +261,7 @@ Likely implementation step:
 - verify browse mode survives normal session reuse and tab switching
 
 ### Phase 2
-- add an iPhone touch-selection controller under `VVTerm/GhosttyTerminal/`
+- add an iPhone touch-selection controller under `Waterm/GhosttyTerminal/`
 - define app-owned grid-based selection state
 - evaluate `UITextInteraction` on the current view stack
 - if needed, add a custom selection overlay for highlight, handles, and menu anchoring
@@ -272,14 +272,14 @@ Likely implementation step:
 - rebuild vendored Ghostty only after the missing primitive is proven
 
 ## Affected Files
-- `VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift`
-- `VVTerm/GhosttyTerminal/Ghostty.App.swift`
-- `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
-- `VVTerm/App/iOS/iOSContentView.swift`
-- `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- `VVTerm/Features/TerminalSessions/UI/Terminal/ZenModeControls.swift`
-- `VVTermTests/TerminalHardwareTextInputRoutingPolicyTests.swift` or a dedicated keyboard-focus-policy test file
-- likely one or more new iPhone selection files under `VVTerm/GhosttyTerminal/`
+- `Waterm/GhosttyTerminal/GhosttyTerminalView+iOS.swift`
+- `Waterm/GhosttyTerminal/Ghostty.App.swift`
+- `Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
+- `Waterm/App/iOS/iOSContentView.swift`
+- `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- `Waterm/Features/TerminalSessions/UI/Terminal/ZenModeControls.swift`
+- `WatermTests/TerminalHardwareTextInputRoutingPolicyTests.swift` or a dedicated keyboard-focus-policy test file
+- likely one or more new iPhone selection files under `Waterm/GhosttyTerminal/`
 
 ## Testing Plan
 

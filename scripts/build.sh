@@ -1,5 +1,5 @@
 #!/bin/bash
-# VVTerm vendor build (GhosttyKit + libssh2/OpenSSL)
+# Waterm vendor build (GhosttyKit + libssh2/OpenSSL)
 
 set -euo pipefail
 
@@ -22,7 +22,7 @@ GHOSTTY_REPO="${GHOSTTY_REPO:-https://github.com/mzz2017/ghostty.git}"
 DEFAULT_GHOSTTY_REF="b00bb2d91ecfd05fa9ce1f08b9d146b76c7d0041"
 GHOSTTY_REF="${GHOSTTY_REF:-${DEFAULT_GHOSTTY_REF}}"
 GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-}"
-BUNDLE_ID="app.vivy.VivyTerm"
+BUNDLE_ID="app.vivy.Waterm"
 
 KEEP_WORKDIR="${KEEP_WORKDIR:-0}"
 GHOSTTY_WORKDIR=""
@@ -61,7 +61,7 @@ cleanup_ghostty_workdir() {
 
 print_usage() {
     cat << EOF
-VVTerm Build Script
+Waterm Build Script
 
 Usage: $0 [command]
 
@@ -69,7 +69,7 @@ Commands:
   all       Build GhosttyKit + libssh2/OpenSSL (default)
   ghostty   Build GhosttyKit.xcframework and copy .a libs
   check-ghostty
-            Verify vendored Ghostty headers/libs expose the ABI VVTerm uses
+            Verify vendored Ghostty headers/libs expose the ABI Waterm uses
   ssh       Build libssh2 + OpenSSL (macOS + iOS + simulator)
   check-ssh-sources
             Download and verify OpenSSL/libssh2 source archives
@@ -144,7 +144,7 @@ check_vendor_manifest() {
     fi
 
     local generated_manifest
-    generated_manifest="$(mktemp "${TMPDIR:-/tmp}/vvterm-vendor-manifest.XXXXXX")"
+    generated_manifest="$(mktemp "${TMPDIR:-/tmp}/waterm-vendor-manifest.XXXXXX")"
     trap 'rm -f "${generated_manifest}"' RETURN
     generate_vendor_manifest > "${generated_manifest}"
 
@@ -385,7 +385,7 @@ PY
 
     # IOSurfaceLayer fixes live in the Ghostty fork; no local patching here.
 
-    # Patch bundle ID to use VVTerm's instead of Ghostty's
+    # Patch bundle ID to use Waterm's instead of Ghostty's
     sed -i '' "s/com\\.mitchellh\\.ghostty/${BUNDLE_ID}/g" "${workdir}/ghostty/src/build_config.zig"
 
     # Lower iOS minimum to match app deployment target.
@@ -498,7 +498,7 @@ self_test_ghostty_cleanup_case() {
     local workdir
     local status
 
-    path_file="$(mktemp "${TMPDIR:-/tmp}/vvterm-ghostty-cleanup.XXXXXX")"
+    path_file="$(mktemp "${TMPDIR:-/tmp}/waterm-ghostty-cleanup.XXXXXX")"
 
     set +e
     (

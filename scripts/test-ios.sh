@@ -4,20 +4,20 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd "${script_dir}/.." && pwd -P)"
 
-project="${IOS_TEST_PROJECT:-VVTerm.xcodeproj}"
-scheme="${IOS_TEST_SCHEME:-VVTermUnitTests}"
+project="${IOS_TEST_PROJECT:-Waterm.xcodeproj}"
+scheme="${IOS_TEST_SCHEME:-WatermUnitTests}"
 device_name="${IOS_TEST_DEVICE_NAME:-iPhone 17}"
 device_name_candidates="${IOS_TEST_DEVICE_NAME_CANDIDATES:-$device_name}"
 destination_id="${IOS_TEST_DESTINATION_ID:-}"
 retries="${IOS_TEST_RETRIES:-2}"
-app_identifier="${IOS_TEST_APP_IDENTIFIER:-app.vivy.VivyTerm}"
+app_identifier="${IOS_TEST_APP_IDENTIFIER:-app.vivy.Waterm}"
 allow_device_fallback="${IOS_TEST_ALLOW_DEVICE_FALLBACK:-0}"
-lock_dir="${IOS_TEST_LOCK_DIR:-${TMPDIR:-/tmp}/vvterm-ios-test.lock}"
+lock_dir="${IOS_TEST_LOCK_DIR:-${TMPDIR:-/tmp}/waterm-ios-test.lock}"
 lock_timeout="${IOS_TEST_LOCK_TIMEOUT:-600}"
 lock_owner_metadata_grace="${IOS_TEST_LOCK_OWNER_METADATA_GRACE:-10}"
 derived_data_path="${IOS_TEST_DERIVED_DATA_PATH:-}"
 cloned_source_packages_path="${IOS_TEST_CLONED_SOURCE_PACKAGES_DIR:-}"
-source_packages_cache_dir="${IOS_TEST_SOURCE_PACKAGES_CACHE_DIR:-${repo_root}/.build/vvterm-ios-source-packages}"
+source_packages_cache_dir="${IOS_TEST_SOURCE_PACKAGES_CACHE_DIR:-${repo_root}/.build/waterm-ios-source-packages}"
 keep_derived_data="${IOS_TEST_KEEP_DERIVED_DATA:-0}"
 no_output_timeout="${IOS_TEST_NO_OUTPUT_TIMEOUT:-900}"
 xcodebuild_quiet="${IOS_TEST_XCODEBUILD_QUIET:-0}"
@@ -298,7 +298,7 @@ prepare_derived_data() {
         if [[ "$keep_derived_data" != "1" ]]; then
             if ! is_auto_cleanup_derived_data_path "$derived_data_path"; then
                 echo "Refusing to use IOS_TEST_DERIVED_DATA_PATH without IOS_TEST_KEEP_DERIVED_DATA=1: ${derived_data_path}" >&2
-                echo "Use a vvterm-* directory directly under the system temp directory for auto-cleanup, or set IOS_TEST_KEEP_DERIVED_DATA=1 for intentional diagnostics." >&2
+                echo "Use a waterm-* directory directly under the system temp directory for auto-cleanup, or set IOS_TEST_KEEP_DERIVED_DATA=1 for intentional diagnostics." >&2
                 exit 6
             fi
             cleanup_derived_data=1
@@ -308,9 +308,9 @@ prepare_derived_data() {
     fi
 
     if [[ -n "$ramdisk_mount_path" ]]; then
-        derived_data_path="$(mktemp -d "${ramdisk_mount_path}/vvterm-ios-derived-data.XXXXXX")"
+        derived_data_path="$(mktemp -d "${ramdisk_mount_path}/waterm-ios-derived-data.XXXXXX")"
     else
-        derived_data_path="$(mktemp -d -t vvterm-ios-derived-data.XXXXXX)"
+        derived_data_path="$(mktemp -d -t waterm-ios-derived-data.XXXXXX)"
     fi
     cleanup_derived_data=1
 }
@@ -326,7 +326,7 @@ is_auto_cleanup_derived_data_path() {
     base="$(basename "$path")"
 
     case "$base" in
-    vvterm-* | vvterm-ios-derived-data.*)
+    waterm-* | waterm-ios-derived-data.*)
         ;;
     *)
         return 1
@@ -362,8 +362,8 @@ resolve_packages() {
     local now
     local status
 
-    log_file="$(mktemp -t vvterm-ios-resolve.XXXXXX)"
-    timeout_file="$(mktemp -t vvterm-ios-resolve-timeout.XXXXXX)"
+    log_file="$(mktemp -t waterm-ios-resolve.XXXXXX)"
+    timeout_file="$(mktemp -t waterm-ios-resolve-timeout.XXXXXX)"
     rm -f "$timeout_file"
     : >"$log_file"
 
@@ -559,7 +559,7 @@ prepare_ramdisk() {
 
     local sectors
     sectors=$((ramdisk_mb * 2048))
-    ramdisk_volume_name="VVTerm-iOS-Test-$$"
+    ramdisk_volume_name="Waterm-iOS-Test-$$"
 
     ramdisk_device="$(hdiutil attach -nomount "ram://${sectors}" | awk 'NR == 1 { print $1 }')"
     if [[ -z "$ramdisk_device" ]]; then
@@ -830,8 +830,8 @@ run_xcodebuild_test() {
     local elapsed
     local last_status
 
-    status_file="$(mktemp -t vvterm-ios-test-status.XXXXXX)"
-    timeout_file="$(mktemp -t vvterm-ios-test-timeout.XXXXXX)"
+    status_file="$(mktemp -t waterm-ios-test-status.XXXXXX)"
+    timeout_file="$(mktemp -t waterm-ios-test-timeout.XXXXXX)"
     rm -f "$timeout_file"
     : > "$log_file"
 
@@ -1018,7 +1018,7 @@ while (( attempt <= total_attempts )); do
     fi
     prepare_simulator "$udid"
 
-    log_file="$(mktemp -t vvterm-ios-test.XXXXXX)"
+    log_file="$(mktemp -t waterm-ios-test.XXXXXX)"
     set +e
     run_xcodebuild_test "$@"
     last_status="$?"

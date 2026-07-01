@@ -44,7 +44,7 @@ Inside `TerminalSettingsView`, add section `Keyboard Accessory`:
 - Keep `Show voice input button` unchanged
 
 ### Sheet Consistency (iOS)
-All new iOS customization/snippet sheets should match existing VVTerm sheet patterns:
+All new iOS customization/snippet sheets should match existing Waterm sheet patterns:
 - Use `NavigationStack` as sheet root.
 - Use `Form` with `.formStyle(.grouped)` for primary content.
 - Use `.navigationBarTitleDisplayMode(.inline)`.
@@ -99,7 +99,7 @@ UI shape:
 
 ### Data Model
 Create:
-- `VVTerm/Models/TerminalAccessoryModels.swift`
+- `Waterm/Models/TerminalAccessoryModels.swift`
 
 Types:
 - `enum TerminalAccessorySystemActionID: String, Codable, CaseIterable, Hashable`
@@ -137,10 +137,10 @@ Normalization rules:
 
 ### Managers / Services
 Create:
-- `VVTerm/Managers/TerminalAccessoryPreferencesManager.swift` (`@MainActor`, `ObservableObject`)
+- `Waterm/Managers/TerminalAccessoryPreferencesManager.swift` (`@MainActor`, `ObservableObject`)
 
 Update:
-- `VVTerm/Services/CloudKit/CloudKitManager.swift`
+- `Waterm/Services/CloudKit/CloudKitManager.swift`
 
 Responsibilities:
 - Preferences manager:
@@ -155,7 +155,7 @@ Responsibilities:
   - merge local/remote on conflicts
 
 ### CloudKit Sync Design (V1)
-Use existing private container `iCloud.app.vivy.VivyTerm` and same custom zone.
+Use existing private container `iCloud.app.vivy.Waterm` and same custom zone.
 Accessory preference sync is implemented through `CloudKitManager` (centralized CloudKit ownership).
 
 Record:
@@ -184,7 +184,7 @@ Conflict strategy:
 
 ## Runtime Rendering Refactor
 Update:
-- `VVTerm/GhosttyTerminal/GhosttyTerminalView+iOS.swift`
+- `Waterm/GhosttyTerminal/GhosttyTerminalView+iOS.swift`
 
 Changes:
 - Replace hard-coded action buttons with profile-driven item rendering.
@@ -201,11 +201,11 @@ Changes:
 
 ## Settings Integration
 Update:
-- `VVTerm/Views/Settings/TerminalSettingsView.swift`
+- `Waterm/Views/Settings/TerminalSettingsView.swift`
 - Add:
-  - `VVTerm/Views/Settings/TerminalAccessoryCustomizationView.swift`
-  - `VVTerm/Views/Settings/TerminalSnippetLibraryView.swift`
-  - `VVTerm/Views/Settings/TerminalSnippetFormView.swift`
+  - `Waterm/Views/Settings/TerminalAccessoryCustomizationView.swift`
+  - `Waterm/Views/Settings/TerminalSnippetLibraryView.swift`
+  - `Waterm/Views/Settings/TerminalSnippetFormView.swift`
 
 ## Migration Plan
 - Existing users with no stored profile get V1 default layout + empty snippets.

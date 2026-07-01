@@ -1,0 +1,156 @@
+import Foundation
+import Testing
+
+// Test Context:
+// These source-boundary tests protect RemoteTmuxManager superfile control.
+// RemoteTmuxManager owns remote command execution, backend detection, and
+// lifecycle timeouts; pure tmux list-session parsing belongs in a separate
+// parser so parsing policy can be tested without actor or SSH execution.
+// Update only if parser ownership intentionally moves to another non-actor
+// SSH/Core type.
+@Suite
+struct RemoteTmuxManagerSuperfileBoundaryTests {
+    @Test
+    func managerDoesNotOwnSessionListParsingPolicy() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("Waterm/Core/SSH/RemoteTmuxManager.swift")
+        )
+        let parserSource = try source(
+            at: root.appendingPathComponent("Waterm/Core/SSH/RemoteTmuxSessionListParser.swift")
+        )
+
+        #expect(
+            managerSource.contains("sessionListParser.parse"),
+            "RemoteTmuxManager should delegate session-list parsing to RemoteTmuxSessionListParser."
+        )
+        #expect(
+            parserSource.contains("struct RemoteTmuxSessionListParser"),
+            "RemoteTmuxSessionListParser.swift should own tmux session-list parsing."
+        )
+
+        #expect(
+            parserSource.contains("func parse("),
+            "RemoteTmuxSessionListParser.swift should expose the session-list parse entry point."
+        )
+
+        for functionName in [
+            "parseSessionLine",
+            "parseTabSeparatedSessionLine",
+            "parseAttachedClients",
+            "parseLegacySessionLine",
+            "sortSessions"
+        ] {
+            #expect(
+                !managerSource.contains("func \(functionName)"),
+                "RemoteTmuxManager.swift should not own \(functionName)."
+            )
+            #expect(
+                parserSource.contains("func \(functionName)"),
+                "RemoteTmuxSessionListParser.swift should own parsing behavior."
+            )
+        }
+
+        #expect(
+            !managerSource.contains("func parseSessionListOutput"),
+            "RemoteTmuxManager.swift should not expose parser policy as actor API."
+        )
+    }
+
+    @Test
+    func managerDoesNotOwnWindowsPowerShellHelperImplementation() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("Waterm/Core/SSH/RemoteTmuxManager.swift")
+        )
+        let windowsSource = try source(
+            at: root.appendingPathComponent("Waterm/Core/SSH/RemoteTmuxManager+WindowsPowerShell.swift")
+        )
+
+        // Given RemoteTmuxManager owns remote execution and lifecycle timeouts,
+        // pure Windows PowerShell/path command helpers should live in a focused
+        // extension file instead of inflating the actor root.
+        for functionName in [
+            "windowsShellCommand",
+            "windowsConfigPathPowerShellExpression",
+            "windowsConfigDirectoryPowerShellExpression",
+            "windowsWorkingDirectoryExpression",
+            "normalizedWindowsPath",
+            "powerShellQuoted",
+            "indentPowerShell",
+            "escapeForDoubleQuotes"
+        ] {
+            #expect(
+                !managerSource.contains("func \(functionName)"),
+                "RemoteTmuxManager.swift should not own \(functionName)."
+            )
+            #expect(
+                windowsSource.contains("func \(functionName)"),
+                "RemoteTmuxManager+WindowsPowerShell.swift should own \(functionName)."
+            )
+        }
+    }
+
+    @Test
+    func managerRootDoesNotOwnCommandBuilderImplementation() throws {
+        let root = try sourceRoot()
+        let managerSource = try source(
+            at: root.appendingPathComponent("Waterm/Core/SSH/RemoteTmuxManager.swift")
+        )
+        let commandSource = try source(
+            at: root.appendingPathComponent("Waterm/Core/SSH/RemoteTmuxManager+Commands.swift")
+        )
+
+        // Given RemoteTmuxManager owns backend detection, execution timeouts,
+        // and cleanup orchestration, pure tmux/psmux command construction
+        // should live in a non-resource-owning extension file.
+        for functionName in [
+            "configWriteExecutionCommand",
+            "attachCommand",
+            "installAndAttachScript",
+            "tmuxAvailabilityProbeCommand",
+            "windowsPsmuxAvailabilityProbeCommand",
+            "listSessionCommands",
+            "killSessionCommand",
+            "currentPathCommand"
+        ] {
+            #expect(
+                !managerSource.contains("func \(functionName)"),
+                "RemoteTmuxManager.swift should not own command-builder implementation \(functionName)."
+            )
+            #expect(
+                commandSource.contains("func \(functionName)"),
+                "RemoteTmuxManager+Commands.swift should own command-builder implementation \(functionName)."
+            )
+        }
+
+        #expect(
+            managerSource.contains("func availableBackend("),
+            "RemoteTmuxManager.swift should keep backend detection orchestration."
+        )
+        #expect(
+            managerSource.contains("func cleanupDetachedSessions("),
+            "RemoteTmuxManager.swift should keep tmux lifecycle cleanup orchestration."
+        )
+    }
+
+    private func source(at url: URL) throws -> String {
+        try String(contentsOf: url, encoding: .utf8)
+    }
+
+    private func sourceRoot() throws -> URL {
+        var url = URL(fileURLWithPath: #filePath)
+        while url.lastPathComponent != "WatermTests" {
+            let next = url.deletingLastPathComponent()
+            if next.path == url.path {
+                throw SourceRootError.notFound
+            }
+            url = next
+        }
+        return url.deletingLastPathComponent()
+    }
+
+    private enum SourceRootError: Error {
+        case notFound
+    }
+}

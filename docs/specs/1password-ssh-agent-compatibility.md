@@ -6,7 +6,7 @@ Add macOS support for authenticating SSH sessions with the 1Password SSH agent, 
 Draft date: 2026-02-26
 
 ## Problem
-VVTerm currently authenticates with passwords or private keys stored in Keychain. Users who keep keys in 1Password want agent-based signing instead of importing private keys.
+Waterm currently authenticates with passwords or private keys stored in Keychain. Users who keep keys in 1Password want agent-based signing instead of importing private keys.
 
 The main constraint is sandboxing: the 1Password agent socket is outside the app container by default, so direct path assumptions are risky for App Store builds.
 
@@ -40,7 +40,7 @@ The main constraint is sandboxing: the 1Password agent socket is outside the app
 - `com.apple.security.files.user-selected.read-write` allows read/write access to files selected via Open/Save panels.
 - Temporary exception entitlements exist, but Apple documents them as temporary exception mechanisms that require explicit App Store Connect justification.
 
-### Current VVTerm state
+### Current Waterm state
 - macOS target has `com.apple.security.app-sandbox` and network entitlements enabled.
 - It does not currently include user-selected file/bookmark entitlements.
 - SSH auth is centralized in `SSHSession.authenticate()`.

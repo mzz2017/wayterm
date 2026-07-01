@@ -1,6 +1,6 @@
 # Swift Best Practice Refactor Index
 
-This is the active, slim index for the VVTerm Swift lifecycle refactor.
+This is the active, slim index for the Waterm Swift lifecycle refactor.
 
 The full historical implementation plan is archived at
 `docs/refactor-swift-best-practice-1.md`. Do not read the archive wholesale
@@ -9,7 +9,7 @@ needed for a specific task or audit question.
 
 ## Goal
 
-Refactor VVTerm so Swift-owned long-lived resources have stable application or
+Refactor Waterm so Swift-owned long-lived resources have stable application or
 infrastructure owners, lifecycle work is awaitable or tracked, SwiftUI only
 sends user intent, and SSH/libssh2 behavior is testable without real network
 access.
@@ -60,7 +60,7 @@ sed -n '<start>,<end>p' docs/refactor-swift-best-practice-1.md
   invariant, fake assumptions, and when the test should be updated instead of
   treated as a regression.
 - iOS simulator focused tests use `ENABLE_DEBUG_DYLIB=NO`,
-  `-parallel-testing-enabled NO`, and `-skip-testing:VVTermUITests`.
+  `-parallel-testing-enabled NO`, and `-skip-testing:WatermUITests`.
 - Do not claim tests pass unless the test command actually completed.
 - Commit atomically. Each commit must represent one invariant, boundary move, or
   documentation update.
@@ -145,8 +145,8 @@ Before merge readiness:
 ## Task 86: SSH Exec/Upload Raw libssh2 Error Preservation
 
 **Files:**
-- Modify: `VVTerm/Core/SSH/SSHClient.swift`
-- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Modify: `Waterm/Core/SSH/SSHClient.swift`
+- Test: `WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -193,10 +193,10 @@ Before merge readiness:
 ## Task 81: Server Connection-Test Cancellation
 
 **Files:**
-- Modify: `VVTerm/Features/Servers/Application/ServerConnectionTester.swift`
-- Modify: `VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift`
-- Test: `VVTermTests/ServerConnectionTesterTests.swift`
-- Test: `VVTermTests/ServerFormConnectionTestBoundaryTests.swift`
+- Modify: `Waterm/Features/Servers/Application/ServerConnectionTester.swift`
+- Modify: `Waterm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift`
+- Test: `WatermTests/ServerConnectionTesterTests.swift`
+- Test: `WatermTests/ServerFormConnectionTestBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -240,7 +240,7 @@ Extend `ServerFormConnectionTestBoundaryTests`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerConnectionTesterTests -only-testing:VVTermTests/ServerFormConnectionTestBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerConnectionTesterTests -only-testing:WatermTests/ServerFormConnectionTestBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: tests fail because `cancelConnectionTestRequest(_:)`, caller-provided request IDs, `activeConnectionTestRequestID`, and stale callback guards do not exist.
@@ -267,8 +267,8 @@ Update `ServerFormSheet.swift`:
 - [x] **Step 4: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerConnectionTesterTests -only-testing:VVTermTests/ServerFormConnectionTestBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "activeConnectionTestRequestID|cancelConnectionTestRequest|requestConnectionTest\\(id:|connectionSnapshot == snapshot|pendingConnectionTestRequestIDs|waitForConnectionTestRequest" VVTerm/Features/Servers/Application/ServerConnectionTester.swift VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift VVTermTests/ServerConnectionTesterTests.swift VVTermTests/ServerFormConnectionTestBoundaryTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerConnectionTesterTests -only-testing:WatermTests/ServerFormConnectionTestBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "activeConnectionTestRequestID|cancelConnectionTestRequest|requestConnectionTest\\(id:|connectionSnapshot == snapshot|pendingConnectionTestRequestIDs|waitForConnectionTestRequest" Waterm/Features/Servers/Application/ServerConnectionTester.swift Waterm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift WatermTests/ServerConnectionTesterTests.swift WatermTests/ServerFormConnectionTestBoundaryTests.swift
 git diff --check
 ```
 
@@ -285,11 +285,11 @@ Perform local lifecycle review against the Swift checklist unless the user expli
 ## Task 82: RemoteFiles Transfer and Mutation Disconnect Cancellation
 
 **Files:**
-- Modify: `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
-- Modify: `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift`
-- Modify: `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift`
-- Test: `VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
-- Test: `VVTermTests/RemoteFileMutationIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
+- Modify: `Waterm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift`
+- Modify: `Waterm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift`
+- Test: `WatermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
+- Test: `WatermTests/RemoteFileMutationIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -335,7 +335,7 @@ Extend `RemoteFileMutationIntentBoundaryTests`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteFileBrowserStoreTests -only-testing:WatermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: tests fail because mutation/transfer request APIs do not accept `serverId`, disconnect does not cancel mutation/transfer requests, and UI helpers do not pass server identity.
@@ -371,8 +371,8 @@ Update `RemoteFileBrowserMacScreen.swift`:
 - [x] **Step 5: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "requestMutation\\(serverId:|requestTransfer\\(serverId:|cancelMutationRequests|cancelTransferRequests|pendingMutationRequestIDs|pendingTransferRequestIDs|waitForMutationRequest|waitForTransferRequest" VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift VVTermTests/RemoteFileMutationIntentBoundaryTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteFileBrowserStoreTests -only-testing:WatermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "requestMutation\\(serverId:|requestTransfer\\(serverId:|cancelMutationRequests|cancelTransferRequests|pendingMutationRequestIDs|pendingTransferRequestIDs|waitForMutationRequest|waitForTransferRequest" Waterm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift Waterm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift Waterm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift WatermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift WatermTests/RemoteFileMutationIntentBoundaryTests.swift
 git diff --check
 ```
 
@@ -389,8 +389,8 @@ Perform local lifecycle review against the Swift checklist unless the user expli
 ## Task 83: ServerManager Startup Load Tracking
 
 **Files:**
-- Modify: `VVTerm/Features/Servers/Application/ServerManager.swift`
-- Test: `VVTermTests/ServerManagerBootstrapTests.swift`
+- Modify: `Waterm/Features/Servers/Application/ServerManager.swift`
+- Test: `WatermTests/ServerManagerBootstrapTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -427,7 +427,7 @@ Extend `ServerManagerBootstrapTests`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: tests fail because `pendingStartupLoadRequestIDs`,
@@ -461,8 +461,8 @@ Update `makeForTesting(...)`:
 - [x] **Step 4: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
-rg -n "pendingStartupLoadRequestIDs|waitForStartupLoadRequest|startStartupLoad|startupLoadTask|Task \\{ await loadData\\(\\) \\}" VVTerm/Features/Servers/Application/ServerManager.swift VVTermTests/ServerManagerBootstrapTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
+rg -n "pendingStartupLoadRequestIDs|waitForStartupLoadRequest|startStartupLoad|startupLoadTask|Task \\{ await loadData\\(\\) \\}" Waterm/Features/Servers/Application/ServerManager.swift WatermTests/ServerManagerBootstrapTests.swift
 git diff --check
 ```
 
@@ -486,8 +486,8 @@ verification, review outcome, and cleanup notes, then commit atomically.
 ## Task 84: SSHClient Channel Cleanup Task Tracking
 
 **Files:**
-- Modify: `VVTerm/Core/SSH/SSHClient.swift`
-- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Modify: `Waterm/Core/SSH/SSHClient.swift`
+- Test: `WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -519,7 +519,7 @@ Extend `LibSSH2SessionLifecycleTests`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/LibSSH2SessionLifecycleTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the source-boundary test fails because shell termination
@@ -560,8 +560,8 @@ Update `SSHSession.disconnect()`:
 - [x] **Step 5: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests ENABLE_DEBUG_DYLIB=NO
-rg -n "SSHChannelCleanupTaskRegistry|trackChannelCleanupTask|waitForChannelCleanupTasks|onTermination|withTaskCancellationHandler|Task \\{" VVTerm/Core/SSH/SSHClient.swift VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/LibSSH2SessionLifecycleTests ENABLE_DEBUG_DYLIB=NO
+rg -n "SSHChannelCleanupTaskRegistry|trackChannelCleanupTask|waitForChannelCleanupTasks|onTermination|withTaskCancellationHandler|Task \\{" Waterm/Core/SSH/SSHClient.swift WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift
 git diff --check
 ```
 
@@ -586,8 +586,8 @@ verification, review outcome, and cleanup notes, then commit atomically.
 ## Task 85: SSHClient Mosh Stream Teardown Tracking
 
 **Files:**
-- Modify: `VVTerm/Core/SSH/SSHClient.swift`
-- Test: `VVTermTests/RemoteMoshManagerTests.swift`
+- Modify: `Waterm/Core/SSH/SSHClient.swift`
+- Test: `WatermTests/RemoteMoshManagerTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -617,7 +617,7 @@ Extend `RemoteMoshManagerTests`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteMoshManagerTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteMoshManagerTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the source-boundary test fails because mosh runtime stores
@@ -661,8 +661,8 @@ Update `disconnect()`:
 - [x] **Step 5: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteMoshManagerTests ENABLE_DEBUG_DYLIB=NO
-rg -n "MoshShellRuntime|setStreamTask|cancelStreamTask|trackMoshTeardownTask|waitForMoshTeardownTasks|hostOpStream|onTermination|Task \\{" VVTerm/Core/SSH/SSHClient.swift VVTermTests/RemoteMoshManagerTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteMoshManagerTests ENABLE_DEBUG_DYLIB=NO
+rg -n "MoshShellRuntime|setStreamTask|cancelStreamTask|trackMoshTeardownTask|waitForMoshTeardownTasks|hostOpStream|onTermination|Task \\{" Waterm/Core/SSH/SSHClient.swift WatermTests/RemoteMoshManagerTests.swift
 git diff --check
 ```
 
@@ -689,12 +689,12 @@ Focused iOS tests:
 
 ```bash
 xcodebuild test \
-  -project VVTerm.xcodeproj \
-  -scheme VVTerm \
+  -project Waterm.xcodeproj \
+  -scheme Waterm \
   -destination 'platform=iOS Simulator,name=iPhone 17' \
   -parallel-testing-enabled NO \
-  -skip-testing:VVTermUITests \
-  -only-testing:VVTermTests/<TestClass> \
+  -skip-testing:WatermUITests \
+  -only-testing:WatermTests/<TestClass> \
   ENABLE_DEBUG_DYLIB=NO
 ```
 
@@ -702,11 +702,11 @@ Compile gate:
 
 ```bash
 xcodebuild build-for-testing \
-  -project VVTerm.xcodeproj \
-  -scheme VVTerm \
+  -project Waterm.xcodeproj \
+  -scheme Waterm \
   -destination 'platform=iOS Simulator,name=iPhone 17' \
   -parallel-testing-enabled NO \
-  -skip-testing:VVTermUITests \
+  -skip-testing:WatermUITests \
   ENABLE_DEBUG_DYLIB=NO
 ```
 

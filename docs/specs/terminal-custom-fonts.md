@@ -4,15 +4,15 @@
 
 Add Pro-gated custom terminal font support for iOS and macOS.
 
-Users can import `.ttf`, `.otf`, `.ttc`, or `.otc` font files from their device, VVTerm copies them into app-owned storage, validates and registers them for the running process, then exposes their resolved font families under a `Custom` group in Terminal Settings. Imported fonts can sync privately across the user's devices through CloudKit assets.
+Users can import `.ttf`, `.otf`, `.ttc`, or `.otc` font files from their device, Waterm copies them into app-owned storage, validates and registers them for the running process, then exposes their resolved font families under a `Custom` group in Terminal Settings. Imported fonts can sync privately across the user's devices through CloudKit assets.
 
 ## Research Findings
 
-- App-loaded fonts are feasible on Apple platforms using Core Text font registration from a font file URL. The relevant API family is `CTFontManagerRegisterFontsForURL` / `CTFontManagerRegisterFontURLs`; the registration scope can be process-local, which fits VVTerm because Ghostty only needs the font available inside the app process.
+- App-loaded fonts are feasible on Apple platforms using Core Text font registration from a font file URL. The relevant API family is `CTFontManagerRegisterFontsForURL` / `CTFontManagerRegisterFontURLs`; the registration scope can be process-local, which fits Waterm because Ghostty only needs the font available inside the app process.
 - iOS and macOS should not depend on the user installing fonts into the OS. The app can import a selected file through document/file import, copy it into Application Support, then register that copy on every launch before Ghostty config is loaded.
 - On macOS, the current system picker is not complete for this feature because it only reads `NSFontManager.availableFontFamilies` and filters by `NSFont.isFixedPitch`. That is good for installed system fonts, but it does not manage app-owned imported font files.
 - On iOS, the current list is intentionally narrow and incomplete: it seeds `Menlo`, `SF Mono`, `Courier New`, then probes a few Nerd Font families. A real font list should enumerate available families through UIKit/Core Text after bundled and imported fonts are registered.
-- CloudKit supports binary file fields through `CKAsset`, so font file sync can live in the existing private CloudKit sync architecture instead of exposing files through iCloud Drive. Apple documents that `CKAsset` data is stored separately from its record; an archived CloudKit Web Services limit table lists 50 MB as the asset field maximum, but VVTerm should use a much smaller app-level limit for predictable sync.
+- CloudKit supports binary file fields through `CKAsset`, so font file sync can live in the existing private CloudKit sync architecture instead of exposing files through iCloud Drive. Apple documents that `CKAsset` data is stored separately from its record; an archived CloudKit Web Services limit table lists 50 MB as the asset field maximum, but Waterm should use a much smaller app-level limit for predictable sync.
 - Ghostty already consumes `font-family` from the generated terminal config, so primary font selection can use the existing config reload path.
 
 References:
@@ -24,7 +24,7 @@ References:
 - Apple security-scoped file access: https://developer.apple.com/documentation/foundation/nsurl/1417051-startaccessingsecurityscopedreso
 - Ghostty font-family config: https://ghostty.org/docs/config/reference#font-family
 
-## Current VVTerm Code Findings
+## Current Waterm Code Findings
 
 - Terminal font preference is stored in `UserDefaults` through `TerminalDefaults.fontNameKey` and `TerminalDefaults.fontSizeKey`.
 - `TerminalSettingsView` owns the current font picker UI. It keeps `availableFonts` in view state, loads macOS fonts through `NSFontManager.availableFontFamilies`, and loads iOS fonts from a short static/probed list.
@@ -46,7 +46,7 @@ References:
 
 - Do not install fonts system-wide.
 - Do not expose synced font files in iCloud Drive.
-- Do not bypass font licensing. VVTerm should treat imported files as user-provided assets and show a short responsibility notice.
+- Do not bypass font licensing. Waterm should treat imported files as user-provided assets and show a short responsibility notice.
 - Do not reject proportional fonts only because they are not terminal-suitable. V1 should allow them if Ghostty can load them and warn that spacing/alignment may be poor in terminal output.
 - Do not implement per-ligature or OpenType feature controls in V1.
 - Do not make custom font import available to non-Pro users.
@@ -79,9 +79,9 @@ The interaction model should match custom themes:
 1. User taps `Manage Custom Fonts`.
 2. If not Pro, show the existing Pro upgrade surface.
 3. User chooses `Import Font`.
-4. VVTerm presents a file importer/open panel accepting font file types.
-5. VVTerm copies the selected file into app-owned storage.
-6. VVTerm validates the font, extracts its family/postscript names, registers it, saves metadata, and shows a save/confirm sheet when there is a user-visible choice to make.
+4. Waterm presents a file importer/open panel accepting font file types.
+5. Waterm copies the selected file into app-owned storage.
+6. Waterm validates the font, extracts its family/postscript names, registers it, saves metadata, and shows a save/confirm sheet when there is a user-visible choice to make.
 7. User saves the font into the custom font library.
 8. The imported family appears under the `Custom` group in the main font pickers.
 9. User can select it from the picker, or use a manager action such as `Use Font`.
@@ -137,7 +137,7 @@ Add a `Custom Fonts` row to the existing Sync Settings `Data` section, next to `
 Create a new feature subtree:
 
 ```text
-VVTerm/Features/TerminalFonts/
+Waterm/Features/TerminalFonts/
 ├── Domain/
 │   ├── TerminalFont.swift
 │   └── TerminalFontValidation.swift

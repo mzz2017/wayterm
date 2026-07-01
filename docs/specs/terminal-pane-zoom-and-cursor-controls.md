@@ -297,7 +297,7 @@ Use `bar`, not `beam`, for the bar cursor. Use `block_hollow` for the hollow blo
 
 - Ghostty config reference: https://ghostty.org/docs/config/reference
 - Vendored Ghostty C header: `Vendor/libghostty/include/ghostty.h`
-- Current Swift config propagation: `VVTerm/GhosttyTerminal/Ghostty.App.swift`
+- Current Swift config propagation: `Waterm/GhosttyTerminal/Ghostty.App.swift`
 
 ## Recommendation
 

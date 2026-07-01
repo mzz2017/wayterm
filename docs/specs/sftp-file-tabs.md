@@ -40,7 +40,7 @@ Users need multiple file contexts for common workflows:
 ## Goals
 - Add multiple file tabs inside `Files` on macOS and iOS.
 - Keep the current top-level server view model unchanged.
-- Match terminal tab behavior closely enough that the feature feels native to VVTerm.
+- Match terminal tab behavior closely enough that the feature feels native to Waterm.
 - Preserve the current free experience: one file browser tab remains available without Pro.
 - Gate opening additional file tabs behind the existing Pro entitlement.
 - Keep browser state isolated per file tab.
@@ -86,7 +86,7 @@ Users need multiple file contexts for common workflows:
 - The paywall copy should be file-tab specific where needed, but the upgrade destination remains the standard Pro sheet.
 
 ### Default Creation Rules
-- When `Files` becomes active for a server with no file tabs yet, VVTerm should auto-create one file tab so the current one-tab behavior remains unchanged.
+- When `Files` becomes active for a server with no file tabs yet, Waterm should auto-create one file tab so the current one-tab behavior remains unchanged.
 - Creating an additional file tab duplicates the current tab’s navigation context:
   - seed from the current tab’s path when available
   - copy current sort, sort direction, and hidden-files setting
@@ -206,7 +206,7 @@ This split keeps tab chrome concerns separate from browser orchestration concern
 
 ### Domain
 Add:
-- `VVTerm/Features/RemoteFiles/Domain/RemoteFileTab.swift`
+- `Waterm/Features/RemoteFiles/Domain/RemoteFileTab.swift`
 
 Suggested shape:
 - `struct RemoteFileTab: Identifiable, Codable, Equatable`
@@ -222,7 +222,7 @@ Notes:
 - no SwiftUI
 
 Add:
-- `VVTerm/Features/RemoteFiles/Domain/RemoteFileTabSnapshot.swift`
+- `Waterm/Features/RemoteFiles/Domain/RemoteFileTabSnapshot.swift`
 
 Suggested shape:
 - `struct RemoteFileTabSnapshot: Codable, Equatable`
@@ -232,7 +232,7 @@ Suggested shape:
 
 ### Application
 Add:
-- `VVTerm/Features/RemoteFiles/Application/RemoteFileTabManager.swift`
+- `Waterm/Features/RemoteFiles/Application/RemoteFileTabManager.swift`
 
 Responsibilities:
 - `tabs(for serverId:)`
@@ -330,7 +330,7 @@ Tradeoff:
 ## Integration Plan
 
 ### Composition Root
-Update `VVTermApp` to create and inject:
+Update `WatermApp` to create and inject:
 - `RemoteFileTabManager`
 - `RemoteFileBrowserStore`
 

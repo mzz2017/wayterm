@@ -11,7 +11,7 @@ Path note: this original feature spec predates the feature-first migration. Any 
 This is a cross-platform feature for macOS and iOS. All three server views are enabled by default, and users can hide views they do not use from Settings. Zen remains a presentation mode layered on top of the selected server view; it is not a separate fourth view tab.
 
 ## Problem
-VVTerm can connect and run shell commands, but users cannot browse remote files or quickly inspect file contents without typing shell commands (`ls`, `cat`, `less`) in Terminal. This adds friction for routine tasks like checking config files, logs, and deployment artifacts.
+Waterm can connect and run shell commands, but users cannot browse remote files or quickly inspect file contents without typing shell commands (`ls`, `cat`, `less`) in Terminal. This adds friction for routine tasks like checking config files, logs, and deployment artifacts.
 
 ## Goals (V1)
 - Add a `Files` view tab after `Terminal` in the per-server view selector.
@@ -80,7 +80,7 @@ VVTerm can connect and run shell commands, but users cannot browse remote files 
 - Switching `Terminal <-> Files` while Zen mode is active must not disconnect the underlying terminal session or clear the browser state.
 
 ### macOS
-- Update `ConnectionTerminalContainer` toolbar picker in `VVTerm/Views/Tabs/ConnectionTabsView.swift`:
+- Update `ConnectionTerminalContainer` toolbar picker in `Waterm/Views/Tabs/ConnectionTabsView.swift`:
   - `Stats` (`chart.bar.xaxis`)
   - `Terminal` (`terminal`)
   - `Files` (`folder`)
@@ -93,7 +93,7 @@ VVTerm can connect and run shell commands, but users cannot browse remote files 
   - Show hidden files toggle
 
 ### iOS
-- Update segmented control in `VVTerm/Views/iOS/iOSContentView.swift`:
+- Update segmented control in `Waterm/Views/iOS/iOSContentView.swift`:
   - Tags: `["stats", "terminal", "files"]`
   - Icons: `["chart.bar.xaxis", "terminal", "folder"]`
 - Render only currently enabled view tabs in the segmented control, preserving configured order.
@@ -125,7 +125,7 @@ VVTerm can connect and run shell commands, but users cannot browse remote files 
 ## Technical Design
 
 ### New Models
-Create `VVTerm/Models/RemoteFile.swift`:
+Create `Waterm/Models/RemoteFile.swift`:
 - `enum RemoteFileType: String, Codable` (`file`, `directory`, `symlink`, `other`)
 - `struct RemoteFileEntry: Identifiable, Hashable`
   - `id` (full path)
@@ -143,7 +143,7 @@ Create `VVTerm/Models/RemoteFile.swift`:
   - `isTruncated: Bool`
 
 ### SSH / SFTP Layer
-Extend `SSHClient` + `SSHSession` in `VVTerm/Services/SSH/SSHClient.swift` with SFTP operations backed by `libssh2_sftp`:
+Extend `SSHClient` + `SSHSession` in `Waterm/Services/SSH/SSHClient.swift` with SFTP operations backed by `libssh2_sftp`:
 - `listDirectory(path:)`
 - `stat(path:)`
 - `readFile(path:maxBytes:offset:)`
@@ -157,7 +157,7 @@ Implementation notes:
 - Track whether the file browser is using a borrowed client or an owned client. `disconnect(serverId:)` must only tear down owned SFTP clients.
 
 ### File Browser Manager
-Create `VVTerm/Managers/RemoteFileBrowserManager.swift` (`@MainActor`, `ObservableObject`):
+Create `Waterm/Managers/RemoteFileBrowserManager.swift` (`@MainActor`, `ObservableObject`):
 - Per-server state:
   - current path
   - breadcrumbs
@@ -193,7 +193,7 @@ Create `VVTerm/Managers/RemoteFileBrowserManager.swift` (`@MainActor`, `Observab
 ## View Integration
 
 ### macOS Path
-Update `VVTerm/Views/Tabs/ConnectionTabsView.swift`:
+Update `Waterm/Views/Tabs/ConnectionTabsView.swift`:
 - Add `Files` picker tag.
 - Update the picker to render from visible tabs instead of hardcoding only `Stats` and `Terminal`.
 - Render new `RemoteFileBrowserView` when `selectedView == "files"`.
@@ -201,7 +201,7 @@ Update `VVTerm/Views/Tabs/ConnectionTabsView.swift`:
 - Update macOS Zen mode controls to include `Files`, respect hidden views, and show file-browser actions when `selectedView == "files"`.
 
 ### iOS Path
-Update `VVTerm/Views/iOS/iOSContentView.swift`:
+Update `Waterm/Views/iOS/iOSContentView.swift`:
 - Add `files` segmented option in `iOSNativeSegmentedPicker`.
 - Update `iOSNativeSegmentedPicker` to support a dynamic list of visible tabs instead of a fixed two-item array.
 - In `sessionContent`, render `RemoteFileBrowserView` for the active server when selected view is files.
@@ -210,9 +210,9 @@ Update `VVTerm/Views/iOS/iOSContentView.swift`:
 
 ### New Views
 Create:
-- `VVTerm/Views/Files/RemoteFileBrowserView.swift`
-- `VVTerm/Views/Files/RemoteFileViewerView.swift`
-- `VVTerm/Views/Files/RemoteFileRow.swift`
+- `Waterm/Views/Files/RemoteFileBrowserView.swift`
+- `Waterm/Views/Files/RemoteFileViewerView.swift`
+- `Waterm/Views/Files/RemoteFileRow.swift`
 
 ## Error Handling
 - Map common SFTP failures to user-facing states:
@@ -238,15 +238,15 @@ Create:
 ## Testing Plan
 
 ### Unit Tests
-- Add `VVTermTests/RemoteFileBrowserManagerTests.swift`:
+- Add `WatermTests/RemoteFileBrowserManagerTests.swift`:
   - path navigation
   - sort and hidden-file filtering
   - state restoration
-- Add `VVTermTests/SFTPPathNormalizationTests.swift`:
+- Add `WatermTests/SFTPPathNormalizationTests.swift`:
   - `.` / `..` handling
   - root handling
   - symlink-safe display path logic
-- Add `VVTermTests/SFTPPreviewTests.swift`:
+- Add `WatermTests/SFTPPreviewTests.swift`:
   - text/binary detection
   - truncation behavior
 

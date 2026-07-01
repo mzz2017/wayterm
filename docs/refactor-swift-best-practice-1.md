@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Refactor VVTerm so Swift-owned long-lived resources have stable application or infrastructure owners, lifecycle work is awaitable or tracked, SwiftUI only sends user intent, and SSH/libssh2 behavior is testable without real network access.
+**Goal:** Refactor Waterm so Swift-owned long-lived resources have stable application or infrastructure owners, lifecycle work is awaitable or tracked, SwiftUI only sends user intent, and SSH/libssh2 behavior is testable without real network access.
 
 **Architecture:** Move SSH shell lifecycle out of SwiftUI representable coordinators and into `Features/TerminalSessions/Application` runtimes. Wrap libssh2 and other external resources behind small actors/services in `Core/SSH`, then expose leases or command executors to TerminalSessions, RemoteFiles, Stats, and rich paste instead of sharing raw `SSHClient` ownership. Execute in safety-first phases: prevent stale shell registration, make close/open ordering awaitable, then move ownership and remove duplicated state.
 
@@ -22,7 +22,7 @@
 - libssh2 handles must not be shared simultaneously. `libssh2_init` uses process-global state and must remain serialized.
 - Bug fixes and refactors require regression tests when feasible. Test lifecycle ordering, not only UI symptoms.
 - Unit test files must include test context: protected behavior, target invariant, fake assumptions, and when the test should be updated instead of treated as a regression.
-- iOS simulator focused tests use `ENABLE_DEBUG_DYLIB=NO`, `-parallel-testing-enabled NO`, and `-skip-testing:VVTermUITests`.
+- iOS simulator focused tests use `ENABLE_DEBUG_DYLIB=NO`, `-parallel-testing-enabled NO`, and `-skip-testing:WatermUITests`.
 - Do not claim tests pass unless the test command actually completed.
 - Commit atomically. Each commit must represent one invariant, boundary move, or documentation update.
 
@@ -55,7 +55,7 @@ Read-only explorers and local inspection found the following highest-priority is
 - Swift API Design Guidelines require clarity at use sites, side-effectful method names as imperative verb phrases, and Boolean names that read as assertions.
 - Apple documents `dismantleUIView` as custom view cleanup. Treat it as UI-surface cleanup, not as the only path that closes business resources.
 - Apple documents `Data.withUnsafeBytes` pointers as valid only for the closure lifetime.
-- libssh2 documents `libssh2_init` as process-global and not thread safe. VVTerm already serializes initialization; keep that invariant.
+- libssh2 documents `libssh2_init` as process-global and not thread safe. Waterm already serializes initialization; keep that invariant.
 - libssh2 documents thread safety as "do not share handles simultaneously"; all session/channel/SFTP access must stay behind one owner.
 - libssh2 documents `libssh2_session_free` as freeing all resources and typically being called after disconnect. Close channels and SFTP before freeing.
 
@@ -63,59 +63,59 @@ Read-only explorers and local inspection found the following highest-priority is
 
 Create or modify these files over the refactor. Keep each file focused.
 
-- Create `VVTerm/Features/TerminalSessions/Domain/TerminalEntityID.swift`
+- Create `Waterm/Features/TerminalSessions/Domain/TerminalEntityID.swift`
   - Defines `TerminalEntityID: Hashable, Sendable` with `.session(UUID)` and `.pane(UUID)`.
-- Create `VVTerm/Features/TerminalSessions/Domain/TerminalEntityConnectionState.swift`
+- Create `Waterm/Features/TerminalSessions/Domain/TerminalEntityConnectionState.swift`
   - Defines explicit runtime states shared by sessions and panes.
-- Create `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift`
+- Create `Waterm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift`
   - Per entity actor that owns `SSHClient`, shell id, connect task, close task, generation, and runtime callbacks.
-- Create `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRegistry.swift`
+- Create `Waterm/Features/TerminalSessions/Application/TerminalConnectionRegistry.swift`
   - Main-actor store for runtimes, entity generations, start gates, close tracking, and server-level teardown waits.
-- Create `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift`
+- Create `Waterm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift`
   - Moves `SSHConnectionRunner` out of UI and accepts application-layer hooks.
-- Create `VVTerm/Features/TerminalSessions/Application/TerminalSurfaceRegistry.swift`
+- Create `Waterm/Features/TerminalSessions/Application/TerminalSurfaceRegistry.swift`
   - Owns terminal UI surfaces separately from shell/client lifecycle.
-- Create `VVTerm/Core/SSH/RemoteConnectionLease.swift`
+- Create `Waterm/Core/SSH/RemoteConnectionLease.swift`
   - Borrowed/owned lease type for RemoteFiles, Stats, and rich paste.
-- Create `VVTerm/Core/SSH/RemoteCommandExecuting.swift`
+- Create `Waterm/Core/SSH/RemoteCommandExecuting.swift`
   - Protocol for tmux/mosh/files/stats operations that need command execution but not raw client ownership.
-- Create `VVTerm/Core/SSH/RemoteConnectionLeaseProvider.swift`
+- Create `Waterm/Core/SSH/RemoteConnectionLeaseProvider.swift`
   - Application/Core boundary for resolving borrowed terminal leases or creating owned feature leases without each feature constructing `SSHClient` directly.
-- Create `VVTerm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileClient.swift`
+- Create `Waterm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileClient.swift`
   - RemoteFiles-owned capability protocol for SFTP/file operations; `SSHClient` conforms in infrastructure without leaking raw-client policy into application or UI.
-- Create `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
+- Create `Waterm/Core/SSH/LibSSH2SessionDriver.swift`
   - Testable boundary for socket/libssh2 calls and raw error capture.
-- Create `VVTermTests/Features/TerminalSessions/TerminalConnectionRegistryTests.swift`
+- Create `WatermTests/Features/TerminalSessions/TerminalConnectionRegistryTests.swift`
   - Tests generation, stale registration rejection, close wait, duplicate start, and open-after-close ordering.
-- Create `VVTermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift`
+- Create `WatermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift`
   - Tests runtime state machine, connect/retry/close sequencing with fake SSH.
-- Create `VVTermTests/Core/SSH/SSHAuthenticationGateCancellationTests.swift`
+- Create `WatermTests/Core/SSH/SSHAuthenticationGateCancellationTests.swift`
   - Tests cancellation-aware auth gate behavior.
-- Create `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Create `WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
   - Tests fd/session cleanup and raw error mapping using fakes.
-- Create `VVTermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift`
+- Create `WatermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift`
   - Tests RemoteFiles lease ownership, operation serialization, and disconnect waiting without real network access.
-- Create `VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift`
+- Create `WatermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift`
   - Tests Stats start/stop/restart lease ordering and borrowed-client ownership without real network access.
-- Modify `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
   - Becomes session domain orchestration and UI intent facade; no direct SSH client ownership after the runtime registry lands.
-- Modify `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
   - Uses the shared runtime registry for panes; no detached pane teardown.
-- Modify `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
+- Modify `Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
   - Creates/attaches `GhosttyTerminalView`; no `SSHClient()` and no business teardown in coordinator/deinit.
-- Modify `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Modify `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
   - Same as above for panes.
-- Modify `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify `Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
   - Sends retry/retrust/install intent to application use cases.
-- Modify `VVTerm/Core/SSH/SSHClient.swift`
+- Modify `Waterm/Core/SSH/SSHClient.swift`
   - Shrinks toward high-level facade over `LibSSH2SessionDriver`, auth service, and mosh owner.
-- Modify `VVTerm/Core/SSH/SSHAuthenticationGate.swift`
+- Modify `Waterm/Core/SSH/SSHAuthenticationGate.swift`
   - Add cancellation-aware waiters.
-- Modify `VVTerm/Core/SSH/RemoteTmuxManager.swift` and `VVTerm/Core/SSH/RemoteMoshManager.swift`
+- Modify `Waterm/Core/SSH/RemoteTmuxManager.swift` and `Waterm/Core/SSH/RemoteMoshManager.swift`
   - Depend on `RemoteCommandExecuting` and preserve cancellation/timeout distinctions.
-- Modify `VVTerm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift`
+- Modify `Waterm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift`
   - Use `RemoteConnectionLease`, no untracked owned-client disconnect.
-- Modify `VVTerm/Features/Stats/Application/ServerStatsCollector.swift`
+- Modify `Waterm/Features/Stats/Application/ServerStatsCollector.swift`
   - Use `RemoteConnectionLease`, no raw shared-client lifetime assumptions.
 
 ## Execution Rules
@@ -136,12 +136,12 @@ Focused test command template:
 
 ```bash
 xcodebuild test \
-  -project VVTerm.xcodeproj \
-  -scheme VVTerm \
+  -project Waterm.xcodeproj \
+  -scheme Waterm \
   -destination 'platform=iOS Simulator,name=iPhone 17' \
   -parallel-testing-enabled NO \
-  -skip-testing:VVTermUITests \
-  -only-testing:VVTermTests/<TestClass> \
+  -skip-testing:WatermUITests \
+  -only-testing:WatermTests/<TestClass> \
   ENABLE_DEBUG_DYLIB=NO
 ```
 
@@ -149,17 +149,17 @@ Compile fallback:
 
 ```bash
 xcodebuild build-for-testing \
-  -project VVTerm.xcodeproj \
-  -scheme VVTerm \
+  -project Waterm.xcodeproj \
+  -scheme Waterm \
   -destination 'platform=iOS Simulator,name=iPhone 17' \
   -parallel-testing-enabled NO \
-  -skip-testing:VVTermUITests \
+  -skip-testing:WatermUITests \
   ENABLE_DEBUG_DYLIB=NO
 ```
 
 ## Shared Test Support
 
-Create shared async test helpers when the first task needs them, preferably in `VVTermTests/TestSupport/AsyncTestHelpers.swift`. If the target does not currently include a `TestSupport` group, add the file to `VVTermTests` and keep the declarations `internal`.
+Create shared async test helpers when the first task needs them, preferably in `WatermTests/TestSupport/AsyncTestHelpers.swift`. If the target does not currently include a `TestSupport` group, add the file to `WatermTests` and keep the declarations `internal`.
 
 Use this exact helper code for cancellation and throwing assertions:
 
@@ -238,9 +238,9 @@ actor AsyncFlag {
 
 Task-local fakes must be defined in the test file that first uses them:
 
-- `TerminalConnectionRunnerProbe` in `VVTermTests/Features/TerminalSessions/TerminalConnectionRunnerTests.swift`
-- `RecordingTerminalSSHClient` in `VVTermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift`
-- `RecordingLibSSH2SessionDriver` in `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- `TerminalConnectionRunnerProbe` in `WatermTests/Features/TerminalSessions/TerminalConnectionRunnerTests.swift`
+- `RecordingTerminalSSHClient` in `WatermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift`
+- `RecordingLibSSH2SessionDriver` in `WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
 - `FakeRemoteCommandExecutor` and `InMemoryKnownHostsStore` in the tmux, mosh, and known-host tests that introduce the corresponding protocols
 
 Use this fake client for runtime ordering tests:
@@ -286,11 +286,11 @@ final class RecordingTerminalSSHClient: FakeTerminalSSHClient {
 ## Task 1: Reject Late Shell Registration
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/SSHShellRegistry.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Test: `VVTermTests/Features/TerminalSessions/TerminalConnectionRegistryTests.swift`
-- Test: `VVTermTests/ConnectionSessionManagerOpenTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/SSHShellRegistry.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Test: `WatermTests/Features/TerminalSessions/TerminalConnectionRegistryTests.swift`
+- Test: `WatermTests/ConnectionSessionManagerOpenTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -308,7 +308,7 @@ Add this test class:
 
 ```swift
 import XCTest
-@testable import VVTerm
+@testable import Waterm
 
 final class TerminalConnectionRegistryTests: XCTestCase {
     func testClosedSessionRejectsLateShellRegistration() {
@@ -379,7 +379,7 @@ final class TerminalConnectionRegistryTests: XCTestCase {
 Run:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalConnectionRegistryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalConnectionRegistryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected: fail to compile because `generation`, `closeEntity`, and `rejectedShellToClose` do not exist.
@@ -420,23 +420,23 @@ Run the same focused command. Expected: `TerminalConnectionRegistryTests` passes
 - [x] **Step 6: Commit**
 
 ```bash
-git add VVTerm/Features/TerminalSessions/Application/SSHShellRegistry.swift \
-  VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift \
-  VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift \
-  VVTermTests/Features/TerminalSessions/TerminalConnectionRegistryTests.swift \
-  VVTermTests/ConnectionSessionManagerOpenTests.swift
+git add Waterm/Features/TerminalSessions/Application/SSHShellRegistry.swift \
+  Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift \
+  Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift \
+  WatermTests/Features/TerminalSessions/TerminalConnectionRegistryTests.swift \
+  WatermTests/ConnectionSessionManagerOpenTests.swift
 git commit -m "fix: reject stale terminal shell registrations"
 ```
 
 ## Task 2: Make Session and Pane Close Awaitable
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabComponents.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift`
-- Test: `VVTermTests/ConnectionSessionManagerOpenTests.swift`
-- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Tabs/ConnectionTabComponents.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift`
+- Test: `WatermTests/ConnectionSessionManagerOpenTests.swift`
+- Test: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -482,7 +482,7 @@ Add pane equivalent to `ConnectionLifecycleIntegrationTests` using `TerminalTabM
 Run:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionSessionManagerOpenTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionSessionManagerOpenTests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected: fail to compile because `closeSessionAndWait` and `closePaneAndWait` do not exist.
@@ -512,22 +512,22 @@ Run the focused command from Step 2. Expected: tests pass.
 - [x] **Step 6: Commit**
 
 ```bash
-git add VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift \
-  VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift \
-  VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabComponents.swift \
-  VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift \
-  VVTermTests/ConnectionSessionManagerOpenTests.swift \
-  VVTermTests/ConnectionLifecycleIntegrationTests.swift
+git add Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift \
+  Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift \
+  Waterm/Features/TerminalSessions/UI/Tabs/ConnectionTabComponents.swift \
+  Waterm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift \
+  WatermTests/ConnectionSessionManagerOpenTests.swift \
+  WatermTests/ConnectionLifecycleIntegrationTests.swift
 git commit -m "fix: make terminal close teardown awaitable"
 ```
 
 ## Task 3: Extract TerminalConnectionRunner from UI
 
 **Files:**
-- Create: `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Test: `VVTermTests/Features/TerminalSessions/TerminalConnectionRunnerTests.swift`
+- Create: `Waterm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `WatermTests/Features/TerminalSessions/TerminalConnectionRunnerTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -559,7 +559,7 @@ final class TerminalConnectionRunnerTests: XCTestCase {
 Run:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalConnectionRunnerTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalConnectionRunnerTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected: fail to compile because the runner file and testing probe do not exist.
@@ -577,27 +577,27 @@ Replace `SSHConnectionRunner.run` with `TerminalConnectionRunner.run` in tab and
 Run the focused runner test. Then run:
 
 ```bash
-xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO
+xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO
 ```
 
 - [x] **Step 6: Commit**
 
 ```bash
-git add VVTerm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift \
-  VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift \
-  VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift \
-  VVTermTests/Features/TerminalSessions/TerminalConnectionRunnerTests.swift
+git add Waterm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift \
+  Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift \
+  Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift \
+  WatermTests/Features/TerminalSessions/TerminalConnectionRunnerTests.swift
 git commit -m "refactor: move terminal connection runner to application layer"
 ```
 
 ## Task 4: Introduce Terminal Entity State
 
 **Files:**
-- Create: `VVTerm/Features/TerminalSessions/Domain/TerminalEntityID.swift`
-- Create: `VVTerm/Features/TerminalSessions/Domain/TerminalEntityConnectionState.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Domain/ConnectionSession.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Domain/TerminalTab.swift`
-- Test: `VVTermTests/Features/TerminalSessions/TerminalEntityStateTests.swift`
+- Create: `Waterm/Features/TerminalSessions/Domain/TerminalEntityID.swift`
+- Create: `Waterm/Features/TerminalSessions/Domain/TerminalEntityConnectionState.swift`
+- Modify: `Waterm/Features/TerminalSessions/Domain/ConnectionSession.swift`
+- Modify: `Waterm/Features/TerminalSessions/Domain/TerminalTab.swift`
+- Test: `WatermTests/Features/TerminalSessions/TerminalEntityStateTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -661,20 +661,20 @@ Run `TerminalEntityStateTests`, `ConnectionSessionDomainTests`, and `TerminalSpl
 - [x] **Step 6: Commit**
 
 ```bash
-git add VVTerm/Features/TerminalSessions/Domain/TerminalEntityID.swift \
-  VVTerm/Features/TerminalSessions/Domain/TerminalEntityConnectionState.swift \
-  VVTerm/Features/TerminalSessions/Domain/ConnectionSession.swift \
-  VVTerm/Features/TerminalSessions/Domain/TerminalTab.swift \
-  VVTermTests/Features/TerminalSessions/TerminalEntityStateTests.swift
+git add Waterm/Features/TerminalSessions/Domain/TerminalEntityID.swift \
+  Waterm/Features/TerminalSessions/Domain/TerminalEntityConnectionState.swift \
+  Waterm/Features/TerminalSessions/Domain/ConnectionSession.swift \
+  Waterm/Features/TerminalSessions/Domain/TerminalTab.swift \
+  WatermTests/Features/TerminalSessions/TerminalEntityStateTests.swift
 git commit -m "refactor: add explicit terminal entity state"
 ```
 
 ## Task 5: Add TerminalConnectionRuntime Actor
 
 **Files:**
-- Create: `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift`
-- Create: `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRegistry.swift`
-- Test: `VVTermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift`
+- Create: `Waterm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift`
+- Create: `Waterm/Features/TerminalSessions/Application/TerminalConnectionRegistry.swift`
+- Test: `WatermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -736,20 +736,20 @@ Run `TerminalConnectionRuntimeTests` and `TerminalConnectionRegistryTests`.
 - [x] **Step 6: Commit**
 
 ```bash
-git add VVTerm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift \
-  VVTerm/Features/TerminalSessions/Application/TerminalConnectionRegistry.swift \
-  VVTermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift
+git add Waterm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift \
+  Waterm/Features/TerminalSessions/Application/TerminalConnectionRegistry.swift \
+  WatermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift
 git commit -m "refactor: add terminal connection runtime owner"
 ```
 
 ## Task 6: Move Tab SSH Ownership Out of Coordinators
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift`
-- Test: `VVTermTests/ConnectionSessionManagerOpenTests.swift`
-- Test: `VVTermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift`
+- Test: `WatermTests/ConnectionSessionManagerOpenTests.swift`
+- Test: `WatermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -783,22 +783,22 @@ Run `ConnectionSessionManagerOpenTests`, `TerminalConnectionRuntimeTests`, and `
 - [x] **Step 6: Commit**
 
 ```bash
-git add VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift \
-  VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift \
-  VVTerm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift \
-  VVTermTests/ConnectionSessionManagerOpenTests.swift \
-  VVTermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift
+git add Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift \
+  Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift \
+  Waterm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift \
+  WatermTests/ConnectionSessionManagerOpenTests.swift \
+  WatermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift
 git commit -m "refactor: move tab SSH ownership to runtime"
 ```
 
 ## Task 7: Move Split Pane SSH Ownership Out of Coordinators
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift`
-- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
-- Test: `VVTermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift`
+- Test: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `WatermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -832,23 +832,23 @@ Run `ConnectionLifecycleIntegrationTests` and `TerminalConnectionRuntimeTests`.
 - [x] **Step 6: Commit**
 
 ```bash
-git add VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift \
-  VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift \
-  VVTerm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift \
-  VVTermTests/ConnectionLifecycleIntegrationTests.swift \
-  VVTermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift
+git add Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift \
+  Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift \
+  Waterm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift \
+  WatermTests/ConnectionLifecycleIntegrationTests.swift \
+  WatermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift
 git commit -m "refactor: move pane SSH ownership to runtime"
 ```
 
 ## Task 8: Extract Terminal Surface Registry
 
 **Files:**
-- Create: `VVTerm/Features/TerminalSessions/Application/TerminalSurfaceRegistry.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Test: `VVTermTests/TerminalSurfaceTeardownTests.swift`
+- Create: `Waterm/Features/TerminalSessions/Application/TerminalSurfaceRegistry.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `WatermTests/TerminalSurfaceTeardownTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -882,21 +882,21 @@ Run `TerminalSurfaceTeardownTests`, `ConnectionSessionManagerOpenTests`, and `Co
 - [x] **Step 6: Commit**
 
 ```bash
-git add VVTerm/Features/TerminalSessions/Application/TerminalSurfaceRegistry.swift \
-  VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift \
-  VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift \
-  VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift \
-  VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift \
-  VVTermTests/TerminalSurfaceTeardownTests.swift
+git add Waterm/Features/TerminalSessions/Application/TerminalSurfaceRegistry.swift \
+  Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift \
+  Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift \
+  Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift \
+  Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift \
+  WatermTests/TerminalSurfaceTeardownTests.swift
 git commit -m "refactor: separate terminal surface lifecycle"
 ```
 
 ## Task 9: Make Authentication Gate Cancellation-Aware
 
 **Files:**
-- Modify: `VVTerm/Core/SSH/SSHAuthenticationGate.swift`
-- Test: `VVTermTests/SSHAuthenticationGateTests.swift`
-- Test: `VVTermTests/Core/SSH/SSHAuthenticationGateCancellationTests.swift`
+- Modify: `Waterm/Core/SSH/SSHAuthenticationGate.swift`
+- Test: `WatermTests/SSHAuthenticationGateTests.swift`
+- Test: `WatermTests/Core/SSH/SSHAuthenticationGateCancellationTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -953,19 +953,19 @@ Run existing overlap tests to prove same-key serialization and different-key par
 - [x] **Step 5: Commit**
 
 ```bash
-git add VVTerm/Core/SSH/SSHAuthenticationGate.swift \
-  VVTermTests/SSHAuthenticationGateTests.swift \
-  VVTermTests/Core/SSH/SSHAuthenticationGateCancellationTests.swift
+git add Waterm/Core/SSH/SSHAuthenticationGate.swift \
+  WatermTests/SSHAuthenticationGateTests.swift \
+  WatermTests/Core/SSH/SSHAuthenticationGateCancellationTests.swift
 git commit -m "fix: make SSH auth gate cancellation-aware"
 ```
 
 ## Task 10: Add Testable libssh2 Session Boundary
 
 **Files:**
-- Create: `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
-- Modify: `VVTerm/Core/SSH/SSHClient.swift`
-- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
-- Test: `VVTermTests/SSHErrorRetryableTests.swift`
+- Create: `Waterm/Core/SSH/LibSSH2SessionDriver.swift`
+- Modify: `Waterm/Core/SSH/SSHClient.swift`
+- Test: `WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Test: `WatermTests/SSHErrorRetryableTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -1009,19 +1009,19 @@ Run `LibSSH2SessionLifecycleTests` and `SSHErrorRetryableTests`.
 - [x] **Step 6: Commit**
 
 ```bash
-git add VVTerm/Core/SSH/LibSSH2SessionDriver.swift \
-  VVTerm/Core/SSH/SSHClient.swift \
-  VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift \
-  VVTermTests/SSHErrorRetryableTests.swift
+git add Waterm/Core/SSH/LibSSH2SessionDriver.swift \
+  Waterm/Core/SSH/SSHClient.swift \
+  WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift \
+  WatermTests/SSHErrorRetryableTests.swift
 git commit -m "refactor: add testable libssh2 session boundary"
 ```
 
 ## Task 11: Make Blocking SSH Operations Abortable
 
 **Files:**
-- Modify: `VVTerm/Core/SSH/SSHClient.swift`
-- Modify: `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
-- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Modify: `Waterm/Core/SSH/SSHClient.swift`
+- Modify: `Waterm/Core/SSH/LibSSH2SessionDriver.swift`
+- Test: `WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -1053,23 +1053,23 @@ Run `LibSSH2SessionLifecycleTests` and `build-for-testing`.
 - [x] **Step 6: Commit**
 
 ```bash
-git add VVTerm/Core/SSH/SSHClient.swift \
-  VVTerm/Core/SSH/LibSSH2SessionDriver.swift \
-  VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift
+git add Waterm/Core/SSH/SSHClient.swift \
+  Waterm/Core/SSH/LibSSH2SessionDriver.swift \
+  WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift
 git commit -m "fix: abort SSH session on blocking timeouts"
 ```
 
 ## Task 12: Preserve Tmux, Mosh, and Known-Host Error Semantics
 
 **Files:**
-- Create: `VVTerm/Core/SSH/RemoteCommandExecuting.swift`
-- Modify: `VVTerm/Core/SSH/RemoteTmuxManager.swift`
-- Modify: `VVTerm/Core/SSH/RemoteMoshManager.swift`
-- Modify: `VVTerm/Core/SSH/KnownHostsManager.swift`
-- Modify: `VVTerm/Core/SSH/SSHClient.swift`
-- Test: `VVTermTests/RemoteTmuxManagerParserTests.swift`
-- Test: `VVTermTests/RemoteMoshManagerTests.swift`
-- Test: `VVTermTests/KnownHostsManagerTests.swift`
+- Create: `Waterm/Core/SSH/RemoteCommandExecuting.swift`
+- Modify: `Waterm/Core/SSH/RemoteTmuxManager.swift`
+- Modify: `Waterm/Core/SSH/RemoteMoshManager.swift`
+- Modify: `Waterm/Core/SSH/KnownHostsManager.swift`
+- Modify: `Waterm/Core/SSH/SSHClient.swift`
+- Test: `WatermTests/RemoteTmuxManagerParserTests.swift`
+- Test: `WatermTests/RemoteMoshManagerTests.swift`
+- Test: `WatermTests/KnownHostsManagerTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -1124,27 +1124,27 @@ Run tmux, mosh, known-host, and SSH retryability tests.
 - [x] **Step 6: Commit**
 
 ```bash
-git add VVTerm/Core/SSH/RemoteCommandExecuting.swift \
-  VVTerm/Core/SSH/RemoteTmuxManager.swift \
-  VVTerm/Core/SSH/RemoteMoshManager.swift \
-  VVTerm/Core/SSH/KnownHostsManager.swift \
-  VVTerm/Core/SSH/SSHClient.swift \
-  VVTermTests/RemoteTmuxManagerParserTests.swift \
-  VVTermTests/RemoteMoshManagerTests.swift \
-  VVTermTests/KnownHostsManagerTests.swift
+git add Waterm/Core/SSH/RemoteCommandExecuting.swift \
+  Waterm/Core/SSH/RemoteTmuxManager.swift \
+  Waterm/Core/SSH/RemoteMoshManager.swift \
+  Waterm/Core/SSH/KnownHostsManager.swift \
+  Waterm/Core/SSH/SSHClient.swift \
+  WatermTests/RemoteTmuxManagerParserTests.swift \
+  WatermTests/RemoteMoshManagerTests.swift \
+  WatermTests/KnownHostsManagerTests.swift
 git commit -m "refactor: preserve remote command failure semantics"
 ```
 
 ## Task 13: Add RemoteConnectionLease for Cross-Feature Use
 
 **Files:**
-- Create: `VVTerm/Core/SSH/RemoteConnectionLease.swift`
-- Modify: `VVTerm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift`
-- Modify: `VVTerm/Features/Stats/Application/ServerStatsCollector.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift`
-- Test: `VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
-- Test: `VVTermTests/Features/Stats/ServerStatsDomainTests.swift`
-- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Create: `Waterm/Core/SSH/RemoteConnectionLease.swift`
+- Modify: `Waterm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift`
+- Modify: `Waterm/Features/Stats/Application/ServerStatsCollector.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift`
+- Test: `WatermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
+- Test: `WatermTests/Features/Stats/ServerStatsDomainTests.swift`
+- Test: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -1178,31 +1178,31 @@ Run RemoteFiles, Stats, and lifecycle tests listed above.
 - [x] **Step 6: Commit**
 
 ```bash
-git add VVTerm/Core/SSH/RemoteConnectionLease.swift \
-  VVTerm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift \
-  VVTerm/Features/Stats/Application/ServerStatsCollector.swift \
-  VVTerm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift \
-  VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift \
-  VVTermTests/Features/Stats/ServerStatsDomainTests.swift \
-  VVTermTests/ConnectionLifecycleIntegrationTests.swift
+git add Waterm/Core/SSH/RemoteConnectionLease.swift \
+  Waterm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift \
+  Waterm/Features/Stats/Application/ServerStatsCollector.swift \
+  Waterm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift \
+  WatermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift \
+  WatermTests/Features/Stats/ServerStatsDomainTests.swift \
+  WatermTests/ConnectionLifecycleIntegrationTests.swift
 git commit -m "refactor: use remote connection leases across features"
 ```
 
 ## Task 14: Remove Duplicated Runtime Sources of Truth
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalAutoReconnectPolicy.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Domain/ConnectionSession.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Domain/TerminalTab.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Test: `VVTermTests/Features/TerminalSessions/ConnectionSessionDomainTests.swift`
-- Test: `VVTermTests/Features/TerminalSessions/TerminalSplitNodeTests.swift`
-- Test: `VVTermTests/Features/TerminalSessions/TerminalAutoReconnectPolicyTests.swift`
-- Test: `VVTermTests/ConnectionSessionManagerOpenTests.swift`
-- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalAutoReconnectPolicy.swift`
+- Modify: `Waterm/Features/TerminalSessions/Domain/ConnectionSession.swift`
+- Modify: `Waterm/Features/TerminalSessions/Domain/TerminalTab.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `WatermTests/Features/TerminalSessions/ConnectionSessionDomainTests.swift`
+- Test: `WatermTests/Features/TerminalSessions/TerminalSplitNodeTests.swift`
+- Test: `WatermTests/Features/TerminalSessions/TerminalAutoReconnectPolicyTests.swift`
+- Test: `WatermTests/ConnectionSessionManagerOpenTests.swift`
+- Test: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -1244,13 +1244,13 @@ Run domain and lifecycle tests.
 - [x] **Step 6: Commit**
 
 ```bash
-git add VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift \
-  VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift \
-  VVTerm/Features/TerminalSessions/Domain/ConnectionSession.swift \
-  VVTerm/Features/TerminalSessions/Domain/TerminalTab.swift \
-  VVTermTests/Features/TerminalSessions/ConnectionSessionDomainTests.swift \
-  VVTermTests/Features/TerminalSessions/TerminalSplitNodeTests.swift \
-  VVTermTests/ConnectionLifecycleIntegrationTests.swift
+git add Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift \
+  Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift \
+  Waterm/Features/TerminalSessions/Domain/ConnectionSession.swift \
+  Waterm/Features/TerminalSessions/Domain/TerminalTab.swift \
+  WatermTests/Features/TerminalSessions/ConnectionSessionDomainTests.swift \
+  WatermTests/Features/TerminalSessions/TerminalSplitNodeTests.swift \
+  WatermTests/ConnectionLifecycleIntegrationTests.swift
 git commit -m "refactor: unify terminal runtime state"
 ```
 
@@ -1266,11 +1266,11 @@ Actual commits were split into smaller reviewable slices:
 Task 14 verification:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,id=6B08CBD5-A6F2-402D-B431-780A0F292BCD' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,id=6B08CBD5-A6F2-402D-B431-780A0F292BCD' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalAutoReconnectPolicyTests -only-testing:VVTermTests/TerminalManualReconnectPolicyTests ENABLE_DEBUG_DYLIB=NO
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,id=6B08CBD5-A6F2-402D-B431-780A0F292BCD' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionSessionDomainTests -only-testing:VVTermTests/TerminalSplitNodeTests -only-testing:VVTermTests/ConnectionSessionManagerOpenTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,id=6B08CBD5-A6F2-402D-B431-780A0F292BCD' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,id=6B08CBD5-A6F2-402D-B431-780A0F292BCD' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalAutoReconnectPolicyTests -only-testing:WatermTests/TerminalManualReconnectPolicyTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,id=6B08CBD5-A6F2-402D-B431-780A0F292BCD' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionSessionDomainTests -only-testing:WatermTests/TerminalSplitNodeTests -only-testing:WatermTests/ConnectionSessionManagerOpenTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
-xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,id=6B08CBD5-A6F2-402D-B431-780A0F292BCD' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO
+xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,id=6B08CBD5-A6F2-402D-B431-780A0F292BCD' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO
 ```
 
 ## Task 15: Final Lifecycle Sweep
@@ -1288,9 +1288,9 @@ xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destinati
 - [x] **Step 1: Run audit commands**
 
 ```bash
-rg -n "SSHClient\\(" VVTerm/Features VVTerm/App -g '*.swift'
-rg -n "Task\\.detached|Task \\{" VVTerm/Features VVTerm/Core VVTerm/App -g '*.swift'
-rg -n "deinit|dismantleUIView|dismantleNSView" VVTerm/Features VVTerm/Core VVTerm/App -g '*.swift'
+rg -n "SSHClient\\(" Waterm/Features Waterm/App -g '*.swift'
+rg -n "Task\\.detached|Task \\{" Waterm/Features Waterm/Core Waterm/App -g '*.swift'
+rg -n "deinit|dismantleUIView|dismantleNSView" Waterm/Features Waterm/Core Waterm/App -g '*.swift'
 ```
 
 - [x] **Step 2: Classify every hit**
@@ -1308,28 +1308,28 @@ Replace untracked task work with awaited operations, stored tasks, or applicatio
 - [x] **Step 5: Run final focused suite**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionSessionManagerOpenTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests -only-testing:VVTermTests/SSHAuthenticationGateTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionSessionManagerOpenTests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalSurfaceTeardownTests -only-testing:WatermTests/SSHAuthenticationGateTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Then run:
 
 ```bash
-xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO
+xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO
 ```
 
 - [x] **Step 6: Commit**
 
 ```bash
-git add docs/refactor-swift-best-practice.md VVTerm VVTermTests
+git add docs/refactor-swift-best-practice.md Waterm WatermTests
 git commit -m "refactor: complete Swift lifecycle cleanup"
 ```
 
 ## Task 16: Core Remote Connection Lease Gate
 
 **Files:**
-- Modify: `VVTerm/Core/SSH/RemoteConnectionLease.swift`
-- Modify: `VVTerm/Core/SSH/SSHClient.swift`
-- Test: `VVTermTests/Core/SSH/RemoteConnectionLeaseTests.swift`
+- Modify: `Waterm/Core/SSH/RemoteConnectionLease.swift`
+- Modify: `Waterm/Core/SSH/SSHClient.swift`
+- Test: `WatermTests/Core/SSH/RemoteConnectionLeaseTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -1358,7 +1358,7 @@ func closeWaitsForExclusiveOperationBeforeDisconnectingOwnedClient() async throw
 Expected first RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteConnectionLeaseTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteConnectionLeaseTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected failure: `RemoteConnectionLease` has no `withExclusiveClient` API, and close does not prove it waits behind an in-flight operation.
@@ -1374,14 +1374,14 @@ Keep the gate in the lease state actor. Do not add locks or global queues. `with
 - [x] **Step 4: Run focused tests and diff check**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteConnectionLeaseTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteConnectionLeaseTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
 - [x] **Step 5: Commit**
 
 ```bash
-git add VVTerm/Core/SSH/RemoteConnectionLease.swift VVTerm/Core/SSH/SSHClient.swift VVTermTests/Core/SSH/RemoteConnectionLeaseTests.swift
+git add Waterm/Core/SSH/RemoteConnectionLease.swift Waterm/Core/SSH/SSHClient.swift WatermTests/Core/SSH/RemoteConnectionLeaseTests.swift
 git commit -m "refactor: serialize remote connection lease operations"
 ```
 
@@ -1392,12 +1392,12 @@ Before starting Task 17, review whether `withExclusiveClient` names its side eff
 ## Task 17: RemoteFiles Lease-Owned SFTP Boundary
 
 **Files:**
-- Create: `VVTerm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileClient.swift`
-- Modify: `VVTerm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileService.swift`
-- Modify: `VVTerm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift`
-- Modify: `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift` only if disconnect task plumbing needs tightening.
-- Test: `VVTermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift`
-- Test: `VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift` only for returned disconnect task coverage or Test Context cleanup.
+- Create: `Waterm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileClient.swift`
+- Modify: `Waterm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileService.swift`
+- Modify: `Waterm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift`
+- Modify: `Waterm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift` only if disconnect task plumbing needs tightening.
+- Test: `WatermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift`
+- Test: `WatermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift` only for returned disconnect task coverage or Test Context cleanup.
 
 **Interfaces:**
 - Produces:
@@ -1434,7 +1434,7 @@ func failedBorrowedOperationDropsBorrowedRegistrationBeforeRetry() async throws
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/SSHSFTPAdapterTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/SSHSFTPAdapterTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected failure: the test seams and `SFTPRemoteFileClient` capability protocol do not exist, and disconnect does not prove it waits for in-flight adapter work.
@@ -1454,19 +1454,19 @@ If a server has an in-flight SFTP operation, `disconnect(serverId:)` must wait f
 - [x] **Step 5: Run focused RemoteFiles tests**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/SSHSFTPAdapterTests -only-testing:WatermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
 - [x] **Step 6: Commit**
 
 ```bash
-git add VVTerm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileClient.swift \
-  VVTerm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileService.swift \
-  VVTerm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift \
-  VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift \
-  VVTermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift \
-  VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift
+git add Waterm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileClient.swift \
+  Waterm/Features/RemoteFiles/Infrastructure/SFTPRemoteFileService.swift \
+  Waterm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift \
+  Waterm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift \
+  WatermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift \
+  WatermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift
 git commit -m "refactor: route remote files through connection leases"
 ```
 
@@ -1477,9 +1477,9 @@ Before Task 18, check that RemoteFiles application/UI code does not reason about
 ## Task 18: Stats Collector Awaitable Stop
 
 **Files:**
-- Modify: `VVTerm/Features/Stats/Application/ServerStatsCollector.swift`
-- Modify: `VVTerm/Features/Stats/UI/ServerStatsView.swift`
-- Test: `VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift`
+- Modify: `Waterm/Features/Stats/Application/ServerStatsCollector.swift`
+- Modify: `Waterm/Features/Stats/UI/ServerStatsView.swift`
+- Test: `WatermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -1519,7 +1519,7 @@ func cancelledCollectionDoesNotPublishConnectionError() async throws
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected failure: `stopCollectingAndWait()` and the needed lease/test seams do not exist.
@@ -1539,16 +1539,16 @@ Cancel the stored collection task, await its completion or close task, close the
 - [x] **Step 5: Run focused Stats lifecycle tests**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
 - [x] **Step 6: Commit**
 
 ```bash
-git add VVTerm/Features/Stats/Application/ServerStatsCollector.swift \
-  VVTerm/Features/Stats/UI/ServerStatsView.swift \
-  VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift
+git add Waterm/Features/Stats/Application/ServerStatsCollector.swift \
+  Waterm/Features/Stats/UI/ServerStatsView.swift \
+  WatermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift
 git commit -m "refactor: make stats collection stop awaitable"
 ```
 
@@ -1559,14 +1559,14 @@ Before Task 19, verify stop/start names read as side-effectful lifecycle APIs, `
 ## Task 19: Stats Command Executor Boundary
 
 **Files:**
-- Modify: `VVTerm/Core/SSH/RemoteCommandExecuting.swift`
-- Modify: `VVTerm/Features/Stats/Application/ServerStatsCollector.swift`
-- Modify: `VVTerm/Features/Stats/Infrastructure/Platforms/PlatformStatsCollector.swift`
-- Modify: all files under `VVTerm/Features/Stats/Infrastructure/Platforms/`
-- Modify: `VVTerm/Features/Stats/UI/ServerStatsView.swift`
-- Test: `VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift`
-- Test: `VVTermTests/Features/Stats/StatsParsingUtilsTests.swift`
-- Test: `VVTermTests/Features/Stats/ServerStatsDomainTests.swift`
+- Modify: `Waterm/Core/SSH/RemoteCommandExecuting.swift`
+- Modify: `Waterm/Features/Stats/Application/ServerStatsCollector.swift`
+- Modify: `Waterm/Features/Stats/Infrastructure/Platforms/PlatformStatsCollector.swift`
+- Modify: all files under `Waterm/Features/Stats/Infrastructure/Platforms/`
+- Modify: `Waterm/Features/Stats/UI/ServerStatsView.swift`
+- Test: `WatermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift`
+- Test: `WatermTests/Features/Stats/StatsParsingUtilsTests.swift`
+- Test: `WatermTests/Features/Stats/ServerStatsDomainTests.swift`
 
 **Interfaces:**
 - Produces:
@@ -1590,7 +1590,7 @@ func collectorUsesCommandExecutorWithoutRawSSHClientOwnership() async throws
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected failure: platform collectors and collector seams still require `SSHClient`.
@@ -1610,18 +1610,18 @@ Rename the UI injection point from `sharedClientProvider` to a lease/provider na
 - [x] **Step 5: Run focused Stats tests**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests -only-testing:VVTermTests/StatsParsingUtilsTests -only-testing:VVTermTests/ServerStatsDomainTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerStatsCollectorLifecycleTests -only-testing:WatermTests/StatsParsingUtilsTests -only-testing:WatermTests/ServerStatsDomainTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
 - [x] **Step 6: Commit**
 
 ```bash
-git add VVTerm/Core/SSH/RemoteCommandExecuting.swift \
-  VVTerm/Features/Stats/Application/ServerStatsCollector.swift \
-  VVTerm/Features/Stats/Infrastructure/Platforms \
-  VVTerm/Features/Stats/UI/ServerStatsView.swift \
-  VVTermTests/Features/Stats
+git add Waterm/Core/SSH/RemoteCommandExecuting.swift \
+  Waterm/Features/Stats/Application/ServerStatsCollector.swift \
+  Waterm/Features/Stats/Infrastructure/Platforms \
+  Waterm/Features/Stats/UI/ServerStatsView.swift \
+  WatermTests/Features/Stats
 git commit -m "refactor: decouple stats collection from raw SSH clients"
 ```
 
@@ -1644,9 +1644,9 @@ Before Task 20, verify Stats Domain remains pure, platform collectors stay Infra
 - [x] **Step 1: Run audit commands**
 
 ```bash
-rg -n "sharedStatsClient|activeSSHClient|getSSHClient|SSHClient\\(|ObjectIdentifier\\(.*SSHClient|stopCollecting\\(\\)" VVTerm/Features/RemoteFiles VVTerm/Features/Stats VVTerm/Features/TerminalSessions VVTerm/App -g '*.swift'
-rg -n "RemoteConnectionLease\\(|withExclusiveClient|disconnectWhenDone: false" VVTerm/Features/RemoteFiles VVTerm/Features/Stats VVTerm/Core/SSH -g '*.swift'
-rg -n "Task\\.detached|Task \\{" VVTerm/Features/RemoteFiles VVTerm/Features/Stats -g '*.swift'
+rg -n "sharedStatsClient|activeSSHClient|getSSHClient|SSHClient\\(|ObjectIdentifier\\(.*SSHClient|stopCollecting\\(\\)" Waterm/Features/RemoteFiles Waterm/Features/Stats Waterm/Features/TerminalSessions Waterm/App -g '*.swift'
+rg -n "RemoteConnectionLease\\(|withExclusiveClient|disconnectWhenDone: false" Waterm/Features/RemoteFiles Waterm/Features/Stats Waterm/Core/SSH -g '*.swift'
+rg -n "Task\\.detached|Task \\{" Waterm/Features/RemoteFiles Waterm/Features/Stats -g '*.swift'
 ```
 
 - [x] **Step 2: Classify every hit**
@@ -1660,36 +1660,36 @@ Use the smallest focused tests in `SSHSFTPAdapterTests`, `ServerStatsCollectorLi
 - [x] **Step 4: Run final focused suite**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteConnectionLeaseTests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests -only-testing:VVTermTests/StatsParsingUtilsTests -only-testing:VVTermTests/ServerStatsDomainTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteConnectionLeaseTests -only-testing:WatermTests/SSHSFTPAdapterTests -only-testing:WatermTests/RemoteFileBrowserStoreTests -only-testing:WatermTests/ServerStatsCollectorLifecycleTests -only-testing:WatermTests/StatsParsingUtilsTests -only-testing:WatermTests/ServerStatsDomainTests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Then run:
 
 ```bash
-xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO
+xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO
 ```
 
 - [x] **Step 5: Commit**
 
 ```bash
-git add docs/refactor-swift-best-practice.md VVTerm VVTermTests
+git add docs/refactor-swift-best-practice.md Waterm WatermTests
 git commit -m "refactor: complete remote lease boundary cleanup"
 ```
 
 ## Task 21: Core SSH FFI Boundary Final Sweep
 
 **Files:**
-- Modify: `VVTerm/Core/SSH/SSHClient.swift`
-- Modify: `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
-- Modify: `VVTerm/Core/SSH/KnownHostsManager.swift`
-- Modify: `VVTerm/Features/Servers/Application/ServerManager.swift`
-- Modify: `VVTerm/Features/Settings/UI/TerminalSettingsView.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
-- Test: `VVTermTests/SSHErrorRetryableTests.swift`
-- Test: `VVTermTests/KnownHostsManagerTests.swift`
-- Test: `VVTermTests/ServerManagerBootstrapTests.swift`
+- Modify: `Waterm/Core/SSH/SSHClient.swift`
+- Modify: `Waterm/Core/SSH/LibSSH2SessionDriver.swift`
+- Modify: `Waterm/Core/SSH/KnownHostsManager.swift`
+- Modify: `Waterm/Features/Servers/Application/ServerManager.swift`
+- Modify: `Waterm/Features/Settings/UI/TerminalSettingsView.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Test: `WatermTests/SSHErrorRetryableTests.swift`
+- Test: `WatermTests/KnownHostsManagerTests.swift`
+- Test: `WatermTests/ServerManagerBootstrapTests.swift`
 
 **Interfaces:**
 - Consumes:
@@ -1706,15 +1706,15 @@ git commit -m "refactor: complete remote lease boundary cleanup"
 - [x] **Step 1: Run focused Core SSH audit commands**
 
 ```bash
-rg -n "nonisolated\\(unsafe\\)|NSLock|DispatchQueue|libssh2_|withUnsafe|UnsafeMutable|UnsafePointer|Darwin\\.close|closeSocket|session_last_error" VVTerm/Core/SSH -g '*.swift'
-rg -n "KnownHostsManager|KnownHostsStore|KnownHostVerificationService|libssh2|LibSSH2RawError|SSHError\\.libssh2|Authentication failed" VVTermTests VVTerm/Core/SSH -g '*.swift'
+rg -n "nonisolated\\(unsafe\\)|NSLock|DispatchQueue|libssh2_|withUnsafe|UnsafeMutable|UnsafePointer|Darwin\\.close|closeSocket|session_last_error" Waterm/Core/SSH -g '*.swift'
+rg -n "KnownHostsManager|KnownHostsStore|KnownHostVerificationService|libssh2|LibSSH2RawError|SSHError\\.libssh2|Authentication failed" WatermTests Waterm/Core/SSH -g '*.swift'
 ```
 
 Classify each hit in the Progress Ledger before editing code. Exemptions must name the owner and invariant, for example "private process-global libssh2 init lock" or "keyboard-interactive callback context lifetime is owned by `SSHSession`".
 
 - [x] **Step 2: Add RED auth raw-error boundary tests**
 
-Add focused tests to `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`:
+Add focused tests to `WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`:
 
 ```swift
 func testPublicKeyAuthFailurePreservesRawLibSSH2Error() async {
@@ -1749,7 +1749,7 @@ This is intentionally an auth-boundary RED test, not a handshake test. Handshake
 - [x] **Step 3: Run RED tests**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/SSHErrorRetryableTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/LibSSH2SessionLifecycleTests -only-testing:WatermTests/SSHErrorRetryableTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected: the new auth raw-boundary assertion fails or fails to compile because `LibSSH2SessionDriving` cannot model auth methods, public-key auth, or `.authentication` raw errors yet.
@@ -1770,28 +1770,28 @@ If Step 1 still finds new code paths using `KnownHostsManager.shared` directly, 
 - [x] **Step 6: Run focused Core SSH verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/SSHErrorRetryableTests -only-testing:VVTermTests/KnownHostsManagerTests -only-testing:VVTermTests/SSHAuthenticationGateCancellationTests -only-testing:VVTermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/LibSSH2SessionLifecycleTests -only-testing:WatermTests/SSHErrorRetryableTests -only-testing:WatermTests/KnownHostsManagerTests -only-testing:WatermTests/SSHAuthenticationGateCancellationTests -only-testing:WatermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
 - [x] **Step 7: Commit**
 
 ```bash
-git add docs/refactor-swift-best-practice.md VVTerm/Core/SSH VVTermTests/Core/SSH VVTermTests/SSHErrorRetryableTests.swift VVTermTests/KnownHostsManagerTests.swift
-git add VVTerm/Features/Servers/Application/ServerManager.swift \
-  VVTerm/Features/Settings/UI/TerminalSettingsView.swift \
-  VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift \
-  VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift \
-  VVTermTests/ServerManagerBootstrapTests.swift
+git add docs/refactor-swift-best-practice.md Waterm/Core/SSH WatermTests/Core/SSH WatermTests/SSHErrorRetryableTests.swift WatermTests/KnownHostsManagerTests.swift
+git add Waterm/Features/Servers/Application/ServerManager.swift \
+  Waterm/Features/Settings/UI/TerminalSettingsView.swift \
+  Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift \
+  Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift \
+  WatermTests/ServerManagerBootstrapTests.swift
 git commit -m "refactor: tighten core SSH FFI boundaries"
 ```
 
 ## Task 22: Move Shell Channel Setup and Teardown Behind the libssh2 Driver
 
 **Files:**
-- Modify: `VVTerm/Core/SSH/SSHClient.swift`
-- Modify: `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
-- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Modify: `Waterm/Core/SSH/SSHClient.swift`
+- Modify: `Waterm/Core/SSH/LibSSH2SessionDriver.swift`
+- Test: `WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
 
 **Interfaces:**
 - Consumes:
@@ -1817,7 +1817,7 @@ git commit -m "refactor: tighten core SSH FFI boundaries"
 
 - [x] **Step 1: Add RED channel setup cleanup tests**
 
-Add tests to `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`:
+Add tests to `WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`:
 
 ```swift
 func testShellPtyFailureClosesAndFreesOpenedChannel() async {
@@ -1865,7 +1865,7 @@ enum ChannelEvent: Equatable {
 - [x] **Step 2: Run RED tests**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/LibSSH2SessionLifecycleTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected: compile failure because `LibSSH2SessionDriving` does not yet expose channel setup/teardown methods or channel raw-error operations.
@@ -1881,7 +1881,7 @@ Make the minimal production change for the shared shell/exec channel setup and t
 - [x] **Step 4: Run GREEN tests**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/LibSSH2SessionLifecycleTests -only-testing:WatermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 - [x] **Step 5: API and boundary cleanup**
@@ -1895,9 +1895,9 @@ Before committing:
 - [x] **Step 6: Run focused verification and review**
 
 ```bash
-rg -n "libssh2_session_set_blocking|libssh2_channel_open_ex|libssh2_channel_setenv_ex|libssh2_channel_request_pty_ex|libssh2_channel_process_startup|libssh2_channel_close|libssh2_channel_free" VVTerm/Core/SSH/SSHClient.swift VVTerm/Core/SSH/LibSSH2SessionDriver.swift
+rg -n "libssh2_session_set_blocking|libssh2_channel_open_ex|libssh2_channel_setenv_ex|libssh2_channel_request_pty_ex|libssh2_channel_process_startup|libssh2_channel_close|libssh2_channel_free" Waterm/Core/SSH/SSHClient.swift Waterm/Core/SSH/LibSSH2SessionDriver.swift
 git diff --check
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/LibSSH2SessionLifecycleTests -only-testing:WatermTests/TerminalSurfaceTeardownTests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected scan result: `LibSSH2SessionDriver.swift` owns the Task 22 shell channel setup/teardown C calls. `SSHClient.swift` may still show channel I/O, exec request, SCP upload, exec upload, resize, and upload finish/drain hits assigned to Task 23; record those exact remaining ranges in the Progress Ledger before committing Task 22.
@@ -1907,9 +1907,9 @@ Request code review for Task 22 before committing.
 - [x] **Step 7: Commit**
 
 ```bash
-git add VVTerm/Core/SSH/LibSSH2SessionDriver.swift \
-  VVTerm/Core/SSH/SSHClient.swift \
-  VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift \
+git add Waterm/Core/SSH/LibSSH2SessionDriver.swift \
+  Waterm/Core/SSH/SSHClient.swift \
+  WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift \
   docs/refactor-swift-best-practice.md
 git commit -m "refactor: move shell channel setup behind libssh2 driver"
 ```
@@ -1917,10 +1917,10 @@ git commit -m "refactor: move shell channel setup behind libssh2 driver"
 ## Task 23: Move Channel I/O, Exec, Upload, and Resize Calls Behind the Driver
 
 **Files:**
-- Modify: `VVTerm/Core/SSH/SSHClient.swift`
-- Modify: `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
-- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
-- Test: `VVTermTests/RemoteTerminalBootstrapTests.swift`
+- Modify: `Waterm/Core/SSH/SSHClient.swift`
+- Modify: `Waterm/Core/SSH/LibSSH2SessionDriver.swift`
+- Test: `WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Test: `WatermTests/RemoteTerminalBootstrapTests.swift`
 
 **Interfaces:**
 - Consumes:
@@ -1955,7 +1955,7 @@ Move direct `libssh2_channel_read_ex`, `libssh2_channel_write_ex`, `libssh2_chan
 - [x] **Step 4: Run focused tests**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/RemoteTerminalBootstrapTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/LibSSH2SessionLifecycleTests -only-testing:WatermTests/RemoteTerminalBootstrapTests -only-testing:WatermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
@@ -1966,18 +1966,18 @@ Verify no channel I/O C calls remain in `SSHClient.swift`; raw channel pointers 
 - [x] **Step 6: Request review and commit**
 
 ```bash
-git add VVTerm/Core/SSH/LibSSH2SessionDriver.swift VVTerm/Core/SSH/SSHClient.swift VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift docs/refactor-swift-best-practice.md
+git add Waterm/Core/SSH/LibSSH2SessionDriver.swift Waterm/Core/SSH/SSHClient.swift WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift docs/refactor-swift-best-practice.md
 git commit -m "refactor: route channel IO through libssh2 driver"
 ```
 
 ## Task 24: Move SFTP Session and Handle Operations Behind the Driver
 
 **Files:**
-- Modify: `VVTerm/Core/SSH/SSHClient.swift`
-- Modify: `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
-- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
-- Test: `VVTermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift`
-- Test: `VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
+- Modify: `Waterm/Core/SSH/SSHClient.swift`
+- Modify: `Waterm/Core/SSH/LibSSH2SessionDriver.swift`
+- Test: `WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Test: `WatermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift`
+- Test: `WatermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
 
 **Interfaces:**
 - Consumes:
@@ -1998,7 +1998,7 @@ Move `libssh2_sftp_init`, `libssh2_sftp_shutdown`, `libssh2_sftp_open_ex`, `libs
 - [x] **Step 3: Run focused RemoteFiles verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/LibSSH2SessionLifecycleTests -only-testing:WatermTests/SSHSFTPAdapterTests -only-testing:WatermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
@@ -2009,16 +2009,16 @@ Verify RemoteFiles application/UI code still depends on `SSHSFTPAdapter` or leas
 - [x] **Step 5: Commit**
 
 ```bash
-git add VVTerm/Core/SSH/LibSSH2SessionDriver.swift VVTerm/Core/SSH/SSHClient.swift VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift VVTermTests/Features/RemoteFiles docs/refactor-swift-best-practice.md
+git add Waterm/Core/SSH/LibSSH2SessionDriver.swift Waterm/Core/SSH/SSHClient.swift WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift WatermTests/Features/RemoteFiles docs/refactor-swift-best-practice.md
 git commit -m "refactor: route SFTP operations through libssh2 driver"
 ```
 
 ## Task 25: Final Core SSH FFI Audit and Keepalive Boundary
 
 **Files:**
-- Modify: `VVTerm/Core/SSH/SSHClient.swift`
-- Modify: `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
-- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Modify: `Waterm/Core/SSH/SSHClient.swift`
+- Modify: `Waterm/Core/SSH/LibSSH2SessionDriver.swift`
+- Test: `WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -2039,23 +2039,23 @@ Move `libssh2_keepalive_send` behind `LibSSH2SessionDriving`. If any remaining d
 - [x] **Step 3: Run final Core SSH boundary scan**
 
 ```bash
-rg -n "libssh2_|withUnsafe|UnsafeMutable|UnsafePointer|NSLock|nonisolated\\(unsafe\\)" VVTerm/Core/SSH -g '*.swift'
+rg -n "libssh2_|withUnsafe|UnsafeMutable|UnsafePointer|NSLock|nonisolated\\(unsafe\\)" Waterm/Core/SSH -g '*.swift'
 git diff --check
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/SSHErrorRetryableTests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/LibSSH2SessionLifecycleTests -only-testing:WatermTests/SSHErrorRetryableTests -only-testing:WatermTests/SSHSFTPAdapterTests -only-testing:WatermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 - [x] **Step 4: Request final Core SSH FFI review and commit**
 
 ```bash
-git add VVTerm/Core/SSH/LibSSH2SessionDriver.swift VVTerm/Core/SSH/SSHClient.swift VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift docs/refactor-swift-best-practice.md
+git add Waterm/Core/SSH/LibSSH2SessionDriver.swift Waterm/Core/SSH/SSHClient.swift WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift docs/refactor-swift-best-practice.md
 git commit -m "refactor: complete core SSH FFI boundary sweep"
 ```
 
 ## Task 26: Whole-Plan Closure Audit and Test Context Tightening
 
 **Files:**
-- Modify: `VVTermTests/ConnectionSessionManagerOpenTests.swift`
-- Modify: `VVTermTests/ServerManagerBootstrapTests.swift`
+- Modify: `WatermTests/ConnectionSessionManagerOpenTests.swift`
+- Modify: `WatermTests/ServerManagerBootstrapTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -2075,7 +2075,7 @@ In `ServerManagerBootstrapTests.knownHostRemovalCandidatesUsePostDeleteServerSta
 - [x] **Step 2: Run focused test-context verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionSessionManagerOpenTests/testDisconnectServerAndWaitClearsSSHRegistrationBeforeReturning -only-testing:VVTermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionSessionManagerOpenTests/testDisconnectServerAndWaitClearsSSHRegistrationBeforeReturning -only-testing:WatermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
@@ -2084,7 +2084,7 @@ git diff --check
 ```bash
 rg -n "^- \\[ \\]" docs/refactor-swift-best-practice.md
 rg -n "TO[D]O|T[B]D|W[I]P" docs/refactor-swift-best-practice.md
-rg -n "libssh2_" VVTerm/Core/SSH/SSHClient.swift VVTerm/Core/SSH/LibSSH2SessionDriver.swift
+rg -n "libssh2_" Waterm/Core/SSH/SSHClient.swift Waterm/Core/SSH/LibSSH2SessionDriver.swift
 ```
 
 Expected results: before Step 5 completes, the first unchecked step is Task 26 Step 5; after Task 26 is committed, the first unchecked step is Task 27 Step 1; the stub-language scan has no output; no direct lowercase `libssh2_` calls remain in `SSHClient.swift`; direct lowercase `libssh2_` calls remain confined to `LibSSH2SessionDriver.swift`.
@@ -2096,15 +2096,15 @@ Verify this task changes only test explanatory context and plan bookkeeping. Do 
 - [x] **Step 5: Request review and commit**
 
 ```bash
-git add VVTermTests/ConnectionSessionManagerOpenTests.swift VVTermTests/ServerManagerBootstrapTests.swift docs/refactor-swift-best-practice.md
+git add WatermTests/ConnectionSessionManagerOpenTests.swift WatermTests/ServerManagerBootstrapTests.swift docs/refactor-swift-best-practice.md
 git commit -m "test: tighten lifecycle test context"
 ```
 
 ## Task 27: RemoteConnectionLease Close Rejects Queued Work
 
 **Files:**
-- Modify: `VVTerm/Core/SSH/RemoteConnectionLease.swift`
-- Test: `VVTermTests/Core/SSH/RemoteConnectionLeaseTests.swift`
+- Modify: `Waterm/Core/SSH/RemoteConnectionLease.swift`
+- Test: `WatermTests/Core/SSH/RemoteConnectionLeaseTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -2121,7 +2121,7 @@ Add `closeRejectsQueuedOperationsAfterCloseBegins` to `RemoteConnectionLeaseTest
 - [x] **Step 2: Run RED test**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteConnectionLeaseTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteConnectionLeaseTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected before implementation: FAIL because the queued operation resumes and runs after close begins, or because close waits for a queued operation that should have been canceled.
@@ -2133,7 +2133,7 @@ Change `RemoteConnectionLeaseState` so close marks the lease closed, waits for t
 - [x] **Step 4: Run focused lease verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteConnectionLeaseTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteConnectionLeaseTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
@@ -2144,18 +2144,18 @@ Verify the lease API remains small: `close()` and `withExclusiveClient(_:)` stay
 - [x] **Step 6: Request review and commit**
 
 ```bash
-git add VVTerm/Core/SSH/RemoteConnectionLease.swift VVTermTests/Core/SSH/RemoteConnectionLeaseTests.swift docs/refactor-swift-best-practice.md
+git add Waterm/Core/SSH/RemoteConnectionLease.swift WatermTests/Core/SSH/RemoteConnectionLeaseTests.swift docs/refactor-swift-best-practice.md
 git commit -m "fix: reject queued remote lease work after close"
 ```
 
 ## Task 28: Server and Workspace Delete Await Runtime Teardown
 
 **Files:**
-- Modify: `VVTerm/Features/Servers/Application/ServerManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Test: `VVTermTests/ServerManagerBootstrapTests.swift`
-- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Modify: `Waterm/Features/Servers/Application/ServerManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Test: `WatermTests/ServerManagerBootstrapTests.swift`
+- Test: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -2174,7 +2174,7 @@ Add tests proving `ServerManager.deleteServer(_:)` invokes an injected teardown 
 - [x] **Step 2: Run RED tests**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected before implementation: FAIL because `ServerManager.deleteServer(_:)` has no injected awaitable teardown boundary.
@@ -2190,7 +2190,7 @@ Keep UI button tasks as intent wrappers only. Server deletion must await the app
 - [x] **Step 5: Run focused deletion verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
@@ -2201,18 +2201,18 @@ Verify the Servers feature sends deletion intent and does not directly orchestra
 - [x] **Step 7: Request review and commit**
 
 ```bash
-git add VVTerm/Features/Servers/Application/ServerManager.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/ServerManagerBootstrapTests.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift docs/refactor-swift-best-practice.md
+git add Waterm/Features/Servers/Application/ServerManager.swift Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift WatermTests/ServerManagerBootstrapTests.swift WatermTests/ConnectionLifecycleIntegrationTests.swift docs/refactor-swift-best-practice.md
 git commit -m "fix: await server deletion teardown"
 ```
 
 ## Task 29: App Termination and LRU Eviction Await Cleanup
 
 **Files:**
-- Modify: `VVTerm/App/VVTermApp.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
-- Test: `VVTermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift`
+- Modify: `Waterm/App/WatermApp.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Test: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `WatermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -2236,12 +2236,12 @@ Add a test that forces terminal-surface eviction, injects a registered SSH clien
 - [x] **Step 3: Run RED tests**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected before implementation: FAIL because `disconnectAll()` is synchronous/non-awaiting and LRU eviction discards returned unregister tasks.
 
-RED result: `xcodebuild test ... -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO` failed to build because `ConnectionSessionManager.disconnectAllAndWait()`, `ConnectionSessionManager.registerTerminalForTesting(sessionId:)`, and `TerminalTabManager.disconnectAllAndWait()` did not exist.
+RED result: `xcodebuild test ... -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO` failed to build because `ConnectionSessionManager.disconnectAllAndWait()`, `ConnectionSessionManager.registerTerminalForTesting(sessionId:)`, and `TerminalTabManager.disconnectAllAndWait()` did not exist.
 
 - [x] **Step 4: Implement awaitable termination APIs**
 
@@ -2254,7 +2254,7 @@ When a terminal surface is evicted, route the returned unregister task through t
 - [x] **Step 6: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
@@ -2267,23 +2267,23 @@ Verify app delegates call application-layer teardown APIs only; no SwiftUI or ap
 - [x] **Step 8: Request review and commit**
 
 ```bash
-git add VVTerm/App/VVTermApp.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift VVTermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift docs/refactor-swift-best-practice.md
+git add Waterm/App/WatermApp.swift Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift WatermTests/ConnectionLifecycleIntegrationTests.swift WatermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift docs/refactor-swift-best-practice.md
 git commit -m "fix: await terminal cleanup on termination"
 ```
 
 ## Task 30: RemoteFiles and Stats Lease Provider Boundaries
 
 **Files:**
-- Modify: `VVTerm/Core/SSH/RemoteConnectionLease.swift`
-- Modify: `VVTerm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift`
-- Modify: `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
-- Modify: `VVTerm/Features/Stats/Application/ServerStatsCollector.swift`
-- Add: `VVTerm/Features/Stats/Infrastructure/StatsSSHConnectionProvider.swift`
-- Modify: `VVTerm/App/VVTermApp.swift`
-- Modify: `VVTerm/App/iOS/iOSContentView.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift`
-- Test: `VVTermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift`
-- Test: `VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift`
+- Modify: `Waterm/Core/SSH/RemoteConnectionLease.swift`
+- Modify: `Waterm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift`
+- Modify: `Waterm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
+- Modify: `Waterm/Features/Stats/Application/ServerStatsCollector.swift`
+- Add: `Waterm/Features/Stats/Infrastructure/StatsSSHConnectionProvider.swift`
+- Modify: `Waterm/App/WatermApp.swift`
+- Modify: `Waterm/App/iOS/iOSContentView.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift`
+- Test: `WatermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift`
+- Test: `WatermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -2307,16 +2307,16 @@ Add a `ServerStatsCollectorLifecycleTests` case that uses a named Stats owned-co
 - [x] **Step 3: Run RED tests**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/SSHSFTPAdapterTests -only-testing:WatermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected before implementation: FAIL because RemoteFiles still has hidden TerminalSessions singleton defaults and Stats does not yet expose the owned-connection factory boundary needed to move default raw `SSHClient()` creation out of Stats Application.
 
-RED result: `xcodebuild test ... -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO` failed to build because `StatsConnectionProvider` and `ServerStatsCollector(connectionProvider:)` did not exist. The RemoteFiles RED test was also in place to prove default `SSHSFTPAdapter` must not consult TerminalSessions singletons.
+RED result: `xcodebuild test ... -only-testing:WatermTests/SSHSFTPAdapterTests -only-testing:WatermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO` failed to build because `StatsConnectionProvider` and `ServerStatsCollector(connectionProvider:)` did not exist. The RemoteFiles RED test was also in place to prove default `SSHSFTPAdapter` must not consult TerminalSessions singletons.
 
 - [x] **Step 4: Introduce explicit lease provider boundary**
 
-Add the narrow provider type in Core SSH or the consuming feature boundary. Inject the app-level provider from `VVTermApp.makeRemoteFileBrowserStore()` and Stats screen composition. Remove RemoteFiles infrastructure default access to TerminalSessions singletons.
+Add the narrow provider type in Core SSH or the consuming feature boundary. Inject the app-level provider from `WatermApp.makeRemoteFileBrowserStore()` and Stats screen composition. Remove RemoteFiles infrastructure default access to TerminalSessions singletons.
 
 - [x] **Step 5: Move Stats raw SSH fallback behind factory**
 
@@ -2325,7 +2325,7 @@ Make `ServerStatsCollector` depend on an injected connection factory/provider fo
 - [x] **Step 6: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/SSHSFTPAdapterTests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/SSHSFTPAdapterTests -only-testing:WatermTests/RemoteFileBrowserStoreTests -only-testing:WatermTests/ServerStatsCollectorLifecycleTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
@@ -2338,20 +2338,20 @@ Verify RemoteFiles Application/UI depends on RemoteFiles abstractions, not Termi
 - [x] **Step 8: Request review and commit**
 
 ```bash
-git add VVTerm/Core/SSH/RemoteConnectionLease.swift VVTerm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift VVTerm/Features/Stats/Application/ServerStatsCollector.swift VVTerm/Features/Stats/Infrastructure/StatsSSHConnectionProvider.swift VVTerm/App/VVTermApp.swift VVTerm/App/iOS/iOSContentView.swift VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift VVTermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift docs/refactor-swift-best-practice.md
+git add Waterm/Core/SSH/RemoteConnectionLease.swift Waterm/Features/RemoteFiles/Infrastructure/SSHSFTPAdapter.swift Waterm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift Waterm/Features/Stats/Application/ServerStatsCollector.swift Waterm/Features/Stats/Infrastructure/StatsSSHConnectionProvider.swift Waterm/App/WatermApp.swift Waterm/App/iOS/iOSContentView.swift Waterm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift WatermTests/Features/RemoteFiles/SSHSFTPAdapterTests.swift WatermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift docs/refactor-swift-best-practice.md
 git commit -m "refactor: inject remote lease providers"
 ```
 
 ## Task 31: Terminal Runtime Ownership Final Cutover
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRegistry.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
-- Test: `VVTermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalConnectionRegistry.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Test: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `WatermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -2374,7 +2374,7 @@ Add a test proving session and pane managers can use an injected runtime/client 
 - [x] **Step 3: Run RED tests**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalSurfaceTeardownTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 - [x] **Step 4: Move raw client construction behind runtime factory**
@@ -2388,7 +2388,7 @@ Ensure canceling a stored runner task either awaits its finish path or routes al
 - [x] **Step 6: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalSurfaceTeardownTests -only-testing:VVTermTests/RemoteTerminalBootstrapTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalSurfaceTeardownTests -only-testing:WatermTests/RemoteTerminalBootstrapTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
@@ -2399,20 +2399,20 @@ Verify TerminalSessions Application has one runtime owner per terminal entity; `
 - [x] **Step 8: Request review and commit**
 
 ```bash
-git add VVTerm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift VVTerm/Features/TerminalSessions/Application/TerminalConnectionRegistry.swift VVTerm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift VVTermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift docs/refactor-swift-best-practice.md
+git add Waterm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift Waterm/Features/TerminalSessions/Application/TerminalConnectionRegistry.swift Waterm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift WatermTests/ConnectionLifecycleIntegrationTests.swift WatermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift docs/refactor-swift-best-practice.md
 git commit -m "refactor: centralize terminal runtime ownership"
 ```
 
 ## Task 32: TerminalConnectionRunner Surface Protocol Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalSurfaceRegistry.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Test: `VVTermTests/Features/TerminalSessions/TerminalConnectionRunnerTests.swift`
-- Test: `VVTermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift`
-- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalSurfaceRegistry.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Test: `WatermTests/Features/TerminalSessions/TerminalConnectionRunnerTests.swift`
+- Test: `WatermTests/Features/TerminalSessions/TerminalSurfaceTeardownTests.swift`
+- Test: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -2430,7 +2430,7 @@ Add tests that run `TerminalConnectionRunner` with a fake terminal surface and a
 - [x] **Step 2: Run RED tests**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalConnectionRunnerTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalConnectionRunnerTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 RED result: failed before implementation because `TerminalConnectionSurface`, `TerminalConnectionSurfaceSize`, and the surface-oriented runner overload did not exist, and the only available `TerminalConnectionRunner.run` still required `GhosttyTerminalView`.
@@ -2446,7 +2446,7 @@ Define a protocol with only the operations the runner needs: terminal size, stre
 - [x] **Step 5: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSurfaceTeardownTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalConnectionRunnerTests -only-testing:VVTermTests/RemoteTerminalBootstrapTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalSurfaceTeardownTests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalConnectionRunnerTests -only-testing:WatermTests/RemoteTerminalBootstrapTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
@@ -2459,14 +2459,14 @@ Verify `TerminalConnectionRunner.swift` imports no UI-specific terminal type and
 - [x] **Step 7: Request review and commit**
 
 ```bash
-git add VVTerm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift VVTerm/Features/TerminalSessions/Application/TerminalSurfaceRegistry.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/Features/TerminalSessions/TerminalConnectionRunnerTests.swift docs/refactor-swift-best-practice.md
+git add Waterm/Features/TerminalSessions/Application/TerminalConnectionRunner.swift Waterm/Features/TerminalSessions/Application/TerminalSurfaceRegistry.swift Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift WatermTests/Features/TerminalSessions/TerminalConnectionRunnerTests.swift docs/refactor-swift-best-practice.md
 git commit -m "refactor: decouple terminal runner from UI surface"
 ```
 
 ## Task 33: Repo-Wide Swift Test Context Sweep
 
 **Files:**
-- Modify: every `VVTermTests/**/*.swift` file missing the required `Test Context` header.
+- Modify: every `WatermTests/**/*.swift` file missing the required `Test Context` header.
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -2481,7 +2481,7 @@ git commit -m "refactor: decouple terminal runner from UI surface"
 Run a scan that lists Swift test files lacking `Test Context`. This should fail before the sweep because older test files predate the rule.
 
 ```bash
-for f in $(rg --files VVTermTests -g '*.swift'); do if ! rg -q "Test Context" "$f"; then echo "$f"; fi; done
+for f in $(rg --files WatermTests -g '*.swift'); do if ! rg -q "Test Context" "$f"; then echo "$f"; fi; done
 ```
 
 - [x] **Step 2: Add missing Test Context headers**
@@ -2491,7 +2491,7 @@ Add concise file-level context headers to every reported Swift test file. Do not
 - [x] **Step 3: Run GREEN test-context scan**
 
 ```bash
-for f in $(rg --files VVTermTests -g '*.swift'); do if ! rg -q "Test Context" "$f"; then echo "$f"; fi; done
+for f in $(rg --files WatermTests -g '*.swift'); do if ! rg -q "Test Context" "$f"; then echo "$f"; fi; done
 ```
 
 Expected after implementation: no output.
@@ -2500,7 +2500,7 @@ Expected after implementation: no output.
 
 ```bash
 git diff --check
-xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO
+xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO
 ```
 
 - [x] **Step 5: API and boundary cleanup**
@@ -2510,18 +2510,18 @@ Verify the task only adds test documentation comments, does not alter production
 - [x] **Step 6: Request review and commit**
 
 ```bash
-git add VVTermTests docs/refactor-swift-best-practice.md
+git add WatermTests docs/refactor-swift-best-practice.md
 git commit -m "test: document Swift test contexts"
 ```
 
 ## Task 34: Final Verification Failure Cleanup
 
 **Files:**
-- Modify: `VVTerm/Core/SSH/SSHPublicKeyDeriver.swift`
-- Modify: `VVTerm/Core/SSH/SSHKeyGenerator.swift`
-- Modify: `VVTermTests/SSHPublicKeyDeriverTests.swift`
-- Modify: `VVTermTests/Features/TerminalAccessories/TerminalAccessoryProfileTests.swift`
-- Modify: `VVTermTests/Features/RemoteFiles/RemoteFilePermissionTests.swift`
+- Modify: `Waterm/Core/SSH/SSHPublicKeyDeriver.swift`
+- Modify: `Waterm/Core/SSH/SSHKeyGenerator.swift`
+- Modify: `WatermTests/SSHPublicKeyDeriverTests.swift`
+- Modify: `WatermTests/Features/TerminalAccessories/TerminalAccessoryProfileTests.swift`
+- Modify: `WatermTests/Features/RemoteFiles/RemoteFilePermissionTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -2538,7 +2538,7 @@ git commit -m "test: document Swift test contexts"
 Run the full iOS unit suite and record the failing tests before changing code.
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO
 ```
 
 - [x] **Step 2: Identify root causes**
@@ -2555,14 +2555,14 @@ Update stale test expectations and replace PKCS#1 RSA derivation with pure Swift
 - [x] **Step 4: Run focused GREEN verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalAccessoryProfileTests -only-testing:VVTermTests/RemoteFilePermissionTests -only-testing:VVTermTests/SSHPublicKeyDeriverTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalAccessoryProfileTests -only-testing:WatermTests/RemoteFilePermissionTests -only-testing:WatermTests/SSHPublicKeyDeriverTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 - [x] **Step 5: Re-run final verification**
 
 ```bash
 git diff --check
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Result: `git diff --check` passed; final iOS unit verification passed with 104 XCTest tests and 282 Swift Testing tests in 46 suites.
@@ -2570,14 +2570,14 @@ Result: `git diff --check` passed; final iOS unit verification passed with 104 X
 - [x] **Step 6: Review and commit**
 
 ```bash
-git add VVTerm/Core/SSH/SSHPublicKeyDeriver.swift VVTerm/Core/SSH/SSHKeyGenerator.swift VVTermTests/SSHPublicKeyDeriverTests.swift VVTermTests/Features/TerminalAccessories/TerminalAccessoryProfileTests.swift VVTermTests/Features/RemoteFiles/RemoteFilePermissionTests.swift docs/refactor-swift-best-practice.md
+git add Waterm/Core/SSH/SSHPublicKeyDeriver.swift Waterm/Core/SSH/SSHKeyGenerator.swift WatermTests/SSHPublicKeyDeriverTests.swift WatermTests/Features/TerminalAccessories/TerminalAccessoryProfileTests.swift WatermTests/Features/RemoteFiles/RemoteFilePermissionTests.swift docs/refactor-swift-best-practice.md
 git commit -m "fix: stabilize RSA public key derivation"
 ```
 
 ## Task 35: Final Teardown Wait Hang Cleanup
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -2602,8 +2602,8 @@ Remove each tracked teardown entry synchronously after the waiter observes `task
 - [x] **Step 4: Verify lifecycle and final suite**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Result: lifecycle focused verification passed 55 Swift Testing tests; final iOS unit verification passed with 104 XCTest tests and 282 Swift Testing tests in 46 suites.
@@ -2611,18 +2611,18 @@ Result: lifecycle focused verification passed 55 Swift Testing tests; final iOS 
 - [x] **Step 5: Review and commit**
 
 ```bash
-git add VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift docs/refactor-swift-best-practice.md
+git add Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift docs/refactor-swift-best-practice.md
 git commit -m "fix: clear completed teardown waits synchronously"
 ```
 
 ## Task 36: Await Terminal Runner Finish on Close
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
-- Test: `VVTermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Test: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `WatermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -2643,7 +2643,7 @@ Add tests proving `closeSessionAndWait(_:)` and `closePaneAndWait(_:)` wait for 
 - [x] **Step 2: Run RED verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalConnectionRuntimeTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalConnectionRuntimeTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 - [x] **Step 3: Make runner cancellation awaitable**
@@ -2657,7 +2657,7 @@ Update Task 31 ledger wording so it does not overclaim that managers no longer o
 - [x] **Step 5: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalConnectionRuntimeTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalConnectionRuntimeTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
@@ -2668,20 +2668,20 @@ Verify close/reconnect APIs name side effects clearly, no stored runner task is 
 - [x] **Step 7: Request review and commit**
 
 ```bash
-git add VVTerm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift VVTermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift docs/refactor-swift-best-practice.md
+git add Waterm/Features/TerminalSessions/Application/TerminalConnectionRuntime.swift Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift WatermTests/ConnectionLifecycleIntegrationTests.swift WatermTests/Features/TerminalSessions/TerminalConnectionRuntimeTests.swift docs/refactor-swift-best-practice.md
 git commit -m "fix: await terminal runner finish on close"
 ```
 
 ## Task 37: Move Terminal Reconnect Orchestration Out of SwiftUI
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Modify: `VVTerm/App/iOS/iOSContentView.swift`
-- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
-- Test: `VVTermTests/IOSTerminalViewPolicyTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Modify: `Waterm/App/iOS/iOSContentView.swift`
+- Test: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `WatermTests/IOSTerminalViewPolicyTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -2714,7 +2714,7 @@ Apply the same boundary to `TerminalView` and `TerminalTabManager`.
 - [x] **Step 5: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/IOSTerminalViewPolicyTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/IOSTerminalViewPolicyTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
@@ -2725,16 +2725,16 @@ Verify SwiftUI lifecycle callbacks only attach/detach surfaces or send intent, a
 - [x] **Step 7: Request review and commit**
 
 ```bash
-git add VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTerm/App/iOS/iOSContentView.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift VVTermTests/IOSTerminalViewPolicyTests.swift docs/refactor-swift-best-practice.md
+git add Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift Waterm/App/iOS/iOSContentView.swift WatermTests/ConnectionLifecycleIntegrationTests.swift WatermTests/IOSTerminalViewPolicyTests.swift docs/refactor-swift-best-practice.md
 git commit -m "refactor: move terminal reconnect orchestration to application"
 ```
 
 ## Task 38: Await RemoteFiles Disconnect from iOS Server Flows
 
 **Files:**
-- Modify: `VVTerm/App/iOS/iOSContentView.swift`
-- Modify: `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
-- Test: `VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
+- Modify: `Waterm/App/iOS/iOSContentView.swift`
+- Modify: `Waterm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
+- Test: `WatermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -2751,7 +2751,7 @@ Add a RemoteFiles store test proving disconnect work is trackable/awaitable and 
 - [x] **Step 2: Run RED verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 - [x] **Step 3: Await or track iOS RemoteFiles disconnect**
@@ -2761,7 +2761,7 @@ Prefer awaiting returned disconnect tasks in iOS flows that already run inside a
 - [x] **Step 4: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteFileBrowserStoreTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
@@ -2772,16 +2772,16 @@ Verify RemoteFiles teardown is not dropped by iOS composition and no UI code dir
 - [x] **Step 6: Request review and commit**
 
 ```bash
-git add VVTerm/App/iOS/iOSContentView.swift VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift docs/refactor-swift-best-practice.md
+git add Waterm/App/iOS/iOSContentView.swift Waterm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift WatermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift docs/refactor-swift-best-practice.md
 git commit -m "fix: await remote file disconnects on ios"
 ```
 
 ## Task 39: Tighten Core SSH Cancellation and Teardown Diagnostics
 
 **Files:**
-- Modify: `VVTerm/Core/SSH/SSHClient.swift`
-- Modify: `VVTerm/Core/SSH/LibSSH2SessionDriver.swift`
-- Test: `VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
+- Modify: `Waterm/Core/SSH/SSHClient.swift`
+- Modify: `Waterm/Core/SSH/LibSSH2SessionDriver.swift`
+- Test: `WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -2808,7 +2808,7 @@ Add a test for repeated `LIBSSH2_ERROR_EAGAIN` write results that cancels the wr
 - [x] **Step 3: Run RED verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/LibSSH2SessionLifecycleTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 RED evidence: `LibSSH2SessionLifecycleTests.testShellWriteEAGAINLoopStopsWhenTaskIsCancelled` failed with `Expected cancelled shell write to throw CancellationError` before the write retry loop checked cancellation.
@@ -2824,7 +2824,7 @@ Prefer raw `LibSSH2RawError` logging for close/free/shutdown failures where a se
 - [x] **Step 6: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/LibSSH2SessionLifecycleTests -only-testing:VVTermTests/SSHErrorRetryableTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/LibSSH2SessionLifecycleTests -only-testing:WatermTests/SSHErrorRetryableTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
@@ -2841,7 +2841,7 @@ Review note: no UI/application boundary changes were introduced; SSHClient/SSHSe
 - [x] **Step 8: Request review and commit**
 
 ```bash
-git add VVTerm/Core/SSH/SSHClient.swift VVTerm/Core/SSH/LibSSH2SessionDriver.swift VVTermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift docs/refactor-swift-best-practice.md
+git add Waterm/Core/SSH/SSHClient.swift Waterm/Core/SSH/LibSSH2SessionDriver.swift WatermTests/Core/SSH/LibSSH2SessionLifecycleTests.swift docs/refactor-swift-best-practice.md
 git commit -m "fix: tighten ssh teardown cancellation"
 ```
 
@@ -2850,13 +2850,13 @@ Review result: initial review found upload close/free teardown diagnostics still
 ## Task 40: Cross-Feature Lifecycle Ownership Sweep
 
 **Files:**
-- Modify: `VVTerm/Features/Servers/Application/ServerManager.swift`
-- Modify: `VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift`
-- Modify: `VVTerm/App/VVTermApp.swift`
-- Modify: `VVTerm/Core/Sync/CloudKitSyncCoordinator.swift`
-- Modify: `VVTerm/Features/VoiceInput/Application/*` or create application owner if needed.
-- Modify: `VVTerm/Features/Settings/UI/AboutView.swift`
-- Modify: `VVTerm/Features/Store/UI/ProUpgradeSheet.swift`
+- Modify: `Waterm/Features/Servers/Application/ServerManager.swift`
+- Modify: `Waterm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift`
+- Modify: `Waterm/App/WatermApp.swift`
+- Modify: `Waterm/Core/Sync/CloudKitSyncCoordinator.swift`
+- Modify: `Waterm/Features/VoiceInput/Application/*` or create application owner if needed.
+- Modify: `Waterm/Features/Settings/UI/AboutView.swift`
+- Modify: `Waterm/Features/Store/UI/ProUpgradeSheet.swift`
 - Test: targeted tests for each touched feature.
 - Modify: `docs/refactor-swift-best-practice.md`
 
@@ -2897,7 +2897,7 @@ Sub-task split:
 - [x] **Step 2: Run boundary scans**
 
 ```bash
-rg -n "try\\?|Task \\{|Task\\.detached|URLSession|NSWindow|save|delete|sync" VVTerm/App VVTerm/Core VVTerm/Features -g '*.swift'
+rg -n "try\\?|Task \\{|Task\\.detached|URLSession|NSWindow|save|delete|sync" Waterm/App Waterm/Core Waterm/Features -g '*.swift'
 ```
 
 Scan result: Task 40A selected server edit credential consistency as the first slice. Task 40B then selected AppDelegate/SyncSettingsView sync task ownership. Remaining scan hits stay assigned to later sub-tasks: Voice/URLSession download ownership for 40C, About/Pro AppKit window presenters for 40D, and remaining destructive save/delete flows for 40E.
@@ -2959,81 +2959,81 @@ Task 40E5 GREEN evidence: `TerminalThemeManagerLifecycleTests`, `TerminalThemeVa
 Run feature-specific tests plus `git diff --check`.
 
 Verification evidence for Task 40A:
-- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO` passed 11 Swift Testing tests.
+- `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO` passed 11 Swift Testing tests.
 - `git diff --check` passed.
-- `xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
+- `xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO` passed.
 
 Verification evidence for Task 40B:
-- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/AppSyncCoordinatorTests ENABLE_DEBUG_DYLIB=NO` passed 5 Swift Testing tests.
-- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/AppSyncCoordinatorTests -only-testing:VVTermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO` passed 16 Swift Testing tests.
+- `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/AppSyncCoordinatorTests ENABLE_DEBUG_DYLIB=NO` passed 5 Swift Testing tests.
+- `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/AppSyncCoordinatorTests -only-testing:WatermTests/ServerManagerBootstrapTests ENABLE_DEBUG_DYLIB=NO` passed 16 Swift Testing tests.
 - `git diff --check` passed.
-- `xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
+- `xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO` passed.
 
 Verification evidence for Task 40C:
-- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/VoiceModelDownloadStoreTests -only-testing:VVTermTests/TranscriptionSettingsStoreTests -only-testing:VVTermTests/MLXModelCatalogTests ENABLE_DEBUG_DYLIB=NO` passed 8 XCTest tests plus 2 Swift Testing tests.
+- `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/VoiceModelDownloadStoreTests -only-testing:WatermTests/TranscriptionSettingsStoreTests -only-testing:WatermTests/MLXModelCatalogTests ENABLE_DEBUG_DYLIB=NO` passed 8 XCTest tests plus 2 Swift Testing tests.
 
 Verification evidence for Task 40D:
-- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/AppKitWindowOwnershipBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 1 Swift Testing test.
+- `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/AppKitWindowOwnershipBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 1 Swift Testing test.
 - `git diff --check` passed.
-- `xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
-- `xcodebuild build-for-testing -quiet -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed after the unsigned macOS build was rerun with signing disabled.
+- `xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO` passed.
+- `xcodebuild build-for-testing -quiet -project Waterm.xcodeproj -scheme Waterm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed after the unsigned macOS build was rerun with signing disabled.
 
 Verification evidence for Task 40E1:
-- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/ServerDeletionIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 13 Swift Testing tests.
+- `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests -only-testing:WatermTests/ServerDeletionIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 13 Swift Testing tests.
 - `git diff --check` passed.
-- `xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
-- `xcodebuild build-for-testing -quiet -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed with existing Swift 6 isolation warnings.
+- `xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO` passed.
+- `xcodebuild build-for-testing -quiet -project Waterm.xcodeproj -scheme Waterm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed with existing Swift 6 isolation warnings.
 
 Verification evidence for Task 40E2:
-- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/ServerDeletionIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 14 Swift Testing tests.
-- `rg -n "try\\? await serverManager\\.deleteEnvironment" VVTerm/App/iOS/iOSContentView.swift VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift` produced no matches.
+- `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests -only-testing:WatermTests/ServerDeletionIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 14 Swift Testing tests.
+- `rg -n "try\\? await serverManager\\.deleteEnvironment" Waterm/App/iOS/iOSContentView.swift Waterm/Features/Servers/UI/Sidebar/ServerSidebarView.swift` produced no matches.
 - `git diff --check` passed.
-- `xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
-- `xcodebuild build-for-testing -quiet -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed with existing Swift 6 isolation warnings.
+- `xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO` passed.
+- `xcodebuild build-for-testing -quiet -project Waterm.xcodeproj -scheme Waterm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed with existing Swift 6 isolation warnings.
 
 Verification evidence for Task 40E3a:
-- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TrustedHostsSettingsStoreTests -only-testing:VVTermTests/SettingsLifecycleBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 3 Swift Testing tests.
-- `rg -n "KnownHostsStore\\.shared|knownHostsTask" VVTerm/Features/Settings/UI/TerminalSettingsView.swift` produced no matches.
+- `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TrustedHostsSettingsStoreTests -only-testing:WatermTests/SettingsLifecycleBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 3 Swift Testing tests.
+- `rg -n "KnownHostsStore\\.shared|knownHostsTask" Waterm/Features/Settings/UI/TerminalSettingsView.swift` produced no matches.
 - `git diff --check` passed.
-- `xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
-- `xcodebuild build-for-testing -quiet -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed with existing Swift 6 isolation warnings.
+- `xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO` passed.
+- `xcodebuild build-for-testing -quiet -project Waterm.xcodeproj -scheme Waterm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed with existing Swift 6 isolation warnings.
 
 Verification evidence for Task 40E3b/c:
-- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/SSHKeySettingsStoreTests -only-testing:VVTermTests/SettingsLifecycleBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 6 Swift Testing tests.
-- `rg -n "KeychainManager\\.shared|SSHKeyGenerator\\.generate|Task \\{" VVTerm/Features/Settings/UI/KeychainSettingsView.swift` produced no matches.
+- `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/SSHKeySettingsStoreTests -only-testing:WatermTests/SettingsLifecycleBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 6 Swift Testing tests.
+- `rg -n "KeychainManager\\.shared|SSHKeyGenerator\\.generate|Task \\{" Waterm/Features/Settings/UI/KeychainSettingsView.swift` produced no matches.
 - `git diff --check` passed.
-- `xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
-- `xcodebuild build-for-testing -quiet -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed with existing Swift 6 isolation and XCTest deployment warnings.
+- `xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO` passed.
+- `xcodebuild build-for-testing -quiet -project Waterm.xcodeproj -scheme Waterm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed with existing Swift 6 isolation and XCTest deployment warnings.
 
 Verification evidence for Task 40E4a:
-- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 9 Swift Testing tests.
+- `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteFileBrowserStoreTests -only-testing:WatermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 9 Swift Testing tests.
 - `git diff --check` passed.
-- `xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
-- `xcodebuild build-for-testing -quiet -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed with existing Swift 6 isolation and XCTest deployment warnings.
+- `xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO` passed.
+- `xcodebuild build-for-testing -quiet -project Waterm.xcodeproj -scheme Waterm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed with existing Swift 6 isolation and XCTest deployment warnings.
 
 Verification evidence for Task 40E4b:
-- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFilePreviewCoordinatorTests -only-testing:VVTermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 4 Swift Testing tests.
-- `rg -n "Task \\{\\n\\s*await saveEditedText|private func saveEditedText\\(for entry: RemoteFileEntry\\) async|try await browser\\.saveTextPreview" VVTerm/Features/RemoteFiles -g '*.swift' -U` produced no matches.
+- `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteFilePreviewCoordinatorTests -only-testing:WatermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 4 Swift Testing tests.
+- `rg -n "Task \\{\\n\\s*await saveEditedText|private func saveEditedText\\(for entry: RemoteFileEntry\\) async|try await browser\\.saveTextPreview" Waterm/Features/RemoteFiles -g '*.swift' -U` produced no matches.
 - `git diff --check` passed.
-- `xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
-- `xcodebuild build-for-testing -quiet -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed with existing Swift 6 isolation and XCTest deployment warnings.
+- `xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO` passed.
+- `xcodebuild build-for-testing -quiet -project Waterm.xcodeproj -scheme Waterm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed with existing Swift 6 isolation and XCTest deployment warnings.
 
 Verification evidence for Task 40E4c:
-- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO` first failed to compile with missing `RemoteFileBrowserStore.requestTransfer`, `pendingTransferRequestIDs`, and `waitForTransferRequest`.
-- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 12 Swift Testing tests after the transfer request owner and UI delegation changes.
-- `rg -n "Task \\{\\n\\s*do \\{\\n\\s*try await operation \\{ progress in|func beginUploadFlow\\(urls: \\[URL\\], to destinationPath: String, initialMessage: String\\) \\{\\n\\s*Task \\{|Task \\{\\n\\s*do \\{\\n\\s*let temporaryURL = try preparedTemporaryURL\\.get\\(\\)|Task \\{ @MainActor in\\n\\s*do \\{\\n\\s*try await export\\(entry, url\\)" VVTerm/Features/RemoteFiles -g '*.swift' -U` produced no matches.
+- `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteFileBrowserStoreTests -only-testing:WatermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO` first failed to compile with missing `RemoteFileBrowserStore.requestTransfer`, `pendingTransferRequestIDs`, and `waitForTransferRequest`.
+- `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteFileBrowserStoreTests -only-testing:WatermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 12 Swift Testing tests after the transfer request owner and UI delegation changes.
+- `rg -n "Task \\{\\n\\s*do \\{\\n\\s*try await operation \\{ progress in|func beginUploadFlow\\(urls: \\[URL\\], to destinationPath: String, initialMessage: String\\) \\{\\n\\s*Task \\{|Task \\{\\n\\s*do \\{\\n\\s*let temporaryURL = try preparedTemporaryURL\\.get\\(\\)|Task \\{ @MainActor in\\n\\s*do \\{\\n\\s*try await export\\(entry, url\\)" Waterm/Features/RemoteFiles -g '*.swift' -U` produced no matches.
 - `git diff --check` passed.
-- `xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
-- `xcodebuild build-for-testing -quiet -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed with existing Swift 6 isolation and XCTest deployment warnings.
+- `xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO` passed.
+- `xcodebuild build-for-testing -quiet -project Waterm.xcodeproj -scheme Waterm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed with existing Swift 6 isolation and XCTest deployment warnings.
 
 Verification evidence for Task 40E5:
-- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalThemeManagerLifecycleTests ENABLE_DEBUG_DYLIB=NO` first failed to compile with missing `TerminalThemeCustomThemeStoring`, `TerminalThemeCloudStoring`, `TerminalThemeSyncCoordinating`, `pendingCloudSyncRequestIDs`, `waitForCloudSyncRequest(_:)`, a private initializer, and non-throwing delete.
-- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalThemeManagerLifecycleTests ENABLE_DEBUG_DYLIB=NO` passed 6 Swift Testing tests after the review fixes for concrete store partial writes and foreground sync request tracking.
-- `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalThemeManagerLifecycleTests -only-testing:VVTermTests/TerminalThemeValidationTests -only-testing:VVTermTests/TerminalThemeStoragePathsTests -only-testing:VVTermTests/SettingsLifecycleBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 9 Swift Testing tests plus 4 XCTest tests.
-- `rg -n "try\\? terminalThemeManager\\.deleteCustomTheme|try\\? .*saveThemes|syncCustomThemeFiles\\(|Task \\{ @MainActor \\[weak self\\]" VVTerm/Features/TerminalThemes/Application/TerminalThemeManager.swift VVTerm/Features/Settings/UI/TerminalSettingsView.swift` found no UI-swallowed custom-theme delete or swallowed `saveThemes` failure; remaining hits are the TerminalThemes application owner or custom-theme store internals.
+- `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalThemeManagerLifecycleTests ENABLE_DEBUG_DYLIB=NO` first failed to compile with missing `TerminalThemeCustomThemeStoring`, `TerminalThemeCloudStoring`, `TerminalThemeSyncCoordinating`, `pendingCloudSyncRequestIDs`, `waitForCloudSyncRequest(_:)`, a private initializer, and non-throwing delete.
+- `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalThemeManagerLifecycleTests ENABLE_DEBUG_DYLIB=NO` passed 6 Swift Testing tests after the review fixes for concrete store partial writes and foreground sync request tracking.
+- `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalThemeManagerLifecycleTests -only-testing:WatermTests/TerminalThemeValidationTests -only-testing:WatermTests/TerminalThemeStoragePathsTests -only-testing:WatermTests/SettingsLifecycleBoundaryTests ENABLE_DEBUG_DYLIB=NO` passed 9 Swift Testing tests plus 4 XCTest tests.
+- `rg -n "try\\? terminalThemeManager\\.deleteCustomTheme|try\\? .*saveThemes|syncCustomThemeFiles\\(|Task \\{ @MainActor \\[weak self\\]" Waterm/Features/TerminalThemes/Application/TerminalThemeManager.swift Waterm/Features/Settings/UI/TerminalSettingsView.swift` found no UI-swallowed custom-theme delete or swallowed `saveThemes` failure; remaining hits are the TerminalThemes application owner or custom-theme store internals.
 - `git diff --check` passed.
-- `xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
-- `xcodebuild build-for-testing -quiet -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed with existing Swift 6 isolation and XCTest deployment warnings; no TerminalThemeManager warning remained after removing a redundant await.
+- `xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO` passed.
+- `xcodebuild build-for-testing -quiet -project Waterm.xcodeproj -scheme Waterm -destination 'platform=macOS' -parallel-testing-enabled NO -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO CODE_SIGNING_ALLOWED=NO` passed with existing Swift 6 isolation and XCTest deployment warnings; no TerminalThemeManager warning remained after removing a redundant await.
 
 - [x] **Step 5: API and boundary cleanup**
 
@@ -3070,15 +3070,15 @@ Commit each split sub-task atomically.
 ## Task 41: Terminal Open Intent Ownership
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/App/ContentView.swift`
-- Modify: `VVTerm/Core/UI/SidebarComponents.swift`
-- Modify: `VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabComponents.swift`
-- Modify: `VVTerm/App/iOS/iOSContentView.swift`
-- Test: `VVTermTests/TerminalOpenIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/App/ContentView.swift`
+- Modify: `Waterm/Core/UI/SidebarComponents.swift`
+- Modify: `Waterm/Features/Servers/UI/Sidebar/ServerSidebarView.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Tabs/ConnectionTabComponents.swift`
+- Modify: `Waterm/App/iOS/iOSContentView.swift`
+- Test: `WatermTests/TerminalOpenIntentBoundaryTests.swift`
 - Test: focused manager lifecycle tests if source-boundary tests expose missing request tracking.
 - Modify: `docs/refactor-swift-best-practice.md`
 
@@ -3099,7 +3099,7 @@ Add `TerminalOpenIntentBoundaryTests` with a `Test Context` header. The tests mu
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalOpenIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalOpenIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the new boundary test fails because `ContentView`, `SidebarComponents`, `ServerSidebarView`, `ConnectionTabComponents`, and any remaining terminal-tab UI entry points still own open tasks or swallow open errors.
@@ -3133,7 +3133,7 @@ UI may still update purely visual state such as selected view, pending spinner, 
 Run the RED/GREEN boundary test plus the focused open lifecycle suites:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalOpenIntentBoundaryTests -only-testing:VVTermTests/ConnectionSessionManagerOpenTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalOpenIntentBoundaryTests -only-testing:WatermTests/ConnectionSessionManagerOpenTests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
 git diff --check
 ```
 
@@ -3152,11 +3152,11 @@ Request code review for Task 41. Fix Critical and Important findings, update the
 ## Task 42: Store Purchase Intent Ownership
 
 **Files:**
-- Modify: `VVTerm/Features/Store/Application/StoreManager.swift`
-- Modify: `VVTerm/Features/Store/UI/ProUpgradeSheet.swift`
-- Modify: `VVTerm/Features/Settings/UI/ProSettingsView.swift`
-- Test: `VVTermTests/Features/Store/StoreManagerLifecycleTests.swift`
-- Test: `VVTermTests/StorePurchaseIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/Store/Application/StoreManager.swift`
+- Modify: `Waterm/Features/Store/UI/ProUpgradeSheet.swift`
+- Modify: `Waterm/Features/Settings/UI/ProSettingsView.swift`
+- Test: `WatermTests/Features/Store/StoreManagerLifecycleTests.swift`
+- Test: `WatermTests/StorePurchaseIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -3178,7 +3178,7 @@ Add `StoreManagerLifecycleTests` with fake purchase/restore operations that avoi
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/StorePurchaseIntentBoundaryTests -only-testing:VVTermTests/StoreManagerLifecycleTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/StorePurchaseIntentBoundaryTests -only-testing:WatermTests/StoreManagerLifecycleTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the boundary test fails because `ProUpgradeSheet` and `ProSettingsView` still start Store purchase/restore tasks from SwiftUI, and the lifecycle test fails to compile because Store request tracking APIs do not exist.
@@ -3207,8 +3207,8 @@ UI may still present state derived from `purchaseState` and `restoreState`, but 
 Run the RED/GREEN Store lifecycle suite plus a Store UI boundary scan:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/StorePurchaseIntentBoundaryTests -only-testing:VVTermTests/StoreManagerLifecycleTests -only-testing:VVTermTests/Features/Store/StoreStateTests ENABLE_DEBUG_DYLIB=NO
-rg -n "Task \\{ await storeManager\\.(purchase|restorePurchases)|storeManager\\.purchase\\(|storeManager\\.restorePurchases\\(" VVTerm/Features/Store/UI/ProUpgradeSheet.swift VVTerm/Features/Settings/UI/ProSettingsView.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/StorePurchaseIntentBoundaryTests -only-testing:WatermTests/StoreManagerLifecycleTests -only-testing:WatermTests/Features/Store/StoreStateTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{ await storeManager\\.(purchase|restorePurchases)|storeManager\\.purchase\\(|storeManager\\.restorePurchases\\(" Waterm/Features/Store/UI/ProUpgradeSheet.swift Waterm/Features/Settings/UI/ProSettingsView.swift
 git diff --check
 ```
 
@@ -3229,8 +3229,8 @@ Review result: initial review found one Important issue: real `purchase(_:)` and
 ## Task 43: Store Lifecycle Refresh Task Tracking
 
 **Files:**
-- Modify: `VVTerm/Features/Store/Application/StoreManager.swift`
-- Test: `VVTermTests/Features/Store/StoreManagerLifecycleTests.swift`
+- Modify: `Waterm/Features/Store/Application/StoreManager.swift`
+- Test: `WatermTests/Features/Store/StoreManagerLifecycleTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -3250,7 +3250,7 @@ Extend `StoreManagerLifecycleTests` with fake load-products and check-entitlemen
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/StoreManagerLifecycleTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/StoreManagerLifecycleTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the test fails to compile because StoreManager does not yet expose injectable lifecycle refresh operations or awaitable startup/review-mode refresh tracking hooks.
@@ -3270,8 +3270,8 @@ Replace the `Task { await checkEntitlements() }` created when review mode is dis
 Run the focused Store lifecycle tests plus a source scan for the old untracked Store lifecycle tasks:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/StoreManagerLifecycleTests ENABLE_DEBUG_DYLIB=NO
-rg -n "Task \\{\\s*(await loadProducts\\(\\)|await checkEntitlements\\(\\))|Task \\{ await checkEntitlements\\(\\) \\}" VVTerm/Features/Store/Application/StoreManager.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/StoreManagerLifecycleTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{\\s*(await loadProducts\\(\\)|await checkEntitlements\\(\\))|Task \\{ await checkEntitlements\\(\\) \\}" Waterm/Features/Store/Application/StoreManager.swift
 git diff --check
 ```
 
@@ -3290,8 +3290,8 @@ Review result: initial review found one Important issue: canceling a superseded 
 ## Task 44: Terminal Accessory Cloud Sync Task Tracking
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalAccessories/Application/TerminalAccessoryPreferencesManager.swift`
-- Test: `VVTermTests/Features/TerminalAccessories/TerminalAccessoryPreferencesManagerTests.swift`
+- Modify: `Waterm/Features/TerminalAccessories/Application/TerminalAccessoryPreferencesManager.swift`
+- Test: `WatermTests/Features/TerminalAccessories/TerminalAccessoryPreferencesManagerTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -3313,7 +3313,7 @@ Extend `TerminalAccessoryPreferencesManagerTests` with fake cloud sync and fake 
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalAccessoryPreferencesManagerTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalAccessoryPreferencesManagerTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the test fails to compile because `TerminalAccessoryPreferencesManager` does not expose injectable cloud sync / pending drain dependencies or awaitable startup sync tracking hooks. If compile succeeds unexpectedly, the source-boundary test must fail on the old untracked startup/observer `Task` forms.
@@ -3333,8 +3333,8 @@ Replace the init-time `Task { await syncWithCloud(); await syncCoordinator.drain
 Run the focused TerminalAccessories lifecycle tests and a source scan for old untracked cloud sync task forms:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalAccessoryPreferencesManagerTests ENABLE_DEBUG_DYLIB=NO
-rg -n "Task \\{\\s*(await syncWithCloud\\(|@MainActor \\[weak self\\].*syncWithCloud|await self\\?\\.syncWithCloudIfNeededForForeground|await self\\.syncWithCloud\\()" VVTerm/Features/TerminalAccessories/Application/TerminalAccessoryPreferencesManager.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalAccessoryPreferencesManagerTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{\\s*(await syncWithCloud\\(|@MainActor \\[weak self\\].*syncWithCloud|await self\\?\\.syncWithCloudIfNeededForForeground|await self\\.syncWithCloud\\()" Waterm/Features/TerminalAccessories/Application/TerminalAccessoryPreferencesManager.swift
 git diff --check
 ```
 
@@ -3353,10 +3353,10 @@ Review result: initial review found one Important issue: disabling sync canceled
 ## Task 45: Server Form Keychain Read Boundary
 
 **Files:**
-- Create: `VVTerm/Features/Servers/Application/ServerFormCredentialProvider.swift`
-- Modify: `VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift`
-- Test: `VVTermTests/ServerFormCredentialProviderTests.swift`
-- Test: `VVTermTests/ServerFormCredentialBoundaryTests.swift`
+- Create: `Waterm/Features/Servers/Application/ServerFormCredentialProvider.swift`
+- Modify: `Waterm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift`
+- Test: `WatermTests/ServerFormCredentialProviderTests.swift`
+- Test: `WatermTests/ServerFormCredentialBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -3380,7 +3380,7 @@ Add `ServerFormCredentialProviderTests` with an in-memory fake library. Cover st
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerFormCredentialProviderTests -only-testing:VVTermTests/ServerFormCredentialBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerFormCredentialProviderTests -only-testing:WatermTests/ServerFormCredentialBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the provider tests fail to compile because `ServerFormCredentialProvider`, `ServerFormCredentialLibrary`, and `ServerFormStoredSSHKeyMaterial` do not exist. If those compile unexpectedly, the boundary test must fail because `ServerFormSheet.swift` still directly references `KeychainManager.shared`.
@@ -3400,8 +3400,8 @@ Inject `ServerFormCredentialProvider.shared` into `ServerFormSheet` via a privat
 Run the focused provider/boundary tests, a source scan for direct `KeychainManager.shared` in `ServerFormSheet.swift`, and `git diff --check`:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerFormCredentialProviderTests -only-testing:VVTermTests/ServerFormCredentialBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "KeychainManager\\.shared" VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerFormCredentialProviderTests -only-testing:WatermTests/ServerFormCredentialBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "KeychainManager\\.shared" Waterm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift
 git diff --check
 ```
 
@@ -3420,10 +3420,10 @@ Review result: initial review found one Important behavior-preservation issue: a
 ## Task 46: Sync Settings CloudKit Status Boundary
 
 **Files:**
-- Create: `VVTerm/Features/Settings/Application/SyncSettingsStore.swift`
-- Modify: `VVTerm/Features/Settings/UI/SyncSettingsView.swift`
-- Test: `VVTermTests/SyncSettingsStoreTests.swift`
-- Test: `VVTermTests/SettingsLifecycleBoundaryTests.swift`
+- Create: `Waterm/Features/Settings/Application/SyncSettingsStore.swift`
+- Modify: `Waterm/Features/Settings/UI/SyncSettingsView.swift`
+- Test: `WatermTests/SyncSettingsStoreTests.swift`
+- Test: `WatermTests/SettingsLifecycleBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -3447,7 +3447,7 @@ Add `SyncSettingsStoreTests` with fakes for CloudKit status and sync coordinatio
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/SyncSettingsStoreTests -only-testing:VVTermTests/SettingsLifecycleBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/SyncSettingsStoreTests -only-testing:WatermTests/SettingsLifecycleBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: `SyncSettingsStoreTests` fails to compile because `SyncSettingsStore`, `SyncSettingsCloudStatusProviding`, and `SyncSettingsCoordinating` do not exist. If those compile unexpectedly, the boundary test must fail because `SyncSettingsView.swift` still directly references CloudKit/app-sync singletons.
@@ -3467,8 +3467,8 @@ Replace `@ObservedObject private var cloudKit = CloudKitManager.shared` with the
 Run the focused store/boundary tests, source scans for direct singleton references in `SyncSettingsView.swift`, and `git diff --check`:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/SyncSettingsStoreTests -only-testing:VVTermTests/SettingsLifecycleBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "CloudKitManager\\.shared|AppSyncCoordinator\\.shared" VVTerm/Features/Settings/UI/SyncSettingsView.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/SyncSettingsStoreTests -only-testing:WatermTests/SettingsLifecycleBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "CloudKitManager\\.shared|AppSyncCoordinator\\.shared" Waterm/Features/Settings/UI/SyncSettingsView.swift
 git diff --check
 ```
 
@@ -3487,10 +3487,10 @@ Review result: subagent review was not spawned because the current tool contract
 ## Task 47: Workspace Form Save/Delete Intent Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/Servers/Application/ServerManager.swift`
-- Modify: `VVTerm/Features/Servers/UI/Workspace/WorkspaceFormSheet.swift`
-- Test: `VVTermTests/ServerManagerBootstrapTests.swift`
-- Test: `VVTermTests/WorkspaceFormIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/Servers/Application/ServerManager.swift`
+- Modify: `Waterm/Features/Servers/UI/Workspace/WorkspaceFormSheet.swift`
+- Test: `WatermTests/ServerManagerBootstrapTests.swift`
+- Test: `WatermTests/WorkspaceFormIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -3513,12 +3513,12 @@ Extend `ServerManagerBootstrapTests` with request-save coverage for successful w
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/WorkspaceFormIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests -only-testing:WatermTests/WorkspaceFormIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: `ServerManagerBootstrapTests` fails to compile because workspace save request APIs and `ServerWorkspaceSaveFailure` do not exist. If those compile unexpectedly, the boundary test must fail because `WorkspaceFormSheet.swift` still owns async CRUD `Task` wrappers and direct workspace CRUD calls.
 
-Actual RED result: `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/WorkspaceFormIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO` failed to compile before production changes because `ServerManager` did not expose `requestWorkspaceSave`, `pendingWorkspaceSaveRequestIDs`, `waitForWorkspaceSaveRequest`, or `workspaceSaveFailure`, and the contextual `.create` / `.update` save modes did not exist.
+Actual RED result: `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests -only-testing:WatermTests/WorkspaceFormIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO` failed to compile before production changes because `ServerManager` did not expose `requestWorkspaceSave`, `pendingWorkspaceSaveRequestIDs`, `waitForWorkspaceSaveRequest`, or `workspaceSaveFailure`, and the contextual `.create` / `.update` save modes did not exist.
 
 - [x] **Step 2: Add ServerManager workspace save request tracking**
 
@@ -3533,8 +3533,8 @@ Replace form-owned save/delete `Task` blocks with synchronous calls to `requestW
 Run focused manager/boundary tests, source scans for old async CRUD ownership in `WorkspaceFormSheet.swift`, and `git diff --check`:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/WorkspaceFormIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "Task \\{|try await serverManager\\.(addWorkspace|updateWorkspace|deleteWorkspace)" VVTerm/Features/Servers/UI/Workspace/WorkspaceFormSheet.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests -only-testing:WatermTests/WorkspaceFormIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{|try await serverManager\\.(addWorkspace|updateWorkspace|deleteWorkspace)" Waterm/Features/Servers/UI/Workspace/WorkspaceFormSheet.swift
 git diff --check
 ```
 
@@ -3555,10 +3555,10 @@ Review result: subagent review was not spawned because the current tool contract
 ## Task 48: Environment Form Save Intent Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/Servers/Application/ServerManager.swift`
-- Modify: `VVTerm/Features/Servers/UI/Workspace/EnvironmentFormSheet.swift`
-- Test: `VVTermTests/ServerManagerBootstrapTests.swift`
-- Test: `VVTermTests/EnvironmentFormIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/Servers/Application/ServerManager.swift`
+- Modify: `Waterm/Features/Servers/UI/Workspace/EnvironmentFormSheet.swift`
+- Test: `WatermTests/ServerManagerBootstrapTests.swift`
+- Test: `WatermTests/EnvironmentFormIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -3586,12 +3586,12 @@ try await serverManager.updateWorkspace
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/EnvironmentFormIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests -only-testing:WatermTests/EnvironmentFormIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: `ServerManagerBootstrapTests` fails to compile because environment save request APIs, save mode, pending request IDs, await hook, or failure state do not exist. If those compile unexpectedly, `EnvironmentFormIntentBoundaryTests` fails because `EnvironmentFormSheet.swift` still owns async save `Task` work and directly calls workspace/environment CRUD methods.
 
-Actual RED result: `xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/EnvironmentFormIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO` failed to compile before production changes because `ServerManager` did not expose `requestEnvironmentSave`, `ServerEnvironmentSaveMode.create/update`, `pendingEnvironmentSaveRequestIDs`, `waitForEnvironmentSaveRequest`, or `environmentSaveFailure`.
+Actual RED result: `xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests -only-testing:WatermTests/EnvironmentFormIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO` failed to compile before production changes because `ServerManager` did not expose `requestEnvironmentSave`, `ServerEnvironmentSaveMode.create/update`, `pendingEnvironmentSaveRequestIDs`, `waitForEnvironmentSaveRequest`, or `environmentSaveFailure`.
 
 - [x] **Step 2: Add ServerManager environment save request tracking**
 
@@ -3608,8 +3608,8 @@ Replace the form-owned save `Task` block with a synchronous call to `requestEnvi
 Run focused manager/boundary tests, source scans for old async CRUD ownership in `EnvironmentFormSheet.swift`, and `git diff --check`:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/EnvironmentFormIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "Task \\{|try await serverManager\\.(updateEnvironment|updateWorkspace)" VVTerm/Features/Servers/UI/Workspace/EnvironmentFormSheet.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests -only-testing:WatermTests/EnvironmentFormIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{|try await serverManager\\.(updateEnvironment|updateWorkspace)" Waterm/Features/Servers/UI/Workspace/EnvironmentFormSheet.swift
 git diff --check
 ```
 
@@ -3630,10 +3630,10 @@ Review result: subagent review was not spawned because the current tool contract
 ## Task 49: Server Form Save Intent Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/Servers/Application/ServerManager.swift`
-- Modify: `VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift`
-- Test: `VVTermTests/ServerManagerBootstrapTests.swift`
-- Test: `VVTermTests/ServerFormSaveIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/Servers/Application/ServerManager.swift`
+- Modify: `Waterm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift`
+- Test: `WatermTests/ServerManagerBootstrapTests.swift`
+- Test: `WatermTests/ServerFormSaveIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -3661,7 +3661,7 @@ try await serverManager.addServer(newServer, credentials: credentials)
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/ServerFormSaveIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests -only-testing:WatermTests/ServerFormSaveIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: `ServerManagerBootstrapTests` fails to compile because server save request APIs, save mode, pending request IDs, await hook, or failure state do not exist. If those compile unexpectedly, `ServerFormSaveIntentBoundaryTests` fails because `ServerFormSheet.saveServer()` still owns async credential/metadata save `Task` work and directly calls server CRUD methods.
@@ -3683,8 +3683,8 @@ Replace the save form-owned `Task` block with a synchronous call to `requestServ
 Run focused manager/boundary tests, source scans for old async CRUD ownership in `ServerFormSheet.swift`, and `git diff --check`:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/ServerFormSaveIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "try await serverManager\\.(updateServer|addServer)\\(newServer, credentials: credentials\\)|Task \\{" VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests -only-testing:WatermTests/ServerFormSaveIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "try await serverManager\\.(updateServer|addServer)\\(newServer, credentials: credentials\\)|Task \\{" Waterm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift
 git diff --check
 ```
 
@@ -3705,10 +3705,10 @@ Review result: code review found no Critical issues and three Task-49 findings: 
 ## Task 50: Server Move Intent Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/Servers/Application/ServerManager.swift`
-- Modify: `VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift`
-- Test: `VVTermTests/ServerManagerBootstrapTests.swift`
-- Test: `VVTermTests/ServerMoveIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/Servers/Application/ServerManager.swift`
+- Modify: `Waterm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift`
+- Test: `WatermTests/ServerManagerBootstrapTests.swift`
+- Test: `WatermTests/ServerMoveIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -3733,7 +3733,7 @@ let updatedServer = try await serverManager.moveServer(
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/ServerMoveIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests -only-testing:WatermTests/ServerMoveIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: `ServerManagerBootstrapTests` fails to compile because server move request APIs, pending request IDs, await hook, or failure state do not exist. If those compile unexpectedly, `ServerMoveIntentBoundaryTests` fails because `MoveServerSheet.moveServer()` still owns async server move `Task` work and directly calls `moveServer`.
@@ -3755,8 +3755,8 @@ Replace the move sheet-owned `Task` block with a synchronous call to `requestSer
 Run focused manager/boundary tests, source scans for old async move ownership in `MoveServerSheet.moveServer()`, and `git diff --check`:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerManagerBootstrapTests -only-testing:VVTermTests/ServerMoveIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-awk '/private func moveServer\\(\\)/,/private func sectionHeader/' VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerManagerBootstrapTests -only-testing:WatermTests/ServerMoveIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+awk '/private func moveServer\\(\\)/,/private func sectionHeader/' Waterm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift
 git diff --check
 ```
 
@@ -3777,10 +3777,10 @@ Actual review result: code review found an Important coverage gap for ordinary n
 ## Task 51: Server Form Connection Test Intent Boundary
 
 **Files:**
-- Create: `VVTerm/Features/Servers/Application/ServerConnectionTester.swift`
-- Modify: `VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift`
-- Test: `VVTermTests/ServerConnectionTesterTests.swift`
-- Test: `VVTermTests/ServerFormConnectionTestBoundaryTests.swift`
+- Create: `Waterm/Features/Servers/Application/ServerConnectionTester.swift`
+- Modify: `Waterm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift`
+- Test: `WatermTests/ServerConnectionTesterTests.swift`
+- Test: `WatermTests/ServerFormConnectionTestBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -3804,7 +3804,7 @@ Add `ServerConnectionTesterTests` with a Test Context header and fake `ServerCon
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerConnectionTesterTests -only-testing:VVTermTests/ServerFormConnectionTestBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerConnectionTesterTests -only-testing:WatermTests/ServerFormConnectionTestBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: `ServerConnectionTesterTests` fails to compile because `ServerConnectionTester`, `ServerConnectionTesting`, request IDs, await hooks, or failure state do not exist. If those compile unexpectedly, `ServerFormConnectionTestBoundaryTests` fails because `ServerFormSheet` still owns async connection-test `Task` work and directly reaches Core SSH/mosh services.
@@ -3824,9 +3824,9 @@ Inject `ServerConnectionTester` into `ServerFormSheet` with `.shared` as the def
 Run focused tests, scoped source scans, and `git diff --check`:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerConnectionTesterTests -only-testing:VVTermTests/ServerFormConnectionTestBoundaryTests ENABLE_DEBUG_DYLIB=NO
-awk '/private var connectionSection/,/private var sessionSection/' VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift
-awk '/private func requestConnectionTest/,/private func saveServer/' VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerConnectionTesterTests -only-testing:WatermTests/ServerFormConnectionTestBoundaryTests ENABLE_DEBUG_DYLIB=NO
+awk '/private var connectionSection/,/private var sessionSection/' Waterm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift
+awk '/private func requestConnectionTest/,/private func saveServer/' Waterm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift
 git diff --check
 ```
 
@@ -3847,11 +3847,11 @@ Actual review result: code review found an Important cancellation gap where `Can
 ## Task 52: App Lock Authentication Intent Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/Security/Application/AppLockManager.swift`
-- Modify: `VVTerm/Features/Security/UI/AppLockGateView.swift`
-- Modify: `VVTerm/Features/Settings/UI/GeneralSettingsView.swift`
-- Test: `VVTermTests/Features/Security/AppLockManagerTests.swift`
-- Test: `VVTermTests/AppLockIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/Security/Application/AppLockManager.swift`
+- Modify: `Waterm/Features/Security/UI/AppLockGateView.swift`
+- Modify: `Waterm/Features/Settings/UI/GeneralSettingsView.swift`
+- Test: `WatermTests/Features/Security/AppLockManagerTests.swift`
+- Test: `WatermTests/AppLockIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -3876,7 +3876,7 @@ Add AppLock manager tests with delayed fake biometric auth. Cover that `requestF
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/AppLockManagerTests -only-testing:VVTermTests/AppLockIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/AppLockManagerTests -only-testing:WatermTests/AppLockIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: `AppLockManagerTests` fails to compile because `requestFullAppLockChange(_:)`, `requestAppUnlock()`, `waitForAppLockRequest(_:)`, or `pendingAppLockRequestIDs` do not exist. If those compile unexpectedly, `AppLockIntentBoundaryTests` fails because app-lock SwiftUI still launches authentication tasks directly.
@@ -3896,8 +3896,8 @@ Update `GeneralSettingsView` full-app-lock toggle setter to call `appLockManager
 Run focused tests, scoped source scans, and whitespace check:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/AppLockManagerTests -only-testing:VVTermTests/AppLockIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "Task \\{|requestSetFullAppLockEnabled|ensureAppUnlocked" VVTerm/Features/Security/UI/AppLockGateView.swift VVTerm/Features/Settings/UI/GeneralSettingsView.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/AppLockManagerTests -only-testing:WatermTests/AppLockIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{|requestSetFullAppLockEnabled|ensureAppUnlocked" Waterm/Features/Security/UI/AppLockGateView.swift Waterm/Features/Settings/UI/GeneralSettingsView.swift
 git diff --check
 ```
 
@@ -3918,10 +3918,10 @@ Actual review result: code review found no Critical issues. Important findings w
 ## Task 53: App Lifecycle Intent Boundary
 
 **Files:**
-- Create: `VVTerm/App/Application/AppLifecycleCoordinator.swift`
-- Modify: `VVTerm/App/VVTermApp.swift`
-- Test: `VVTermTests/AppLifecycleCoordinatorTests.swift`
-- Test: `VVTermTests/AppLifecycleIntentBoundaryTests.swift`
+- Create: `Waterm/App/Application/AppLifecycleCoordinator.swift`
+- Modify: `Waterm/App/WatermApp.swift`
+- Test: `WatermTests/AppLifecycleCoordinatorTests.swift`
+- Test: `WatermTests/AppLifecycleIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -3950,15 +3950,15 @@ Actual review result: code review found no Critical issues. Important findings w
 
 - [x] **Step 1: Add RED app lifecycle coordinator and source-boundary tests**
 
-Add `AppLifecycleCoordinatorTests` with a Test Context header. Use injected fake closures plus an async gate to cover: background suspension stays tracked until `suspendAllForBackground` finishes and then locks the app; termination teardown waits for both terminal-manager teardown closures before returning; foreground refresh respects sync-disabled and minimum-interval policy; remote notification completion waits on `AppSyncCoordinator` refresh completion. Add `AppLifecycleIntentBoundaryTests` with a Test Context header that reads `VVTermApp.swift` and fails while AppDelegate or the root SwiftUI locale hooks directly call lifecycle singletons or own `Task { ... }` wrappers for background suspension / termination teardown / app-language change.
+Add `AppLifecycleCoordinatorTests` with a Test Context header. Use injected fake closures plus an async gate to cover: background suspension stays tracked until `suspendAllForBackground` finishes and then locks the app; termination teardown waits for both terminal-manager teardown closures before returning; foreground refresh respects sync-disabled and minimum-interval policy; remote notification completion waits on `AppSyncCoordinator` refresh completion. Add `AppLifecycleIntentBoundaryTests` with a Test Context header that reads `WatermApp.swift` and fails while AppDelegate or the root SwiftUI locale hooks directly call lifecycle singletons or own `Task { ... }` wrappers for background suspension / termination teardown / app-language change.
 
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/AppLifecycleCoordinatorTests -only-testing:VVTermTests/AppLifecycleIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/AppLifecycleCoordinatorTests -only-testing:WatermTests/AppLifecycleIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
-Expected RED result: `AppLifecycleCoordinatorTests` fails to compile because `AppLifecycleCoordinator`, `requestBackgroundSuspension()`, `pendingBackgroundSuspensionRequestIDs`, `waitForBackgroundSuspensionRequest(_:)`, or termination teardown request APIs do not exist. If those compile unexpectedly, `AppLifecycleIntentBoundaryTests` fails because `VVTermApp.swift` still owns app lifecycle tasks or directly calls terminal/app-lock/sync/server-manager singletons from delegate/root lifecycle hooks.
+Expected RED result: `AppLifecycleCoordinatorTests` fails to compile because `AppLifecycleCoordinator`, `requestBackgroundSuspension()`, `pendingBackgroundSuspensionRequestIDs`, `waitForBackgroundSuspensionRequest(_:)`, or termination teardown request APIs do not exist. If those compile unexpectedly, `AppLifecycleIntentBoundaryTests` fails because `WatermApp.swift` still owns app lifecycle tasks or directly calls terminal/app-lock/sync/server-manager singletons from delegate/root lifecycle hooks.
 
 Actual RED result: the focused suite first failed to compile because `AppLifecycleCoordinator` did not exist. After the initial implementation exposed an untracked background-lock task, the review-cycle RED failed to compile because `pendingBackgroundLockRequestIDs` and `waitForBackgroundLockRequest(_:)` did not exist, proving background lock work still needed tracked ownership.
 
@@ -3968,19 +3968,19 @@ Create `AppLifecycleCoordinator` under App Application. Inject closures for term
 
 - [x] **Step 3: Route AppDelegate and root app lifecycle hooks through the coordinator**
 
-Update macOS and iOS `AppDelegate` methods so they only send intent to `AppLifecycleCoordinator.shared`. Preserve behavior: launch starts CloudKit subscription and remote notifications, foreground refresh still respects `SyncSettings.isEnabled` and the 20-second throttle, remote notification completion still calls the system completion handler after refresh, macOS termination waits through `applicationShouldTerminate(_:)` / `.terminateLater` until terminal teardown completes, and iOS background still suspends sessions before locking the app. Update `VVTermApp` `.onAppear` / `.onChange(of: appLanguage)` to apply the language selection and then call `AppLifecycleCoordinator.shared.handleAppLanguageChange(...)` instead of directly calling `ServerManager.shared`.
+Update macOS and iOS `AppDelegate` methods so they only send intent to `AppLifecycleCoordinator.shared`. Preserve behavior: launch starts CloudKit subscription and remote notifications, foreground refresh still respects `SyncSettings.isEnabled` and the 20-second throttle, remote notification completion still calls the system completion handler after refresh, macOS termination waits through `applicationShouldTerminate(_:)` / `.terminateLater` until terminal teardown completes, and iOS background still suspends sessions before locking the app. Update `WatermApp` `.onAppear` / `.onChange(of: appLanguage)` to apply the language selection and then call `AppLifecycleCoordinator.shared.handleAppLanguageChange(...)` instead of directly calling `ServerManager.shared`.
 
 - [x] **Step 4: Run focused verification**
 
 Run focused tests, scoped source scans, and whitespace check:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/AppLifecycleCoordinatorTests -only-testing:VVTermTests/AppLifecycleIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "awaitTerminalManagersTeardownBeforeExit|ConnectionSessionManager\\.shared\\.(disconnectAllAndWait|suspendAllForBackground)|TerminalTabManager\\.shared\\.disconnectAllAndWait|AppLockManager\\.shared\\.lockIfNeededForBackground|ServerManager\\.shared\\.handleAppLanguageChange|AppSyncCoordinator\\.shared" VVTerm/App/VVTermApp.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/AppLifecycleCoordinatorTests -only-testing:WatermTests/AppLifecycleIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "awaitTerminalManagersTeardownBeforeExit|ConnectionSessionManager\\.shared\\.(disconnectAllAndWait|suspendAllForBackground)|TerminalTabManager\\.shared\\.disconnectAllAndWait|AppLockManager\\.shared\\.lockIfNeededForBackground|ServerManager\\.shared\\.handleAppLanguageChange|AppSyncCoordinator\\.shared" Waterm/App/WatermApp.swift
 git diff --check
 ```
 
-Actual GREEN result: the focused suite passed 7 Swift Testing tests in 2 suites. Source scans showed direct terminal teardown, background suspend, app-lock, app-sync, and server-language singleton calls moved out of `VVTermApp.swift` and into `AppLifecycleCoordinator`; tracked task scans showed app lock, background suspend, remote notification refresh, and termination teardown expose request IDs plus await hooks. `git diff --check` passed.
+Actual GREEN result: the focused suite passed 7 Swift Testing tests in 2 suites. Source scans showed direct terminal teardown, background suspend, app-lock, app-sync, and server-language singleton calls moved out of `WatermApp.swift` and into `AppLifecycleCoordinator`; tracked task scans showed app lock, background suspend, remote notification refresh, and termination teardown expose request IDs plus await hooks. `git diff --check` passed.
 
 - [x] **Step 5: API and boundary cleanup**
 
@@ -3997,12 +3997,12 @@ Actual review result: local lifecycle review found no Critical issues. Important
 ## Task 54: Terminal Install Intent Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
-- Test: `VVTermTests/TerminalInstallIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `WatermTests/TerminalInstallIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -4032,7 +4032,7 @@ Extend `ConnectionLifecycleIntegrationTests` with request-ordering coverage for 
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalInstallIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalInstallIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because `requestTmuxInstall`, `pendingTmuxInstallRequestIDs`, `waitForTmuxInstallRequest(_:)`, `requestMoshInstallAndReconnect`, `pendingMoshInstallRequestIDs`, `waitForMoshInstallRequest(_:)`, `lastMoshInstallFailure`, and DEBUG install-operation injection hooks do not exist. If those compile unexpectedly, `TerminalInstallIntentBoundaryTests` fails because terminal UI install buttons still launch install work inside SwiftUI-owned `Task` blocks.
@@ -4056,9 +4056,9 @@ Update `TerminalContainerView` and split `TerminalView` install alerts so button
 Run focused tests, source scans, and whitespace check:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalInstallIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "Task \\{[^\\n]*(startTmuxInstall|installMoshServerAndReconnect)|startTmuxInstall\\(|installMoshServerAndReconnect\\(" VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift
-rg -n "Task \\{ \\[weak self\\] in|Task\\.detached" VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalInstallIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{[^\\n]*(startTmuxInstall|installMoshServerAndReconnect)|startTmuxInstall\\(|installMoshServerAndReconnect\\(" Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift
+rg -n "Task \\{ \\[weak self\\] in|Task\\.detached" Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift
 git diff --check
 ```
 
@@ -4077,12 +4077,12 @@ Request code review for Task 54. Fix Critical and Important findings, update the
 ## Task 55: Terminal Retry Intent Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
-- Test: `VVTermTests/TerminalRetryIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `WatermTests/TerminalRetryIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -4105,7 +4105,7 @@ Extend `ConnectionLifecycleIntegrationTests` with request-ordering coverage for 
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalRetryIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalRetryIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because `requestSessionRetry`, `pendingSessionRetryRequestIDs`, `waitForSessionRetryRequest(_:)`, `requestPaneRetry`, `pendingPaneRetryRequestIDs`, `waitForPaneRetryRequest(_:)`, and DEBUG retry-operation injection hooks do not exist. If those compile unexpectedly, `TerminalRetryIntentBoundaryTests` fails because terminal retry UI still owns async retry tasks or calls the old async retry helpers directly.
@@ -4123,9 +4123,9 @@ Update `TerminalContainerView.retryConnection()` and split `TerminalView.retryCo
 Run focused tests, source scans, and whitespace check:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalRetryIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "Task \\{[^\\n]*await retryConnection|await retryConnection\\(|retrySessionConnection\\(|retryPaneConnection\\(" VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift
-rg -n "Task \\{ \\[weak self\\] in|Task\\.detached" VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalRetryIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{[^\\n]*await retryConnection|await retryConnection\\(|retrySessionConnection\\(|retryPaneConnection\\(" Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift
+rg -n "Task \\{ \\[weak self\\] in|Task\\.detached" Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift
 git diff --check
 ```
 
@@ -4142,12 +4142,12 @@ Request code review for Task 55. Fix Critical and Important findings, update the
 ## Task 56: Terminal Voice Input Intent Boundary
 
 **Files:**
-- Create: `VVTerm/Features/TerminalSessions/Application/TerminalVoiceInputStore.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/VoiceRecordingView.swift`
-- Test: `VVTermTests/TerminalVoiceInputStoreTests.swift`
-- Test: `VVTermTests/TerminalVoiceInputIntentBoundaryTests.swift`
+- Create: `Waterm/Features/TerminalSessions/Application/TerminalVoiceInputStore.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/VoiceRecordingView.swift`
+- Test: `WatermTests/TerminalVoiceInputStoreTests.swift`
+- Test: `WatermTests/TerminalVoiceInputIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -4181,7 +4181,7 @@ Add `TerminalVoiceInputIntentBoundaryTests` with a Test Context header. The test
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalVoiceInputStoreTests -only-testing:VVTermTests/TerminalVoiceInputIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalVoiceInputStoreTests -only-testing:WatermTests/TerminalVoiceInputIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because `TerminalVoiceInputStore`, `TerminalVoiceInputTarget`, tracked request APIs, await hooks, and the fake-audio seam do not exist. If those compile unexpectedly, the source-boundary test fails because terminal voice UI still owns `AudioService` and direct start/stop/cancel tasks.
@@ -4209,8 +4209,8 @@ Update split `TerminalView` and `VoiceRecordingView` the same way. Preserve exis
 Run focused tests, source scans, and whitespace check:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalVoiceInputStoreTests -only-testing:VVTermTests/TerminalVoiceInputIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "@StateObject private var audioService|audioService\\.(startRecording|stopRecording|cancelRecording)|Task \\{" VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTerm/Features/TerminalSessions/UI/Terminal/VoiceRecordingView.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalVoiceInputStoreTests -only-testing:WatermTests/TerminalVoiceInputIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "@StateObject private var audioService|audioService\\.(startRecording|stopRecording|cancelRecording)|Task \\{" Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift Waterm/Features/TerminalSessions/UI/Terminal/VoiceRecordingView.swift
 git diff --check
 ```
 
@@ -4227,12 +4227,12 @@ Request code review for Task 56. Fix Critical and Important findings, update the
 ## Task 57: Terminal Host Retrust Intent Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
-- Test: `VVTermTests/TerminalRetrustIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `WatermTests/TerminalRetrustIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -4263,7 +4263,7 @@ Add `TerminalRetrustIntentBoundaryTests` with a Test Context header. The tests m
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalRetrustIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalRetrustIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because the request APIs, pending request IDs, wait hooks, and DEBUG operation seams do not exist. If those compile unexpectedly, the source-boundary tests fail because SwiftUI still owns retrust `Task` wrappers and directly awaits the old async helpers.
@@ -4288,8 +4288,8 @@ Update root `TerminalContainerView.retrustHostAndRetry()` and split `TerminalVie
 Run focused tests, source scans, and whitespace check:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalRetrustIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "Task \\{|retrustHostAndReconnect|requestSessionHostRetrust|requestPaneHostRetrust" VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalRetrustIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{|retrustHostAndReconnect|requestSessionHostRetrust|requestPaneHostRetrust" Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift
 git diff --check
 ```
 
@@ -4306,11 +4306,11 @@ Request code review for Task 57. Fix Critical and Important findings, update the
 ## Task 58: App-Owned Server Disconnect Intent Boundary
 
 **Files:**
-- Create: `VVTerm/App/Application/ServerConnectionLifecycleCoordinator.swift`
-- Modify: `VVTerm/App/iOS/iOSContentView.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift`
-- Test: `VVTermTests/ServerConnectionLifecycleCoordinatorTests.swift`
-- Test: `VVTermTests/ServerDisconnectIntentBoundaryTests.swift`
+- Create: `Waterm/App/Application/ServerConnectionLifecycleCoordinator.swift`
+- Modify: `Waterm/App/iOS/iOSContentView.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift`
+- Test: `WatermTests/ServerConnectionLifecycleCoordinatorTests.swift`
+- Test: `WatermTests/ServerDisconnectIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -4341,7 +4341,7 @@ Add `ServerDisconnectIntentBoundaryTests` with a Test Context header. Source-sca
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerConnectionLifecycleCoordinatorTests -only-testing:VVTermTests/ServerDisconnectIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerConnectionLifecycleCoordinatorTests -only-testing:WatermTests/ServerDisconnectIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because `ServerConnectionLifecycleCoordinator` does not exist. If it compiles unexpectedly, the boundary tests fail because SwiftUI still owns the disconnect `Task` wrappers and direct multi-step teardown sequencing.
@@ -4368,8 +4368,8 @@ The UI functions should become synchronous intent senders. They may update prese
 - [x] **Step 4: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerConnectionLifecycleCoordinatorTests -only-testing:VVTermTests/ServerDisconnectIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "disconnectActiveConnection|disconnectCurrentServerSessions|disconnectFromServer|Task \\{|disconnectServerAndWait|requestServerDisconnect|fileBrowser.disconnect|fileTabs.disconnect|fileTabManager.disconnect" VVTerm/App/iOS/iOSContentView.swift VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerConnectionLifecycleCoordinatorTests -only-testing:WatermTests/ServerDisconnectIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "disconnectActiveConnection|disconnectCurrentServerSessions|disconnectFromServer|Task \\{|disconnectServerAndWait|requestServerDisconnect|fileBrowser.disconnect|fileTabs.disconnect|fileTabManager.disconnect" Waterm/App/iOS/iOSContentView.swift Waterm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift
 git diff --check
 ```
 
@@ -4386,12 +4386,12 @@ Request code review for Task 58. Fix Critical and Important findings, update the
 ## Task 59: Terminal Surface Attach Intent Boundary
 
 **Files:**
-- Create: `VVTermTests/TerminalSurfaceAttachIntentTests.swift`
-- Create: `VVTermTests/TerminalSurfaceAttachBoundaryTests.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Create: `WatermTests/TerminalSurfaceAttachIntentTests.swift`
+- Create: `WatermTests/TerminalSurfaceAttachBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -4422,7 +4422,7 @@ Add `TerminalSurfaceAttachBoundaryTests` with a Test Context header. Source-scan
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSurfaceAttachIntentTests -only-testing:VVTermTests/TerminalSurfaceAttachBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalSurfaceAttachIntentTests -only-testing:WatermTests/TerminalSurfaceAttachBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because `TerminalSurfaceAttachContext`, `requestSurfaceAttach(...)`, pending request IDs, wait hooks, and DEBUG attach seams do not exist. If it compiles unexpectedly, boundary tests fail because representables still own shell-state checks and attach `Task` wrappers.
@@ -4459,8 +4459,8 @@ This task deliberately leaves resize/input/rich-paste callback `Task` bridges fo
 - [x] **Step 5: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSurfaceAttachIntentTests -only-testing:VVTermTests/TerminalSurfaceAttachBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "attachSurface\\(|requestSurfaceAttach|shellId\\(for:|isShellStartInFlight|consumeTerminalReconnectReset|Task \\{[^\\n]*attachSurface|resizeSession|resizePane" VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalSurfaceAttachIntentTests -only-testing:WatermTests/TerminalSurfaceAttachBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "attachSurface\\(|requestSurfaceAttach|shellId\\(for:|isShellStartInFlight|consumeTerminalReconnectReset|Task \\{[^\\n]*attachSurface|resizeSession|resizePane" Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift
 git diff --check
 ```
 
@@ -4477,12 +4477,12 @@ Request code review for Task 59. Fix Critical and Important findings, update the
 ## Task 60: Terminal Input Intent Boundary
 
 **Files:**
-- Create: `VVTermTests/TerminalInputIntentTests.swift`
-- Create: `VVTermTests/TerminalInputBoundaryTests.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Create: `WatermTests/TerminalInputIntentTests.swift`
+- Create: `WatermTests/TerminalInputBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -4512,7 +4512,7 @@ Add `TerminalInputBoundaryTests` with a Test Context header. Source-scan:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalInputIntentTests -only-testing:VVTermTests/TerminalInputBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalInputIntentTests -only-testing:WatermTests/TerminalInputBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because `requestSessionInput(...)`, `requestPaneInput(...)`, pending input request IDs, wait hooks, and DEBUG input seams do not exist. If it compiles unexpectedly, boundary tests fail because representables still own input `Task` wrappers.
@@ -4548,8 +4548,8 @@ This task deliberately leaves resize, rich-paste, title/background parsing, proc
 - [x] **Step 5: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalInputIntentTests -only-testing:VVTermTests/TerminalInputBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "sendInput\\(|requestSessionInput|requestPaneInput|Task \\{[^\\n]*sendInput|Task\\([^\\n]*sendInput" VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalInputIntentTests -only-testing:WatermTests/TerminalInputBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "sendInput\\(|requestSessionInput|requestPaneInput|Task \\{[^\\n]*sendInput|Task\\([^\\n]*sendInput" Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift
 git diff --check
 ```
 
@@ -4566,13 +4566,13 @@ Request code review for Task 60. Fix Critical and Important findings, update the
 ## Task 61: Terminal Resize Intent Boundary
 
 **Files:**
-- Create: `VVTermTests/TerminalResizeIntentTests.swift`
-- Create: `VVTermTests/TerminalResizeBoundaryTests.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Modify: `VVTerm/App/iOS/iOSContentView.swift`
+- Create: `WatermTests/TerminalResizeIntentTests.swift`
+- Create: `WatermTests/TerminalResizeBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Modify: `Waterm/App/iOS/iOSContentView.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -4605,7 +4605,7 @@ Add `TerminalResizeBoundaryTests` with a Test Context header. Source-scan:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalResizeIntentTests -only-testing:VVTermTests/TerminalResizeBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalResizeIntentTests -only-testing:WatermTests/TerminalResizeBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because `TerminalResizeRequestSize`, `requestSessionResize(...)`, `requestPaneResize(...)`, pending resize request IDs, wait hooks, and DEBUG resize seams do not exist. If it compiles unexpectedly, boundary tests fail because representables and iOS redraw still own resize `Task` wrappers.
@@ -4647,8 +4647,8 @@ This task deliberately leaves rich paste, title/PWD/background callbacks, proces
 - [x] **Step 5: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalResizeIntentTests -only-testing:VVTermTests/TerminalResizeBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "resizeSession\\(|resizePane\\(|requestSessionResize|requestPaneResize|Task \\{[^\\n]*resize|Task\\([^\\n]*resize" VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTerm/App/iOS/iOSContentView.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalResizeIntentTests -only-testing:WatermTests/TerminalResizeBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "resizeSession\\(|resizePane\\(|requestSessionResize|requestPaneResize|Task \\{[^\\n]*resize|Task\\([^\\n]*resize" Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift Waterm/App/iOS/iOSContentView.swift
 git diff --check
 ```
 
@@ -4665,10 +4665,10 @@ Request code review for Task 61. Fix Critical and Important findings, update the
 ## Task 62: Terminal Pane Process Exit Intent Boundary
 
 **Files:**
-- Create: `VVTermTests/TerminalProcessExitIntentTests.swift`
-- Create: `VVTermTests/TerminalProcessExitBoundaryTests.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Create: `WatermTests/TerminalProcessExitIntentTests.swift`
+- Create: `WatermTests/TerminalProcessExitBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -4696,12 +4696,12 @@ Add `TerminalProcessExitBoundaryTests` with a Test Context header. Source-scan:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalProcessExitIntentTests -only-testing:VVTermTests/TerminalProcessExitBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalProcessExitIntentTests -only-testing:WatermTests/TerminalProcessExitBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because `requestPaneProcessExit(...)`, pending process-exit request IDs, wait hooks, and DEBUG process-exit seams do not exist. If it compiles unexpectedly, boundary tests fail because split process exit still uses a SwiftUI-owned `Task` wrapper.
 
-RED result: `xcodebuild test ... -only-testing:VVTermTests/TerminalProcessExitIntentTests -only-testing:VVTermTests/TerminalProcessExitBoundaryTests ENABLE_DEBUG_DYLIB=NO` failed to build because `TerminalTabManager` had no `setProcessExitOperationForTesting(...)`; the remaining missing request/pending/wait APIs were still unimplemented at the same boundary.
+RED result: `xcodebuild test ... -only-testing:WatermTests/TerminalProcessExitIntentTests -only-testing:WatermTests/TerminalProcessExitBoundaryTests ENABLE_DEBUG_DYLIB=NO` failed to build because `TerminalTabManager` had no `setProcessExitOperationForTesting(...)`; the remaining missing request/pending/wait APIs were still unimplemented at the same boundary.
 
 - [x] **Step 2: Add split-pane process-exit requests**
 
@@ -4718,8 +4718,8 @@ Do not widen this task into root session process-exit, rich paste upload ownersh
 - [x] **Step 4: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalProcessExitIntentTests -only-testing:VVTermTests/TerminalProcessExitBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "handlePaneExit\\(|requestPaneProcessExit|Task \\{[^\\n]*handlePaneExit" VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalProcessExitIntentTests -only-testing:WatermTests/TerminalProcessExitBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "handlePaneExit\\(|requestPaneProcessExit|Task \\{[^\\n]*handlePaneExit" Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift
 git diff --check
 ```
 
@@ -4736,10 +4736,10 @@ Request code review for Task 62. Fix Critical and Important findings, update the
 ## Task 63: Root Terminal Process Exit Intent Boundary
 
 **Files:**
-- Modify: `VVTermTests/TerminalProcessExitIntentTests.swift`
-- Modify: `VVTermTests/TerminalProcessExitBoundaryTests.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `WatermTests/TerminalProcessExitIntentTests.swift`
+- Modify: `WatermTests/TerminalProcessExitBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -4768,7 +4768,7 @@ Extend `TerminalProcessExitBoundaryTests` with a source scan:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalProcessExitIntentTests -only-testing:VVTermTests/TerminalProcessExitBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalProcessExitIntentTests -only-testing:WatermTests/TerminalProcessExitBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because `requestSessionProcessExit(...)`, root pending process-exit request IDs, wait hooks, and DEBUG process-exit seams do not exist on `ConnectionSessionManager`. If it compiles unexpectedly, boundary tests fail because root process exit still uses a SwiftUI-owned `DispatchQueue.main.async` bridge to `handleShellExit(for:)`.
@@ -4788,8 +4788,8 @@ Do not widen this task into split-pane exit, rich paste upload ownership, title/
 - [x] **Step 4: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalProcessExitIntentTests -only-testing:VVTermTests/TerminalProcessExitBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "handleShellExit\\(|requestSessionProcessExit|DispatchQueue\\.main\\.async" VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalProcessExitIntentTests -only-testing:WatermTests/TerminalProcessExitBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "handleShellExit\\(|requestSessionProcessExit|DispatchQueue\\.main\\.async" Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift
 git diff --check
 ```
 
@@ -4806,12 +4806,12 @@ Request code review for Task 63. Fix Critical and Important findings, update the
 ## Task 64: RemoteFiles Preview Load Intent Boundary
 
 **Files:**
-- Modify: `VVTermTests/Features/RemoteFiles/RemoteFilePreviewCoordinatorTests.swift`
-- Modify: `VVTermTests/RemoteFileMutationIntentBoundaryTests.swift`
-- Modify: `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
-- Modify: `VVTerm/Features/RemoteFiles/Application/RemoteFilePreviewCoordinator.swift`
-- Modify: `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserIOSScreen.swift`
-- Modify: `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift`
+- Modify: `WatermTests/Features/RemoteFiles/RemoteFilePreviewCoordinatorTests.swift`
+- Modify: `WatermTests/RemoteFileMutationIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
+- Modify: `Waterm/Features/RemoteFiles/Application/RemoteFilePreviewCoordinator.swift`
+- Modify: `Waterm/Features/RemoteFiles/UI/RemoteFileBrowserIOSScreen.swift`
+- Modify: `Waterm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -4840,7 +4840,7 @@ Extend `RemoteFileMutationIntentBoundaryTests`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFilePreviewCoordinatorTests -only-testing:VVTermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteFilePreviewCoordinatorTests -only-testing:WatermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because `requestPreviewLoad(...)`, `pendingPreviewLoadRequestIDs`, and `waitForPreviewLoadRequest(_:)` do not exist on `RemoteFileBrowserStore`. If it compiles unexpectedly, boundary tests fail because macOS/iOS preview callbacks still create UI-owned `Task { await browser.loadPreview(...) }` wrappers.
@@ -4875,8 +4875,8 @@ Update `RemoteFileBrowserIOSScreen` and `RemoteFileBrowserMacScreen`:
 - [x] **Step 5: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFilePreviewCoordinatorTests -only-testing:VVTermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "requestPreviewLoad|loadPreview\\(|Task \\{ await browser\\.loadPreview|await browser\\.loadPreview" VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserIOSScreen.swift VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift VVTerm/Features/RemoteFiles/UI/Preview/RemoteFilePreviewViews.swift VVTerm/Features/RemoteFiles/Application/RemoteFilePreviewCoordinator.swift VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteFilePreviewCoordinatorTests -only-testing:WatermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "requestPreviewLoad|loadPreview\\(|Task \\{ await browser\\.loadPreview|await browser\\.loadPreview" Waterm/Features/RemoteFiles/UI/RemoteFileBrowserIOSScreen.swift Waterm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift Waterm/Features/RemoteFiles/UI/Preview/RemoteFilePreviewViews.swift Waterm/Features/RemoteFiles/Application/RemoteFilePreviewCoordinator.swift Waterm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift
 git diff --check
 ```
 
@@ -4893,12 +4893,12 @@ Request code review for Task 64. Fix Critical and Important findings, update the
 ## Task 65: Terminal Credential Load Intent Boundary
 
 **Files:**
-- Modify: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
-- Create: `VVTermTests/TerminalCredentialLoadIntentBoundaryTests.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Modify: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
+- Create: `WatermTests/TerminalCredentialLoadIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -4929,7 +4929,7 @@ Create `TerminalCredentialLoadIntentBoundaryTests`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalCredentialLoadIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalCredentialLoadIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because `requestSessionCredentialLoad(...)`, `requestPaneCredentialLoad(...)`, pending request ID properties, and wait hooks do not exist. If it compiles unexpectedly, the source-boundary tests fail because SwiftUI still awaits credential loading directly.
@@ -4966,8 +4966,8 @@ Update split `TerminalView`:
 - [x] **Step 5: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/TerminalCredentialLoadIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "requestSessionCredentialLoad|requestPaneCredentialLoad|loadCredentialsIfNeeded|Task \\{ await loadCredentialsIfNeeded|await ConnectionSessionManager\\.shared\\.loadCredentials|await TerminalTabManager\\.shared\\.loadCredentials" VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/TerminalCredentialLoadIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "requestSessionCredentialLoad|requestPaneCredentialLoad|loadCredentialsIfNeeded|Task \\{ await loadCredentialsIfNeeded|await ConnectionSessionManager\\.shared\\.loadCredentials|await TerminalTabManager\\.shared\\.loadCredentials" Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift
 git diff --check
 ```
 
@@ -4984,13 +4984,13 @@ Request code review for Task 65. Fix Critical and Important findings, update the
 ## Task 66: RemoteFiles Navigation Intent Boundary
 
 **Files:**
-- Modify: `VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
-- Create: `VVTermTests/RemoteFileNavigationIntentBoundaryTests.swift`
-- Modify: `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
-- Modify: `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift`
-- Modify: `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserIOSScreen.swift`
-- Modify: `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift`
+- Modify: `WatermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
+- Create: `WatermTests/RemoteFileNavigationIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
+- Modify: `Waterm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift`
+- Modify: `Waterm/Features/RemoteFiles/UI/RemoteFileBrowserIOSScreen.swift`
+- Modify: `Waterm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -5021,7 +5021,7 @@ Create `RemoteFileNavigationIntentBoundaryTests`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/RemoteFileNavigationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteFileBrowserStoreTests -only-testing:WatermTests/RemoteFileNavigationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because the navigation request API, pending request IDs, request result model, and wait hook do not exist. If it compiles unexpectedly, the source-boundary tests fail because RemoteFiles UI still owns async navigation tasks.
@@ -5056,8 +5056,8 @@ Update RemoteFiles UI:
 - [x] **Step 5: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/RemoteFileNavigationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "request.*Navigation|request.*Activation|request.*Directory|Task \\{ await (browser|fileBrowser)\\.(goUp|refresh|openDirectory|openBreadcrumb|activate)|await (browser|fileBrowser)\\.(loadInitialPath|goUp|refresh|openDirectory|openBreadcrumb|activate)" VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserIOSScreen.swift VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift VVTerm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteFileBrowserStoreTests -only-testing:WatermTests/RemoteFileNavigationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "request.*Navigation|request.*Activation|request.*Directory|Task \\{ await (browser|fileBrowser)\\.(goUp|refresh|openDirectory|openBreadcrumb|activate)|await (browser|fileBrowser)\\.(loadInitialPath|goUp|refresh|openDirectory|openBreadcrumb|activate)" Waterm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift Waterm/Features/RemoteFiles/UI/RemoteFileBrowserIOSScreen.swift Waterm/Features/RemoteFiles/UI/RemoteFileBrowserMacScreen.swift Waterm/Features/TerminalSessions/UI/Tabs/ConnectionTabsView.swift Waterm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift
 git diff --check
 ```
 
@@ -5074,16 +5074,16 @@ Request code review for Task 66. Fix Critical and Important findings, update the
 ## Task 67: Terminal Rich Paste Upload Intent Boundary
 
 **Files:**
-- Create: `VVTerm/Features/TerminalSessions/Application/TerminalRichPasteUploadRequest.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Modify: `VVTerm/Core/SSH/RemoteClipboardTransferService.swift`
-- Test: `VVTermTests/TerminalRichPasteUploadRequestTests.swift`
-- Test: `VVTermTests/TerminalRichPasteIntentBoundaryTests.swift`
-- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
+- Create: `Waterm/Features/TerminalSessions/Application/TerminalRichPasteUploadRequest.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Modify: `Waterm/Core/SSH/RemoteClipboardTransferService.swift`
+- Test: `WatermTests/TerminalRichPasteUploadRequestTests.swift`
+- Test: `WatermTests/TerminalRichPasteIntentBoundaryTests.swift`
+- Test: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -5117,7 +5117,7 @@ Add `TerminalRichPasteIntentBoundaryTests`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalRichPasteUploadRequestTests -only-testing:VVTermTests/TerminalRichPasteIntentBoundaryTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalRichPasteUploadRequestTests -only-testing:WatermTests/TerminalRichPasteIntentBoundaryTests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because the session/pane rich paste request APIs, pending request IDs, wait hooks, and injectable upload/lease seams do not exist. If it compiles unexpectedly, source-boundary tests fail because `TerminalRichPasteController` still owns `activePasteTask`, direct coordinator upload, and lease close.
@@ -5162,8 +5162,8 @@ Update `RemoteClipboardTransferService` so stale remote clipboard file cleanup i
 - [x] **Step 6: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalRichPasteUploadRequestTests -only-testing:VVTermTests/TerminalRichPasteIntentBoundaryTests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
-rg -n "activePasteTask|performRichPaste|resolveRemoteConnectionLease|lease\\.close|withExclusiveClient|TerminalRichPasteCoordinator\\(|requestSessionRichPasteUpload|requestPaneRichPasteUpload|Task\\(priority: \\.utility\\)" VVTerm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTerm/Features/TerminalSessions/Application/TerminalRichPasteUploadRequest.swift VVTerm/Core/SSH/RemoteClipboardTransferService.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalRichPasteUploadRequestTests -only-testing:WatermTests/TerminalRichPasteIntentBoundaryTests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests ENABLE_DEBUG_DYLIB=NO
+rg -n "activePasteTask|performRichPaste|resolveRemoteConnectionLease|lease\\.close|withExclusiveClient|TerminalRichPasteCoordinator\\(|requestSessionRichPasteUpload|requestPaneRichPasteUpload|Task\\(priority: \\.utility\\)" Waterm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift Waterm/Features/TerminalSessions/Application/TerminalRichPasteUploadRequest.swift Waterm/Core/SSH/RemoteClipboardTransferService.swift
 git diff --check
 ```
 
@@ -5180,10 +5180,10 @@ Request code review for Task 67. Fix Critical and Important findings, update the
 ## Task 68: Stats Collection Request Intent Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/Stats/Application/ServerStatsCollector.swift`
-- Modify: `VVTerm/Features/Stats/UI/ServerStatsView.swift`
-- Test: `VVTermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift`
-- Create: `VVTermTests/Features/Stats/ServerStatsIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/Stats/Application/ServerStatsCollector.swift`
+- Modify: `Waterm/Features/Stats/UI/ServerStatsView.swift`
+- Test: `WatermTests/Features/Stats/ServerStatsCollectorLifecycleTests.swift`
+- Create: `WatermTests/Features/Stats/ServerStatsIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -5214,7 +5214,7 @@ Create `ServerStatsIntentBoundaryTests`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests -only-testing:VVTermTests/ServerStatsIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerStatsCollectorLifecycleTests -only-testing:WatermTests/ServerStatsIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because `requestStartCollecting`, `requestStopCollecting`, `pendingStatsCollectionRequestIDs`, and `waitForStatsCollectionRequest(_:)` do not exist. If it compiles unexpectedly, the boundary test must fail because `ServerStatsView` still starts async collection work directly from SwiftUI.
@@ -5249,8 +5249,8 @@ Update `ServerStatsView`:
 - [x] **Step 5: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ServerStatsCollectorLifecycleTests -only-testing:VVTermTests/ServerStatsIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "Task \\{[[:space:]]*await statsCollector\\.startCollecting|\\.task\\(id: makeTaskKey\\(\\)\\)|await statsCollector\\.(startCollecting|stopCollectingAndWait)|requestStartCollecting|requestStopCollecting" VVTerm/Features/Stats/UI/ServerStatsView.swift VVTerm/Features/Stats/Application/ServerStatsCollector.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ServerStatsCollectorLifecycleTests -only-testing:WatermTests/ServerStatsIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "Task \\{[[:space:]]*await statsCollector\\.startCollecting|\\.task\\(id: makeTaskKey\\(\\)\\)|await statsCollector\\.(startCollecting|stopCollectingAndWait)|requestStartCollecting|requestStopCollecting" Waterm/Features/Stats/UI/ServerStatsView.swift Waterm/Features/Stats/Application/ServerStatsCollector.swift
 git diff --check
 ```
 
@@ -5271,10 +5271,10 @@ Review result: subagent review was not spawned because the available multi-agent
 ## Task 69: Store Product Load Request Intent Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/Store/Application/StoreManager.swift`
-- Modify: `VVTerm/Features/Store/UI/ProUpgradeSheet.swift`
-- Test: `VVTermTests/Features/Store/StoreManagerLifecycleTests.swift`
-- Create: `VVTermTests/StoreProductLoadIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/Store/Application/StoreManager.swift`
+- Modify: `Waterm/Features/Store/UI/ProUpgradeSheet.swift`
+- Test: `WatermTests/Features/Store/StoreManagerLifecycleTests.swift`
+- Create: `WatermTests/StoreProductLoadIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -5304,7 +5304,7 @@ Create `StoreProductLoadIntentBoundaryTests`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/StoreManagerLifecycleTests -only-testing:VVTermTests/StoreProductLoadIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/StoreManagerLifecycleTests -only-testing:WatermTests/StoreProductLoadIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because `requestProductLoad(onCompleted:)`, `pendingProductLoadRequestIDs`, `waitForProductLoadRequest(_:)`, and the testing cancellation hook do not exist. If it compiles unexpectedly, the boundary test must fail because `ProUpgradeSheet` still directly awaits `loadProducts()`.
@@ -5333,8 +5333,8 @@ Update both iOS and macOS sheet lifecycle hooks:
 - [x] **Step 4: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/StoreManagerLifecycleTests -only-testing:VVTermTests/StoreProductLoadIntentBoundaryTests -only-testing:VVTermTests/StorePurchaseIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "await storeManager\\.loadProducts|requestProductLoad|pendingProductLoadRequestIDs|waitForProductLoadRequest" VVTerm/Features/Store/UI/ProUpgradeSheet.swift VVTerm/Features/Store/Application/StoreManager.swift VVTermTests/Features/Store/StoreManagerLifecycleTests.swift VVTermTests/StoreProductLoadIntentBoundaryTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/StoreManagerLifecycleTests -only-testing:WatermTests/StoreProductLoadIntentBoundaryTests -only-testing:WatermTests/StorePurchaseIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "await storeManager\\.loadProducts|requestProductLoad|pendingProductLoadRequestIDs|waitForProductLoadRequest" Waterm/Features/Store/UI/ProUpgradeSheet.swift Waterm/Features/Store/Application/StoreManager.swift WatermTests/Features/Store/StoreManagerLifecycleTests.swift WatermTests/StoreProductLoadIntentBoundaryTests.swift
 git diff --check
 ```
 
@@ -5355,11 +5355,11 @@ Review result: independent read-only reviewer found no Critical, Important, or M
 ## Task 70: Server Unlock Request Intent Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/Security/Application/AppLockManager.swift`
-- Modify: `VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift`
-- Modify: `VVTerm/App/iOS/iOSContentView.swift`
-- Test: `VVTermTests/Features/Security/AppLockManagerTests.swift`
-- Modify: `VVTermTests/AppLockIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/Security/Application/AppLockManager.swift`
+- Modify: `Waterm/Features/Servers/UI/Sidebar/ServerSidebarView.swift`
+- Modify: `Waterm/App/iOS/iOSContentView.swift`
+- Test: `WatermTests/Features/Security/AppLockManagerTests.swift`
+- Modify: `WatermTests/AppLockIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -5390,7 +5390,7 @@ Extend `AppLockIntentBoundaryTests`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/AppLockManagerTests -only-testing:VVTermTests/AppLockIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/AppLockManagerTests -only-testing:WatermTests/AppLockIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because `requestServerUnlock`, `pendingServerUnlockRequestIDs`, and the server-unlock testing cancellation hook do not exist. If it compiles unexpectedly, the boundary tests must fail because `ServerSidebarView` and `iOSContentView` still call `ensureServerUnlocked(` directly.
@@ -5420,8 +5420,8 @@ Update `iOSContentView.openActiveConnection(_:)`:
 - [x] **Step 4: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/AppLockManagerTests -only-testing:VVTermTests/AppLockIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "ensureServerUnlocked\\(|requestServerUnlock|pendingServerUnlockRequestIDs" VVTerm/Features/Security/Application/AppLockManager.swift VVTerm/Features/Servers/UI/Sidebar/ServerSidebarView.swift VVTerm/App/iOS/iOSContentView.swift VVTermTests/Features/Security/AppLockManagerTests.swift VVTermTests/AppLockIntentBoundaryTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/AppLockManagerTests -only-testing:WatermTests/AppLockIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "ensureServerUnlocked\\(|requestServerUnlock|pendingServerUnlockRequestIDs" Waterm/Features/Security/Application/AppLockManager.swift Waterm/Features/Servers/UI/Sidebar/ServerSidebarView.swift Waterm/App/iOS/iOSContentView.swift WatermTests/Features/Security/AppLockManagerTests.swift WatermTests/AppLockIntentBoundaryTests.swift
 git diff --check
 ```
 
@@ -5442,10 +5442,10 @@ Review result: independent read-only reviewer found one Important cancellation i
 ## Task 71: iOS Active Connection Open Intent Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/App/iOS/iOSContentView.swift`
-- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
-- Test: `VVTermTests/IOSActiveConnectionOpenIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/App/iOS/iOSContentView.swift`
+- Test: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `WatermTests/IOSActiveConnectionOpenIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -5470,7 +5470,7 @@ Extend `ConnectionLifecycleIntegrationTests`:
 - `activeConnectionOpenCancellationDoesNotSelectOrCallback`: cancel the returned request through a DEBUG testing hook while the fake operation is delayed, release it, wait for completion, then assert no callback fires and no stale selection/view update is written.
 
 Add `IOSActiveConnectionOpenIntentBoundaryTests` with a Test Context header:
-- scan `VVTerm/App/iOS/iOSContentView.swift`;
+- scan `Waterm/App/iOS/iOSContentView.swift`;
 - slice `private func openActiveConnection(_ connection: ActiveConnection)`;
 - assert the helper still calls `AppLockManager.shared.requestServerUnlock`;
 - assert the unlocked continuation calls `sessionManager.requestActiveConnectionOpen`;
@@ -5479,7 +5479,7 @@ Add `IOSActiveConnectionOpenIntentBoundaryTests` with a Test Context header:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/IOSActiveConnectionOpenIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/IOSActiveConnectionOpenIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because `requestActiveConnectionOpen`, `pendingActiveConnectionOpenRequestIDs`, `waitForActiveConnectionOpenRequest`, and DEBUG testing hooks do not exist. If it compiles unexpectedly, the boundary test must fail because `iOSContentView.openActiveConnection(_:)` still owns `Task { await sessionManager.reconnectSessionIfRuntimeInactive(...) }`.
@@ -5504,8 +5504,8 @@ Update `iOSContentView.openActiveConnection(_:)`:
 - [x] **Step 4: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests -only-testing:VVTermTests/IOSActiveConnectionOpenIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "openActiveConnection|requestActiveConnectionOpen|reconnectSessionIfRuntimeInactive|Task \\{" VVTerm/App/iOS/iOSContentView.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift VVTermTests/IOSActiveConnectionOpenIntentBoundaryTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests -only-testing:WatermTests/IOSActiveConnectionOpenIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "openActiveConnection|requestActiveConnectionOpen|reconnectSessionIfRuntimeInactive|Task \\{" Waterm/App/iOS/iOSContentView.swift Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift WatermTests/ConnectionLifecycleIntegrationTests.swift WatermTests/IOSActiveConnectionOpenIntentBoundaryTests.swift
 git diff --check
 ```
 
@@ -5522,11 +5522,11 @@ Request code review for Task 71. Fix Critical and Important findings, update the
 ## Task 72: RemoteFiles Move Destination Load Request Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
-- Modify: `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift`
-- Modify: `VVTerm/Features/RemoteFiles/UI/Sheets/RemoteFileBrowserSheets.swift`
-- Test: `VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
-- Test: `VVTermTests/RemoteFileMutationIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift`
+- Modify: `Waterm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift`
+- Modify: `Waterm/Features/RemoteFiles/UI/Sheets/RemoteFileBrowserSheets.swift`
+- Test: `WatermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift`
+- Test: `WatermTests/RemoteFileMutationIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -5553,19 +5553,19 @@ Extend `RemoteFileBrowserStoreTests`:
 - `disconnectCancelsVisibleMoveDestinationLoadRequestsForServer`: start a blocked move-destination directory load, disconnect the same server, assert visible pending state clears immediately, release the fake list, and assert no canceled completion callback runs.
 
 Extend `RemoteFileMutationIntentBoundaryTests`:
-- scan `VVTerm/Features/RemoteFiles/UI/Sheets/RemoteFileBrowserSheets.swift`;
+- scan `Waterm/Features/RemoteFiles/UI/Sheets/RemoteFileBrowserSheets.swift`;
 - slice `struct RemoteFileMoveSheet`;
 - assert the sheet accepts a synchronous move-destination load request closure instead of an async `onLoadDirectories`;
 - assert the sheet uses `.task(id: currentDirectory)` only to send intent;
 - assert the sheet does not contain `Task { await loadDirectories() }` or `try await onLoadDirectories`.
-- scan `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift`;
+- scan `Waterm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift`;
 - assert `moveSheet(entry:)` calls `browser.requestMoveDestinationLoad(...)`;
 - assert `moveSheet(entry:)` does not pass `try await fileBrowser.listDirectories(...)` into the sheet.
 
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteFileBrowserStoreTests -only-testing:WatermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails to compile because `requestMoveDestinationLoad`, `pendingMoveDestinationLoadRequestIDs`, `waitForMoveDestinationLoadRequest`, and DEBUG cancellation hooks do not exist. If it compiles unexpectedly, the boundary test must fail because `RemoteFileMoveSheet` still owns async directory loading through `onLoadDirectories` and retry starts `Task { await loadDirectories() }`.
@@ -5599,8 +5599,8 @@ Update `RemoteFileBrowserScreen.moveSheet(entry:)`:
 - [x] **Step 4: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/RemoteFileBrowserStoreTests -only-testing:VVTermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "RemoteFileMoveSheet|onLoadDirectories|onRequestDirectories|requestMoveDestinationLoad|Task \\{ await loadDirectories|try await fileBrowser\\.listDirectories|pendingMoveDestinationLoad|guard currentDirectory == requestedDirectory" VVTerm/Features/RemoteFiles/UI/Sheets/RemoteFileBrowserSheets.swift VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift VVTermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift VVTermTests/RemoteFileMutationIntentBoundaryTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/RemoteFileBrowserStoreTests -only-testing:WatermTests/RemoteFileMutationIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "RemoteFileMoveSheet|onLoadDirectories|onRequestDirectories|requestMoveDestinationLoad|Task \\{ await loadDirectories|try await fileBrowser\\.listDirectories|pendingMoveDestinationLoad|guard currentDirectory == requestedDirectory" Waterm/Features/RemoteFiles/UI/Sheets/RemoteFileBrowserSheets.swift Waterm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift Waterm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift WatermTests/Features/RemoteFiles/RemoteFileBrowserStoreTests.swift WatermTests/RemoteFileMutationIntentBoundaryTests.swift
 git diff --check
 ```
 
@@ -5617,9 +5617,9 @@ Request code review for Task 72. Fix Critical and Important findings, update the
 ## Task 73: Terminal Split Voice Text Intent Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Test: `VVTermTests/TerminalVoiceInputIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `WatermTests/TerminalVoiceInputIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -5637,7 +5637,7 @@ Request code review for Task 72. Fix Critical and Important findings, update the
 
 Extend `TerminalVoiceInputIntentBoundaryTests`:
 - Add `splitTerminalDelegatesVoiceTextSendToTabManager`.
-- Read `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`.
+- Read `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`.
 - Slice from `private var voiceOverlay` through `private func sendTranscriptionToTerminal`.
 - Assert the slice contains `tabManager.sendText(trimmed, toPane: paneId)`.
 - Assert the slice does not contain `TerminalTabManager.shared.sendText`.
@@ -5650,7 +5650,7 @@ Extend `TerminalVoiceInputIntentBoundaryTests`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalVoiceInputIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalVoiceInputIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails because split `TerminalView.sendTranscriptionToTerminal(_:)` still unwraps `focusedTerminal` and dispatches `terminal.sendText(trimmed)` from SwiftUI instead of delegating text-send intent to `TerminalTabManager`.
@@ -5691,8 +5691,8 @@ Do not change root `TerminalContainerView` in this task; it already routes voice
 - [x] **Step 4: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalVoiceInputIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "sendTranscriptionToTerminal|focusedTerminal|terminal\\.sendText\\(trimmed\\)|DispatchQueue\\.main\\.async|TerminalTabManager\\.shared\\.sendText|tabManager\\.sendText|func sendText\\(_ text: String, toPane|let target = voiceTarget|for: target|target: target" VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTerm/Features/TerminalSessions/Application/TerminalTabManager.swift VVTermTests/TerminalVoiceInputIntentBoundaryTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalVoiceInputIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "sendTranscriptionToTerminal|focusedTerminal|terminal\\.sendText\\(trimmed\\)|DispatchQueue\\.main\\.async|TerminalTabManager\\.shared\\.sendText|tabManager\\.sendText|func sendText\\(_ text: String, toPane|let target = voiceTarget|for: target|target: target" Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift Waterm/Features/TerminalSessions/Application/TerminalTabManager.swift WatermTests/TerminalVoiceInputIntentBoundaryTests.swift
 git diff --check
 ```
 
@@ -5709,8 +5709,8 @@ Request code review for Task 73. Fix Critical and Important findings, update the
 ## Task 74: Split Pane Surface Callback Manager Injection
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Test: `VVTermTests/TerminalSplitSurfaceCallbackBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `WatermTests/TerminalSplitSurfaceCallbackBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -5733,7 +5733,7 @@ Create `TerminalSplitSurfaceCallbackBoundaryTests` with Test Context:
 - Update guidance: update the test only if split pane surface callback ownership intentionally moves to a different injected application owner.
 
 Add `splitPaneWrapperUsesInjectedManagerForSurfaceCallbacks`:
-- Read `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`.
+- Read `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`.
 - Slice `struct SSHTerminalPaneWrapper` ending before `static func dismantleNSView`.
 - Assert the slice contains `let tabManager: TerminalTabManager`.
 - Assert the slice contains `tabManager.configureRuntime`, `tabManager.getTerminal`, `tabManager.updatePaneWorkingDirectory`, `tabManager.updatePaneTitle`, `tabManager.handleTerminalZoom`, `tabManager.presentationOverrides`, `tabManager.registerTerminal`, `tabManager.requestPaneResize`, and `tabManager.requestPaneInput`.
@@ -5754,7 +5754,7 @@ Add `terminalPaneViewInjectsTabManagerIntoWrapper`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSplitSurfaceCallbackBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalSplitSurfaceCallbackBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails because `TerminalPaneView` does not pass a manager into `SSHTerminalPaneWrapper`, and the split pane wrapper/coordinator still reach directly for `TerminalTabManager.shared` in surface callbacks.
@@ -5789,8 +5789,8 @@ Do not change `static func dismantleNSView` in this task; because it has no acce
 - [x] **Step 4: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSplitSurfaceCallbackBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "SSHTerminalPaneWrapper|TerminalTabManager\\.shared|tabManager\\.(configureRuntime|getTerminal|updatePaneWorkingDirectory|updatePaneTitle|handleTerminalZoom|presentationOverrides|registerTerminal|requestPaneResize|requestPaneInput|requestSurfaceAttach|detachSurfaceForClosedPane)" VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTermTests/TerminalSplitSurfaceCallbackBoundaryTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalSplitSurfaceCallbackBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "SSHTerminalPaneWrapper|TerminalTabManager\\.shared|tabManager\\.(configureRuntime|getTerminal|updatePaneWorkingDirectory|updatePaneTitle|handleTerminalZoom|presentationOverrides|registerTerminal|requestPaneResize|requestPaneInput|requestSurfaceAttach|detachSurfaceForClosedPane)" Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift WatermTests/TerminalSplitSurfaceCallbackBoundaryTests.swift
 git diff --check
 ```
 
@@ -5807,9 +5807,9 @@ Request code review for Task 74. Fix Critical and Important findings, update the
 ## Task 75: Root Terminal Surface Callback Manager Injection
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
-- Test: `VVTermTests/TerminalRootSurfaceCallbackBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
+- Test: `WatermTests/TerminalRootSurfaceCallbackBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -5832,12 +5832,12 @@ Create `TerminalRootSurfaceCallbackBoundaryTests` with Test Context:
 - Update guidance: update the tests only if root terminal surface callback ownership intentionally moves to a different injected application owner or static teardown is redesigned.
 
 Add `terminalContainerInjectsSessionManagerIntoRootWrapper`:
-- Read `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`.
+- Read `Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`.
 - Assert the source contains `private let sessionManager = ConnectionSessionManager.shared`.
 - Assert every `SSHTerminalWrapper(` construction in the file includes `sessionManager: sessionManager`.
 
 Add `macRootWrapperUsesInjectedManagerForSurfaceCallbacks`:
-- Read `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`.
+- Read `Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`.
 - Slice from `struct SSHTerminalWrapper: NSViewRepresentable` ending before `static func dismantleNSView`.
 - Assert the slice contains `let sessionManager: ConnectionSessionManager`.
 - Assert the slice contains `sessionManager.configureRuntime`, `sessionManager.getTerminal`, `sessionManager.requestSessionResize`, `sessionManager.updateSessionWorkingDirectory`, `sessionManager.updateSessionTitle`, `sessionManager.handleTerminalZoom`, `sessionManager.presentationOverrides`, `sessionManager.registerTerminal`, and `sessionManager.handleClosedSessionSurfaceTeardown`.
@@ -5859,7 +5859,7 @@ Add `rootCoordinatorUsesInjectedManagerForInputAndAttach`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalRootSurfaceCallbackBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalRootSurfaceCallbackBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails because `TerminalContainerView` does not inject a manager into root wrappers, and the root wrapper/coordinator callbacks still reach directly for `ConnectionSessionManager.shared`.
@@ -5903,8 +5903,8 @@ Do not change `static func dismantleNSView` or `static func dismantleUIView` in 
 - [x] **Step 4: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalRootSurfaceCallbackBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "SSHTerminalWrapper|SSHTerminalRepresentable|ConnectionSessionManager\\.shared|sessionManager\\.(configureRuntime|getTerminal|peekTerminal|markTerminalUsed|updateSessionWorkingDirectory|updateSessionTitle|handleTerminalZoom|presentationOverrides|registerTerminal|requestSessionResize|requestSessionInput|requestSurfaceAttach|handleClosedSessionSurfaceTeardown)" VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift VVTermTests/TerminalRootSurfaceCallbackBoundaryTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalRootSurfaceCallbackBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "SSHTerminalWrapper|SSHTerminalRepresentable|ConnectionSessionManager\\.shared|sessionManager\\.(configureRuntime|getTerminal|peekTerminal|markTerminalUsed|updateSessionWorkingDirectory|updateSessionTitle|handleTerminalZoom|presentationOverrides|registerTerminal|requestSessionResize|requestSessionInput|requestSurfaceAttach|handleClosedSessionSurfaceTeardown)" Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift WatermTests/TerminalRootSurfaceCallbackBoundaryTests.swift
 git diff --check
 ```
 
@@ -5921,8 +5921,8 @@ Request code review for Task 75. Fix Critical and Important findings, update the
 ## Task 76: Root Static Teardown Manager Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
-- Test: `VVTermTests/TerminalRootStaticTeardownBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
+- Test: `WatermTests/TerminalRootStaticTeardownBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -5944,7 +5944,7 @@ Create `TerminalRootStaticTeardownBoundaryTests` with Test Context:
 - Update guidance: update the tests only if static teardown is redesigned to call a different injected application owner or is moved out of representable static lifecycle methods entirely.
 
 Add `macStaticTeardownUsesCoordinatorManager`:
-- Read `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`.
+- Read `Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`.
 - Slice from `static func dismantleNSView` ending before `// MARK: - Coordinator`.
 - Assert the slice contains `coordinator.sessionManager.sessions`, `coordinator.sessionManager.detachSurfaceForViewDisappeared`, and `coordinator.sessionManager.handleClosedSessionSurfaceTeardown`.
 - Assert the slice does not contain `ConnectionSessionManager.shared`.
@@ -5957,7 +5957,7 @@ Add `iosStaticTeardownUsesCoordinatorManager`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalRootStaticTeardownBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalRootStaticTeardownBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails because both root static teardown functions still resolve `ConnectionSessionManager.shared`.
@@ -5974,8 +5974,8 @@ Update `SSHTerminalWrapper.swift`:
 - [x] **Step 3: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalRootStaticTeardownBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "static func dismantleNSView|static func dismantleUIView|ConnectionSessionManager\\.shared|coordinator\\.sessionManager\\.(sessions|detachSurfaceForViewDisappeared|handleClosedSessionSurfaceTeardown)" VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift VVTermTests/TerminalRootStaticTeardownBoundaryTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalRootStaticTeardownBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "static func dismantleNSView|static func dismantleUIView|ConnectionSessionManager\\.shared|coordinator\\.sessionManager\\.(sessions|detachSurfaceForViewDisappeared|handleClosedSessionSurfaceTeardown)" Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift WatermTests/TerminalRootStaticTeardownBoundaryTests.swift
 git diff --check
 ```
 
@@ -5995,11 +5995,11 @@ After Task 76, this refactor is no longer an open-ended search for every possibl
 
 Audit evidence:
 - Local scans:
-  - `rg -n "ConnectionSessionManager\\.shared|TerminalTabManager\\.shared|ServerManager\\.shared|StoreManager\\.shared|AppLockManager\\.shared|KnownHostsManager\\.shared" VVTerm/App VVTerm/Core VVTerm/Features -g '*.swift'`
-  - `rg -n "Task \\{|Task\\.detached" VVTerm/App VVTerm/Core VVTerm/Features -g '*.swift'`
-  - `rg -n "dismantleNSView|dismantleUIView|onDisappear|\\.task\\(|DispatchQueue\\.main\\.async" VVTerm/App VVTerm/Core VVTerm/Features -g '*.swift'`
-  - `rg -n "libssh2_|withUnsafe|UnsafePointer|UnsafeMutablePointer|nonisolated\\(unsafe\\)|NSLock" VVTerm/Core/SSH VVTerm/Features -g '*.swift'`
-  - `for f in $(rg --files VVTermTests -g '*.swift' | sort); do if ! rg -q "Test Context:" "$f"; then echo "$f"; fi; done`
+  - `rg -n "ConnectionSessionManager\\.shared|TerminalTabManager\\.shared|ServerManager\\.shared|StoreManager\\.shared|AppLockManager\\.shared|KnownHostsManager\\.shared" Waterm/App Waterm/Core Waterm/Features -g '*.swift'`
+  - `rg -n "Task \\{|Task\\.detached" Waterm/App Waterm/Core Waterm/Features -g '*.swift'`
+  - `rg -n "dismantleNSView|dismantleUIView|onDisappear|\\.task\\(|DispatchQueue\\.main\\.async" Waterm/App Waterm/Core Waterm/Features -g '*.swift'`
+  - `rg -n "libssh2_|withUnsafe|UnsafePointer|UnsafeMutablePointer|nonisolated\\(unsafe\\)|NSLock" Waterm/Core/SSH Waterm/Features -g '*.swift'`
+  - `for f in $(rg --files WatermTests -g '*.swift' | sort); do if ! rg -q "Test Context:" "$f"; then echo "$f"; fi; done`
 - Read-only audit agents:
   - TerminalSessions audit: split static teardown, split injected-manager use, rich-paste manager injection, TerminalSessions exceptions/later list.
   - Cross-feature audit: iOS foreground reconnect, ServerConnectionTester cancellation, RemoteFiles transfer disconnect cancellation, ServerManager startup load, cross-feature exceptions/later list.
@@ -6008,47 +6008,47 @@ Audit evidence:
 ### Must-Fix Before Ready-for-Merge
 
 1. **Split static teardown manager boundary**
-   - Evidence: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift` static `dismantleNSView` still uses `TerminalTabManager.shared.paneStates`, `detachSurfaceForPaneViewDisappeared`, and `detachSurfaceForClosedPane` while `Coordinator` already stores `tabManager`.
+   - Evidence: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift` static `dismantleNSView` still uses `TerminalTabManager.shared.paneStates`, `detachSurfaceForPaneViewDisappeared`, and `detachSurfaceForClosedPane` while `Coordinator` already stores `tabManager`.
    - Required fix: mirror Task 76 for split panes by routing static teardown through `coordinator.tabManager` and add source-boundary coverage.
    - Status: completed by Task 77.
 
 2. **Split terminal UI injected-manager boundary**
-   - Evidence: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift` still uses `TerminalTabManager.shared` for focused terminal lookup, tmux install/disable, host retrust, auto-reconnect, retry, credential load, watchdog, and mosh install even though the view has an injected `tabManager`.
+   - Evidence: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift` still uses `TerminalTabManager.shared` for focused terminal lookup, tmux install/disable, host retrust, auto-reconnect, retry, credential load, watchdog, and mosh install even though the view has an injected `tabManager`.
    - Required fix: route these split UI intent helpers through the injected manager and update source-boundary tests that still expect `.shared`.
    - Status: completed by Task 78.
 
 3. **Rich paste runtime manager injection**
-   - Evidence: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift` still resolves `ConnectionSessionManager.shared` / `TerminalTabManager.shared` inside rich-paste runtime factories for upload and clipboard paste actions.
+   - Evidence: `Waterm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift` still resolves `ConnectionSessionManager.shared` / `TerminalTabManager.shared` inside rich-paste runtime factories for upload and clipboard paste actions.
    - Required fix: inject the root/split manager into `TerminalRichPasteRuntime` construction and keep upload lifecycle in the existing manager-owned request APIs.
    - Status: completed by Task 79.
 
 4. **iOS foreground reconnect request tracking**
-   - Evidence: `VVTerm/App/iOS/iOSContentView.swift` starts an untracked `Task` in the foreground reconnect helper called from `onAppear`, scene changes, and selected-session changes.
+   - Evidence: `Waterm/App/iOS/iOSContentView.swift` starts an untracked `Task` in the foreground reconnect helper called from `onAppear`, scene changes, and selected-session changes.
    - Required fix: move this behind an app/session lifecycle request API with tracked request ID/task, or make the existing application owner expose equivalent awaitable request tracking.
    - Status: completed by Task 80.
 
 5. **Server connection-test cancellation and stale callbacks**
-   - Evidence: `VVTerm/Features/Servers/Application/ServerConnectionTester.swift` stores request tasks and exposes wait, but `VVTerm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift` starts tests without retaining/canceling the request; field changes reset UI state only.
+   - Evidence: `Waterm/Features/Servers/Application/ServerConnectionTester.swift` stores request tasks and exposes wait, but `Waterm/Features/Servers/UI/ServerDetail/ServerFormSheet.swift` starts tests without retaining/canceling the request; field changes reset UI state only.
    - Required fix: add cancellation/supersede semantics and stale-callback guards so changed form input cannot receive an old connection-test result.
 
 6. **RemoteFiles transfer/mutation cancellation on disconnect**
-   - Evidence: `VVTerm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift` stores remote operation requests, but `disconnect(serverId:)` cancels navigation/preview/move state only before closing the adapter; UI transfer calls ignore request IDs.
+   - Evidence: `Waterm/Features/RemoteFiles/Application/RemoteFileBrowserStore.swift` stores remote operation requests, but `disconnect(serverId:)` cancels navigation/preview/move state only before closing the adapter; UI transfer calls ignore request IDs.
    - Required fix: expose cancel APIs for active transfer/mutation requests, cancel same-server operations on disconnect/close, and add ordering tests.
 
 7. **ServerManager startup load tracking**
-   - Evidence: `VVTerm/Features/Servers/Application/ServerManager.swift` starts `Task { await loadData() }` from init without storing or returning the task.
+   - Evidence: `Waterm/Features/Servers/Application/ServerManager.swift` starts `Task { await loadData() }` from init without storing or returning the task.
    - Required fix: store/return the startup load task or move startup load into an application lifecycle coordinator so startup load ordering is observable and awaitable.
 
 8. **SSHClient untracked channel cleanup tasks**
-   - Evidence: `VVTerm/Core/SSH/SSHClient.swift` uses untracked `Task {}` from stream termination / exec cancellation paths that eventually close/free libssh2 channels.
+   - Evidence: `Waterm/Core/SSH/SSHClient.swift` uses untracked `Task {}` from stream termination / exec cancellation paths that eventually close/free libssh2 channels.
    - Required fix: track these cleanup tasks in the owning `SSHClient` / runtime or make later disconnect/close paths await them.
 
 9. **SSHClient mosh stream teardown tracking**
-   - Evidence: `VVTerm/Core/SSH/SSHClient.swift` mosh stream termination cancels the stream task and starts untracked shell teardown, which can stop a live `MoshClientSession`.
+   - Evidence: `Waterm/Core/SSH/SSHClient.swift` mosh stream termination cancels the stream task and starts untracked shell teardown, which can stop a live `MoshClientSession`.
    - Required fix: track/await this teardown from the owning `SSHClient` / runtime before merge.
 
 10. **SSH exec/upload raw libssh2 error preservation**
-    - Evidence: `VVTerm/Core/SSH/SSHClient.swift` still collapses non-EAGAIN exec channel open/startup/write and upload close/wait errors to generic errors after reading or encountering raw libssh2 state.
+    - Evidence: `Waterm/Core/SSH/SSHClient.swift` still collapses non-EAGAIN exec channel open/startup/write and upload close/wait errors to generic errors after reading or encountering raw libssh2 state.
     - Required fix: preserve/log `LibSSH2RawError` before translation on these exec/upload paths.
 
 ### Accepted Exceptions For This Branch
@@ -6085,8 +6085,8 @@ Before this branch is considered ready for merge:
 ## Task 77: Split Static Teardown Manager Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Test: `VVTermTests/TerminalSplitStaticTeardownBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `WatermTests/TerminalSplitStaticTeardownBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -6107,7 +6107,7 @@ Create `TerminalSplitStaticTeardownBoundaryTests` with Test Context:
 - Update guidance: update the tests only if split static teardown is redesigned to call a different injected application owner or moves out of representable static lifecycle methods entirely.
 
 Add `splitStaticTeardownUsesCoordinatorManager`:
-- Read `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`.
+- Read `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`.
 - Slice from `static func dismantleNSView` ending before `func makeCoordinator`.
 - Assert the slice contains `coordinator.tabManager.paneStates`, `coordinator.tabManager.detachSurfaceForPaneViewDisappeared`, and `coordinator.tabManager.detachSurfaceForClosedPane`.
 - Assert the slice does not contain `TerminalTabManager.shared`.
@@ -6115,7 +6115,7 @@ Add `splitStaticTeardownUsesCoordinatorManager`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSplitStaticTeardownBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalSplitStaticTeardownBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails because split static teardown still resolves `TerminalTabManager.shared` for pane liveness and surface cleanup.
@@ -6131,8 +6131,8 @@ Update `TerminalView.swift`:
 - [x] **Step 3: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSplitStaticTeardownBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "static func dismantleNSView|TerminalTabManager\\.shared|coordinator\\.tabManager\\.(paneStates|detachSurfaceForPaneViewDisappeared|detachSurfaceForClosedPane)" VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTermTests/TerminalSplitStaticTeardownBoundaryTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalSplitStaticTeardownBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "static func dismantleNSView|TerminalTabManager\\.shared|coordinator\\.tabManager\\.(paneStates|detachSurfaceForPaneViewDisappeared|detachSurfaceForClosedPane)" Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift WatermTests/TerminalSplitStaticTeardownBoundaryTests.swift
 git diff --check
 ```
 
@@ -6149,8 +6149,8 @@ Perform local lifecycle review against the Swift checklist unless the user expli
 ## Task 78: Split Terminal UI Injected-Manager Boundary
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Test: `VVTermTests/TerminalSplitUIInjectedManagerBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `WatermTests/TerminalSplitUIInjectedManagerBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -6171,7 +6171,7 @@ Create `TerminalSplitUIInjectedManagerBoundaryTests` with Test Context:
 - Update guidance: update the tests only if split terminal UI ownership intentionally moves to a different injected application owner.
 
 Add `terminalTabViewUsesInjectedManagerForFocusedTerminalLookup`:
-- Read `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`.
+- Read `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`.
 - Slice from `struct TerminalTabView` ending before `// MARK: - Terminal Pane View`.
 - Assert the slice contains `@ObservedObject var tabManager: TerminalTabManager`.
 - Assert the slice contains `tabManager.getTerminal(for: tab.focusedPaneId)`.
@@ -6189,7 +6189,7 @@ Add `splitTerminalViewHasNoTerminalTabManagerSingletonReachThrough`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSplitUIInjectedManagerBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalSplitUIInjectedManagerBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails because split terminal UI still resolves `TerminalTabManager.shared` for focused terminal lookup, tmux/mosh intent helpers, host retrust, retry, credential load, watchdog, and pane-state callback guards.
@@ -6206,8 +6206,8 @@ Update `TerminalView.swift`:
 - [x] **Step 3: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalSplitUIInjectedManagerBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "TerminalTabManager\\.shared|tabManager\\.(getTerminal|requestTmuxInstall|disableTmux|requestPaneHostRetrust|shouldAutoReconnectPane|requestPaneRetry|requestPaneCredentialLoad|paneStates|scheduleConnectWatchdog|requestMoshInstallAndReconnect)" VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTermTests/TerminalSplitUIInjectedManagerBoundaryTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalSplitUIInjectedManagerBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "TerminalTabManager\\.shared|tabManager\\.(getTerminal|requestTmuxInstall|disableTmux|requestPaneHostRetrust|shouldAutoReconnectPane|requestPaneRetry|requestPaneCredentialLoad|paneStates|scheduleConnectWatchdog|requestMoshInstallAndReconnect)" Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift WatermTests/TerminalSplitUIInjectedManagerBoundaryTests.swift
 git diff --check
 ```
 
@@ -6224,10 +6224,10 @@ Perform local lifecycle review against the Swift checklist unless the user expli
 ## Task 79: Rich Paste Runtime Manager Injection
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
-- Modify: `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
-- Test: `VVTermTests/TerminalRichPasteRuntimeManagerBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`
+- Modify: `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+- Test: `WatermTests/TerminalRichPasteRuntimeManagerBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -6252,7 +6252,7 @@ Create `TerminalRichPasteRuntimeManagerBoundaryTests` with Test Context:
 - Update guidance: update the tests only if rich-paste runtime construction intentionally moves to a different injected application owner or out of terminal representable coordinators.
 
 Add `richPasteRuntimeFactoriesUseInjectedManagers`:
-- Read `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift`.
+- Read `Waterm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift`.
 - Slice from `static func connectionSession` ending before `static func terminalPane`.
 - Assert the root slice contains `sessionManager: ConnectionSessionManager`, `sessionManager.requestSessionRichPasteUpload`, and `sessionManager.peekTerminal`.
 - Assert the root slice does not contain `ConnectionSessionManager.shared`.
@@ -6262,13 +6262,13 @@ Add `richPasteRuntimeFactoriesUseInjectedManagers`:
 - Assert the full source does not contain `ConnectionSessionManager.shared` or `TerminalTabManager.shared`.
 
 Add `rootTerminalCoordinatorsPassInjectedSessionManagerToRichPasteRuntime`:
-- Read `VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`.
+- Read `Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift`.
 - Assert there are two `self.richPasteRuntime = .connectionSession(` construction sites.
 - Assert each construction site includes `sessionManager: sessionManager`.
 - Assert the source still contains `let sessionManager: ConnectionSessionManager`.
 
 Add `splitTerminalCoordinatorPassesInjectedTabManagerToRichPasteRuntime`:
-- Read `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`.
+- Read `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`.
 - Slice from `self.richPasteRuntime = .terminalPane(` ending before `)`.
 - Assert the slice contains `paneId: paneId`, `uiModel: richPasteUIModel`, and `tabManager: tabManager`.
 - Assert the surrounding coordinator slice contains `let tabManager: TerminalTabManager`.
@@ -6276,7 +6276,7 @@ Add `splitTerminalCoordinatorPassesInjectedTabManagerToRichPasteRuntime`:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalRichPasteRuntimeManagerBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalRichPasteRuntimeManagerBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: the focused suite fails because rich-paste runtime factories still resolve `ConnectionSessionManager.shared` / `TerminalTabManager.shared`, and coordinator construction sites do not pass injected managers into the runtime factories.
@@ -6303,8 +6303,8 @@ Update split `TerminalView.swift` coordinator:
 - [x] **Step 4: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/TerminalRichPasteRuntimeManagerBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "ConnectionSessionManager\\.shared|TerminalTabManager\\.shared|connectionSession\\(|terminalPane\\(|sessionManager\\.requestSessionRichPasteUpload|sessionManager\\.peekTerminal|tabManager\\.requestPaneRichPasteUpload|tabManager\\.getTerminal" VVTerm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift VVTerm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift VVTermTests/TerminalRichPasteRuntimeManagerBoundaryTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/TerminalRichPasteRuntimeManagerBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "ConnectionSessionManager\\.shared|TerminalTabManager\\.shared|connectionSession\\(|terminalPane\\(|sessionManager\\.requestSessionRichPasteUpload|sessionManager\\.peekTerminal|tabManager\\.requestPaneRichPasteUpload|tabManager\\.getTerminal" Waterm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift Waterm/Features/TerminalSessions/UI/Terminal/SSHTerminalWrapper.swift Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift WatermTests/TerminalRichPasteRuntimeManagerBoundaryTests.swift
 git diff --check
 ```
 
@@ -6321,10 +6321,10 @@ Perform local lifecycle review against the Swift checklist unless the user expli
 ## Task 80: iOS Foreground Reconnect Request Tracking
 
 **Files:**
-- Modify: `VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
-- Modify: `VVTerm/App/iOS/iOSContentView.swift`
-- Test: `VVTermTests/ConnectionLifecycleIntegrationTests.swift`
-- Test: `VVTermTests/IOSForegroundReconnectIntentBoundaryTests.swift`
+- Modify: `Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift`
+- Modify: `Waterm/App/iOS/iOSContentView.swift`
+- Test: `WatermTests/ConnectionLifecycleIntegrationTests.swift`
+- Test: `WatermTests/IOSForegroundReconnectIntentBoundaryTests.swift`
 - Modify: `docs/refactor-swift-best-practice.md`
 
 **Interfaces:**
@@ -6364,7 +6364,7 @@ Create `IOSForegroundReconnectIntentBoundaryTests` with Test Context:
 Expected RED command:
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests/foregroundReconnectRequestTracksReconnectUntilCompletion -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests/duplicateForegroundReconnectRequestsCoalesceUntilCompletion -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests/closeSessionCancelsPendingForegroundReconnectRequest -only-testing:VVTermTests/IOSForegroundReconnectIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests/foregroundReconnectRequestTracksReconnectUntilCompletion -only-testing:WatermTests/ConnectionLifecycleIntegrationTests/duplicateForegroundReconnectRequestsCoalesceUntilCompletion -only-testing:WatermTests/ConnectionLifecycleIntegrationTests/closeSessionCancelsPendingForegroundReconnectRequest -only-testing:WatermTests/IOSForegroundReconnectIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
 ```
 
 Expected RED result: focused tests fail to compile because the request API, pending IDs, wait hook, cancellation hook, and source-boundary behavior do not exist; source-boundary test also fails because the iOS helper owns a local `Task` and calls `handleForegroundReconnectForSelectedSession(...)`.
@@ -6397,8 +6397,8 @@ Update `iOSContentView.swift`:
 - [x] **Step 4: Run focused verification**
 
 ```bash
-xcodebuild test -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:VVTermUITests -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests/foregroundReconnectRequestTracksReconnectUntilCompletion -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests/duplicateForegroundReconnectRequestsCoalesceUntilCompletion -only-testing:VVTermTests/ConnectionLifecycleIntegrationTests/closeSessionCancelsPendingForegroundReconnectRequest -only-testing:VVTermTests/IOSForegroundReconnectIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
-rg -n "attemptForegroundReconnectIfNeeded|requestForegroundReconnectForSelectedSession|handleForegroundReconnectForSelectedSession|Task \\{ @MainActor" VVTerm/App/iOS/iOSContentView.swift VVTerm/Features/TerminalSessions/Application/ConnectionSessionManager.swift VVTermTests/IOSForegroundReconnectIntentBoundaryTests.swift VVTermTests/ConnectionLifecycleIntegrationTests.swift
+xcodebuild test -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -parallel-testing-enabled NO -skip-testing:WatermUITests -only-testing:WatermTests/ConnectionLifecycleIntegrationTests/foregroundReconnectRequestTracksReconnectUntilCompletion -only-testing:WatermTests/ConnectionLifecycleIntegrationTests/duplicateForegroundReconnectRequestsCoalesceUntilCompletion -only-testing:WatermTests/ConnectionLifecycleIntegrationTests/closeSessionCancelsPendingForegroundReconnectRequest -only-testing:WatermTests/IOSForegroundReconnectIntentBoundaryTests ENABLE_DEBUG_DYLIB=NO
+rg -n "attemptForegroundReconnectIfNeeded|requestForegroundReconnectForSelectedSession|handleForegroundReconnectForSelectedSession|Task \\{ @MainActor" Waterm/App/iOS/iOSContentView.swift Waterm/Features/TerminalSessions/Application/ConnectionSessionManager.swift WatermTests/IOSForegroundReconnectIntentBoundaryTests.swift WatermTests/ConnectionLifecycleIntegrationTests.swift
 git diff --check
 ```
 
@@ -6465,8 +6465,8 @@ Perform local lifecycle review against the Swift checklist unless the user expli
 - 2026-06-21: Post-Task-54 scan selected Task 55 as the next executable lifecycle slice. Current plan checkboxes were complete, so the codebase was rescanned for remaining SwiftUI-owned `Task` work and deferred ledger hits. The clearest focused TerminalSessions gap is terminal retry intent: `TerminalContainerView` and split `TerminalView` still launch retry work from SwiftUI-owned `Task` wrappers and directly await `retrySessionConnection` / `retryPaneConnection`, while the managers expose only async low-level retry helpers rather than tracked request APIs. Task 55 should add manager-owned tracked request APIs for session and pane retry intent, preserve duplicate retry coalescing and credential-load result semantics, and leave broader voice recording, iOS active-connection action orchestration, mosh fallback banner timing, and RemoteFiles navigation/mutation tasks deferred to later slices.
 - 2026-06-21: Task 54 RED/GREEN completed with review fixes. `TerminalContainerView` and split `TerminalView` no longer launch tmux/mosh install work from SwiftUI-owned `Task` blocks; install buttons synchronously send intent to `ConnectionSessionManager` or `TerminalTabManager`. Both managers now own tracked tmux and mosh install request tasks, expose pending request IDs plus await hooks for ordering tests, coalesce duplicate same-session/pane tmux and mosh request intent, keep mosh cancellation separate from ordinary failure, and record ordinary mosh install failures. Close paths for sessions and panes now cancel pending install requests and run completion callbacks so presentation state can clear on lifecycle cancellation. The tmux install helpers now await the six-attempt availability poll in the request task instead of scheduling an internal untracked follow-up task. RED failed to compile until the manager request/testing APIs existed. Review found three Important lifecycle issues: close did not cancel pending install requests, cancellation could leave mosh UI cleanup callbacks unsent, and duplicate mosh callers lost callbacks. Review-fix RED reproduced missing duplicate callbacks and a pending close-cancellation wait; GREEN passed after callbacks were stored per duplicate request and close cancellation completed pending requests. Final focused tests passed 84 Swift Testing tests; the terminal UI install source scan produced no matches; `git diff --check` passed; iOS `build-for-testing` passed with `ENABLE_DEBUG_DYLIB=NO`. The broad manager task scan still reports previously classified runtime/persist/detached tasks outside this install slice.
 - 2026-06-21: Post-Task-53 scan selected Task 54 as the next executable lifecycle slice. Current plan checkboxes were complete, so the codebase was rescanned for remaining SwiftUI-owned `Task` work and deferred ledger hits. The clearest focused TerminalSessions gap is terminal install intent: `TerminalContainerView` and split `TerminalView` launch tmux and mosh install work from alert buttons, while both managers expose only awaitable low-level install helpers rather than tracked request APIs. The tmux install helpers also schedule an internal untracked poll task after sending the install script, so the UI-owned task can return before install lifecycle state settles. Task 54 should add manager-owned tracked request APIs for session and pane tmux/mosh install intent, make tmux install polling awaitable, and leave broader retry, voice recording, mosh fallback banner timing, and RemoteFiles navigation tasks deferred to later slices.
-- 2026-06-21: Task 53 RED/GREEN completed with review fixes. `VVTermApp.swift` and both AppDelegate implementations no longer directly orchestrate terminal teardown, background suspension, app-lock, app-sync refresh, or server-language side effects; they send intent to `AppLifecycleCoordinator`. `AppLifecycleCoordinator` owns tracked request tasks for background lock, background suspension, remote-notification refresh completion, and termination teardown, with await hooks for ordering tests. The old blocking termination semaphore bridge was removed after it proved unsafe on MainActor; macOS termination now uses `applicationShouldTerminate(_:)` / `.terminateLater` with a timeout-bounded tracked teardown request, and iOS termination sends a tracked best-effort request. RED failed to compile until the coordinator APIs existed, review-cycle RED exposed missing background lock tracking, and a focused timeout regression test prevented a hanging termination request. Final focused tests passed 7 Swift Testing tests; source scans showed `VVTermApp.swift` only sends coordinator intent; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment / AppIntents metadata warnings.
-- 2026-06-21: Post-Task-52 scan selected Task 53 as the next executable lifecycle slice. Current plan checkboxes were complete, so the codebase was rescanned for remaining SwiftUI/App-owned lifecycle `Task` work, direct app lifecycle singleton orchestration, and deferred ledger hits. The clearest focused App-layer gap is `VVTermApp.swift`: AppDelegate termination owns the semaphore bridge plus a `Task` that awaits terminal manager teardown, iOS background owns a `Task` that suspends sessions and locks the app, foreground/remote notification delegates directly call `AppSyncCoordinator.shared`, and root locale hooks call `ServerManager.shared.handleAppLanguageChange()` directly. Existing `AppSyncCoordinatorTests` already cover sync task coalescing, so Task 53 should not replace that owner; it should introduce an App Application lifecycle coordinator that receives delegate/root intent and delegates to the existing sync, terminal, app-lock, and server-language owners. Broader remaining hits in terminal UI retry/tmux/voice flows, RemoteFiles navigation/preview view tasks, and low-level Application/Core internally tracked tasks remain deferred to later slices.
+- 2026-06-21: Task 53 RED/GREEN completed with review fixes. `WatermApp.swift` and both AppDelegate implementations no longer directly orchestrate terminal teardown, background suspension, app-lock, app-sync refresh, or server-language side effects; they send intent to `AppLifecycleCoordinator`. `AppLifecycleCoordinator` owns tracked request tasks for background lock, background suspension, remote-notification refresh completion, and termination teardown, with await hooks for ordering tests. The old blocking termination semaphore bridge was removed after it proved unsafe on MainActor; macOS termination now uses `applicationShouldTerminate(_:)` / `.terminateLater` with a timeout-bounded tracked teardown request, and iOS termination sends a tracked best-effort request. RED failed to compile until the coordinator APIs existed, review-cycle RED exposed missing background lock tracking, and a focused timeout regression test prevented a hanging termination request. Final focused tests passed 7 Swift Testing tests; source scans showed `WatermApp.swift` only sends coordinator intent; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment / AppIntents metadata warnings.
+- 2026-06-21: Post-Task-52 scan selected Task 53 as the next executable lifecycle slice. Current plan checkboxes were complete, so the codebase was rescanned for remaining SwiftUI/App-owned lifecycle `Task` work, direct app lifecycle singleton orchestration, and deferred ledger hits. The clearest focused App-layer gap is `WatermApp.swift`: AppDelegate termination owns the semaphore bridge plus a `Task` that awaits terminal manager teardown, iOS background owns a `Task` that suspends sessions and locks the app, foreground/remote notification delegates directly call `AppSyncCoordinator.shared`, and root locale hooks call `ServerManager.shared.handleAppLanguageChange()` directly. Existing `AppSyncCoordinatorTests` already cover sync task coalescing, so Task 53 should not replace that owner; it should introduce an App Application lifecycle coordinator that receives delegate/root intent and delegates to the existing sync, terminal, app-lock, and server-language owners. Broader remaining hits in terminal UI retry/tmux/voice flows, RemoteFiles navigation/preview view tasks, and low-level Application/Core internally tracked tasks remain deferred to later slices.
 - 2026-06-21: Task 52 RED/GREEN completed with review fixes. `AppLockContainer`, `AppLockGateView`, and `GeneralSettingsView` no longer own biometric authentication `Task` work; they send synchronous intent to `AppLockManager.requestAppUnlock()` or `requestFullAppLockChange(_:)`. `AppLockManager` owns tracked request tasks, exposes pending request IDs plus `waitForAppLockRequest(_:)`, preserves existing async behavior boundaries, and treats `CancellationError` as lifecycle completion rather than a user-facing auth failure. RED failed to compile until the request APIs and tracking state existed; review-fix RED proved cancellation still polluted `lastErrorMessage`. Final focused tests passed 6 XCTest tests plus 2 Swift Testing tests; the source scan showed only manager-owned app-lock tasks; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings / AppIntents metadata skip warning. Broader SwiftUI task hits in terminal, RemoteFiles, Settings language change, App sync, and low-level Application/Core paths remain deferred to later slices.
 - 2026-06-21: Post-Task-51 scan selected Task 52 as the next executable lifecycle slice. Current plan checkboxes were all complete, so the codebase was rescanned for SwiftUI-owned lifecycle `Task` work, direct resource/singleton calls, and stale terminal runtime state. `AppLockContainer`, `AppLockGateView`, and the full-app-lock toggle in `GeneralSettingsView` are a focused remaining Security/Settings hit: SwiftUI launches authentication tasks directly for app unlock and full-lock enablement even though `AppLockManager` is already the stable Application owner for biometric authentication state. Broader hits remain intentionally deferred for later classification, including Terminal view retry/tmux/voice tasks, RemoteFiles navigation/preview tasks, App app-delegate sync calls, and low-level Application/Core tasks that are already tracked or need separate ownership audits.
 - 2026-06-21: Task 51 RED/GREEN completed with review fix. `ServerFormSheet` no longer owns the Test Connection async `Task`, no longer launches `Task.detached`, and no longer directly reaches `SSHConnectionOperationService.shared` or `RemoteMoshManager.shared`; it sends synchronous intent to `ServerConnectionTester` in Servers Application. `ServerConnectionTester` owns tracked connection-test request tasks, exposes pending request IDs plus `waitForConnectionTestRequest`, records ordinary `ServerConnectionTestFailure`, preserves cancellation as lifecycle state rather than failure, and always calls `onCompleted` so SwiftUI can clear transient testing state after success, failure, or cancellation. RED first failed to compile until the connection tester/protocol existed; review-fix RED failed until `onCompleted` existed. Final focused tests passed 6 Swift Testing tests; scoped source scans showed the UI helper only delegates to `connectionTester.requestConnectionTest`; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO` and existing XCTest deployment warnings. Broader SwiftUI task hits in terminal, RemoteFiles, Settings, and other low-level paths remain deferred to later slices.
@@ -6490,8 +6490,8 @@ Perform local lifecycle review against the Swift checklist unless the user expli
 - 2026-06-21: Task 37 slice 2 RED/GREEN completed. `ConnectionSessionManager` and `TerminalTabManager` now own connect watchdog timer tasks and generation cancellation; root and split SwiftUI views no longer store watchdog tokens, sleep for the 20-second timeout, or call timeout handlers directly. Task 37 remains open for moving remaining credential-loading and `reconnectInFlight` retry-state orchestration out of the views. Verification: focused Task 37 suite passed 67 Swift Testing tests, and `git diff --check` passed.
 - 2026-06-21: Task 37 final RED/GREEN, API cleanup, and review fixes completed. Root, split, and iOS terminal views no longer own retry in-flight state, call Keychain directly, execute reconnect directly, or derive foreground reconnect from registry state in SwiftUI. Managers now load credentials through application-layer providers, gate duplicate retry intent, revalidate liveness after awaited credential loading, execute foreground/open-active reconnect intent, return wrapper credentials or UI actions to views, and keep reconnect/watchdog/retrust/mosh sequencing in TerminalSessions Application. Boundary scan found no `reconnectInFlight`, direct `KeychainManager.shared.getCredentials`, old watchdog token/sleep, direct `reconnect(session:)`, direct live-runtime lookup, direct known-host reset, or direct reconnect policy calls in the target SwiftUI files. Verification: focused Task 37 suite passed 74 Swift Testing tests, and `git diff --check` passed.
 - 2026-06-21: Task 38 RED/GREEN and review fix completed. RED proved a same-server RemoteFiles operation could start while a dropped disconnect task was still closing the previous SFTP lease, and review added coverage for a second disconnect registered after the first wait. `RemoteFileBrowserStore` now tracks pending disconnect tasks and loops until no same-server disconnect remains before later service work; iOS active-connection and current-server disconnect flows now await the returned RemoteFiles disconnect task before terminal session teardown/navigation. Verification: `RemoteFileBrowserStoreTests` passed 6 Swift Testing tests, and `git diff --check` passed.
-- 2026-06-21: Task 40A RED/GREEN completed. Server edit save now runs through `ServerManager.updateServer(_:credentials:)`, so credential storage failure prevents metadata mutation instead of letting `ServerFormSheet` update metadata first and write Keychain later. `ServerFormSheet.saveServer()` no longer directly stores/deletes server credentials on edit save; remaining Keychain reads/import helpers are deferred to broader cleanup. Task 40 remains open for sync ownership, voice download ownership, AppKit window ownership, and remaining destructive action tracking. Verification: `ServerManagerBootstrapTests` passed 11 Swift Testing tests, `git diff --check` passed, and `xcodebuild build-for-testing -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
-- 2026-06-21: Task 40B RED/GREEN completed with review fixes. AppDelegate launch/foreground/remote-notification sync and `SyncSettingsView` recheck/toggle sync now send intent to `AppSyncCoordinator`, which stores/coalesces sync tasks, waits for tracked refresh before remote notification completion, queues a settings-owned reload after any already-running foreground refresh, and cancels stale settings enable work when a later disable intent arrives. `CloudKitManager.handleSyncToggle(_:)` is awaitable and cancellation-aware after account status checks, and subscription setup rechecks cancellation/sync-enabled state before treating existing subscriptions or saves as valid. Task 40 remains open for voice download ownership, AppKit window ownership, and remaining destructive action tracking. Verification: `AppSyncCoordinatorTests` passed 5 Swift Testing tests; `AppSyncCoordinatorTests` + `ServerManagerBootstrapTests` passed 16 Swift Testing tests; `git diff --check` passed; `xcodebuild build-for-testing -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed.
+- 2026-06-21: Task 40A RED/GREEN completed. Server edit save now runs through `ServerManager.updateServer(_:credentials:)`, so credential storage failure prevents metadata mutation instead of letting `ServerFormSheet` update metadata first and write Keychain later. `ServerFormSheet.saveServer()` no longer directly stores/deletes server credentials on edit save; remaining Keychain reads/import helpers are deferred to broader cleanup. Task 40 remains open for sync ownership, voice download ownership, AppKit window ownership, and remaining destructive action tracking. Verification: `ServerManagerBootstrapTests` passed 11 Swift Testing tests, `git diff --check` passed, and `xcodebuild build-for-testing -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO` passed.
+- 2026-06-21: Task 40B RED/GREEN completed with review fixes. AppDelegate launch/foreground/remote-notification sync and `SyncSettingsView` recheck/toggle sync now send intent to `AppSyncCoordinator`, which stores/coalesces sync tasks, waits for tracked refresh before remote notification completion, queues a settings-owned reload after any already-running foreground refresh, and cancels stale settings enable work when a later disable intent arrives. `CloudKitManager.handleSyncToggle(_:)` is awaitable and cancellation-aware after account status checks, and subscription setup rechecks cancellation/sync-enabled state before treating existing subscriptions or saves as valid. Task 40 remains open for voice download ownership, AppKit window ownership, and remaining destructive action tracking. Verification: `AppSyncCoordinatorTests` passed 5 Swift Testing tests; `AppSyncCoordinatorTests` + `ServerManagerBootstrapTests` passed 16 Swift Testing tests; `git diff --check` passed; `xcodebuild build-for-testing -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO` passed.
 - 2026-06-21: Task 40C RED/GREEN completed. `TranscriptionSettingsView` no longer owns `MLXModelManager` instances or starts download tasks; voice model download, cancel, remove, and clear-storage intent now goes through `VoiceModelDownloadStore`, which owns stable managers and tracks/coalesces download tasks by model kind. Cancel clears the tracked task before forwarding cancellation so immediate retry starts a fresh application-owned operation, and URLSession delegate callbacks now ignore stale canceled tasks before touching active download state. Task 40 remains open for AppKit window ownership and remaining destructive action tracking. Verification: `VoiceModelDownloadStoreTests`, `TranscriptionSettingsStoreTests`, and `MLXModelCatalogTests` passed 8 XCTest tests plus 2 Swift Testing tests.
 - 2026-06-21: Task 40D RED/GREEN completed. `AboutView` and `ProUpgradeSheet` no longer own singleton AppKit windows; About presentation lives in `AboutWindowPresenter`, Pro upgrade presentation lives in `ProUpgradeWindowPresenter`, and shared paywall presentation copy lives in Store Application instead of the UI file. UI now sends show/close intent while Application owns stable `NSWindow` lifetimes. Task 40 remains open for remaining destructive action tracking. Verification: `AppKitWindowOwnershipBoundaryTests` passed 1 Swift Testing test; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with `CODE_SIGNING_ALLOWED=NO`.
 - 2026-06-21: Task 40E1 RED/GREEN completed. Server/workspace delete buttons, swipe actions, and workspace switcher deletion now send intent to `ServerManager.requestServerDeletion` or `requestWorkspaceDeletion` instead of launching untracked SwiftUI tasks that swallow destructive-action failures. `ServerManager` tracks pending deletion request tasks, captures `ServerDeletionFailure`, exposes an awaitable request wait for ordering tests, and runs success continuations only after the application-layer delete path succeeds. Task 40E remains open for environment deletion, Settings Keychain/trusted-host destructive flows, RemoteFiles mutation tasks, and TerminalThemes persistence/sync failure handling. Verification: `ServerManagerBootstrapTests` + `ServerDeletionIntentBoundaryTests` passed 13 Swift Testing tests; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with existing Swift 6 isolation warnings.
@@ -6504,9 +6504,9 @@ Perform local lifecycle review against the Swift checklist unless the user expli
 - 2026-06-21: Task 40E5 RED/GREEN completed with review fixes. `TerminalThemeManager` now owns custom-theme persistence through `TerminalThemeCustomThemeStoring`, owns CloudKit fetch/drain through TerminalThemes application-layer protocols, and tracks startup/theme/preference/foreground CloudKit push tasks with awaitable request IDs. Custom theme create/update/delete and remote merge publish `customThemes` only after local persistence succeeds, the concrete UserDefaults store avoids committing defaults when file sync throws, and Settings custom-theme delete UI now preserves throwing intent and surfaces persistence failures. Task 40E is complete. Verification: `TerminalThemeManagerLifecycleTests`, `TerminalThemeValidationTests`, `TerminalThemeStoragePathsTests`, and `SettingsLifecycleBoundaryTests` passed 9 Swift Testing tests plus 4 XCTest tests; custom-theme boundary scan found no UI-swallowed delete or swallowed `saveThemes` failure; `git diff --check` passed; iOS build-for-testing passed; macOS build-for-testing passed with existing Swift 6 isolation and XCTest deployment warnings.
 - 2026-06-21: Task 31 completed, with Task 36 ledger correction. Terminal runtime/client factory ownership is centralized in `TerminalConnectionRuntime`; session and tab managers still hold temporary application-boundary bridge maps and shell registry leases for runtime lookup/registration, but runner finish ordering is protected by awaitable runtime close paths and late/missing shell registrations are rejected before runner follow-up callbacks mutate closed state.
 - 2026-06-21: Task 32 RED/GREEN and API cleanup completed. `TerminalConnectionRunner` now depends on `TerminalConnectionSurface` and abstract connection operations instead of `GhosttyTerminalView`; `GhosttyTerminalView` adaptation lives at the surface registry/application boundary, and runner tests cover fake-surface size reads, stream writes, and process-exit notification without constructing a UI surface.
-- 2026-06-21: Final audit after Task 32 found repo-wide drift against the Swift test context rule: multiple older `VVTermTests/**/*.swift` files still lack `Test Context` headers. Task 33 is added to close this rule before final ready-for-merge review.
-- 2026-06-21: Task 33 RED scan listed legacy `VVTermTests/**/*.swift` files missing `Test Context`; the sweep added file-level headers only, and the GREEN scan produced no output.
-- 2026-06-21: Task 33 verification passed: `git diff --check`, GREEN context scan, and `xcodebuild build-for-testing -project VVTerm.xcodeproj -scheme VVTerm -destination 'platform=iOS Simulator,name=iPhone 17' -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO`. Boundary check confirmed Swift test diffs only add comment lines.
+- 2026-06-21: Final audit after Task 32 found repo-wide drift against the Swift test context rule: multiple older `WatermTests/**/*.swift` files still lack `Test Context` headers. Task 33 is added to close this rule before final ready-for-merge review.
+- 2026-06-21: Task 33 RED scan listed legacy `WatermTests/**/*.swift` files missing `Test Context`; the sweep added file-level headers only, and the GREEN scan produced no output.
+- 2026-06-21: Task 33 verification passed: `git diff --check`, GREEN context scan, and `xcodebuild build-for-testing -project Waterm.xcodeproj -scheme Waterm -destination 'platform=iOS Simulator,name=iPhone 17' -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO`. Boundary check confirmed Swift test diffs only add comment lines.
 - 2026-06-21: Task 33 review completed locally because the current harness only permits new subagents when explicitly requested. Review found and fixed misplaced context headers in three legacy banner files, then re-ran the GREEN context scan, header-format scan, `git diff --check`, and build-for-testing successfully.
 - 2026-06-21: Task 34 RED final suite exposed stale TerminalAccessories and RemoteFiles test expectations plus a real PKCS#1 RSA derivation crash. Focused GREEN passed after replacing Security.framework private-key import with pure Swift ASN.1 parsing, making both RSA mpint helpers Data-slice safe, and updating stale expectations; final iOS unit verification passed with 104 XCTest tests and 282 Swift Testing tests in 46 suites.
 - 2026-06-21: Task 35 RED full-suite verification exposed a main-actor teardown wait hang in `ConnectionSessionManager`; the waiter now removes completed tracked tasks itself instead of relying only on a separate cleanup task. Focused lifecycle verification passed 55 Swift Testing tests, including the previously hanging disconnect/reopen case.
@@ -6523,7 +6523,7 @@ Perform local lifecycle review against the Swift checklist unless the user expli
 - 2026-06-21: Task 15 shell cleanup slice completed. Rejected, stale, and replaced shell cleanup in `ConnectionSessionManager` and `TerminalTabManager` now enters per-server teardown tracking so immediate reopen waits for cleanup instead of racing a detached disconnect. Remaining non-exempt hits: managed tmux kill fire-and-forget and SwiftUI lifecycle teardown calls.
 - 2026-06-21: Task 15 tmux kill slice completed. `killTmuxIfNeeded` in both terminal managers now tracks managed remote tmux kill tasks per server, so immediate open waits for the kill operation instead of racing a fire-and-forget remote command. Remaining non-exempt hits: SwiftUI lifecycle teardown calls in `SSHTerminalWrapper` and split-pane `TerminalView`.
 - 2026-06-21: Task 15 SwiftUI surface lifecycle slice completed. `SSHTerminalWrapper` and split-pane `TerminalView` no longer perform business teardown from coordinator `deinit`; `dismantleUIView` / `dismantleNSView` now only detach or pause live surfaces, and closed-session cleanup is routed through manager-owned application-layer intent APIs. Verification: `TerminalSurfaceTeardownTests` passed, then the focused connection lifecycle/auth suite passed 16 XCTest tests plus 46 Swift Testing tests.
-- 2026-06-21: Task 15 final verification completed. The documented focused suite passed 16 XCTest tests plus 49 Swift Testing tests, and `xcodebuild build-for-testing -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` succeeded. Remaining architecture work is the previously deferred RemoteFiles/Stats lease-boundary cleanup, not an unresolved TerminalSessions lifecycle hit.
+- 2026-06-21: Task 15 final verification completed. The documented focused suite passed 16 XCTest tests plus 49 Swift Testing tests, and `xcodebuild build-for-testing -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO` succeeded. Remaining architecture work is the previously deferred RemoteFiles/Stats lease-boundary cleanup, not an unresolved TerminalSessions lifecycle hit.
 - 2026-06-21: RemoteFiles/Stats lease-boundary audit completed with three read-only fan-out explorers. Findings: `RemoteConnectionLease.close()` is awaitable and idempotent per lease, but RemoteFiles and Stats still expose raw `SSHClient` at feature boundaries; RemoteFiles needs a per-lease exclusive operation gate before borrowed terminal clients can safely run SFTP; Stats stop/restart must await or track close work instead of dropping returned tasks from SwiftUI.
 - 2026-06-21: Task 16 RED/GREEN completed. Added lease-ordering tests for concurrent close, non-overlapping exclusive operations, and close waiting for a protected operation; then implemented `RemoteConnectionLease.withExclusiveClient` with private actor-owned per-lease serialization. API cleanup found no new UI/application raw-client exposure; mutable gate state remains private to `RemoteConnectionLeaseState`. Verification: `RemoteConnectionLeaseTests` passed 6 Swift Testing tests and `git diff --check` passed.
 - 2026-06-21: Task 17 RED/GREEN completed. Added `SSHSFTPAdapterTests` covering borrowed disconnect safety, owned disconnect waiting for in-flight SFTP work, per-server lease serialization, and borrowed registration retry after failure. RED failed on missing `SFTPRemoteFileClient` and adapter seams; GREEN passed 4 `SSHSFTPAdapterTests` after introducing the RemoteFiles SFTP capability protocol and routing adapter work through `RemoteConnectionLease.withExclusiveClient`.
@@ -6534,7 +6534,7 @@ Perform local lifecycle review against the Swift checklist unless the user expli
 - 2026-06-21: Task 19 API/boundary cleanup completed. Stats Domain stayed pure, platform collectors remain in Infrastructure, `ServerStatsView` only sends visibility/retry intent with a borrowed lease provider and no longer keys lifecycle on `ObjectIdentifier(SSHClient)`, and all touched Stats test files include Test Context headers. Verification: focused Stats suite passed 10 XCTest tests plus 6 Swift Testing tests; `git diff --check` passed; code review found no blocking issues and the stale shared-SSH comment was aligned to lease vocabulary before commit.
 - 2026-06-21: Task 20 audit classification completed. Non-exempt hits were RemoteFiles/App raw borrowed-client provider wiring and Terminal Rich Paste UI-side raw-client-to-lease wrapping. Exempt hits are Stats and RemoteFiles owned `SSHClient()` infrastructure fallback construction, TerminalSessions application-layer runtime construction/private raw-client helpers, `RemoteConnectionLease.withExclusiveClient`, Stats `disconnectWhenDone: false` inside the lease-gated connection bridge, and UI event `Task {}` wrappers that send store/collector intent rather than owning teardown.
 - 2026-06-21: Task 20 RED/GREEN completed for RemoteFiles lease boundary. `SSHSFTPAdapterTests.borrowedLeaseProviderIsTheRemoteFilesConnectionBoundary` first failed to compile because `SSHSFTPAdapter` still accepted `borrowedClientProvider`; GREEN passed after `SSHSFTPAdapter`, app composition, and terminal rich-paste runtime paths consumed `RemoteConnectionLease` providers. `sharedStatsClient` is now private to terminal managers and tests assert `sharedStatsLease(...).client` identity instead.
-- 2026-06-21: Task 20 API/boundary cleanup completed after code review. Reviewer found iOS UI still pulled raw `SSHClient`/`shellId` for resize and raw terminal helpers were still module-internal; fixed by routing iOS refresh resize through `ConnectionSessionManager.resizeSession(...)`, reusing that manager intent in redraw-after-close, and making raw terminal client helpers private. Verification: expanded focused suite passed 24 XCTest tests plus 67 Swift Testing tests; `git diff --check` passed; `xcodebuild build-for-testing -skip-testing:VVTermUITests ENABLE_DEBUG_DYLIB=NO` passed; re-review found no remaining issues.
+- 2026-06-21: Task 20 API/boundary cleanup completed after code review. Reviewer found iOS UI still pulled raw `SSHClient`/`shellId` for resize and raw terminal helpers were still module-internal; fixed by routing iOS refresh resize through `ConnectionSessionManager.resizeSession(...)`, reusing that manager intent in redraw-after-close, and making raw terminal client helpers private. Verification: expanded focused suite passed 24 XCTest tests plus 67 Swift Testing tests; `git diff --check` passed; `xcodebuild build-for-testing -skip-testing:WatermUITests ENABLE_DEBUG_DYLIB=NO` passed; re-review found no remaining issues.
 - 2026-06-21: Post-Task-20 plan audit reconciled historical checklist drift. Tasks 1-13 are now marked complete because their current code/test artifacts exist in-tree: generation-guard shell registration, awaitable close APIs, application-layer runner/runtime/registry, terminal surface registry, cancellation-aware auth gate, libssh2 session driver and abort tests, `RemoteCommandExecuting`, known-host verification service, and `RemoteConnectionLease`.
 - 2026-06-21: Post-Task-20 remaining gap classification selected Core SSH/FFI for the next wave. RemoteFiles/Stats raw lease boundaries are complete from Task 20; broad UI `Task {}` hits are lower priority unless they own lifecycle-critical teardown. The highest-risk remaining area is concentrated in `SSHClient.swift` and `LibSSH2SessionDriver.swift`: direct auth/channel/SFTP libssh2 calls, keyboard-interactive callback lifetime, raw error preservation, and legacy known-host storage compatibility.
 - 2026-06-21: Task 21 audit classification completed. Exempt low-level boundaries: `LibSSH2Runtime` process-global init lock; `LibSSH2SessionDriver` socket/address/session pointer operations with local pointer lifetimes; `SSHClientAbortState` and `AtomicSocket` locks for emergency fd abort; `KeyboardInteractiveContext` lock and callback context owned by `SSHSession`; test fake locks in `LibSSH2SessionLifecycleTests`. Non-exempt Task 21 slice: auth method discovery, auth status, password/keyboard-interactive/public-key auth, auth last-error mapping, and host-key fingerprint reads still happen directly in `SSHClient.swift` and must move behind `LibSSH2SessionDriving` for the RED auth raw-error test. Deferred follow-up candidates: channel, SCP, SFTP, and keepalive libssh2 calls still live in `SSHClient.swift` and should be split only after the auth boundary is stable.
@@ -6561,7 +6561,7 @@ Perform local lifecycle review against the Swift checklist unless the user expli
 - 2026-06-21: Task 25 RED completed. Added `testKeepAliveUsesDriverBoundary`; the first focused run failed to compile because `RecordingLibSSH2SessionDriver` did not yet expose keepalive invocation tracking, proving keepalive still lacked an injectable driver boundary.
 - 2026-06-21: Task 25 GREEN completed. `LibSSH2SessionDriving.sendKeepAlive(session:)` now owns `libssh2_keepalive_send`; `SSHSession.sendKeepAlive()` only checks that a session exists and delegates to the driver. Verification: focused keepalive test passed.
 - 2026-06-21: Task 25 final Core SSH FFI scan completed. Direct `libssh2_` calls are confined to `LibSSH2SessionDriver.swift`; `SSHClient.swift` has no remaining direct `libssh2_` function calls. Remaining allowed low-level hits are: `LibSSH2Runtime` process-global init `NSLock`; `LibSSH2SessionDriver` socket/address, auth, channel, SFTP, keepalive, and last-error pointer lifetimes; `KnownHostsManager` synchronous compatibility-facade lock; `SSHClientAbortState` and `AtomicSocket` emergency socket-abort locks; keyboard-interactive callback context `UnsafePointer` / `UnsafeMutablePointer` / `nonisolated(unsafe)` boundaries owned by `SSHSession`; `SSHSession.downloadFile` local Swift buffer-to-`Data` copy after driver SFTP reads; and `fdSet` local `fd_set` bit mutation for C `select` compatibility.
-- 2026-06-21: Task 25 final verification completed. `rg -n "libssh2_|withUnsafe|UnsafeMutable|UnsafePointer|NSLock|nonisolated\\(unsafe\\)" VVTerm/Core/SSH -g '*.swift'` produced only the classified Core SSH low-level boundaries; `git diff --check` passed; the documented focused suite passed 11 XCTest tests plus 15 Swift Testing tests.
+- 2026-06-21: Task 25 final verification completed. `rg -n "libssh2_|withUnsafe|UnsafeMutable|UnsafePointer|NSLock|nonisolated\\(unsafe\\)" Waterm/Core/SSH -g '*.swift'` produced only the classified Core SSH low-level boundaries; `git diff --check` passed; the documented focused suite passed 11 XCTest tests plus 15 Swift Testing tests.
 - 2026-06-21: Task 25 review completed. Reviewer found no code-level keepalive issue; the only Important finding was the missing classification for the two `SSHClient.swift` `withUnsafe` hits, which is now documented above.
 - 2026-06-21: Post-Task-25 plan consistency audit reconciled stale commit checkboxes for Task 22 and Task 24 against existing commits `cd210e1` and `3590af0`; no code changed in this reconciliation.
 - 2026-06-21: Post-Task-25 whole-plan fan-out audit completed. Remaining non-Core lifecycle gaps are split into executable Tasks 26 through 32: test-context tightening, remote lease close semantics, server/workspace delete teardown, app termination and LRU eviction cleanup, RemoteFiles/Stats lease provider boundaries, centralized terminal runtime ownership, and TerminalConnectionRunner surface protocol decoupling.

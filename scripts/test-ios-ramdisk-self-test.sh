@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-tmp_root="$(mktemp -d -t vvterm-ios-ramdisk-self-test.XXXXXX)"
+tmp_root="$(mktemp -d -t waterm-ios-ramdisk-self-test.XXXXXX)"
 
 cleanup() {
     rm -rf "$tmp_root"
@@ -76,24 +76,24 @@ write_stub_tools() {
     cat >"$bin_dir/xcodebuild" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$@" >>"${VVTERM_STUB_CAPTURE}/xcodebuild.args"
+printf '%s\n' "$@" >>"${WATERM_STUB_CAPTURE}/xcodebuild.args"
 if [[ " $* " == *" -resolvePackageDependencies "* ]]; then
-    if [[ "${VVTERM_STUB_RESOLVE_STALL:-0}" == "1" ]]; then
-        sleep "${VVTERM_STUB_RESOLVE_SLEEP:-3}"
+    if [[ "${WATERM_STUB_RESOLVE_STALL:-0}" == "1" ]]; then
+        sleep "${WATERM_STUB_RESOLVE_SLEEP:-3}"
     fi
     exit 0
 fi
-if [[ "${1:-}" == "test" && "${VVTERM_STUB_TEST_STALL:-0}" == "1" ]]; then
+if [[ "${1:-}" == "test" && "${WATERM_STUB_TEST_STALL:-0}" == "1" ]]; then
     (
-        sleep "${VVTERM_STUB_TEST_GRANDCHILD_SLEEP:-30}" &
-        echo "$!" >"${VVTERM_STUB_CAPTURE}/xcodebuild-test-grandchild.pid"
-        sleep "${VVTERM_STUB_TEST_CHILD_SLEEP:-30}"
+        sleep "${WATERM_STUB_TEST_GRANDCHILD_SLEEP:-30}" &
+        echo "$!" >"${WATERM_STUB_CAPTURE}/xcodebuild-test-grandchild.pid"
+        sleep "${WATERM_STUB_TEST_CHILD_SLEEP:-30}"
     ) &
-    echo "$!" >"${VVTERM_STUB_CAPTURE}/xcodebuild-test-child.pid"
-    sleep "${VVTERM_STUB_TEST_SLEEP:-30}"
+    echo "$!" >"${WATERM_STUB_CAPTURE}/xcodebuild-test-child.pid"
+    sleep "${WATERM_STUB_TEST_SLEEP:-30}"
     exit 0
 fi
-if [[ "${VVTERM_STUB_ZERO_TESTS:-0}" == "1" ]]; then
+if [[ "${WATERM_STUB_ZERO_TESTS:-0}" == "1" ]]; then
     echo "Test run started."
     exit 0
 fi
@@ -105,9 +105,9 @@ STUB
     cat >"$bin_dir/xcrun" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$@" >>"${VVTERM_STUB_CAPTURE}/xcrun.calls"
+printf '%s\n' "$@" >>"${WATERM_STUB_CAPTURE}/xcrun.calls"
 if [[ "${1:-}" == "simctl" && "${2:-}" == "list" && "${3:-}" == "devices" ]]; then
-    echo "    iPhone 17 (11111111-2222-3333-4444-555555555555) (${VVTERM_STUB_DEVICE_STATE:-Shutdown})"
+    echo "    iPhone 17 (11111111-2222-3333-4444-555555555555) (${WATERM_STUB_DEVICE_STATE:-Shutdown})"
 fi
 exit 0
 STUB
@@ -115,7 +115,7 @@ STUB
     cat >"$bin_dir/hdiutil" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$@" >>"${VVTERM_STUB_CAPTURE}/hdiutil.calls"
+printf '%s\n' "$@" >>"${WATERM_STUB_CAPTURE}/hdiutil.calls"
 case "${1:-}" in
 attach)
     echo "/dev/disk999"
@@ -129,10 +129,10 @@ STUB
     cat >"$bin_dir/diskutil" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$@" >>"${VVTERM_STUB_CAPTURE}/diskutil.calls"
+printf '%s\n' "$@" >>"${WATERM_STUB_CAPTURE}/diskutil.calls"
 case "${1:-}" in
 erasevolume)
-    mkdir -p "${VVTERM_STUB_RAMDISK_MOUNT}"
+    mkdir -p "${WATERM_STUB_RAMDISK_MOUNT}"
     ;;
 info)
     cat <<PLIST
@@ -142,7 +142,7 @@ info)
 <plist version="1.0">
 <dict>
     <key>MountPoint</key>
-    <string>${VVTERM_STUB_RAMDISK_MOUNT}</string>
+    <string>${WATERM_STUB_RAMDISK_MOUNT}</string>
 </dict>
 </plist>
 PLIST
@@ -156,7 +156,7 @@ STUB
     cat >"$bin_dir/perl" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$@" >>"${VVTERM_STUB_CAPTURE}/perl.calls"
+printf '%s\n' "$@" >>"${WATERM_STUB_CAPTURE}/perl.calls"
 exit 0
 STUB
 
@@ -195,9 +195,9 @@ run_wrapper() {
         env -i \
             PATH="${tmp_root}/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
             TMPDIR="${tmp_root}/tmp/" \
-            VVTERM_STUB_CAPTURE="$capture_dir" \
-            VVTERM_STUB_DEVICE_STATE="$device_state" \
-            VVTERM_STUB_RAMDISK_MOUNT="$ramdisk_mount" \
+            WATERM_STUB_CAPTURE="$capture_dir" \
+            WATERM_STUB_DEVICE_STATE="$device_state" \
+            WATERM_STUB_RAMDISK_MOUNT="$ramdisk_mount" \
             IOS_TEST_LOCK_DIR="${tmp_root}/ios-test.lock" \
             IOS_TEST_LOG_DIR="${tmp_root}/logs" \
             IOS_TEST_RETRIES=0 \
@@ -211,9 +211,9 @@ run_wrapper() {
         env -i \
             PATH="${tmp_root}/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
             TMPDIR="${tmp_root}/tmp/" \
-            VVTERM_STUB_CAPTURE="$capture_dir" \
-            VVTERM_STUB_DEVICE_STATE="$device_state" \
-            VVTERM_STUB_RAMDISK_MOUNT="$ramdisk_mount" \
+            WATERM_STUB_CAPTURE="$capture_dir" \
+            WATERM_STUB_DEVICE_STATE="$device_state" \
+            WATERM_STUB_RAMDISK_MOUNT="$ramdisk_mount" \
             IOS_TEST_LOCK_DIR="${tmp_root}/ios-test.lock" \
             IOS_TEST_LOG_DIR="${tmp_root}/logs" \
             IOS_TEST_RETRIES=0 \
@@ -299,15 +299,15 @@ assert_contains "${local_capture}/hdiutil.calls" "detach"
 assert_contains "${local_capture}/diskutil.calls" "erasevolume"
 assert_contains "${local_capture}/diskutil.calls" "unmountDisk"
 assert_contains "${local_capture}/xcodebuild.args" "-derivedDataPath"
-assert_contains "${local_capture}/xcodebuild.args" "${local_mount}/vvterm-ios-derived-data."
+assert_contains "${local_capture}/xcodebuild.args" "${local_mount}/waterm-ios-derived-data."
 assert_contains "${local_capture}/xcodebuild.args" "$local_packages"
-assert_not_contains "${local_capture}/xcodebuild.args" "${local_mount}/vvterm-ios-source-packages"
-assert_not_contains "${local_capture}/xcodebuild.args" "${tmp_root}/tmp/vvterm-ios-source-packages"
+assert_not_contains "${local_capture}/xcodebuild.args" "${local_mount}/waterm-ios-source-packages"
+assert_not_contains "${local_capture}/xcodebuild.args" "${tmp_root}/tmp/waterm-ios-source-packages"
 resolve_args_line="$(grep -n -- '-resolvePackageDependencies' "${local_capture}/xcodebuild.args" | head -n 1 | cut -d: -f1)"
 [[ -n "$resolve_args_line" ]] || fail "missing resolvePackageDependencies invocation"
 sed -n "${resolve_args_line},$((resolve_args_line + 8))p" "${local_capture}/xcodebuild.args" >"${tmp_root}/resolve.args"
 assert_contains "${tmp_root}/resolve.args" "-derivedDataPath"
-assert_contains "${tmp_root}/resolve.args" "${local_mount}/vvterm-ios-derived-data."
+assert_contains "${tmp_root}/resolve.args" "${local_mount}/waterm-ios-derived-data."
 assert_file_missing_or_empty "${local_capture}/perl.calls"
 assert_contains "${local_capture}/xcrun.calls" "simctl"
 assert_contains "${local_capture}/xcrun.calls" "terminate"
@@ -315,7 +315,7 @@ assert_not_contains "${local_capture}/xcrun.calls" "shutdown"
 assert_not_contains "${local_capture}/xcrun.calls" "bootstatus"
 assert_contains "${local_capture}/xcodebuild.args" "-collect-test-diagnostics"
 assert_contains "${local_capture}/xcodebuild.args" "never"
-[[ -z "$(find "$local_mount" -maxdepth 1 -name 'vvterm-ios-derived-data.*' -print -quit)" ]] ||
+[[ -z "$(find "$local_mount" -maxdepth 1 -name 'waterm-ios-derived-data.*' -print -quit)" ]] ||
     fail "auto-managed DerivedData was not removed from RAM disk"
 [[ -n "$(find "${tmp_root}/logs" -name 'xcodebuild-test-attempt-1-passed.log' -print -quit)" ]] ||
     fail "diagnostic logs should be preserved outside the RAM disk"
@@ -339,7 +339,7 @@ run_wrapper "$explicit_capture" "$explicit_mount" "${tmp_root}/explicit.out" "${
     IOS_TEST_RAMDISK_MB=16
 
 assert_contains "${explicit_capture}/xcodebuild.args" "$explicit_packages"
-assert_not_contains "${explicit_capture}/xcodebuild.args" "${explicit_mount}/vvterm-ios-source-packages"
+assert_not_contains "${explicit_capture}/xcodebuild.args" "${explicit_mount}/waterm-ios-source-packages"
 
 ci_capture="${tmp_root}/capture-ci"
 ci_mount="${tmp_root}/ramdisk-ci"
@@ -349,7 +349,7 @@ run_wrapper "$ci_capture" "$ci_mount" "${tmp_root}/ci.out" "${tmp_root}/ci.err" 
 
 [[ ! -s "${ci_capture}/hdiutil.calls" ]] || fail "GitHub Actions must not create a RAM disk"
 assert_contains "${ci_capture}/xcodebuild.args" "-derivedDataPath"
-assert_not_contains "${ci_capture}/xcodebuild.args" "${ci_mount}/vvterm-ios-derived-data."
+assert_not_contains "${ci_capture}/xcodebuild.args" "${ci_mount}/waterm-ios-derived-data."
 assert_contains "${tmp_root}/ci.out" "Ignoring IOS_TEST_RAMDISK_MB on GitHub Actions."
 
 resolve_timeout_capture="${tmp_root}/capture-resolve-timeout"
@@ -358,13 +358,13 @@ run_wrapper_expect_failure "$resolve_timeout_capture" "$resolve_timeout_mount" \
     "${tmp_root}/resolve-timeout.out" "${tmp_root}/resolve-timeout.err" "" "Shutdown" \
     IOS_TEST_RAMDISK_MB=16 \
     IOS_TEST_NO_OUTPUT_TIMEOUT=1 \
-    VVTERM_STUB_RESOLVE_STALL=1 \
-    VVTERM_STUB_RESOLVE_SLEEP=3
+    WATERM_STUB_RESOLVE_STALL=1 \
+    WATERM_STUB_RESOLVE_SLEEP=3
 
 assert_contains "${resolve_timeout_capture}/wrapper.status" "124"
 assert_contains "${tmp_root}/resolve-timeout.err" "xcodebuild produced no output for 1s"
 [[ ! -d "${tmp_root}/ios-test.lock" ]] || fail "resolve timeout should remove the iOS test lock"
-[[ -z "$(find "$resolve_timeout_mount" -maxdepth 1 -name 'vvterm-ios-derived-data.*' -print -quit)" ]] ||
+[[ -z "$(find "$resolve_timeout_mount" -maxdepth 1 -name 'waterm-ios-derived-data.*' -print -quit)" ]] ||
     fail "resolve timeout should clean auto-managed DerivedData from RAM disk"
 
 test_timeout_capture="${tmp_root}/capture-test-timeout"
@@ -373,16 +373,16 @@ run_wrapper_expect_failure "$test_timeout_capture" "$test_timeout_mount" \
     "${tmp_root}/test-timeout.out" "${tmp_root}/test-timeout.err" "" "Shutdown" \
     IOS_TEST_RAMDISK_MB=16 \
     IOS_TEST_NO_OUTPUT_TIMEOUT=1 \
-    VVTERM_STUB_TEST_STALL=1 \
-    VVTERM_STUB_TEST_SLEEP=30 \
-    VVTERM_STUB_TEST_CHILD_SLEEP=30
+    WATERM_STUB_TEST_STALL=1 \
+    WATERM_STUB_TEST_SLEEP=30 \
+    WATERM_STUB_TEST_CHILD_SLEEP=30
 
 assert_contains "${test_timeout_capture}/wrapper.status" "124"
 assert_contains "${tmp_root}/test-timeout.err" "xcodebuild produced no output for 1s"
 assert_pid_not_running "${test_timeout_capture}/xcodebuild-test-child.pid" "test timeout"
 assert_pid_not_running "${test_timeout_capture}/xcodebuild-test-grandchild.pid" "test timeout grandchild"
 [[ ! -d "${tmp_root}/ios-test.lock" ]] || fail "test timeout should remove the iOS test lock"
-[[ -z "$(find "$test_timeout_mount" -maxdepth 1 -name 'vvterm-ios-derived-data.*' -print -quit)" ]] ||
+[[ -z "$(find "$test_timeout_mount" -maxdepth 1 -name 'waterm-ios-derived-data.*' -print -quit)" ]] ||
     fail "test timeout should clean auto-managed DerivedData from RAM disk"
 
 test_term_capture="${tmp_root}/capture-test-term"
@@ -391,15 +391,15 @@ run_wrapper_and_terminate "$test_term_capture" "$test_term_mount" \
     "${tmp_root}/test-term.out" "${tmp_root}/test-term.err" "" "Shutdown" \
     IOS_TEST_RAMDISK_MB=16 \
     IOS_TEST_NO_OUTPUT_TIMEOUT=0 \
-    VVTERM_STUB_TEST_STALL=1 \
-    VVTERM_STUB_TEST_SLEEP=30 \
-    VVTERM_STUB_TEST_CHILD_SLEEP=30
+    WATERM_STUB_TEST_STALL=1 \
+    WATERM_STUB_TEST_SLEEP=30 \
+    WATERM_STUB_TEST_CHILD_SLEEP=30
 
 assert_contains "${test_term_capture}/wrapper.status" "143"
 assert_pid_not_running "${test_term_capture}/xcodebuild-test-child.pid" "test trap termination"
 assert_pid_not_running "${test_term_capture}/xcodebuild-test-grandchild.pid" "test trap termination grandchild"
 [[ ! -d "${tmp_root}/ios-test.lock" ]] || fail "test trap termination should remove the iOS test lock"
-[[ -z "$(find "$test_term_mount" -maxdepth 1 -name 'vvterm-ios-derived-data.*' -print -quit)" ]] ||
+[[ -z "$(find "$test_term_mount" -maxdepth 1 -name 'waterm-ios-derived-data.*' -print -quit)" ]] ||
     fail "test trap termination should clean auto-managed DerivedData from RAM disk"
 
 zero_tests_required_capture="${tmp_root}/capture-zero-tests-required"
@@ -408,7 +408,7 @@ run_wrapper_expect_failure "$zero_tests_required_capture" "$zero_tests_required_
     "${tmp_root}/zero-tests-required.out" "${tmp_root}/zero-tests-required.err" "" "Shutdown" \
     IOS_TEST_RAMDISK_MB=16 \
     IOS_TEST_REQUIRE_EXECUTED_TESTS=1 \
-    VVTERM_STUB_ZERO_TESTS=1
+    WATERM_STUB_ZERO_TESTS=1
 
 assert_contains "${zero_tests_required_capture}/wrapper.status" "11"
 assert_contains "${tmp_root}/zero-tests-required.err" "executed zero tests"
@@ -418,9 +418,9 @@ zero_tests_filter_mount="${tmp_root}/ramdisk-zero-tests-filter"
 run_wrapper_expect_failure "$zero_tests_filter_capture" "$zero_tests_filter_mount" \
     "${tmp_root}/zero-tests-filter.out" "${tmp_root}/zero-tests-filter.err" "" "Shutdown" \
     IOS_TEST_RAMDISK_MB=16 \
-    VVTERM_STUB_ZERO_TESTS=1 \
+    WATERM_STUB_ZERO_TESTS=1 \
     -- \
-    -only-testing:VVTermTests/MissingRenamedTest
+    -only-testing:WatermTests/MissingRenamedTest
 
 assert_contains "${zero_tests_filter_capture}/wrapper.status" "11"
 assert_contains "${tmp_root}/zero-tests-filter.err" "Check -only-testing arguments"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Waterm Commit Message"
+  short_description: "Write informative Waterm commit messages"
+  default_prompt: "Use $waterm-commit-message to draft a concise, reviewable commit message for the staged Waterm changes."

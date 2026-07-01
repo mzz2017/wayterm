@@ -3,7 +3,7 @@
 ## Summary
 Add two security features:
 - `Per-server lock`: selected servers require biometric authentication before opening/connecting.
-- `Full-app lock`: VVTerm requires biometric authentication when the app becomes active.
+- `Full-app lock`: Waterm requires biometric authentication when the app becomes active.
 
 Path note: this spec predates the feature-first migration. Any legacy `Models/`, `Managers/`, `Services/`, or `Views/` file paths in this document should be mapped to the current `App/`, `Core/`, and `Features/` tree.
 
@@ -12,7 +12,7 @@ This spec targets:
 - macOS 13.3+
 
 ## Problem
-VVTerm currently protects credentials in Keychain, but opening the app or selecting a server does not require a local user-presence check. On shared devices this increases exposure risk.
+Waterm currently protects credentials in Keychain, but opening the app or selecting a server does not require a local user-presence check. On shared devices this increases exposure risk.
 
 ## Goals (V1)
 - Allow users to enable biometric lock for individual servers.
@@ -30,24 +30,24 @@ VVTerm currently protects credentials in Keychain, but opening the app or select
 
 ## Current Code Touchpoints
 ### Connection/open flows
-- iOS server open path: `VVTerm/Views/iOS/iOSContentView.swift`
-- iOS session open API: `VVTerm/Managers/ConnectionSessionManager.swift`
-- macOS server connect UI path: `VVTerm/ContentView.swift`
-- macOS tab open API: `VVTerm/Managers/TerminalTabManager.swift`
+- iOS server open path: `Waterm/Views/iOS/iOSContentView.swift`
+- iOS session open API: `Waterm/Managers/ConnectionSessionManager.swift`
+- macOS server connect UI path: `Waterm/ContentView.swift`
+- macOS tab open API: `Waterm/Managers/TerminalTabManager.swift`
 
 ### Server metadata + sync
-- Server model: `VVTerm/Models/Server.swift`
-- Server CloudKit encode/decode: `VVTerm/Models/Server+CloudKit.swift`
-- Server CRUD/rebuild paths: `VVTerm/Managers/ServerManager.swift`
+- Server model: `Waterm/Models/Server.swift`
+- Server CloudKit encode/decode: `Waterm/Models/Server+CloudKit.swift`
+- Server CRUD/rebuild paths: `Waterm/Managers/ServerManager.swift`
 
 ### App lifecycle
-- App root and delegates: `VVTerm/VVTermApp.swift`
+- App root and delegates: `Waterm/WatermApp.swift`
 - iOS background hook already exists: `applicationDidEnterBackground`
 
 ### Settings and server edit UI
-- General settings: `VVTerm/Views/Settings/GeneralSettingsView.swift`
-- Settings navigation: `VVTerm/Views/Settings/SettingsView.swift`
-- Server edit form: `VVTerm/Views/ServerDetail/ServerFormSheet.swift`
+- General settings: `Waterm/Views/Settings/GeneralSettingsView.swift`
+- Settings navigation: `Waterm/Views/Settings/SettingsView.swift`
+- Server edit form: `Waterm/Views/ServerDetail/ServerFormSheet.swift`
 
 ## APIs Needed
 ### 1) LocalAuthentication (required)
@@ -60,7 +60,7 @@ VVTerm currently protects credentials in Keychain, but opening the app or select
 - `LAError` handling (`userCancel`, `systemCancel`, `appCancel`, `biometryNotAvailable`, `biometryNotEnrolled`, `biometryLockout`, `passcodeNotSet`, `authenticationFailed`)
 
 Compatibility note:
-- Do not use SwiftUI-only `LocalAuthenticationView` for V1 because VVTerm supports iOS 16, while those newer APIs are iOS 18+.
+- Do not use SwiftUI-only `LocalAuthenticationView` for V1 because Waterm supports iOS 16, while those newer APIs are iOS 18+.
 
 ### 2) Info.plist (iOS required)
 - `NSFaceIDUsageDescription`
@@ -108,9 +108,9 @@ Add field to `Server`:
 - `requiresBiometricUnlock: Bool = false`
 
 Update:
-- `Codable` keys and init/encode in `VVTerm/Models/Server.swift`
-- CloudKit record read/write in `VVTerm/Models/Server+CloudKit.swift`
-- All manual `Server(...)` rebuild callsites in `VVTerm/Managers/ServerManager.swift`
+- `Codable` keys and init/encode in `Waterm/Models/Server.swift`
+- CloudKit record read/write in `Waterm/Models/Server+CloudKit.swift`
+- All manual `Server(...)` rebuild callsites in `Waterm/Managers/ServerManager.swift`
 
 ### App lock settings (local)
 Use `@AppStorage` (device-local):
@@ -122,8 +122,8 @@ Never persist unlocked session state.
 
 ## Architecture
 Create:
-- `VVTerm/Services/Security/BiometricAuthService.swift`
-- `VVTerm/Managers/AppLockManager.swift`
+- `Waterm/Services/Security/BiometricAuthService.swift`
+- `Waterm/Managers/AppLockManager.swift`
 
 ### `BiometricAuthService`
 Responsibilities:
@@ -150,7 +150,7 @@ Responsibilities:
 
 ## UI Changes
 ### Server form
-File: `VVTerm/Views/ServerDetail/ServerFormSheet.swift`
+File: `Waterm/Views/ServerDetail/ServerFormSheet.swift`
 - Add `Security` section with toggle:
   - Label adapts by biometry type, e.g. `Require Face ID to open this server`.
 - If unsupported/unavailable, disable toggle and show helper text.
@@ -158,11 +158,11 @@ File: `VVTerm/Views/ServerDetail/ServerFormSheet.swift`
 
 ### Settings
 Files:
-- `VVTerm/Views/Settings/SettingsView.swift`
-- `VVTerm/Views/Settings/GeneralSettingsView.swift`
+- `Waterm/Views/Settings/SettingsView.swift`
+- `Waterm/Views/Settings/GeneralSettingsView.swift`
 
 Add security section in General:
-- `Require Face ID to open VVTerm` toggle
+- `Require Face ID to open Waterm` toggle
 - Optional `Lock when app goes to background` toggle
 - Optional `Require re-auth after` (grace period picker)
 
@@ -170,7 +170,7 @@ Enabling full-app lock should do a confirmation auth before committing the toggl
 
 ### App lock gate UI
 Add shared lock overlay view:
-- `VVTerm/Views/Security/AppLockGateView.swift`
+- `Waterm/Views/Security/AppLockGateView.swift`
 
 Behavior:
 - Full-window overlay in app root, above all content.
@@ -180,21 +180,21 @@ Behavior:
 
 ## Integration Points
 ### iOS
-- `VVTerm/Views/iOS/iOSContentView.swift`
+- `Waterm/Views/iOS/iOSContentView.swift`
   - Gate `onServerSelected` with `ensureServerUnlocked`.
-- `VVTerm/Managers/ConnectionSessionManager.swift`
+- `Waterm/Managers/ConnectionSessionManager.swift`
   - Fail-safe check at start of `openConnection(to:forceNew:)`.
-- `VVTerm/VVTermApp.swift`
+- `Waterm/WatermApp.swift`
   - Listen to `scenePhase` and lock on background/inactive transitions.
 
 ### macOS
-- `VVTerm/ContentView.swift`
+- `Waterm/ContentView.swift`
   - Gate connect actions before mutating connected state.
-- `VVTerm/Views/Tabs/ConnectionTabsView.swift`
+- `Waterm/Views/Tabs/ConnectionTabsView.swift`
   - Gate `openNewTab` for protected server.
-- `VVTerm/Managers/TerminalTabManager.swift`
+- `Waterm/Managers/TerminalTabManager.swift`
   - Fail-safe check in `openTab(for:)` (or return nil/throw variant).
-- `VVTerm/VVTermApp.swift`
+- `Waterm/WatermApp.swift`
   - On app active, require unlock if full-app lock enabled.
 
 ## Error Handling & UX
@@ -217,8 +217,8 @@ Do not log sensitive reasons or per-attempt details.
 ## Testing Plan
 ### Unit tests
 Add test files:
-- `VVTermTests/BiometricAuthServiceTests.swift`
-- `VVTermTests/AppLockManagerTests.swift`
+- `WatermTests/BiometricAuthServiceTests.swift`
+- `WatermTests/AppLockManagerTests.swift`
 - Extend model serialization tests for `requiresBiometricUnlock`.
 
 Cases:

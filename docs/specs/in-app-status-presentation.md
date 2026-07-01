@@ -3,7 +3,7 @@
 Draft date: 2026-04-07
 
 ## Summary
-Refactor VVTerm's in-app status and notification presentation into a small shared system with:
+Refactor Waterm's in-app status and notification presentation into a small shared system with:
 - a consistent taxonomy
 - shared visual primitives
 - explicit ownership boundaries
@@ -14,7 +14,7 @@ This is primarily a structural and presentation-architecture refactor.
 The goal is not to add more toast types. The goal is to reduce ad hoc overlays and make status presentation stable as the app grows.
 
 ## Problem
-VVTerm currently has multiple overlapping ways to communicate status:
+Waterm currently has multiple overlapping ways to communicate status:
 - large center cards
 - compact top banners
 - bottom transfer cards
@@ -35,29 +35,29 @@ This makes the UI feel inconsistent and makes the code harder to scale safely.
 
 ### Existing presentation surfaces
 - App-shell initial connect empty state on iOS:
-  - `VVTerm/App/iOS/iOSContentView.swift`
+  - `Waterm/App/iOS/iOSContentView.swift`
   - `connectingStateView(serverName:)`
 - Terminal blocking and progress overlays:
-  - `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
+  - `Waterm/Features/TerminalSessions/UI/Terminal/TerminalContainerView.swift`
   - `stateOverlayLayer`
   - `progressOverlayLayer`
   - `topBannerOverlayLayer`
   - `errorOverlayLayer`
 - Split-terminal duplicate status stack:
-  - `VVTerm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
+  - `Waterm/Features/TerminalSessions/UI/Splits/TerminalView.swift`
 - Terminal-specific banner and progress components:
-  - `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalStatusCard.swift`
-  - `VVTerm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift`
+  - `Waterm/Features/TerminalSessions/UI/Terminal/TerminalStatusCard.swift`
+  - `Waterm/Features/TerminalSessions/UI/Terminal/TerminalRichPasteSupport.swift`
   - `TerminalTopBannerView`
   - `TerminalRichPasteProgressOverlay`
   - `TerminalRichPasteBannerOverlay`
 - Files transfer overlay:
-  - `VVTerm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift`
+  - `Waterm/Features/RemoteFiles/UI/RemoteFileBrowserScreen.swift`
   - `TransferStatus`
   - `performTransfer(...)`
   - `RemoteFileTransferStatusView`
 - Offline banner utility:
-  - `VVTerm/Core/UI/OfflineBanner.swift`
+  - `Waterm/Core/UI/OfflineBanner.swift`
   - currently not integrated into app root presentation
 
 ### Current inconsistency examples
@@ -110,7 +110,7 @@ Relevant HIG pages:
 - `https://developer.apple.com/design/human-interface-guidelines/progress-indicators`
 - `https://developer.apple.com/design/human-interface-guidelines/loading`
 
-Product interpretation for VVTerm:
+Product interpretation for Waterm:
 - not every status should become a toast
 - routine success should usually not interrupt
 - persistent degraded state belongs in a stable inline/banner region
@@ -205,7 +205,7 @@ Rules:
 - keep local to the form
 - do not route through shared notice infrastructure
 
-## Mapping Current VVTerm States
+## Mapping Current Waterm States
 
 | Current state | Target category | Notes |
 | --- | --- | --- |
@@ -257,7 +257,7 @@ This preserves clarity:
 ## Proposed Structure
 
 ```text
-VVTerm/
+Waterm/
 ├── Core/
 │   └── UI/
 │       └── Notices/

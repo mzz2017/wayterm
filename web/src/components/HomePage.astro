@@ -30,7 +30,7 @@ const currentYear = new Date().getFullYear();
 
 const highlightAnswer = (text: string) =>
   text
-    .replace(/VVTerm/g, '<span class="text-orange-500">VVTerm</span>')
+    .replace(/Waterm/g, '<span class="text-orange-500">Waterm</span>')
     .replace(/libghostty/g, '<span class="text-orange-500">libghostty</span>')
     .replace(/Ghostty/g, '<span class="text-orange-500">Ghostty</span>')
     .replace(/iCloud/g, '<span class="text-orange-500">iCloud</span>')
@@ -42,7 +42,7 @@ const highlightAnswer = (text: string) =>
   <section class="relative px-4 pb-10 pt-16 sm:px-6 sm:pt-24">
     <div class="relative mx-auto flex max-w-5xl flex-col items-center text-center">
       <div class="max-w-4xl">
-        <img src="/logo.png" alt="VVTerm" width="96" height="96" class="mx-auto size-24 object-contain drop-shadow-[0_0_28px_rgba(249,115,22,0.18)]" />
+        <img src="/logo.png" alt="Waterm" width="96" height="96" class="mx-auto size-24 object-contain drop-shadow-[0_0_28px_rgba(249,115,22,0.18)]" />
         <p class="mt-8 inline-flex min-h-6 items-center justify-center gap-0.5 font-mono text-xs font-semibold uppercase tracking-[0.16em] text-orange-500 sm:text-sm">
           <span data-typing-text>{translations.en.hero.eyebrow}</span>
           <span class="inline-block h-[1.1em] w-[0.7ch] bg-orange-500 align-middle animate-pulse"></span>
@@ -76,7 +76,7 @@ const highlightAnswer = (text: string) =>
       </div>
 
       <div class="flex min-h-[300px] w-full items-center justify-center sm:min-h-[420px] lg:min-h-[520px]">
-        <img src="/preview.png" alt="VVTerm on iPhone, iPad, and Mac" width="1600" height="1100" class="w-full max-w-4xl scale-110 drop-shadow-[0_28px_48px_rgba(15,23,42,0.18)] lg:max-w-[64rem]" loading="eager" fetchpriority="high" />
+        <img src="/preview.png" alt="Waterm on iPhone, iPad, and Mac" width="1600" height="1100" class="w-full max-w-4xl scale-110 drop-shadow-[0_28px_48px_rgba(15,23,42,0.18)] lg:max-w-[64rem]" loading="eager" fetchpriority="high" />
       </div>
     </div>
   </section>
@@ -250,7 +250,7 @@ const highlightAnswer = (text: string) =>
 
   <section class="px-4 py-12 sm:px-6 sm:py-16">
     <div class="mx-auto flex max-w-4xl flex-col items-center text-center">
-      <img src="/logo.png" alt="VVTerm" width="72" height="72" class="size-18 object-contain drop-shadow-[0_0_24px_rgba(249,115,22,0.16)]" />
+      <img src="/logo.png" alt="Waterm" width="72" height="72" class="size-18 object-contain drop-shadow-[0_0_24px_rgba(249,115,22,0.16)]" />
       <h2 class="mt-6 text-3xl font-semibold tracking-[-0.05em] text-slate-950 dark:text-slate-100 sm:text-5xl" data-i18n="closing.title">{translations.en.closing.title}</h2>
       <p class="mt-4 max-w-2xl text-base leading-8 text-slate-600 dark:text-slate-300 sm:text-lg" data-i18n="closing.subtitle">{translations.en.closing.subtitle}</p>
       <a
@@ -271,9 +271,9 @@ const highlightAnswer = (text: string) =>
     <div class="relative mx-auto grid max-w-6xl gap-10 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)_minmax(0,0.75fr)]">
       <div class="max-w-xl">
         <div class="flex items-center gap-3">
-          <img src="/logo.png" alt="VVTerm" width="48" height="48" class="size-12 object-contain" />
+          <img src="/logo.png" alt="Waterm" width="48" height="48" class="size-12 object-contain" />
           <div>
-            <p class="text-xl font-semibold tracking-[-0.04em] text-slate-950 dark:text-white">VVTerm</p>
+            <p class="text-xl font-semibold tracking-[-0.04em] text-slate-950 dark:text-white">Waterm</p>
             <p class="mt-1 text-sm text-slate-500 dark:text-slate-400" data-i18n="footer.tagline">{translations.en.footer.tagline}</p>
           </div>
         </div>
@@ -353,7 +353,7 @@ const highlightAnswer = (text: string) =>
 
   const highlightAnswer = (text) =>
     text
-      .replace(/VVTerm/g, '<span class="text-orange-500">VVTerm</span>')
+      .replace(/Waterm/g, '<span class="text-orange-500">Waterm</span>')
       .replace(/libghostty/g, '<span class="text-orange-500">libghostty</span>')
       .replace(/Ghostty/g, '<span class="text-orange-500">Ghostty</span>')
       .replace(/iCloud/g, '<span class="text-orange-500">iCloud</span>')
@@ -485,12 +485,12 @@ const highlightAnswer = (text: string) =>
   };
 
   if (langSelect) {
-    const storedLanguage = localStorage.getItem("vvterm-language");
+    const storedLanguage = localStorage.getItem("waterm-language");
     const preferredLanguage = storedLanguage || ((navigator.language || "").startsWith("zh") ? "zh" : "en");
     applyLanguage(preferredLanguage);
     langSelect.addEventListener("change", (event) => {
       const lang = event.currentTarget.value;
-      localStorage.setItem("vvterm-language", lang);
+      localStorage.setItem("waterm-language", lang);
       applyLanguage(lang);
       trackEvent(`language_change_${lang}`);
     });
@@ -499,7 +499,7 @@ const highlightAnswer = (text: string) =>
   if (themeToggle) {
     themeToggle.addEventListener("click", () => {
       const isDark = document.documentElement.classList.toggle("dark");
-      localStorage.setItem("vvterm-theme", isDark ? "dark" : "light");
+      localStorage.setItem("waterm-theme", isDark ? "dark" : "light");
     });
   }
 

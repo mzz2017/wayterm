@@ -1,14 +1,14 @@
 # Remote Shell Profiles and Multi-Shell SSH Support (Draft Spec)
 
 ## Summary
-Refactor VVTerm's remote SSH bootstrap logic around explicit remote shell profiles so shell-specific behavior is modeled in one place instead of being spread across generic SSH, tmux, mosh, and terminal restore paths.
+Refactor Waterm's remote SSH bootstrap logic around explicit remote shell profiles so shell-specific behavior is modeled in one place instead of being spread across generic SSH, tmux, mosh, and terminal restore paths.
 
 Path note: this draft predates the feature-first migration. Any legacy `Models/`, `Managers/`, `Services/`, or `Views/` file paths in this document should be mapped to the current `App/`, `Core/`, and `Features/` tree.
 
 Draft date: 2026-03-18
 
 ## Problem
-VVTerm's current SSH flow is mostly POSIX-shaped.
+Waterm's current SSH flow is mostly POSIX-shaped.
 
 That works well for Unix hosts using `bash`, `zsh`, `fish`, and similar shells, but it breaks down when the remote shell is not POSIX-compatible or when the remote platform is Windows.
 
@@ -67,17 +67,17 @@ The immediate PowerShell bug can be patched, but continuing with one-off conditi
 - Windows stats collection must keep working through PowerShell-based commands.
 
 Relevant files:
-- `VVTerm/Services/SSH/RemoteTerminalBootstrap.swift`
-- `VVTerm/Services/SSH/SSHClient.swift`
-- `VVTerm/Services/SSH/RemoteTmuxManager.swift`
-- `VVTerm/Services/SSH/RemoteMoshManager.swift`
-- `VVTerm/Services/Stats/ServerStatsCollector.swift`
-- `VVTerm/Services/Stats/Platforms/PlatformStatsCollector.swift`
-- `VVTerm/Services/Stats/Platforms/WindowsStatsCollector.swift`
-- `VVTerm/Views/Terminal/SSHTerminalWrapper.swift`
-- `VVTerm/Views/Splits/TerminalView.swift`
-- `VVTerm/Views/Stats/ServerStatsView.swift`
-- `VVTerm/GhosttyTerminal/Ghostty.App.swift`
+- `Waterm/Services/SSH/RemoteTerminalBootstrap.swift`
+- `Waterm/Services/SSH/SSHClient.swift`
+- `Waterm/Services/SSH/RemoteTmuxManager.swift`
+- `Waterm/Services/SSH/RemoteMoshManager.swift`
+- `Waterm/Services/Stats/ServerStatsCollector.swift`
+- `Waterm/Services/Stats/Platforms/PlatformStatsCollector.swift`
+- `Waterm/Services/Stats/Platforms/WindowsStatsCollector.swift`
+- `Waterm/Views/Terminal/SSHTerminalWrapper.swift`
+- `Waterm/Views/Splits/TerminalView.swift`
+- `Waterm/Views/Stats/ServerStatsView.swift`
+- `Waterm/GhosttyTerminal/Ghostty.App.swift`
 
 ## Stats Requirements
 
@@ -151,7 +151,7 @@ Definitions:
 - `Full`: supported as a first-class runtime path in V1.
 - `Basic`: intended to start correctly, but advanced shell-specific polish is limited.
 - `None`: no shell-specific integration provided in V1.
-- `Fallback to plain SSH`: user settings remain available, but VVTerm resolves capabilities at runtime and silently uses normal SSH shell behavior instead of tmux/mosh-specific behavior.
+- `Fallback to plain SSH`: user settings remain available, but Waterm resolves capabilities at runtime and silently uses normal SSH shell behavior instead of tmux/mosh-specific behavior.
 
 ## Proposed Design
 
@@ -200,7 +200,7 @@ Examples:
 This removes the need for generic code to guess which quoting rules apply.
 
 ### 3) Centralize per-shell command generation
-Create a shell strategy surface for operations VVTerm performs after connect.
+Create a shell strategy surface for operations Waterm performs after connect.
 
 Proposed API shape:
 - `wrapStartupCommand(_ command: String) -> String?`
@@ -219,7 +219,7 @@ Behavior examples:
 The important rule is that UI and SSH orchestration code should stop constructing shell syntax directly.
 
 ### 4) Add remote shell and platform detection
-VVTerm needs a best-effort way to resolve a remote shell profile early in connection startup.
+Waterm needs a best-effort way to resolve a remote shell profile early in connection startup.
 
 Detection should be layered:
 1. Use explicit transport/platform knowledge where already available.
@@ -248,15 +248,15 @@ V1 rules:
 This removes the current implicit assumption that every SSH target can execute `sh -lc`.
 
 Important UI rule:
-- VVTerm must not hide, disable, or block tmux/mosh UI based only on shell capability resolution.
+- Waterm must not hide, disable, or block tmux/mosh UI based only on shell capability resolution.
 - Existing settings and selections remain user-visible.
-- At runtime, if the resolved remote environment does not support tmux or mosh, VVTerm automatically falls back to normal SSH shell behavior.
+- At runtime, if the resolved remote environment does not support tmux or mosh, Waterm automatically falls back to normal SSH shell behavior.
 - Fallback should be safe and observable in logs, but should not require extra user intervention.
 - Mosh fallback should be exposed in active session state.
 - tmux fallback may remain status-based in V1 as long as it safely degrades to plain SSH behavior without mutating saved settings.
 - Example: a server configured for mosh may show "requested mosh, using SSH fallback" for the current session.
-- VVTerm must not automatically rewrite the saved server connection mode or tmux/mosh preferences during fallback.
-- When fallback repeats, VVTerm may present a non-blocking recommendation to switch the server to `SSH`.
+- Waterm must not automatically rewrite the saved server connection mode or tmux/mosh preferences during fallback.
+- When fallback repeats, Waterm may present a non-blocking recommendation to switch the server to `SSH`.
 
 ### 6) Preserve current Ghostty integration scope
 Ghostty integration resources currently exist only for:
@@ -287,7 +287,7 @@ What must remain stable:
 Compatibility rules:
 - existing POSIX hosts should continue using effectively the same runtime behavior after the refactor
 - existing Windows hosts should become safer, not more restrictive
-- if capability resolution is uncertain, VVTerm should prefer safe fallback behavior over hard failure
+- if capability resolution is uncertain, Waterm should prefer safe fallback behavior over hard failure
 - tmux/mosh settings must not be erased or rewritten simply because the current remote shell does not support them
 - unsupported combinations should degrade to plain SSH shell startup rather than surfacing blocking UI
 - runtime transport fallback should be reflected in active session status without mutating persisted server configuration
@@ -324,21 +324,21 @@ Non-goal for V1:
 ## Proposed File Layout
 
 Possible additions:
-- `VVTerm/Services/SSH/RemoteShellProfile.swift`
-- `VVTerm/Services/SSH/RemoteEnvironmentResolver.swift`
-- `VVTerm/Services/SSH/RemoteShellDetector.swift`
-- `VVTerm/Services/SSH/RemoteShellCommandBuilder.swift`
+- `Waterm/Services/SSH/RemoteShellProfile.swift`
+- `Waterm/Services/SSH/RemoteEnvironmentResolver.swift`
+- `Waterm/Services/SSH/RemoteShellDetector.swift`
+- `Waterm/Services/SSH/RemoteShellCommandBuilder.swift`
 
 Expected touch points:
-- `VVTerm/Services/SSH/RemoteTerminalBootstrap.swift`
-- `VVTerm/Services/SSH/SSHClient.swift`
-- `VVTerm/Services/SSH/RemoteTmuxManager.swift`
-- `VVTerm/Services/SSH/RemoteMoshManager.swift`
-- `VVTerm/Services/Stats/ServerStatsCollector.swift`
-- `VVTerm/Services/Stats/Platforms/PlatformStatsCollector.swift`
-- `VVTerm/Services/Stats/Platforms/WindowsStatsCollector.swift`
-- `VVTerm/Views/Terminal/SSHTerminalWrapper.swift`
-- `VVTerm/Views/Splits/TerminalView.swift`
+- `Waterm/Services/SSH/RemoteTerminalBootstrap.swift`
+- `Waterm/Services/SSH/SSHClient.swift`
+- `Waterm/Services/SSH/RemoteTmuxManager.swift`
+- `Waterm/Services/SSH/RemoteMoshManager.swift`
+- `Waterm/Services/Stats/ServerStatsCollector.swift`
+- `Waterm/Services/Stats/Platforms/PlatformStatsCollector.swift`
+- `Waterm/Services/Stats/Platforms/WindowsStatsCollector.swift`
+- `Waterm/Views/Terminal/SSHTerminalWrapper.swift`
+- `Waterm/Views/Splits/TerminalView.swift`
 
 ## Testing Plan
 

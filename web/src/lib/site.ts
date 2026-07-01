@@ -2,13 +2,13 @@ import en from "../i18n/translations/en.json";
 import zh from "../i18n/translations/zh.json";
 
 export const SITE = {
-  name: "VVTerm",
-  siteUrl: "https://vvterm.com",
-  title: "VVTerm - SSH Terminal and SFTP Client for iPhone, iPad, and Mac",
+  name: "Waterm",
+  siteUrl: "https://waterm.com",
+  title: "Waterm - SSH Terminal and SFTP Client for iPhone, iPad, and Mac",
   description:
     "Your servers. Everywhere. Native SSH terminal and SFTP client for iPhone, iPad, and Mac with Mosh, Tailscale SSH, Cloudflare Tunnel SSH, iCloud sync, and Keychain security.",
-  appStoreUrl: "https://apps.apple.com/app/vvterm/id6757482822",
-  githubUrl: "https://github.com/vivy-company/vvterm",
+  appStoreUrl: "https://apps.apple.com/app/waterm/id6757482822",
+  githubUrl: "https://github.com/mzz2017/waterm",
   discordUrl: "https://discord.gg/zemMZtrkSb",
   appStoreId: "6757482822",
   umamiWebsiteId: "22711a63-9ec0-491c-ad86-71cb0b6ad4dd",
@@ -21,10 +21,10 @@ export const translations = { en, zh } as const;
 export const faqSchema = [
   {
     "@type": "Question",
-    name: "What is VVTerm?",
+    name: "What is Waterm?",
     acceptedAnswer: {
       "@type": "Answer",
-      text: "VVTerm is an SSH terminal app for iOS and macOS. It helps you manage and connect to remote servers with iCloud sync across Apple devices.",
+      text: "Waterm is an SSH terminal app for iOS and macOS. It helps you manage and connect to remote servers with iCloud sync across Apple devices.",
     },
   },
   {
@@ -40,7 +40,7 @@ export const faqSchema = [
     name: "Which authentication methods are supported?",
     acceptedAnswer: {
       "@type": "Answer",
-      text: "VVTerm supports password authentication, SSH keys, SSH keys with passphrase, plus Mosh, Tailscale SSH, and Cloudflare Tunnel SSH.",
+      text: "Waterm supports password authentication, SSH keys, SSH keys with passphrase, plus Mosh, Tailscale SSH, and Cloudflare Tunnel SSH.",
     },
   },
   {
@@ -48,15 +48,15 @@ export const faqSchema = [
     name: "What are the system requirements?",
     acceptedAnswer: {
       "@type": "Answer",
-      text: "VVTerm requires iOS 16 or later on iPhone and iPad, or macOS 13 Ventura or later on Apple Silicon Macs.",
+      text: "Waterm requires iOS 16 or later on iPhone and iPad, or macOS 13 Ventura or later on Apple Silicon Macs.",
     },
   },
   {
     "@type": "Question",
-    name: "Does VVTerm include remote file browsing?",
+    name: "Does Waterm include remote file browsing?",
     acceptedAnswer: {
       "@type": "Answer",
-      text: "Yes. VVTerm includes a built-in SFTP file browser for browsing folders, previewing text, image, and video files, uploading and downloading, renaming or moving items, creating folders, and editing POSIX permissions on supported servers.",
+      text: "Yes. Waterm includes a built-in SFTP file browser for browsing folders, previewing text, image, and video files, uploading and downloading, renaming or moving items, creating folders, and editing POSIX permissions on supported servers.",
     },
   },
 ];
@@ -64,7 +64,7 @@ export const faqSchema = [
 export const softwareSchema = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
-  name: "VVTerm",
+  name: "Waterm",
   applicationCategory: "UtilitiesApplication",
   operatingSystem: "iOS 16+, macOS 13+",
   offers: [
@@ -83,8 +83,8 @@ export const softwareSchema = {
   ],
   description:
     "SSH terminal and SFTP remote file browser for iPhone, iPad, and Mac with standard SSH, Mosh, Tailscale SSH, and Cloudflare Tunnel SSH.",
-  url: "https://vvterm.com/",
-  image: "https://vvterm.com/og.png",
+  url: "https://waterm.com/",
+  image: "https://waterm.com/og.png",
   author: {
     "@type": "Organization",
     name: "Vivy Technologies",
@@ -114,14 +114,14 @@ export const websiteSchema = {
   "@graph": [
     {
       "@type": "WebSite",
-      name: "VVTerm",
-      url: "https://vvterm.com/",
+      name: "Waterm",
+      url: "https://waterm.com/",
     },
     {
       "@type": "Organization",
       name: "Vivy Technologies",
-      url: "https://vvterm.com/",
-      logo: "https://vvterm.com/logo.png",
+      url: "https://waterm.com/",
+      logo: "https://waterm.com/logo.png",
     },
     {
       "@type": "FAQPage",

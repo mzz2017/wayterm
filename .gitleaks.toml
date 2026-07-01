@@ -1,4 +1,4 @@
-title = "VVTerm Gitleaks Config"
+title = "Waterm Gitleaks Config"
 
 [extend]
 useDefault = true
@@ -6,6 +6,6 @@ useDefault = true
 [[allowlists]]
 description = "False positive: PEM boundary literals in SSH key template generator."
 paths = [
-  '''^VivyTerm/Services/SSH/SSHKeyGenerator\.swift$''',
-  '''^VVTerm/Services/SSH/SSHKeyGenerator\.swift$''',
+  '''^Waterm/Services/SSH/SSHKeyGenerator\.swift$''',
+  '''^Waterm/Services/SSH/SSHKeyGenerator\.swift$''',
 ]

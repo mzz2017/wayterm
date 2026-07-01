@@ -3,26 +3,26 @@
 import PackageDescription
 
 let package = Package(
-    name: "VVTermLinuxCore",
+    name: "WatermLinuxCore",
     platforms: [
         .macOS(.v13)
     ],
     products: [
         .library(
-            name: "VVTermIOSApplicationLogic",
+            name: "WatermIOSApplicationLogic",
             targets: [
-                "VVTermConnectionViewsApplicationLogic",
-                "VVTermIOSApplicationLogic",
-                "VVTermRemoteFilesApplicationLogic",
-                "VVTermServersApplicationLogic",
-                "VVTermTerminalSessionsApplicationLogic"
+                "WatermConnectionViewsApplicationLogic",
+                "WatermIOSApplicationLogic",
+                "WatermRemoteFilesApplicationLogic",
+                "WatermServersApplicationLogic",
+                "WatermTerminalSessionsApplicationLogic"
             ]
         )
     ],
     targets: [
         .target(
-            name: "VVTermRemoteFilesDomain",
-            path: "VVTerm/Features/RemoteFiles/Domain",
+            name: "WatermRemoteFilesDomain",
+            path: "Waterm/Features/RemoteFiles/Domain",
             exclude: [
                 "RemoteFileBrowserError.swift",
                 "RemoteFileBrowserPersistedState.swift",
@@ -42,12 +42,12 @@ let package = Package(
             ]
         ),
         .target(
-            name: "VVTermTerminalCoreLogic",
-            path: "VVTerm/Core/Terminal/Logic"
+            name: "WatermTerminalCoreLogic",
+            path: "Waterm/Core/Terminal/Logic"
         ),
         .target(
-            name: "VVTermSSHCoreLogic",
-            path: "VVTerm/Core/SSH",
+            name: "WatermSSHCoreLogic",
+            path: "Waterm/Core/SSH",
             exclude: [
                 "AtomicSocket.swift",
                 "KnownHostsManager.swift",
@@ -93,13 +93,13 @@ let package = Package(
             ]
         ),
         .target(
-            name: "VVTermIOSApplicationLogic",
-            dependencies: ["VVTermRemoteFilesDomain"],
-            path: "VVTerm/App/iOS/Application"
+            name: "WatermIOSApplicationLogic",
+            dependencies: ["WatermRemoteFilesDomain"],
+            path: "Waterm/App/iOS/Application"
         ),
         .target(
-            name: "VVTermConnectionViewsApplicationLogic",
-            path: "VVTerm/Features/ConnectionViews/Application",
+            name: "WatermConnectionViewsApplicationLogic",
+            path: "Waterm/Features/ConnectionViews/Application",
             exclude: [
                 "ViewTabConfigurationManager.swift"
             ],
@@ -108,9 +108,9 @@ let package = Package(
             ]
         ),
         .target(
-            name: "VVTermRemoteFilesApplicationLogic",
-            dependencies: ["VVTermRemoteFilesDomain"],
-            path: "VVTerm/Features/RemoteFiles/Application",
+            name: "WatermRemoteFilesApplicationLogic",
+            dependencies: ["WatermRemoteFilesDomain"],
+            path: "Waterm/Features/RemoteFiles/Application",
             exclude: [
                 "RemoteFileBrowserActions.swift",
                 "RemoteFileBrowserStore.swift",
@@ -137,8 +137,8 @@ let package = Package(
             ]
         ),
         .target(
-            name: "VVTermServersApplicationLogic",
-            path: "VVTerm/Features/Servers/Application",
+            name: "WatermServersApplicationLogic",
+            path: "Waterm/Features/Servers/Application",
             exclude: [
                 "ServerAccessPolicy.swift",
                 "ServerConnectionTester.swift",
@@ -170,8 +170,8 @@ let package = Package(
             ]
         ),
         .target(
-            name: "VVTermTerminalSessionsApplicationLogic",
-            path: "VVTerm/Features/TerminalSessions/Application",
+            name: "WatermTerminalSessionsApplicationLogic",
+            path: "Waterm/Features/TerminalSessions/Application",
             exclude: [
                 "ConnectionReliabilityManager.swift",
                 "ConnectionSessionManager.swift",
@@ -235,29 +235,29 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "VVTermTerminalCoreLogicTests",
+            name: "WatermTerminalCoreLogicTests",
             dependencies: [
-                "VVTermTerminalCoreLogic"
+                "WatermTerminalCoreLogic"
             ],
-            path: "VVTermLinuxTests/Core/Terminal"
+            path: "WatermLinuxTests/Core/Terminal"
         ),
         .testTarget(
-            name: "VVTermSSHCoreLogicTests",
+            name: "WatermSSHCoreLogicTests",
             dependencies: [
-                "VVTermSSHCoreLogic"
+                "WatermSSHCoreLogic"
             ],
-            path: "VVTermLinuxTests/Core/SSH"
+            path: "WatermLinuxTests/Core/SSH"
         ),
         .testTarget(
-            name: "VVTermIOSApplicationLogicTests",
+            name: "WatermIOSApplicationLogicTests",
             dependencies: [
-                "VVTermConnectionViewsApplicationLogic",
-                "VVTermIOSApplicationLogic",
-                "VVTermRemoteFilesApplicationLogic",
-                "VVTermServersApplicationLogic",
-                "VVTermTerminalSessionsApplicationLogic"
+                "WatermConnectionViewsApplicationLogic",
+                "WatermIOSApplicationLogic",
+                "WatermRemoteFilesApplicationLogic",
+                "WatermServersApplicationLogic",
+                "WatermTerminalSessionsApplicationLogic"
             ],
-            path: "VVTermLinuxTests/App/iOS/Application"
+            path: "WatermLinuxTests/App/iOS/Application"
         )
     ]
 )

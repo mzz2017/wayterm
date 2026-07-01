@@ -74,7 +74,7 @@ class SwiftLifecycleGuardTests(unittest.TestCase):
         payload = """{
   "tool_name": "Read",
   "tool_input": {
-    "file_path": "/Users/mzz/projects/vvterm/docs/engineering/swift-best-practices.md"
+    "file_path": "/Users/mzz/projects/waterm/docs/engineering/swift-best-practices.md"
   }
 }
 """
@@ -151,7 +151,7 @@ class SwiftLifecycleGuardTests(unittest.TestCase):
     "payload": {
       "tool_name": "Read",
       "tool_input": {
-        "file_path": "/Users/mzz/projects/vvterm/docs/engineering/swift-best-practices.md"
+        "file_path": "/Users/mzz/projects/waterm/docs/engineering/swift-best-practices.md"
       }
     }
   }
@@ -170,7 +170,7 @@ class SwiftLifecycleGuardTests(unittest.TestCase):
         payload = """{
   "tool_name": "Read",
   "tool_input": {
-    "file_path": "/Users/mzz/projects/vvterm/README.md"
+    "file_path": "/Users/mzz/projects/waterm/README.md"
   }
 }
 """
@@ -195,7 +195,7 @@ class SwiftLifecycleGuardTests(unittest.TestCase):
     def test_preflight_swift_apply_patch_without_marker_blocks_loudly(self) -> None:
         payload = """{
   "tool_name": "apply_patch",
-  "tool_input": "*** Begin Patch\\n*** Update File: VVTerm/Foo.swift\\n@@\\n+Task {}\\n*** End Patch\\n"
+  "tool_input": "*** Begin Patch\\n*** Update File: Waterm/Foo.swift\\n@@\\n+Task {}\\n*** End Patch\\n"
 }
 """
 
@@ -209,14 +209,14 @@ class SwiftLifecycleGuardTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         notice = stderr.getvalue()
-        self.assertIn("VVTERM HOOK BLOCKED", notice)
+        self.assertIn("WATERM HOOK BLOCKED", notice)
         self.assertIn("docs/engineering/swift-best-practices.md", notice)
 
     def test_preflight_swift_edit_with_marker_passes(self) -> None:
         payload = """{
   "tool_name": "Edit",
   "tool_input": {
-    "file_path": "VVTerm/Foo.swift"
+    "file_path": "Waterm/Foo.swift"
   }
 }
 """

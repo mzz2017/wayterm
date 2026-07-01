@@ -1,27 +1,27 @@
-# VVTerm
+# Waterm
 
-[![macOS](https://img.shields.io/badge/macOS-13.3+-black?style=flat-square&logo=apple)](https://vvterm.com)
-[![iOS](https://img.shields.io/badge/iOS-16.1+-black?style=flat-square&logo=apple)](https://vvterm.com)
+[![macOS](https://img.shields.io/badge/macOS-13.3+-black?style=flat-square&logo=apple)](https://waterm.com)
+[![iOS](https://img.shields.io/badge/iOS-16.1+-black?style=flat-square&logo=apple)](https://waterm.com)
 [![Swift](https://img.shields.io/badge/Swift-5.0+-F05138?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![Source License](https://img.shields.io/badge/Source-GPL%203.0-blue?style=flat-square)](LICENSE)
 [![Binary License](https://img.shields.io/badge/Binary-App%20Store%20EULA-6e7681?style=flat-square)](LICENSE-APPSTORE.md)
-[![Sponsor](https://img.shields.io/badge/Sponsor-GitHub-ff69b4?style=flat-square&logo=github)](https://github.com/sponsors/vivy-company)
+[![Sponsor](https://img.shields.io/badge/Sponsor-GitHub-ff69b4?style=flat-square&logo=github)](https://github.com/sponsors/mzz2017)
 
 Your servers. Everywhere.
 
-![VVTerm macOS](/web/src/preview.png)
+![Waterm macOS](/web/src/preview.png)
 
 ## Overview
 
-VVTerm is a cross-platform SSH terminal app for Apple platforms. The current codebase targets iOS and macOS, uses Ghostty for terminal rendering, libssh2/OpenSSL for SSH transport, CloudKit for sync, and Keychain for local credential storage.
+Waterm is a cross-platform SSH terminal app for Apple platforms. The current codebase targets iOS and macOS, uses Ghostty for terminal rendering, libssh2/OpenSSL for SSH transport, CloudKit for sync, and Keychain for local credential storage.
 
 ## Current State
 
-- Main app target: `VVTerm`
-- Companion target: `VVTermLiveActivity`
+- Main app target: `Waterm`
+- Companion target: `WatermLiveActivity`
 - Runtime targets: `macOS 13.3+` and `iOS 16.1+`
 - Hardware targets: arm64 iOS devices, plus Apple Silicon and Intel macOS/iOS Simulator development
-- App-owned code is organized under `VVTerm/App`, `VVTerm/Core`, and `VVTerm/Features`
+- App-owned code is organized under `Waterm/App`, `Waterm/Core`, and `Waterm/Features`
 - The repo also contains tests, native vendor builds, feature specs under `docs/specs`, and the marketing site under `web/`
 
 ## Implemented Feature Areas
@@ -73,10 +73,10 @@ VVTerm is a cross-platform SSH terminal app for Apple platforms. The current cod
 
 ## Architecture
 
-VVTerm uses a feature-first structure for app-owned code.
+Waterm uses a feature-first structure for app-owned code.
 
 ```text
-VVTerm/
+Waterm/
 ├── App/                         # App entry, composition roots, shared root containers
 ├── Core/                        # Shared infrastructure and cross-feature primitives
 │   ├── Logging/
@@ -118,16 +118,16 @@ Feature modules follow these boundaries:
 Other top-level folders in the repo:
 
 ```text
-VVTerm-iOS/                     # iOS Info.plist and entitlements
-VVTerm-macOS/                   # macOS Info.plist and entitlements
-VVTermLiveActivity/             # ActivityKit target
-VVTermShared/                   # Shared Activity attributes and small shared types
-VVTermTests/                    # Unit and integration tests
-VVTermUITests/                  # UI tests
+Waterm-iOS/                     # iOS Info.plist and entitlements
+Waterm-macOS/                   # macOS Info.plist and entitlements
+WatermLiveActivity/             # ActivityKit target
+WatermShared/                   # Shared Activity attributes and small shared types
+WatermTests/                    # Unit and integration tests
+WatermUITests/                  # UI tests
 Vendor/                         # Vendored native dependencies
 docs/specs/                     # Feature specs and implementation notes
 scripts/                        # Vendor build scripts
-web/                            # Astro site for vvterm.com
+web/                            # Astro site for waterm.com
 ```
 
 ## Requirements
@@ -147,14 +147,14 @@ brew install zig cmake
 ## Building From Source
 
 ```bash
-git clone https://github.com/vivy-company/vvterm.git
-cd vvterm
+git clone https://github.com/mzz2017/waterm.git
+cd waterm
 
 # Build native vendor libraries (GhosttyKit + libssh2/OpenSSL)
 ./scripts/build.sh all
 
 # Open the project in Xcode
-open VVTerm.xcodeproj
+open Waterm.xcodeproj
 ```
 
 `./scripts/build.sh` supports `all`, `ghostty`, `ssh`, `clean`, and `help`.
@@ -178,7 +178,7 @@ Swift package dependencies currently resolved by the Xcode project:
 
 ## Installation
 
-[![Download on the App Store](https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg)](https://apps.apple.com/app/vvterm/id6757482822)
+[![Download on the App Store](https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg)](https://apps.apple.com/app/waterm/id6757482822)
 
 ## Pro Tier
 

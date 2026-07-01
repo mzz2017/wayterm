@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-project_file="${1:-VVTerm.xcodeproj/project.pbxproj}"
-resolved_file="${2:-VVTerm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved}"
+project_file="${1:-Waterm.xcodeproj/project.pbxproj}"
+resolved_file="${2:-Waterm.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved}"
 
 failed=0
 

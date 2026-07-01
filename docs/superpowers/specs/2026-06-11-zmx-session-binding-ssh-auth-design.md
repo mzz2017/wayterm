@@ -18,7 +18,7 @@ enum TerminalMultiplexer: String, Codable, CaseIterable, Identifiable {
 
 `Server` changes (direct cutover with decode migration):
 - Replace `tmuxEnabledOverride: Bool?` with `multiplexerOverride: TerminalMultiplexer?` (nil = use global default).
-- `init(from:)`: decode `multiplexerOverride` if present; else migrate legacy `tmuxEnabledOverride` (`true → .tmux`, `false → .none`). Keep `tmuxStartupBehaviorOverride` as-is (applies to both tmux and zmx; for zmx, `vvtermManaged`/`askEveryTime`/`skipTmux` map to managed-attach / pick-from-`zmx ls` / plain shell).
+- `init(from:)`: decode `multiplexerOverride` if present; else migrate legacy `tmuxEnabledOverride` (`true → .tmux`, `false → .none`). Keep `tmuxStartupBehaviorOverride` as-is (applies to both tmux and zmx; for zmx, `watermManaged`/`askEveryTime`/`skipTmux` map to managed-attach / pick-from-`zmx ls` / plain shell).
 - `Server+CloudKit.swift`: read `multiplexerOverride` string, with the same legacy fallback from `tmuxEnabledOverride`; write the new field; stop writing the old one.
 
 Global default: new UserDefaults key `terminalMultiplexerDefault` (String raw of `TerminalMultiplexer`), default `.tmux`. Migration helper reads legacy `terminalTmuxEnabledDefault` once if the new key is absent.
@@ -37,7 +37,7 @@ New `Core/SSH/RemoteZmxCommandBuilder.swift` (~80 lines) owns zmx's command set,
 `RemoteTmuxManager` routes the `.zmx` case of each public method (`tmuxBackend`, `attachCommand`, `attachExecCommand`, `listSessions`, `killSession`, `prepareConfig` no-op, `installAndAttachScript` → plain attach) to `RemoteZmxCommandBuilder`. Detection order in `tmuxBackend(using:)`: respect the server's selected multiplexer — if `.zmx`, probe zmx; if `.tmux`, probe tmux; choosing happens above in the resolver via the multiplexer kind, so `tmuxBackend` gains a `preferred: TerminalMultiplexer` parameter (default `.tmux` to preserve existing call sites until updated).
 
 **Resolver / lifecycle wiring.**
-- `TmuxAttachResolver`: rename `isTmuxEnabled(for:)` → `multiplexer(for:)` returning `TerminalMultiplexer` (reads `Server.multiplexerOverride` ?? global default). `managedSessionName` unchanged (works for both). `listSessions` for zmx filters internal `vvterm_*` names same as tmux.
+- `TmuxAttachResolver`: rename `isTmuxEnabled(for:)` → `multiplexer(for:)` returning `TerminalMultiplexer` (reads `Server.multiplexerOverride` ?? global default). `managedSessionName` unchanged (works for both). `listSessions` for zmx filters internal `waterm_*` names same as tmux.
 - `TerminalTabManager.tmuxStartupPlan` / `handleTmuxLifecycle` and `ConnectionSessionManager` equivalents: resolve the multiplexer kind, fetch the matching backend, and otherwise reuse the existing flow (selection → attach command → send).
 
 **UI.**
@@ -111,7 +111,7 @@ Where pure-logic units exist (pubkey derivation, session-list parsing, isRetryab
 
 ## Out of scope
 
-- zmx windows/splits (zmx has none; VVTerm's own split UI is unaffected).
+- zmx windows/splits (zmx has none; Waterm's own split UI is unaffected).
 - Auto-installing zmx remotely (assume present; absent → plain shell).
 - Reworking the 1060-line tmux builder into a protocol (deferred; delegation keeps blast radius small).
 
