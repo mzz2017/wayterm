@@ -50,7 +50,7 @@ extension RemoteFileBrowserStore {
     }
 
     private func resetCancelledNavigationState(for tabId: UUID) {
-        directoryRequestIDs.removeValue(forKey: tabId)
+        directoryLoadCoordinator.clearRequest(for: tabId)
 
         guard let state = states[tabId] else { return }
         updateState(for: tabId, serverId: state.serverId) { state in

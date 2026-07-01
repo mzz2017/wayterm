@@ -114,9 +114,9 @@ final class RemoteFileBrowserStore: ObservableObject {
     let previewLoadCoordinator = RemoteFilePreviewLoadCoordinator()
     let navigationRequestCoordinator = RemoteFileNavigationRequestCoordinator()
     private let moveDestinationLoadCoordinator = RemoteFileMoveDestinationLoadCoordinator()
+    var directoryLoadCoordinator = RemoteFileDirectoryLoadRequestCoordinator()
 
     var persistedStates: [String: RemoteFileBrowserPersistedState] = [:]
-    var directoryRequestIDs: [UUID: UUID] = [:]
     var viewerRequestIDs: [UUID: UUID] = [:]
     static let directoryEntryLimit = 2_000
     static let defaultPreviewBytes = 512 * 1_024
@@ -461,7 +461,7 @@ final class RemoteFileBrowserStore: ObservableObject {
         if let previewTask = cancelPreviewLoadRequest(for: tabId) {
             canceledTasks.append(previewTask)
         }
-        directoryRequestIDs.removeValue(forKey: tabId)
+        directoryLoadCoordinator.clearRequest(for: tabId)
         viewerRequestIDs.removeValue(forKey: tabId)
         temporaryStorage.removePreviewArtifact(for: states[tabId]?.viewerPayload)
         states.removeValue(forKey: tabId)
@@ -511,7 +511,7 @@ final class RemoteFileBrowserStore: ObservableObject {
 
         canceledRequestTasks += navigationRequestCoordinator.cancelAllRequests()
         canceledRequestTasks += previewLoadCoordinator.cancelAllRequests()
-        directoryRequestIDs.removeAll()
+        directoryLoadCoordinator.clearAll()
         viewerRequestIDs.removeAll()
         pendingToolbarCommand = nil
 

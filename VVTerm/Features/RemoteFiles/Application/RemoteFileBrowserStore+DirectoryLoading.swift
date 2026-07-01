@@ -9,8 +9,7 @@ extension RemoteFileBrowserStore {
         guard !currentState.isLoadingDirectory else { return }
         guard !currentState.hasLoadedDirectory else { return }
 
-        let requestID = UUID()
-        directoryRequestIDs[tab.id] = requestID
+        let requestID = directoryLoadCoordinator.beginRequest(for: tab.id)
 
         updateState(for: tab) { state in
             state.isLoadingDirectory = true
@@ -19,10 +18,10 @@ extension RemoteFileBrowserStore {
 
         do {
             let snapshot = try await resolveInitialDirectorySnapshot(for: server, tab: tab, initialPath: initialPath)
-            guard directoryRequestIDs[tab.id] == requestID else { return }
+            guard isCurrentDirectoryLoadRequest(requestID, for: tab.id) else { return }
             applyDirectorySnapshot(snapshot, to: tab)
         } catch {
-            guard directoryRequestIDs[tab.id] == requestID else { return }
+            guard isCurrentDirectoryLoadRequest(requestID, for: tab.id) else { return }
             logger.error("Initial file browser load failed for \(server.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
             updateState(for: tab) { state in
                 state.isLoadingDirectory = false
@@ -86,8 +85,7 @@ extension RemoteFileBrowserStore {
 
         let normalizedPath = RemoteFilePath.normalize(path)
         cancelPreviewLoadRequest(for: tab.id)
-        let requestID = UUID()
-        directoryRequestIDs[tab.id] = requestID
+        let requestID = directoryLoadCoordinator.beginRequest(for: tab.id)
         cleanupPreviewArtifact(for: state(for: tab).viewerPayload)
 
         updateState(for: tab) { state in
@@ -102,10 +100,10 @@ extension RemoteFileBrowserStore {
 
         do {
             let snapshot = try await directorySnapshot(path: normalizedPath, for: server)
-            guard directoryRequestIDs[tab.id] == requestID else { return }
+            guard isCurrentDirectoryLoadRequest(requestID, for: tab.id) else { return }
             applyDirectorySnapshot(snapshot, to: tab)
         } catch {
-            guard directoryRequestIDs[tab.id] == requestID else { return }
+            guard isCurrentDirectoryLoadRequest(requestID, for: tab.id) else { return }
             logger.error("Directory load failed for \(normalizedPath, privacy: .public): \(error.localizedDescription, privacy: .public)")
             updateState(for: tab) { state in
                 state.isLoadingDirectory = false
@@ -170,6 +168,10 @@ extension RemoteFileBrowserStore {
             isTruncated: entries.count >= Self.directoryEntryLimit,
             filesystemStatus: filesystemStatus
         )
+    }
+
+    private func isCurrentDirectoryLoadRequest(_ requestID: UUID, for tabId: UUID) -> Bool {
+        directoryLoadCoordinator.isCurrent(requestID, for: tabId)
     }
 
     func applyDirectorySnapshot(_ snapshot: DirectorySnapshot, to tab: RemoteFileTab) {
