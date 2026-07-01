@@ -1602,6 +1602,58 @@ final class LibSSH2SessionLifecycleTests: XCTestCase {
         )
     }
 
+    func testSFTPDownloadPublishFailureRemovesTemporaryFile() async throws {
+        // Given a remote download reaches local publish, but the selected
+        // destination file is immutable so final replacement cannot publish
+        // the temporary file.
+        let localDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vvterm-download-\(UUID().uuidString)", isDirectory: true)
+        let destinationURL = localDirectory.appendingPathComponent("report.txt")
+        try FileManager.default.createDirectory(at: localDirectory, withIntermediateDirectories: true)
+        try Data("existing-report".utf8).write(to: destinationURL)
+        try FileManager.default.setAttributes(
+            [.immutable: true],
+            ofItemAtPath: destinationURL.path
+        )
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: destinationURL.path)
+            try? FileManager.default.removeItem(at: localDirectory)
+        }
+
+        let driver = RecordingLibSSH2SessionDriver(
+            sessionInitResult: OpaquePointer(bitPattern: 0x1),
+            authMethods: .methods("publickey"),
+            publicKeyAuthResult: .success,
+            sftpSessionResult: OpaquePointer(bitPattern: 0x55),
+            sftpOpenResult: OpaquePointer(bitPattern: 0x66),
+            sftpReadFileResults: [
+                4,
+                0
+            ]
+        )
+        let session = SSHSession(config: .libSSH2AuthLifecycleTest, driver: driver)
+
+        // When SFTP download completes but final local replacement fails.
+        try await session.connect()
+        do {
+            try await session.downloadFile(at: "/remote/report.txt", to: destinationURL)
+            XCTFail("Expected final local download publish to fail")
+        } catch {
+            // Then the download owner should still clean its temporary file.
+        }
+
+        let remainingTemporaryDownloads = try FileManager.default.contentsOfDirectory(
+            at: localDirectory,
+            includingPropertiesForKeys: nil
+        ).filter { url in
+            url.lastPathComponent.hasPrefix(".report.txt.vvterm-download-")
+        }
+        XCTAssertTrue(
+            remainingTemporaryDownloads.isEmpty,
+            "SFTP download must remove its temporary file when final local publish fails."
+        )
+    }
+
     func testSFTPFileWriteFailurePreservesRawLibSSH2TransportError() async throws {
         // Given writing an opened SFTP file fails because the underlying SSH
         // transport closes before an SFTP status is available.

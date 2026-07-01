@@ -193,17 +193,17 @@ extension SSHSession {
                     path: normalizedPath
                 )
             }
+
+            try localFileHandle.close()
+            if fileManager.fileExists(atPath: localURL.path) {
+                _ = try fileManager.replaceItemAt(localURL, withItemAt: temporaryURL)
+            } else {
+                try fileManager.moveItem(at: temporaryURL, to: localURL)
+            }
         } catch {
             try? localFileHandle.close()
             try? fileManager.removeItem(at: temporaryURL)
             throw error
-        }
-
-        try localFileHandle.close()
-        if fileManager.fileExists(atPath: localURL.path) {
-            _ = try fileManager.replaceItemAt(localURL, withItemAt: temporaryURL)
-        } else {
-            try fileManager.moveItem(at: temporaryURL, to: localURL)
         }
     }
 
