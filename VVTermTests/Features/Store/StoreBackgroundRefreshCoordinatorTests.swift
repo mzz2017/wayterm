@@ -74,6 +74,61 @@ struct StoreBackgroundRefreshCoordinatorTests {
     }
 
     @Test
+    func waitForSupersededRefreshAwaitsCanceledTaskCleanup() async {
+        let firstGate = BackgroundRefreshGate()
+        let secondGate = BackgroundRefreshGate()
+        let cleanupGate = BackgroundRefreshGate()
+        let coordinator = StoreBackgroundRefreshCoordinator()
+
+        // Given a startup refresh is active and performs async cleanup after
+        // cancellation before its lifecycle is truly finished.
+        let firstID = coordinator.startRefresh(kind: .startup) {
+            await withTaskCancellationHandler {
+                await firstGate.waitForRelease()
+                if Task.isCancelled {
+                    await cleanupGate.waitForRelease()
+                }
+            } onCancel: {
+                Task {
+                    await firstGate.release()
+                }
+            }
+        }
+        await firstGate.waitForOperationStart()
+
+        // When a newer startup refresh replaces it.
+        let secondID = coordinator.startRefresh(kind: .startup) {
+            await secondGate.waitForRelease()
+        }
+        await secondGate.waitForOperationStart()
+
+        // Then waiting for the superseded request must remain tied to the old
+        // task instead of returning just because the visible request ID changed.
+        var didFinishWaitingForFirst = false
+        let waiter = Task { @MainActor in
+            await coordinator.waitForRefresh(kind: .startup, firstID)
+            didFinishWaitingForFirst = true
+        }
+        await Task.yield()
+
+        #expect(
+            !didFinishWaitingForFirst,
+            "Waiting for a superseded refresh should not complete before the canceled task exits."
+        )
+
+        await cleanupGate.release()
+        await waiter.value
+
+        #expect(didFinishWaitingForFirst)
+        #expect(coordinator.pendingRequestIDs(for: .startup) == [secondID])
+
+        await secondGate.release()
+        await coordinator.waitForRefresh(kind: .startup, secondID)
+
+        #expect(coordinator.pendingRequestIDs(for: .startup).isEmpty)
+    }
+
+    @Test
     func differentKindsRemainIndependentlyTracked() async {
         let startupGate = BackgroundRefreshGate()
         let reviewGate = BackgroundRefreshGate()

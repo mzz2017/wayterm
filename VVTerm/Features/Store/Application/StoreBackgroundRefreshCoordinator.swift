@@ -15,6 +15,7 @@ final class StoreBackgroundRefreshCoordinator {
     ]
     private var refreshTasks: [RefreshKind: Task<Void, Never>] = [:]
     private var requestIDs: [RefreshKind: UUID] = [:]
+    private var supersededRefreshTasks: [UUID: Task<Void, Never>] = [:]
 
     func pendingRequestIDs(for kind: RefreshKind) -> Set<UUID> {
         guard let requestID = requestIDs[kind] else { return [] }
@@ -26,6 +27,10 @@ final class StoreBackgroundRefreshCoordinator {
         kind: RefreshKind,
         operation: @escaping StoreBackgroundRefreshAction
     ) -> UUID {
+        if let supersededRequestID = requestIDs[kind],
+           let supersededTask = refreshTasks[kind] {
+            supersededRefreshTasks[supersededRequestID] = supersededTask
+        }
         cancellationBoxes[kind]?.cancel()
 
         let requestID = UUID()
@@ -39,6 +44,7 @@ final class StoreBackgroundRefreshCoordinator {
                     self.refreshTasks[kind] = nil
                     self.cancellationBoxes[kind]?.clear()
                 }
+                self.supersededRefreshTasks[requestID] = nil
             }
 
             guard !Task.isCancelled else { return }
@@ -53,8 +59,12 @@ final class StoreBackgroundRefreshCoordinator {
     }
 
     func waitForRefresh(kind: RefreshKind, _ requestID: UUID) async {
-        guard requestIDs[kind] == requestID else { return }
-        await refreshTasks[kind]?.value
+        if requestIDs[kind] == requestID {
+            await refreshTasks[kind]?.value
+            return
+        }
+
+        await supersededRefreshTasks[requestID]?.value
     }
 
     func cancelAll() {
@@ -66,12 +76,13 @@ final class StoreBackgroundRefreshCoordinator {
     }
 
     func cancelAllAndWait() async {
-        let tasks = Array(refreshTasks.values)
+        let tasks = Array(refreshTasks.values) + Array(supersededRefreshTasks.values)
         cancellationBoxes.values.forEach { $0.cancel() }
         for task in tasks {
             await task.value
         }
         refreshTasks.removeAll()
+        supersededRefreshTasks.removeAll()
         requestIDs.removeAll()
         cancellationBoxes.values.forEach { $0.clear() }
     }
