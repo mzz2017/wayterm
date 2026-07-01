@@ -2,7 +2,7 @@ import Foundation
 
 nonisolated struct SSHAuthenticationWaiter: Sendable {
     enum Resolution: Sendable {
-        case acquired
+        case acquired(UUID)
         case canceled
     }
 
@@ -14,8 +14,8 @@ nonisolated struct SSHAuthenticationWaiter: Sendable {
         self.resolve = resolve
     }
 
-    func resume() {
-        resolve(.acquired)
+    func resume(leaseID: UUID) {
+        resolve(.acquired(leaseID))
     }
 
     func cancel() {

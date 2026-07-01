@@ -45,6 +45,61 @@ final class SSHAuthenticationGateCancellationTests: XCTestCase {
         )
     }
 
+    func testDuplicateLeaseReleaseDoesNotReleaseNextHolder() async throws {
+        let gate = SSHAuthenticationGate()
+        let firstLease = try await gate.acquireLease(for: "server:user")
+        let secondAcquired = AsyncFlag()
+        let releaseSecond = AsyncGate()
+        let thirdAcquired = AsyncFlag()
+
+        // Given one auth lease is active and a second caller is waiting for
+        // the same key-specific public-key auth slot.
+        let second = Task {
+            let lease = try await gate.acquireLease(for: "server:user")
+            await secondAcquired.setTrue()
+            await releaseSecond.wait()
+            await lease.release()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // When the first lease is accidentally released twice, as can happen
+        // when cleanup paths are refactored around close/retry ordering.
+        await firstLease.release()
+        await firstLease.release()
+        try await Task.sleep(for: .milliseconds(20))
+
+        let didSecondAcquire = await secondAcquired.value
+        XCTAssertTrue(
+            didSecondAcquire,
+            "The first release should hand the auth slot to the queued second lease."
+        )
+
+        let third = Task {
+            let lease = try await gate.acquireLease(for: "server:user")
+            await thirdAcquired.setTrue()
+            await lease.release()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Then the duplicate release must not make the key look idle while the
+        // second lease still owns authentication.
+        let didThirdAcquireBeforeSecondRelease = await thirdAcquired.value
+        XCTAssertFalse(
+            didThirdAcquireBeforeSecondRelease,
+            "Duplicate auth lease release must not release a newer holder."
+        )
+
+        await releaseSecond.open()
+        try await second.value
+        try await third.value
+
+        let didThirdAcquireAfterSecondRelease = await thirdAcquired.value
+        XCTAssertTrue(
+            didThirdAcquireAfterSecondRelease,
+            "The third lease should acquire only after the second holder releases."
+        )
+    }
+
     func testCanceledExplicitLeaseAcquisitionDoesNotLeakAuthenticationSlot() async {
         // Given a task that will enter explicit lease acquisition after it has
         // already been canceled.
