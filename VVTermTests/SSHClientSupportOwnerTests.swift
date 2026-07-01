@@ -100,6 +100,29 @@ struct SSHClientSupportOwnerTests {
     }
 
     @Test
+    func moshShellRuntimeCanClearFinishedStreamTaskWithoutCancelingIt() async {
+        let runtime = SSHMoshShellRuntime(
+            session: MoshClientSession(
+                endpoint: MoshEndpoint(host: "127.0.0.1", port: 60001, keyBase64_22: "abcdefghijklmnopqrstuv")
+            )
+        )
+        let streamTask = Task {}
+
+        // Given a Mosh host stream task naturally reaches its own cleanup path.
+        runtime.setStreamTask(streamTask)
+        await streamTask.value
+
+        // When the runtime owner clears stream task ownership for that natural
+        // completion path.
+        runtime.clearStreamTask()
+
+        // Then the runtime forgets the task without retroactively marking the
+        // finished stream as canceled.
+        #expect(runtime.streamTaskForTesting == nil)
+        #expect(!streamTask.isCancelled)
+    }
+
+    @Test
     func pendingConnectCoordinatorPublishesCurrentSessionAndCancelsForDisconnect() {
         let coordinator = SSHPendingConnectCoordinator()
         let requestID = UUID()
@@ -252,6 +275,10 @@ struct SSHClientSupportOwnerTests {
         #expect(
             moshShellSource.contains("runtime.setStreamTask(streamTask)"),
             "Mosh host streams should publish their stream task through the runtime owner."
+        )
+        #expect(
+            moshShellSource.contains("runtime.clearStreamTask()"),
+            "Mosh stream natural completion should clear ownership without canceling the current stream task."
         )
         #expect(
             moshShellSource.contains("trackMoshTeardownTask"),

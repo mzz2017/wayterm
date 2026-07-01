@@ -16,32 +16,36 @@ struct RemoteMoshManagerTests {
     func sshClientMoshStreamTeardownIsTrackedByClientOwner() throws {
         // Given SSHClient owns MoshClientSession runtimes and host-op stream
         // delivery for mosh-backed terminal shells.
-        let source = try source(at: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift"))
-        let moshRuntimeSource = try slice(
-            startingAt: "    private final class MoshShellRuntime",
-            endingBefore: "    private var session: SSHSession?",
-            in: source
+        let clientSource = try source(at: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift"))
+        let moshRuntimeSource = try source(
+            at: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHMoshShellRuntime.swift")
         )
         let moshSource = try slice(
             startingAt: "    private func startMoshShell(",
             endingBefore: "    nonisolated static func runWithTimeout",
-            in: source
+            in: clientSource
         )
         let disconnectSource = try slice(
             startingAt: "    func disconnect() async {",
             endingBefore: "    // MARK: - Command Execution",
-            in: source
+            in: clientSource
         )
 
         // Then the runtime must own the stream task, synchronous stream
         // termination must register teardown with SSHClient, and disconnect
         // must await tracked mosh teardown before completing.
         #expect(
-            moshRuntimeSource.contains("setStreamTask") && moshRuntimeSource.contains("cancelStreamTask"),
-            "MoshShellRuntime should own and cancel the host-op stream task."
+            moshRuntimeSource.contains("setStreamTask")
+                && moshRuntimeSource.contains("cancelStreamTask")
+                && moshRuntimeSource.contains("clearStreamTask"),
+            "SSHMoshShellRuntime should own, cancel, and clear the host-op stream task."
         )
         #expect(
-            source.contains("trackMoshTeardownTask") && source.contains("waitForMoshTeardownTasks"),
+            moshSource.contains("runtime.clearStreamTask()"),
+            "Mosh stream natural completion should clear stream ownership before closeShell cleanup."
+        )
+        #expect(
+            clientSource.contains("trackMoshTeardownTask") && clientSource.contains("waitForMoshTeardownTasks"),
             "SSHClient should expose private mosh teardown tracking helpers."
         )
         #expect(

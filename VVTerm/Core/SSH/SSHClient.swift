@@ -836,6 +836,7 @@ nonisolated actor SSHClient {
                     }
                 }
                 moshLogger.info("Mosh stream ended, total bytes delivered: \(totalBytes)")
+                runtime.clearStreamTask()
                 continuation.finish()
                 await self.closeShell(shellId)
             }

@@ -24,6 +24,12 @@ nonisolated final class SSHMoshShellRuntime: @unchecked Sendable {
         task?.cancel()
     }
 
+    func clearStreamTask() {
+        lock.lock()
+        streamTask = nil
+        lock.unlock()
+    }
+
     #if DEBUG
     var streamTaskForTesting: Task<Void, Never>? {
         lock.lock()
