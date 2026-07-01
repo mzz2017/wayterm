@@ -336,6 +336,51 @@ struct StoreManagerLifecycleTests {
     }
 
     @Test
+    func purchaseCancellationDuringEntitlementRefreshDoesNotPublishStalePurchase() async {
+        let entitlementGate = StoreRequestGate()
+        let telemetry = StoreTelemetrySpy()
+        var didFinishTransaction = false
+        let manager = StoreManager.makeForTesting(
+            checkEntitlementsAction: { _ in
+                await entitlementGate.waitForRelease()
+            },
+            telemetry: telemetry
+        )
+        manager.purchaseState = .purchasing
+
+        // Given a verified purchase has finished its StoreKit transaction and
+        // is suspended while refreshing entitlements.
+        let task = Task { @MainActor in
+            await manager.completeVerifiedPurchaseForTesting(productId: "vvterm.pro.monthly") {
+                didFinishTransaction = true
+            }
+        }
+        await entitlementGate.waitForOperationStart()
+        #expect(didFinishTransaction, "Verified purchases should finish the StoreKit transaction before refreshing entitlements.")
+
+        // When lifecycle cancellation arrives before entitlement refresh can
+        // publish fresh access state.
+        task.cancel()
+        await entitlementGate.release()
+        await task.value
+
+        // Then StoreManager must not publish a stale successful purchase based
+        // on an entitlement refresh that exited because the task was canceled.
+        #expect(
+            manager.purchaseState == .idle,
+            "Canceled purchase should return to idle instead of publishing a stale purchased result."
+        )
+        #expect(
+            manager.lastPurchasedProductId == nil,
+            "Canceled purchase must not leave a stale purchased product id."
+        )
+        #expect(
+            telemetry.purchasedProducts.isEmpty,
+            "Canceled purchase must not emit purchase telemetry."
+        )
+    }
+
+    @Test
     func dismissRestoreResultClearsOnlyCompletedPresentationState() {
         let manager = StoreManager.makeForTesting()
 

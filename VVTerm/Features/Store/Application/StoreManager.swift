@@ -240,9 +240,9 @@ final class StoreManager: ObservableObject {
             switch result {
             case .success(let verification):
                 let transaction = try checkVerified(verification)
-                await transaction.finish()
-                await checkEntitlements()
-                applySuccessfulPurchase(of: product)
+                try await completeVerifiedPurchase(productId: product.id) {
+                    await transaction.finish()
+                }
 
             case .userCancelled:
                 applyIdlePurchaseState(logMessage: "Purchase cancelled by user")
@@ -450,11 +450,22 @@ final class StoreManager: ObservableObject {
         }
     }
 
-    private func applySuccessfulPurchase(of product: Product) {
-        lastPurchasedProductId = product.id
+    private func completeVerifiedPurchase(
+        productId: String,
+        finishTransaction: @MainActor () async -> Void
+    ) async throws {
+        await finishTransaction()
+        try Task.checkCancellation()
+        await checkEntitlementsAction(self)
+        try Task.checkCancellation()
+        applySuccessfulPurchase(productId: productId)
+    }
+
+    private func applySuccessfulPurchase(productId: String) {
+        lastPurchasedProductId = productId
         purchaseState = .purchased
-        telemetry.trackPurchase(source: activePaywallSource, productId: product.id)
-        logger.info("Purchase successful: \(product.id)")
+        telemetry.trackPurchase(source: activePaywallSource, productId: productId)
+        logger.info("Purchase successful: \(productId)")
     }
 
     private func applyIdlePurchaseState(logMessage: String) {
@@ -600,6 +611,20 @@ extension StoreManager {
 
     func applyRestoreErrorForTesting(_ error: Error) {
         applyRestoreError(error)
+    }
+
+    func completeVerifiedPurchaseForTesting(
+        productId: String,
+        finishTransaction: @MainActor () async -> Void = {}
+    ) async {
+        do {
+            try await completeVerifiedPurchase(
+                productId: productId,
+                finishTransaction: finishTransaction
+            )
+        } catch {
+            applyPurchaseError(error)
+        }
     }
 
     var hasPendingStartupRefreshForTesting: Bool {
