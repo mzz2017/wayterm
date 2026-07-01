@@ -198,6 +198,53 @@ struct ConnectionRetryCredentialLifecycleTests {
     }
 
     @Test
+    func connectionManagerRetryCompletionCanStartFreshRetryRequest() async {
+        await withCleanConnectionManager { manager in
+            let server = makeServer()
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .disconnected
+            )
+            let gate = RetryOperationGate()
+            let credentials = makeCredentials(serverId: server.id)
+            manager.sessions = [session]
+            manager.setSessionRetryOperationForTesting { _, _ in
+                await gate.run()
+                return .started(credentials)
+            }
+            var callbackTriggeredRequestID: UUID?
+
+            // Given a retry request is completing and its callback immediately
+            // asks the application owner to try again.
+            let firstRequestID = manager.requestSessionRetry(
+                session: session,
+                server: server,
+                onCompleted: { _ in
+                    callbackTriggeredRequestID = manager.requestSessionRetry(
+                        session: session,
+                        server: server
+                    )
+                }
+            )
+            await gate.waitForCallCount(1)
+
+            // When the first retry finishes.
+            await gate.release()
+            await manager.waitForSessionRetryRequest(firstRequestID)
+            for _ in 0..<50 where await gate.callCount < 2 {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+
+            // Then the callback-triggered retry owns a new lifecycle instead
+            // of being joined to the completed request that is about to clear.
+            #expect(callbackTriggeredRequestID != nil)
+            #expect(callbackTriggeredRequestID != firstRequestID)
+            #expect(await gate.callCount == 2)
+        }
+    }
+
+    @Test
     func connectionManagerRetrySkipsIfRuntimeBecomesLiveWhileLoadingCredentials() async {
         await withCleanConnectionManager { manager in
             let server = makeServer()

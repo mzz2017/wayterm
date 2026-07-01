@@ -70,7 +70,9 @@ extension TerminalTabManager {
             let result = await self.retryPaneConnection(paneId: paneId, server: server)
             #endif
 
-            let callbacks = self.paneRetryRequestStore[requestID]?.onCompleted ?? []
+            let callbacks = self.paneRetryRequestStore
+                .remove(id: requestID, ifMappedTo: paneId)?
+                .onCompleted ?? []
             callbacks.forEach { $0(Task.isCancelled ? .skipped : result) }
         }
         paneRetryRequestStore.insert(

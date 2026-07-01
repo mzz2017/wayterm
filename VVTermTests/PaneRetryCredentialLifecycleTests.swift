@@ -150,6 +150,52 @@ struct PaneRetryCredentialLifecycleTests {
     }
 
     @Test
+    func tabManagerRetryCompletionCanStartFreshRetryRequest() async {
+        await withCleanTabManager { manager in
+            let server = makeServer()
+            let tabId = UUID()
+            let paneId = UUID()
+            var paneState = TerminalPaneState(paneId: paneId, tabId: tabId, serverId: server.id)
+            paneState.connectionState = .disconnected
+            let gate = PaneRetryOperationGate()
+            let credentials = makeCredentials(serverId: server.id)
+            manager.paneStates[paneId] = paneState
+            manager.setPaneRetryOperationForTesting { _, _ in
+                await gate.run()
+                return .started(credentials)
+            }
+            var callbackTriggeredRequestID: UUID?
+
+            // Given a pane retry request is completing and its callback
+            // immediately asks the application owner to try again.
+            let firstRequestID = manager.requestPaneRetry(
+                paneId: paneId,
+                server: server,
+                onCompleted: { _ in
+                    callbackTriggeredRequestID = manager.requestPaneRetry(
+                        paneId: paneId,
+                        server: server
+                    )
+                }
+            )
+            await gate.waitForCallCount(1)
+
+            // When the first retry finishes.
+            await gate.release()
+            await manager.waitForPaneRetryRequest(firstRequestID)
+            for _ in 0..<50 where await gate.callCount < 2 {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+
+            // Then the callback-triggered retry owns a new lifecycle instead
+            // of being joined to the completed request that is about to clear.
+            #expect(callbackTriggeredRequestID != nil)
+            #expect(callbackTriggeredRequestID != firstRequestID)
+            #expect(await gate.callCount == 2)
+        }
+    }
+
+    @Test
     func tabManagerRetrySkipsIfRuntimeBecomesLiveWhileLoadingCredentials() async {
         await withCleanTabManager { manager in
             let server = makeServer()

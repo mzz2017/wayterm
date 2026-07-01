@@ -224,7 +224,9 @@ extension ConnectionSessionManager {
             let result = await self.retrySessionConnection(session: session, server: server)
             #endif
 
-            let callbacks = self.sessionRetryRequestStore[requestID]?.onCompleted ?? []
+            let callbacks = self.sessionRetryRequestStore
+                .remove(id: requestID, ifMappedTo: session.id)?
+                .onCompleted ?? []
             callbacks.forEach { $0(Task.isCancelled ? .skipped : result) }
         }
         sessionRetryRequestStore.insert(
