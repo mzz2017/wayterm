@@ -48,6 +48,10 @@ extension RemoteFileBrowserStore {
         RemoteFileUploadFilesCoordinator()
     }
 
+    private var localUploadPlanCoordinator: RemoteFileLocalUploadPlanCoordinator {
+        RemoteFileLocalUploadPlanCoordinator(conflictResolver: conflictResolver)
+    }
+
     func upload(
         data: Data,
         to remotePath: String,
@@ -320,34 +324,15 @@ extension RemoteFileBrowserStore {
         to directoryPath: String,
         server: Server
     ) async throws -> [LocalUploadPlanCandidate] {
-        let destinationDirectory = RemoteFilePath.normalize(directoryPath)
         return try await localFileService.withSecurityScopedAccess(to: urls) {
-            try await withRemoteFileService(for: server) { service in
-                var reservedNames: Set<String> = []
-                var candidates: [LocalUploadPlanCandidate] = []
-
-                for url in urls {
-                    try Task.checkCancellation()
-                    let itemInfo = try await self.localItemInfo(at: url)
-                    let originalName = itemInfo.name
-                    let resolution = try await self.conflictResolver.resolveName(
-                        for: originalName,
-                        in: destinationDirectory,
-                        policy: .keepBoth,
-                        using: service,
-                        reservedNames: &reservedNames
-                    )
-                    candidates.append(
-                        LocalUploadPlanCandidate(
-                            sourceURL: url,
-                            originalName: originalName,
-                            existingEntry: resolution.existingEntry,
-                            suggestedName: resolution.hasConflict ? resolution.resolvedName : nil
-                        )
-                    )
+            try await withRemoteFileService(for: server) { [self] service in
+                try await localUploadPlanCoordinator.prepareLocalUploadPlan(
+                    at: urls,
+                    to: directoryPath,
+                    using: service
+                ) { url in
+                    try await self.localItemInfo(at: url)
                 }
-
-                return candidates
             }
         }
     }

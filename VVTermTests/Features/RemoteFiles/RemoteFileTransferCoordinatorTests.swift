@@ -699,6 +699,40 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func localUploadPlanCoordinatorReservesDuplicateKeepBothNames() async throws {
+        let coordinator = RemoteFileLocalUploadPlanCoordinator()
+        let firstURL = URL(fileURLWithPath: "/local/a/report.txt")
+        let secondURL = URL(fileURLWithPath: "/local/b/report.txt")
+        let service = RecordingRemoteFileService(
+            directoryContents: [:],
+            existingEntries: [
+                "/destination/report.txt": makeEntry(
+                    name: "report.txt",
+                    path: "/destination/report.txt",
+                    type: .file
+                )
+            ]
+        )
+
+        // Given two local upload candidates have the same display name and the
+        // remote destination already contains that name.
+        let candidates = try await coordinator.prepareLocalUploadPlan(
+            at: [firstURL, secondURL],
+            to: "/destination",
+            using: service
+        ) { url in
+            RemoteFileLocalItemInfo(name: url.lastPathComponent, isDirectory: false)
+        }
+
+        // Then the upload-plan owner keeps resolved names reserved across the
+        // whole batch, so the second candidate does not reuse "report 2.txt".
+        #expect(candidates.map(\.sourceURL) == [firstURL, secondURL])
+        #expect(candidates.map(\.originalName) == ["report.txt", "report.txt"])
+        #expect(candidates.map(\.suggestedName) == ["report 2.txt", "report 3.txt"])
+        #expect(candidates.map(\.hasConflict) == [true, true])
+    }
+
+    @Test
     func deleteEntriesCancellationStopsBeforeNextSelectedItem() async throws {
         let server = Server(
             workspaceId: UUID(),
