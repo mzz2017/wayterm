@@ -8,17 +8,20 @@ struct RemoteFileRecursiveTransferCoordinator {
     let temporaryStorage: RemoteFileTemporaryStorage
     let atomicUploader: RemoteFileAtomicUploader
     let atomicDirectoryCopyCoordinator: RemoteFileAtomicDirectoryCopyCoordinator
+    let cleanupCoordinator: RemoteFileAtomicCleanupCoordinator
 
     init(
         localFileService: any RemoteFileLocalFileServicing,
         temporaryStorage: RemoteFileTemporaryStorage,
         atomicUploader: RemoteFileAtomicUploader = RemoteFileAtomicUploader(),
-        atomicDirectoryCopyCoordinator: RemoteFileAtomicDirectoryCopyCoordinator = RemoteFileAtomicDirectoryCopyCoordinator()
+        atomicDirectoryCopyCoordinator: RemoteFileAtomicDirectoryCopyCoordinator = RemoteFileAtomicDirectoryCopyCoordinator(),
+        cleanupCoordinator: RemoteFileAtomicCleanupCoordinator = RemoteFileAtomicCleanupCoordinator()
     ) {
         self.localFileService = localFileService
         self.temporaryStorage = temporaryStorage
         self.atomicUploader = atomicUploader
         self.atomicDirectoryCopyCoordinator = atomicDirectoryCopyCoordinator
+        self.cleanupCoordinator = cleanupCoordinator
     }
 
     func uploadItem(
@@ -33,21 +36,33 @@ struct RemoteFileRecursiveTransferCoordinator {
         let remotePath = RemoteFilePath.appending(targetName, to: remoteDirectoryPath)
 
         if itemInfo.isDirectory {
-            try await ensureRemoteDirectoryExists(
-                at: remotePath,
-                permissions: 0o755,
-                using: client
-            )
-            await progressTracker?.advance(currentItemName: targetName)
-            let children = try await localDirectoryContents(at: localURL)
-            for child in children {
+            let temporaryRemotePath = makeAtomicRemoteDirectoryUploadPath(for: remotePath)
+            do {
+                try await client.createDirectory(at: temporaryRemotePath, permissions: 0o755)
+                let children = try await localDirectoryContents(at: localURL)
+                for child in children {
+                    try Task.checkCancellation()
+                    try await uploadItem(
+                        at: child,
+                        to: temporaryRemotePath,
+                        using: client,
+                        progressTracker: progressTracker
+                    )
+                }
                 try Task.checkCancellation()
-                try await uploadItem(
-                    at: child,
+                try await atomicUploader.publishAtomicRemoteItem(
+                    at: temporaryRemotePath,
                     to: remotePath,
-                    using: client,
-                    progressTracker: progressTracker
+                    publishMode: .failIfDestinationExists,
+                    using: client
                 )
+                await progressTracker?.advance(currentItemName: targetName)
+            } catch {
+                await cleanupCoordinator.removeTemporaryDirectory(
+                    temporaryRemotePath,
+                    using: client
+                )
+                throw error
             }
             return
         }
@@ -246,6 +261,16 @@ struct RemoteFileRecursiveTransferCoordinator {
         return parentURL.appendingPathComponent(
             ".\(destinationURL.lastPathComponent).vvterm-download-\(UUID().uuidString).tmp",
             isDirectory: true
+        )
+    }
+
+    private func makeAtomicRemoteDirectoryUploadPath(for remotePath: String) -> String {
+        let normalizedPath = RemoteFilePath.normalize(remotePath)
+        let parentPath = RemoteFilePath.parent(of: normalizedPath)
+        let targetName = normalizedPath.split(separator: "/").last.map(String.init) ?? "upload"
+        return RemoteFilePath.appending(
+            ".\(targetName).vvterm-upload-\(UUID().uuidString).tmp",
+            to: parentPath
         )
     }
 

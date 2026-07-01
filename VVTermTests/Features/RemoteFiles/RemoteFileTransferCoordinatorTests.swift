@@ -686,6 +686,65 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func uploadDirectoryCancellationDoesNotExposePartialDestinationDirectory() async throws {
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            serverProvider: { _ in nil }
+        )
+        let localDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RemoteFileTransferCoordinatorTests-\(UUID().uuidString)", isDirectory: true)
+        let folderURL = localDirectory.appendingPathComponent("folder", isDirectory: true)
+        let childURL = folderURL.appendingPathComponent("child.txt")
+        try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
+        try Data("new remote child".utf8).write(to: childURL)
+        defer { try? FileManager.default.removeItem(at: localDirectory) }
+
+        let uploadBlocker = RemoteFileUploadBlocker()
+        let service = RecordingRemoteFileService(
+            directoryContents: [:],
+            uploadBlocker: uploadBlocker
+        )
+
+        // Given a local directory upload has created its remote staging
+        // directory and reached the first child upload.
+        let task = Task {
+            try await store.uploadItem(
+                at: folderURL,
+                to: "/remote",
+                using: service
+            )
+        }
+        await uploadBlocker.waitUntilStarted()
+
+        // When cancellation arrives before the child upload is allowed to finish.
+        task.cancel()
+        await uploadBlocker.release()
+
+        // Then RemoteFiles never exposes the final directory path with partial
+        // contents, and removes the temporary staging directory instead.
+        let result = await task.result
+        switch result {
+        case .success:
+            Issue.record("Expected directory upload cancellation before final remote replacement")
+        case .failure(is CancellationError):
+            break
+        case .failure(let error):
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+
+        let operations = service.operations
+        let createdPaths = operations.compactMap { operation -> String? in
+            guard case .createDirectory(let path) = operation else { return nil }
+            return path
+        }
+        let stagingPath = try #require(createdPaths.first)
+        #expect(stagingPath != "/remote/folder")
+        #expect(stagingPath.hasPrefix("/remote/.folder.vvterm-upload-"))
+        #expect(operations.contains(.deleteDirectory(stagingPath)))
+        #expect(!operations.contains(.renameItem(source: stagingPath, destination: "/remote/folder")))
+    }
+
+    @Test
     func uploadFilesCoordinatorCancellationStopsBeforeNextPlan() async throws {
         let coordinator = RemoteFileUploadFilesCoordinator()
         let uploadBlocker = RemoteFileUploadBlocker()
