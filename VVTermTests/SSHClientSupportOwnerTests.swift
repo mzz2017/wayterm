@@ -143,6 +143,28 @@ struct SSHClientSupportOwnerTests {
     }
 
     @Test
+    func pendingConnectCleanupCancelsUnfinishedTaskOnTimeout() async {
+        let cleanup = SSHPendingConnectCleanup(timeout: .milliseconds(20))
+        let cancellationRecorder = TaskCancellationRecorder()
+        let task = Task<SSHSession, Error> {
+            await cancellationRecorder.waitForCancellation()
+            throw CancellationError()
+        }
+
+        // Given a pending connect task does not finish before disconnect
+        // cleanup's timeout.
+        await cleanup.waitForPendingTask(task)
+
+        // Then cleanup cancels the task so the connect path cannot keep running
+        // after SSHClient disconnect has moved on.
+        for _ in 0..<20 where !(await cancellationRecorder.didCancel) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(task.isCancelled)
+        #expect(await cancellationRecorder.didCancel)
+    }
+
+    @Test
     func keepAliveCoordinatorIgnoresSupersededLoopAndClearsOnCancel() async {
         let sleepSequence = KeepAliveSleepSequence()
         let coordinator = SSHKeepAliveCoordinator { _ in

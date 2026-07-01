@@ -665,10 +665,9 @@ nonisolated actor SSHClient {
     }
 
     private func waitForPendingConnectCleanup(_ task: Task<SSHSession, Error>?) async {
-        guard let task else { return }
-        do {
-            try await SSHClient.waitForTaskCompletion(task, timeout: disconnectTimeout)
-        } catch {
+        let cleanup = SSHPendingConnectCleanup(timeout: disconnectTimeout)
+        let didTimeout = await cleanup.waitForPendingTask(task)
+        if didTimeout {
             logger.warning("Timed out while waiting for pending SSH connect cleanup")
         }
     }
@@ -697,22 +696,6 @@ nonisolated actor SSHClient {
             }
         } catch {
             logger.warning("Timed out while disconnecting Cloudflare transport (\(reason, privacy: .public))")
-        }
-    }
-
-    nonisolated private static func waitForTaskCompletion<T: Sendable>(
-        _ task: Task<T, Error>,
-        timeout: Duration
-    ) async throws {
-        do {
-            return try await AsyncTimeoutGate.waitForTask(
-                task,
-                timeout: timeout,
-                timeoutError: { SSHError.timeout }
-            )
-        } catch {
-            task.cancel()
-            throw error
         }
     }
 
