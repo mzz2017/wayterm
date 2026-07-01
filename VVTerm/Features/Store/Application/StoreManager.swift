@@ -37,6 +37,7 @@ final class StoreManager: ObservableObject {
     private let subscriptionExpirationRefreshCoordinator: StoreSubscriptionExpirationRefreshCoordinator
     private let reviewModeExpiryCoordinator: StoreReviewModeExpiryCoordinator
     private let transactionListenerCoordinator = StoreTransactionListenerCoordinator()
+    private let backgroundRefreshCoordinator = StoreBackgroundRefreshCoordinator()
     var lastPurchaseRequestFailure: Error? { purchaseRequestCoordinator.lastRequestFailure }
     var lastRestoreRequestFailure: Error? { restoreRequestCoordinator.lastRequestFailure }
     var pendingPurchaseRequestIDs: Set<UUID> { purchaseRequestCoordinator.pendingRequestIDs }
@@ -48,10 +49,6 @@ final class StoreManager: ObservableObject {
         entitlementRefreshCoordinator.pendingRequestIDs
     }
 
-    private var startupRefreshTask: Task<Void, Never>?
-    private var startupRefreshTaskID: UUID?
-    private var reviewModeRefreshTask: Task<Void, Never>?
-    private var reviewModeRefreshTaskID: UUID?
     private var reviewModeExpiresAt: Date?
     private var entitlementRefreshGeneration = 0
     private let loadProductsAction: StoreLifecycleAction
@@ -117,8 +114,7 @@ final class StoreManager: ObservableObject {
 
     deinit {
         transactionListenerCoordinator.cancelAllFromAnyContext()
-        startupRefreshTask?.cancel()
-        reviewModeRefreshTask?.cancel()
+        backgroundRefreshCoordinator.cancelAllFromAnyContext()
         entitlementRefreshCoordinator.cancelAllFromAnyContext()
         subscriptionExpirationRefreshCoordinator.cancelAllFromAnyContext()
         reviewModeExpiryCoordinator.cancelAllFromAnyContext()
@@ -128,12 +124,6 @@ final class StoreManager: ObservableObject {
     }
 
     func cancelAllAndWait() async {
-        let trackedTasks = [
-            startupRefreshTask,
-            reviewModeRefreshTask
-        ].compactMap { $0 }
-
-        trackedTasks.forEach { $0.cancel() }
         await productLoadCoordinator.cancelAllAndWait()
         await purchaseRequestCoordinator.cancelAllAndWait()
         await restoreRequestCoordinator.cancelAllAndWait()
@@ -141,57 +131,26 @@ final class StoreManager: ObservableObject {
         await subscriptionExpirationRefreshCoordinator.cancelAllAndWait()
         await reviewModeExpiryCoordinator.cancelAllAndWait()
         await transactionListenerCoordinator.cancelAllAndWait()
-        for task in trackedTasks {
-            await task.value
-        }
-
-        startupRefreshTask = nil
-        startupRefreshTaskID = nil
-        reviewModeRefreshTask = nil
-        reviewModeRefreshTaskID = nil
+        await backgroundRefreshCoordinator.cancelAllAndWait()
     }
 
     private func startStartupRefresh() {
-        startupRefreshTask?.cancel()
-        let taskID = UUID()
-        startupRefreshTaskID = taskID
-
-        let task = Task { @MainActor [weak self] in
+        backgroundRefreshCoordinator.startRefresh(kind: .startup) { [weak self] in
             guard let self else { return }
-            defer {
-                if self.startupRefreshTaskID == taskID {
-                    self.startupRefreshTaskID = nil
-                    self.startupRefreshTask = nil
-                }
-            }
 
             await self.loadProductsAction(self)
             guard !Task.isCancelled else { return }
             await self.checkEntitlementsAction(self)
         }
-
-        startupRefreshTask = task
     }
 
     private func startReviewModeRefresh() {
-        reviewModeRefreshTask?.cancel()
-        let taskID = UUID()
-        reviewModeRefreshTaskID = taskID
-
-        let task = Task { @MainActor [weak self] in
+        backgroundRefreshCoordinator.startRefresh(kind: .reviewMode) { [weak self] in
             guard let self else { return }
-            defer {
-                if self.reviewModeRefreshTaskID == taskID {
-                    self.reviewModeRefreshTaskID = nil
-                    self.reviewModeRefreshTask = nil
-                }
-            }
 
             guard !Task.isCancelled else { return }
             await self.checkEntitlementsAction(self)
         }
-
-        reviewModeRefreshTask = task
     }
 
     // MARK: - Load Products
@@ -628,19 +587,21 @@ extension StoreManager {
     }
 
     var hasPendingStartupRefreshForTesting: Bool {
-        startupRefreshTask != nil
+        !backgroundRefreshCoordinator.pendingRequestIDs(for: .startup).isEmpty
     }
 
     func waitForStartupRefreshForTesting() async {
-        await startupRefreshTask?.value
+        guard let requestID = backgroundRefreshCoordinator.pendingRequestIDs(for: .startup).first else { return }
+        await backgroundRefreshCoordinator.waitForRefresh(kind: .startup, requestID)
     }
 
     var hasPendingReviewModeRefreshForTesting: Bool {
-        reviewModeRefreshTask != nil
+        !backgroundRefreshCoordinator.pendingRequestIDs(for: .reviewMode).isEmpty
     }
 
     func waitForReviewModeRefreshForTesting() async {
-        await reviewModeRefreshTask?.value
+        guard let requestID = backgroundRefreshCoordinator.pendingRequestIDs(for: .reviewMode).first else { return }
+        await backgroundRefreshCoordinator.waitForRefresh(kind: .reviewMode, requestID)
     }
 
     var hasPendingReviewModeExpiryForTesting: Bool {
