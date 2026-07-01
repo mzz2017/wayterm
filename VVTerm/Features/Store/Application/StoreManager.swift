@@ -32,13 +32,13 @@ final class StoreManager: ObservableObject {
     private let purchaseRequestCoordinator = StoreRequestLifecycleCoordinator()
     private let restoreRequestCoordinator = StoreRequestLifecycleCoordinator()
     private let entitlementRefreshCoordinator = StoreEntitlementRefreshCoordinator()
+    private let productLoadCoordinator = StoreProductLoadCoordinator()
     var lastPurchaseRequestFailure: Error? { purchaseRequestCoordinator.lastRequestFailure }
     var lastRestoreRequestFailure: Error? { restoreRequestCoordinator.lastRequestFailure }
     var pendingPurchaseRequestIDs: Set<UUID> { purchaseRequestCoordinator.pendingRequestIDs }
     var pendingRestoreRequestIDs: Set<UUID> { restoreRequestCoordinator.pendingRequestIDs }
     var pendingProductLoadRequestIDs: Set<UUID> {
-        guard let productLoadRequestID else { return [] }
-        return [productLoadRequestID]
+        productLoadCoordinator.pendingRequestIDs
     }
     var pendingEntitlementRefreshRequestIDs: Set<UUID> {
         entitlementRefreshCoordinator.pendingRequestIDs
@@ -50,9 +50,6 @@ final class StoreManager: ObservableObject {
     private var reviewModeRefreshTaskID: UUID?
     private var subscriptionExpirationRefreshTask: Task<Void, Never>?
     private var subscriptionExpirationRefreshTaskID: UUID?
-    private var productLoadRequestTask: Task<Void, Never>?
-    private var productLoadRequestID: UUID?
-    private var productLoadCompletionCallbacks: [@MainActor () -> Void] = []
     private var updateListenerTask: Task<Void, Never>?
     private var updateListenerTaskID: UUID?
     private var reviewModeExpiryTask: Task<Void, Never>?
@@ -117,7 +114,7 @@ final class StoreManager: ObservableObject {
         entitlementRefreshCoordinator.cancelAllFromAnyContext()
         subscriptionExpirationRefreshTask?.cancel()
         reviewModeExpiryTask?.cancel()
-        productLoadRequestTask?.cancel()
+        productLoadCoordinator.cancelAllFromAnyContext()
         purchaseRequestCoordinator.cancelAllFromAnyContext()
         restoreRequestCoordinator.cancelAllFromAnyContext()
     }
@@ -128,11 +125,11 @@ final class StoreManager: ObservableObject {
             startupRefreshTask,
             reviewModeRefreshTask,
             subscriptionExpirationRefreshTask,
-            reviewModeExpiryTask,
-            productLoadRequestTask
+            reviewModeExpiryTask
         ].compactMap { $0 }
 
         trackedTasks.forEach { $0.cancel() }
+        await productLoadCoordinator.cancelAllAndWait()
         await purchaseRequestCoordinator.cancelAllAndWait()
         await restoreRequestCoordinator.cancelAllAndWait()
         await entitlementRefreshCoordinator.cancelAllAndWait()
@@ -149,9 +146,6 @@ final class StoreManager: ObservableObject {
         subscriptionExpirationRefreshTask = nil
         subscriptionExpirationRefreshTaskID = nil
         reviewModeExpiryTask = nil
-        productLoadRequestTask = nil
-        productLoadRequestID = nil
-        productLoadCompletionCallbacks = []
     }
 
     private func startStartupRefresh() {
@@ -203,42 +197,14 @@ final class StoreManager: ObservableObject {
     func requestProductLoad(
         onCompleted: @escaping @MainActor () -> Void = {}
     ) -> UUID {
-        if let productLoadRequestID {
-            productLoadCompletionCallbacks.append(onCompleted)
-            return productLoadRequestID
-        }
-
-        let requestID = UUID()
-        productLoadRequestID = requestID
-        productLoadCompletionCallbacks = [onCompleted]
-
-        let task = Task { @MainActor [weak self] in
+        productLoadCoordinator.requestLoad(onCompleted: onCompleted) { [weak self] in
             guard let self else { return }
-            defer {
-                if self.productLoadRequestID == requestID {
-                    self.productLoadRequestID = nil
-                    self.productLoadRequestTask = nil
-                    self.productLoadCompletionCallbacks = []
-                }
-            }
-
             await self.loadProductsAction(self)
-            guard !Task.isCancelled else { return }
-            guard self.productLoadRequestID == requestID else { return }
-
-            let callbacks = self.productLoadCompletionCallbacks
-            callbacks.forEach { $0() }
         }
-
-        if productLoadRequestID == requestID {
-            productLoadRequestTask = task
-        }
-        return requestID
     }
 
     func waitForProductLoadRequest(_ requestID: UUID) async {
-        guard productLoadRequestID == requestID else { return }
-        await productLoadRequestTask?.value
+        await productLoadCoordinator.waitForLoad(requestID)
     }
 
     @discardableResult
@@ -718,8 +684,7 @@ extension StoreManager {
     }
 
     func cancelProductLoadRequestForTesting(_ requestID: UUID) {
-        guard productLoadRequestID == requestID else { return }
-        productLoadRequestTask?.cancel()
+        productLoadCoordinator.cancelRequest(requestID)
     }
 
     func cancelPurchaseRequestForTesting(_ requestID: UUID) {

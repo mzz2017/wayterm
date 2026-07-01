@@ -777,7 +777,7 @@ struct StoreManagerLifecycleTests {
         #expect(deinitSource.contains("updateListenerTask?.cancel()"))
         #expect(deinitSource.contains("startupRefreshTask?.cancel()"))
         #expect(deinitSource.contains("reviewModeRefreshTask?.cancel()"))
-        #expect(deinitSource.contains("productLoadRequestTask?.cancel()"))
+        #expect(deinitSource.contains("productLoadCoordinator.cancelAllFromAnyContext()"))
         #expect(deinitSource.contains("purchaseRequestCoordinator.cancelAllFromAnyContext()"))
         #expect(deinitSource.contains("restoreRequestCoordinator.cancelAllFromAnyContext()"))
 
