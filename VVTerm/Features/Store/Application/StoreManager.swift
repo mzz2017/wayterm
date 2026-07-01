@@ -50,7 +50,7 @@ final class StoreManager: ObservableObject {
     }
 
     private var reviewModeExpiresAt: Date?
-    private var entitlementRefreshGenerationGate = StoreEntitlementRefreshGenerationGate()
+    private var entitlementStateCoordinator = StoreEntitlementStateCoordinator()
     private let loadProductsAction: StoreLifecycleAction
     private let checkEntitlementsAction: StoreLifecycleAction
     private let transactionListenerAction: StoreTransactionListenerAction
@@ -481,20 +481,18 @@ final class StoreManager: ObservableObject {
     }
 
     private func applyEntitlements(
-        hasAccess: Bool,
-        hasLifetime: Bool,
-        status: Product.SubscriptionInfo.Status?
+        _ state: StoreEntitlementPublishedState
     ) {
-        isPro = hasAccess || isReviewModeEnabled
-        isLifetime = hasLifetime
-        subscriptionStatus = status
+        isPro = state.isPro
+        isLifetime = state.isLifetime
+        subscriptionStatus = state.status
         updateSubscriptionExpirationRefresh(
-            hasAccess: hasAccess,
-            hasLifetime: hasLifetime,
-            expirationDate: subscriptionExpirationDate(from: status)
+            hasAccess: state.hasStoreAccess,
+            hasLifetime: state.isLifetime,
+            expirationDate: subscriptionExpirationDate(from: state.status)
         )
         telemetry.trackAppLaunched(isPro: isPro)
-        logger.info("Entitlements checked: isPro=\(hasAccess), isLifetime=\(hasLifetime), reviewMode=\(self.isReviewModeEnabled)")
+        logger.info("Entitlements checked: isPro=\(state.hasStoreAccess), isLifetime=\(state.isLifetime), reviewMode=\(self.isReviewModeEnabled)")
     }
 
     private func updateSubscriptionExpirationRefresh(
@@ -523,7 +521,7 @@ final class StoreManager: ObservableObject {
     }
 
     private func beginEntitlementRefresh() -> StoreEntitlementRefreshGenerationGate.Token {
-        entitlementRefreshGenerationGate.beginRefresh()
+        entitlementStateCoordinator.beginRefresh()
     }
 
     private func applyEntitlementsIfCurrent(
@@ -532,12 +530,21 @@ final class StoreManager: ObservableObject {
         hasLifetime: Bool,
         status: Product.SubscriptionInfo.Status?
     ) {
-        guard entitlementRefreshGenerationGate.isCurrent(refreshGeneration) else {
+        let snapshot = StoreEntitlementSnapshot(
+            hasAccess: hasAccess,
+            hasLifetime: hasLifetime,
+            status: status
+        )
+        guard let state = entitlementStateCoordinator.publishIfCurrent(
+            refreshGeneration,
+            snapshot: snapshot,
+            isReviewModeEnabled: isReviewModeEnabled
+        ) else {
             logger.info("Ignored superseded entitlement refresh")
             return
         }
 
-        applyEntitlements(hasAccess: hasAccess, hasLifetime: hasLifetime, status: status)
+        applyEntitlements(state)
     }
 }
 
