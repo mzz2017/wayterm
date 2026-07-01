@@ -187,19 +187,19 @@ struct RemoteFileBrowserRequestLifecycleTests {
     func transferRequestTracksTaskProgressAndSuccessAfterOperation() async throws {
         let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
         let gate = RemoteFileMutationGate()
-        var events: [String] = []
+        let events = RemoteFileBrowserEventRecorder()
 
         // Given a RemoteFiles transfer launched from synchronous UI intent.
         let requestID = store.requestTransfer(
             operation: { onProgress in
-                events.append("operation-started")
-                onProgress(RemoteFileBrowserStore.TransferProgress(
+                await events.append("operation-started")
+                await onProgress(RemoteFileBrowserStore.TransferProgress(
                     completedUnitCount: 1,
                     totalUnitCount: 2,
                     currentItemName: "logs.txt"
                 ))
                 await gate.wait()
-                events.append("operation-finished")
+                await events.append("operation-finished")
                 return "exported"
             },
             onProgress: { progress in
@@ -217,13 +217,13 @@ struct RemoteFileBrowserRequestLifecycleTests {
         // Then the application store owns the transfer task until the async
         // operation and success continuation finish.
         #expect(store.pendingTransferRequestIDs.contains(requestID))
-        #expect(events == ["operation-started", "progress-1-2-logs.txt"])
+        #expect(events.values == ["operation-started", "progress-1-2-logs.txt"])
 
         await gate.release()
         await store.waitForTransferRequest(requestID)
 
         #expect(!store.pendingTransferRequestIDs.contains(requestID))
-        #expect(events == [
+        #expect(events.values == [
             "operation-started",
             "progress-1-2-logs.txt",
             "operation-finished",
@@ -237,7 +237,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
         let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
         let gate = RemoteFileMutationGate()
         let waitProbe = RemoteFileWaitProbe()
-        var operationEvents: [String] = []
+        let operationEvents = RemoteFileBrowserEventRecorder()
         var callbackEvents: [String] = []
 
         // Given a same-server mutation is blocked in application-owned remote
@@ -280,7 +280,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
         await waitTask.value
 
         #expect(await waitProbe.didReturn)
-        #expect(operationEvents == ["operation-started", "operation-finished"])
+        #expect(operationEvents.values == ["operation-started", "operation-finished"])
         #expect(callbackEvents.isEmpty)
     }
 
@@ -290,21 +290,21 @@ struct RemoteFileBrowserRequestLifecycleTests {
         let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
         let gate = RemoteFileMutationGate()
         let waitProbe = RemoteFileWaitProbe()
-        var operationEvents: [String] = []
+        let operationEvents = RemoteFileBrowserEventRecorder()
         var callbackEvents: [String] = []
 
         // Given a same-server transfer is blocked before emitting progress.
         let requestID = store.requestTransfer(
             serverId: server.id,
             operation: { onProgress in
-                operationEvents.append("operation-started")
+                await operationEvents.append("operation-started")
                 await gate.wait()
-                onProgress(RemoteFileBrowserStore.TransferProgress(
+                await onProgress(RemoteFileBrowserStore.TransferProgress(
                     completedUnitCount: 1,
                     totalUnitCount: 2,
                     currentItemName: "logs.txt"
                 ))
-                operationEvents.append("operation-finished")
+                await operationEvents.append("operation-finished")
                 return "exported"
             },
             onProgress: { progress in
@@ -340,7 +340,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
         await waitTask.value
 
         #expect(await waitProbe.didReturn)
-        #expect(operationEvents == ["operation-started", "operation-finished"])
+        #expect(operationEvents.values == ["operation-started", "operation-finished"])
         #expect(callbackEvents.isEmpty)
     }
 
@@ -352,7 +352,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
         let gate = RemoteFileMutationGate()
         let waitProbe = RemoteFileWaitProbe()
         let sourceBoundProbe = RemoteFileLifecycleEventProbe()
-        var operationEvents: [String] = []
+        let operationEvents = RemoteFileBrowserEventRecorder()
         var callbackEvents: [String] = []
 
         // Given a cross-server transfer starts from destination UI intent, then
@@ -360,16 +360,16 @@ struct RemoteFileBrowserRequestLifecycleTests {
         let requestID = store.requestTransfer(
             serverIds: [destinationServer.id],
             operation: { onProgress, bindServerScope in
-                operationEvents.append("operation-started")
-                bindServerScope([sourceServer.id])
+                await operationEvents.append("operation-started")
+                await bindServerScope([sourceServer.id])
                 await sourceBoundProbe.markOccurred()
                 await gate.wait()
-                onProgress(RemoteFileBrowserStore.TransferProgress(
+                await onProgress(RemoteFileBrowserStore.TransferProgress(
                     completedUnitCount: 1,
                     totalUnitCount: 1,
                     currentItemName: "copied.txt"
                 ))
-                operationEvents.append("operation-finished")
+                await operationEvents.append("operation-finished")
                 return "copied"
             },
             onProgress: { progress in
@@ -405,7 +405,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
         await waitTask.value
 
         #expect(await waitProbe.didReturn)
-        #expect(operationEvents == ["operation-started", "operation-finished"])
+        #expect(operationEvents.values == ["operation-started", "operation-finished"])
         #expect(callbackEvents.isEmpty)
     }
 
@@ -419,7 +419,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
         let waitProbe = RemoteFileWaitProbe()
         let operationStartedProbe = RemoteFileLifecycleEventProbe()
         let sourceBoundProbe = RemoteFileLifecycleEventProbe()
-        var operationEvents: [String] = []
+        let operationEvents = RemoteFileBrowserEventRecorder()
         var callbackEvents: [String] = []
 
         // Given a remote drop transfer is registered for the destination UI
@@ -427,14 +427,14 @@ struct RemoteFileBrowserRequestLifecycleTests {
         let requestID = store.requestTransfer(
             serverIds: [destinationServer.id],
             operation: { _, bindServerScope in
-                operationEvents.append("operation-started")
+                await operationEvents.append("operation-started")
                 await operationStartedProbe.markOccurred()
                 await bindGate.wait()
-                bindServerScope([sourceServer.id])
-                operationEvents.append("source-bound")
+                await bindServerScope([sourceServer.id])
+                await operationEvents.append("source-bound")
                 await sourceBoundProbe.markOccurred()
                 await workGate.wait()
-                operationEvents.append("operation-finished")
+                await operationEvents.append("operation-finished")
                 return "copied"
             },
             onSuccess: { result in
@@ -476,7 +476,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
         await waitTask.value
 
         #expect(await waitProbe.didReturn)
-        #expect(operationEvents == ["operation-started", "source-bound", "operation-finished"])
+        #expect(operationEvents.values == ["operation-started", "source-bound", "operation-finished"])
         #expect(callbackEvents.isEmpty)
     }
 
@@ -485,19 +485,19 @@ struct RemoteFileBrowserRequestLifecycleTests {
         let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
         let gate = RemoteFileMutationGate()
         let waitProbe = RemoteFileWaitProbe()
-        var operationEvents: [String] = []
+        let operationEvents = RemoteFileBrowserEventRecorder()
         var callbackEvents: [String] = []
 
         let requestID = store.requestTransfer(
             operation: { onProgress in
-                operationEvents.append("operation-started")
+                await operationEvents.append("operation-started")
                 await gate.wait()
-                onProgress(RemoteFileBrowserStore.TransferProgress(
+                await onProgress(RemoteFileBrowserStore.TransferProgress(
                     completedUnitCount: 1,
                     totalUnitCount: 1,
                     currentItemName: "export.txt"
                 ))
-                operationEvents.append("operation-finished")
+                await operationEvents.append("operation-finished")
                 return "exported"
             },
             onProgress: { progress in
@@ -536,7 +536,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
         await waitTask.value
 
         #expect(await waitProbe.didReturn)
-        #expect(operationEvents == ["operation-started", "operation-finished"])
+        #expect(operationEvents.values == ["operation-started", "operation-finished"])
         #expect(callbackEvents.isEmpty)
     }
 
@@ -544,16 +544,16 @@ struct RemoteFileBrowserRequestLifecycleTests {
     func canceledTransferRunsCancellationContinuationWithoutPublishingFailure() async throws {
         let store = RemoteFileBrowserStore(persistedStateStore: makeRemoteFileBrowserPersistedStateStore(), serverProvider: { _ in nil })
         let gate = RemoteFileMutationGate()
-        var events: [String] = []
+        let events = RemoteFileBrowserEventRecorder()
 
         // Given a file-export style transfer has a completion adapter that
         // must be called even when explicit cancellation suppresses normal
         // success/failure UI callbacks.
         let requestID = store.requestTransfer(
             operation: { _ in
-                events.append("operation-started")
+                await events.append("operation-started")
                 await gate.wait()
-                events.append("operation-finished")
+                await events.append("operation-finished")
                 try Task.checkCancellation()
                 return "exported"
             },
@@ -577,7 +577,7 @@ struct RemoteFileBrowserRequestLifecycleTests {
         // Then the special cancellation continuation runs exactly where
         // system file-export completion can be fulfilled, without treating
         // cancellation as a user-facing transfer failure.
-        #expect(events == ["operation-started", "operation-finished", "cancel"])
+        #expect(events.values == ["operation-started", "operation-finished", "cancel"])
     }
 
     @Test
@@ -807,5 +807,18 @@ struct RemoteFileBrowserRequestLifecycleTests {
 
         #expect(events.count == 2)
         #expect(Set(events) == Set(["mutation-mutated", "transfer-transferred"]))
+    }
+}
+
+@MainActor
+private final class RemoteFileBrowserEventRecorder {
+    private(set) var values: [String] = []
+
+    var isEmpty: Bool {
+        values.isEmpty
+    }
+
+    func append(_ value: String) {
+        values.append(value)
     }
 }

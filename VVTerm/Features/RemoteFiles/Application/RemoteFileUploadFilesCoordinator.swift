@@ -12,7 +12,7 @@ nonisolated struct RemoteFileUploadFilesCoordinator {
     func uploadFiles(
         plans: [RemoteFileLocalUploadPlanItem],
         to directoryPath: String,
-        onProgress: RemoteFileBrowserStore.TransferProgressCallback? = nil,
+        onProgress: RemoteFileBrowserStore.TransferProgressPublisher? = nil,
         countTransferUnits: CountTransferUnits,
         uploadItem: UploadItem
     ) async throws {

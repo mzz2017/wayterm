@@ -28,7 +28,8 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     typealias TransferProgressCallback = @MainActor @Sendable (TransferProgress) -> Void
-    typealias TransferServerScopeBinder = @MainActor @Sendable (Set<UUID>) -> Void
+    typealias TransferProgressPublisher = @Sendable (TransferProgress) async -> Void
+    typealias TransferServerScopeBinder = @Sendable (Set<UUID>) async -> Void
 
     typealias LocalUploadPlanItem = RemoteFileLocalUploadPlanItem
 
@@ -242,9 +243,9 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     @discardableResult
-    func requestTransfer<Result>(
+    func requestTransfer<Result: Sendable>(
         serverId: UUID? = nil,
-        operation: @escaping @MainActor @Sendable (@escaping TransferProgressCallback) async throws -> Result,
+        operation: @escaping @Sendable (@escaping TransferProgressPublisher) async throws -> Result,
         onProgress: @escaping TransferProgressCallback = { _ in },
         onSuccess: @escaping @MainActor @Sendable (Result) -> Void,
         onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in },
@@ -261,10 +262,10 @@ final class RemoteFileBrowserStore: ObservableObject {
     }
 
     @discardableResult
-    func requestTransfer<Result>(
+    func requestTransfer<Result: Sendable>(
         serverIds: Set<UUID>,
-        operation: @escaping @MainActor @Sendable (
-            @escaping TransferProgressCallback,
+        operation: @escaping @Sendable (
+            @escaping TransferProgressPublisher,
             @escaping TransferServerScopeBinder
         ) async throws -> Result,
         onProgress: @escaping TransferProgressCallback = { _ in },

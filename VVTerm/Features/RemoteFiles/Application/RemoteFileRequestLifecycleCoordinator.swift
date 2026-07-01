@@ -82,9 +82,9 @@ final class RemoteFileRequestLifecycleCoordinator {
     }
 
     @discardableResult
-    func requestTransfer<Result>(
+    func requestTransfer<Result: Sendable>(
         serverId: UUID? = nil,
-        operation: @escaping @MainActor @Sendable (@escaping @MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void) async throws -> Result,
+        operation: @escaping @Sendable (@escaping @Sendable (RemoteFileBrowserStore.TransferProgress) async -> Void) async throws -> Result,
         onProgress: @escaping @MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void = { _ in },
         onSuccess: @escaping @MainActor @Sendable (Result) -> Void,
         onFailure: @escaping @MainActor @Sendable (Error) -> Void = { _ in },
@@ -103,11 +103,11 @@ final class RemoteFileRequestLifecycleCoordinator {
     }
 
     @discardableResult
-    func requestTransfer<Result>(
+    func requestTransfer<Result: Sendable>(
         serverIds: Set<UUID>,
-        operation: @escaping @MainActor @Sendable (
-            @escaping @MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void,
-            @escaping @MainActor @Sendable (Set<UUID>) -> Void
+        operation: @escaping @Sendable (
+            @escaping @Sendable (RemoteFileBrowserStore.TransferProgress) async -> Void,
+            @escaping @Sendable (Set<UUID>) async -> Void
         ) async throws -> Result,
         onProgress: @escaping @MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void = { _ in },
         onSuccess: @escaping @MainActor @Sendable (Result) -> Void,

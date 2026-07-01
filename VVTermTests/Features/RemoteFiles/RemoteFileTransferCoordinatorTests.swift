@@ -996,13 +996,13 @@ struct RemoteFileTransferCoordinatorTests {
                 destinationPath: "/target/second.txt"
             )
         ]
-        var progressEvents: [String] = []
+        let progressEvents = StringRecorder()
 
         // Given the dedicated move owner is blocked inside the first remote
         // rename after SFTP has accepted the operation.
         let task = Task {
             try await coordinator.moveEntries(moves, using: service) { progress in
-                progressEvents.append(
+                await progressEvents.record(
                     "\(progress.completedUnitCount)/\(progress.totalUnitCount):\(progress.currentItemName)"
                 )
             }
@@ -1019,7 +1019,7 @@ struct RemoteFileTransferCoordinatorTests {
         #expect(service.operations == [
             .renameItem(source: "/source/first.txt", destination: "/target/first.txt")
         ])
-        #expect(progressEvents == ["1/2:first.txt"])
+        #expect(await progressEvents.values == ["1/2:first.txt"])
         switch result {
         case .success:
             Issue.record("Expected move owner to report partial mutation after cancellation")

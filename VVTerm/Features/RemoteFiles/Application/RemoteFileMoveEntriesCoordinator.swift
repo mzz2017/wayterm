@@ -9,7 +9,7 @@ nonisolated struct RemoteFileMoveEntriesCoordinator {
     func moveEntries(
         _ moves: [RemoteFileDropPolicy.MovePlan],
         using service: any RemoteFileService,
-        onProgress: RemoteFileBrowserStore.TransferProgressCallback? = nil
+        onProgress: RemoteFileBrowserStore.TransferProgressPublisher? = nil
     ) async throws {
         guard !moves.isEmpty else { return }
 

@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import Darwin
 @testable import VVTerm
 
 // Test Context:
@@ -10,6 +11,38 @@ import Testing
 
 @MainActor
 struct RemoteFileTransferRequestLifecycleCoordinatorTests {
+    @Test
+    func transferOperationRunsOffMainThreadWhileProgressPublishesOnMainThread() async {
+        let coordinator = RemoteFileTransferRequestLifecycleCoordinator()
+        let operationProbe = RemoteFileTransferThreadProbe()
+        var progressWasMainThread: Bool?
+
+        // Given transfer work owns SFTP traversal and local file IO, while
+        // progress publication remains UI-facing.
+        let requestID = coordinator.requestTransfer(serverIds: []) { onProgress, _ in
+            await operationProbe.record(pthread_main_np() == 1)
+            await onProgress(RemoteFileBrowserStore.TransferProgress(
+                completedUnitCount: 1,
+                totalUnitCount: 1,
+                currentItemName: "archive.tar"
+            ))
+            return "uploaded"
+        } onProgress: { _ in
+            progressWasMainThread = pthread_main_np() == 1
+        } onSuccess: { _ in }
+
+        await coordinator.waitForTransferRequest(requestID)
+
+        // Then the heavy transfer operation is not pinned to the main thread,
+        // but progress still publishes through the MainActor/UI lane.
+        #expect(await operationProbe.wasMainThread == false)
+        #expect(progressWasMainThread == true)
+        #expect(
+            coordinator.pendingRequestIDs.isEmpty,
+            "Completed detached transfer work must not leave a stale pending request behind."
+        )
+    }
+
     @Test
     func transferRequestTracksUntilOperationCompletes() async {
         let gate = RemoteFileTransferRequestGate()
@@ -49,7 +82,7 @@ struct RemoteFileTransferRequestLifecycleCoordinatorTests {
         // Given a transfer starts before it knows every server it depends on.
         let requestID = coordinator.requestTransfer(serverIds: []) { _, bindServers in
             await bindGate.waitForRelease()
-            bindServers([serverID])
+            await bindServers([serverID])
             try Task.checkCancellation()
             await finishGate.waitForRelease()
             return "copied"
@@ -83,7 +116,7 @@ struct RemoteFileTransferRequestLifecycleCoordinatorTests {
         // own its eventual SFTP work.
         let requestID = coordinator.requestTransfer(serverIds: []) { _, bindServers in
             await bindGate.waitForRelease()
-            bindServers([serverID])
+            await bindServers([serverID])
             await finishGate.waitForRelease()
             try Task.checkCancellation()
             return "copied"
@@ -162,5 +195,13 @@ private actor RemoteFileTransferRequestWaitProbe {
 
     func markReturned() {
         didReturn = true
+    }
+}
+
+private actor RemoteFileTransferThreadProbe {
+    private(set) var wasMainThread: Bool?
+
+    func record(_ value: Bool) {
+        wasMainThread = value
     }
 }

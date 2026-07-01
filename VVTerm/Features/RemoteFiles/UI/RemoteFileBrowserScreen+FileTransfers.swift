@@ -131,7 +131,7 @@ extension RemoteFileBrowserScreen {
     func uploadResolvedLocalURLs(
         _ urls: [URL],
         to destinationPath: String,
-        onProgress: @escaping @MainActor @Sendable (RemoteFileBrowserStore.TransferProgress) -> Void
+        onProgress: @escaping RemoteFileBrowserStore.TransferProgressPublisher
     ) async throws {
         let candidates = try await browser.prepareLocalUploadPlan(
             at: urls,

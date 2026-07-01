@@ -126,8 +126,8 @@ extension RemoteFileBrowserScreen {
         successFileURL: URL? = nil,
         successFileName: String? = nil,
         successFilePath: String? = nil,
-        operation: @escaping @MainActor @Sendable (
-            @escaping RemoteFileBrowserStore.TransferProgressCallback,
+        operation: @escaping @Sendable (
+            @escaping RemoteFileBrowserStore.TransferProgressPublisher,
             @escaping RemoteFileBrowserStore.TransferServerScopeBinder
         ) async throws -> Void
     ) {
@@ -196,8 +196,8 @@ extension RemoteFileBrowserScreen {
         successFileURL: URL? = nil,
         successFileName: String? = nil,
         successFilePath: String? = nil,
-        operation: @escaping @MainActor @Sendable (
-            @escaping RemoteFileBrowserStore.TransferProgressCallback
+        operation: @escaping @Sendable (
+            @escaping RemoteFileBrowserStore.TransferProgressPublisher
         ) async throws -> Void
     ) {
         performTransfer(
@@ -219,7 +219,7 @@ extension RemoteFileBrowserScreen {
         successFileURL: URL? = nil,
         successFileName: String? = nil,
         successFilePath: String? = nil,
-        operation: @escaping @MainActor @Sendable () async throws -> Void
+        operation: @escaping @Sendable () async throws -> Void
     ) {
         performTransfer(
             title: title,

@@ -5,20 +5,20 @@ extension RemoteFileBrowserStore {
     nonisolated final class TransferProgressTracker: @unchecked Sendable {
         @MainActor private var completedUnitCount = 0
         let totalUnitCount: Int
-        let onProgress: (@MainActor @Sendable (TransferProgress) -> Void)?
+        let onProgress: TransferProgressPublisher?
 
         init(
             totalUnitCount: Int,
-            onProgress: (@MainActor @Sendable (TransferProgress) -> Void)?
+            onProgress: TransferProgressPublisher?
         ) {
             self.totalUnitCount = max(1, totalUnitCount)
             self.onProgress = onProgress
         }
 
         @MainActor
-        func advance(currentItemName: String) {
+        func advance(currentItemName: String) async {
             completedUnitCount += 1
-            onProgress?(
+            await onProgress?(
                 TransferProgress(
                     completedUnitCount: min(completedUnitCount, totalUnitCount),
                     totalUnitCount: totalUnitCount,
@@ -127,7 +127,7 @@ extension RemoteFileBrowserStore {
         _ moves: [RemoteFileDropPolicy.MovePlan],
         in tab: RemoteFileTab,
         server: Server,
-        onProgress: (@MainActor @Sendable (TransferProgress) -> Void)? = nil
+        onProgress: TransferProgressPublisher? = nil
     ) async throws {
         guard tab.serverId == server.id else {
             throw RemoteFileBrowserError.disconnected
@@ -269,7 +269,7 @@ extension RemoteFileBrowserStore {
         to directoryPath: String,
         in tab: RemoteFileTab,
         server: Server,
-        onProgress: (@MainActor @Sendable (TransferProgress) -> Void)? = nil
+        onProgress: TransferProgressPublisher? = nil
     ) async throws {
         let plans = transferPolicy.uploadPlans(for: urls)
         try await uploadFiles(
@@ -286,7 +286,7 @@ extension RemoteFileBrowserStore {
         to directoryPath: String,
         in tab: RemoteFileTab,
         server: Server,
-        onProgress: (@MainActor @Sendable (TransferProgress) -> Void)? = nil
+        onProgress: TransferProgressPublisher? = nil
     ) async throws {
         guard tab.serverId == server.id else {
             throw RemoteFileBrowserError.disconnected
@@ -343,7 +343,7 @@ extension RemoteFileBrowserStore {
         to destinationDirectoryPath: String,
         destinationTab: RemoteFileTab,
         destinationServer: Server,
-        onProgress: (@MainActor @Sendable (TransferProgress) -> Void)? = nil
+        onProgress: TransferProgressPublisher? = nil
     ) async throws {
         guard destinationTab.serverId == destinationServer.id,
               let sourceServer = server(for: sourceServerId) else {
