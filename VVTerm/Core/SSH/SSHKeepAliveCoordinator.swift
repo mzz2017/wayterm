@@ -4,7 +4,7 @@ actor SSHKeepAliveCoordinator {
     typealias SleepAction = @Sendable (Duration) async -> Void
     typealias KeepAliveAction = @Sendable () async -> Void
 
-    private let sleepAction: SleepAction
+    private let loopFactory: SSHKeepAliveLoopFactory
     private var task: Task<Void, Never>?
     private var requestID: UUID?
 
@@ -13,7 +13,7 @@ actor SSHKeepAliveCoordinator {
             try? await Task.sleep(for: duration)
         }
     ) {
-        self.sleepAction = sleepAction
+        self.loopFactory = SSHKeepAliveLoopFactory(sleepAction)
     }
 
     var pendingRequestIDs: Set<UUID> {
@@ -30,20 +30,16 @@ actor SSHKeepAliveCoordinator {
 
         let requestID = UUID()
         self.requestID = requestID
-        let sleepAction = self.sleepAction
-        let intervalNanoseconds = Int64(max(0, interval) * 1_000_000_000)
-        let intervalDuration = Duration.nanoseconds(intervalNanoseconds)
-
-        let task = Task { [weak self] in
-            while !Task.isCancelled {
-                await sleepAction(intervalDuration)
-                guard !Task.isCancelled else { break }
-                guard await self?.isCurrent(requestID) == true else { break }
-                await operation()
+        let task = loopFactory.makeLoop(
+            interval: interval,
+            shouldContinue: { [weak self] in
+                await self?.isCurrent(requestID) == true
+            },
+            operation: operation,
+            onFinished: { [weak self] in
+                await self?.clearIfCurrent(requestID)
             }
-
-            await self?.clearIfCurrent(requestID)
-        }
+        )
 
         if self.requestID == requestID {
             self.task = task

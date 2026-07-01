@@ -186,6 +186,39 @@ struct SSHClientSupportOwnerTests {
     }
 
     @Test
+    func keepAliveLoopFactoryStopsBeforeOperationWhenCancelled() async {
+        let sleepSequence = KeepAliveSleepSequence()
+        let factory = SSHKeepAliveLoopFactory { _ in
+            await sleepSequence.sleep()
+        }
+        let recorder = KeepAliveRecorder()
+        let finishRecorder = KeepAliveRecorder()
+
+        // Given a keepalive loop is sleeping before its first operation.
+        let task = factory.makeLoop(
+            interval: 30,
+            shouldContinue: { true },
+            operation: {
+                await recorder.record("tick")
+            },
+            onFinished: {
+                await finishRecorder.record("finished")
+            }
+        )
+        await sleepSequence.waitForFirstStart()
+
+        // When teardown cancels the loop before the sleep completes.
+        task.cancel()
+        await sleepSequence.releaseFirst()
+        await task.value
+
+        // Then the loop exits without sending a stale keepalive, while still
+        // running its owner cleanup callback.
+        #expect(await recorder.values == [])
+        #expect(await finishRecorder.values == ["finished"])
+    }
+
+    @Test
     func moshShellStreamTerminationIsOwnedByClientTeardownRegistry() throws {
         let source = try source(at: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift"))
         let moshShellSource = try slice(
