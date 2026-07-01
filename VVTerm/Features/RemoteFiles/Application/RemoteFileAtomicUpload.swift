@@ -1,21 +1,46 @@
 import Foundation
 
+enum RemoteFileAtomicPublishMode: Sendable {
+    case replaceExisting
+    case failIfDestinationExists
+}
+
 extension RemoteFileBrowserStore {
     nonisolated func uploadAtomically(
         _ data: Data,
         to remotePath: String,
         permissions: Int32,
         strategy: SSHUploadStrategy = .automatic,
+        publishMode: RemoteFileAtomicPublishMode = .replaceExisting,
         using service: any RemoteFileService
     ) async throws {
         let temporaryRemotePath = makeAtomicRemoteUploadPath(for: remotePath)
         do {
             try await service.upload(data, to: temporaryRemotePath, permissions: permissions, strategy: strategy)
             try Task.checkCancellation()
-            try await service.renameItem(at: temporaryRemotePath, to: remotePath)
+            try await publishAtomicRemoteItem(
+                at: temporaryRemotePath,
+                to: remotePath,
+                publishMode: publishMode,
+                using: service
+            )
         } catch {
             await removeAtomicUploadTemporaryFile(temporaryRemotePath, using: service)
             throw error
+        }
+    }
+
+    nonisolated func publishAtomicRemoteItem(
+        at temporaryRemotePath: String,
+        to remotePath: String,
+        publishMode: RemoteFileAtomicPublishMode,
+        using service: any RemoteFileService
+    ) async throws {
+        switch publishMode {
+        case .replaceExisting:
+            try await service.renameItem(at: temporaryRemotePath, to: remotePath)
+        case .failIfDestinationExists:
+            try await service.renameItemIfDestinationMissing(at: temporaryRemotePath, to: remotePath)
         }
     }
 

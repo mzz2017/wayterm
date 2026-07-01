@@ -14,6 +14,12 @@ protocol KeychainStoring: Sendable {
     func delete(_ key: String) throws
 }
 
+struct KeychainMigratedItem: Equatable, Sendable {
+    let key: String
+    let data: Data
+    let sourceICloudSync: Bool
+}
+
 nonisolated enum KeychainSyncPolicy {
     // VVTerm's sync setting is the cross-device total control: when CloudKit
     // sync is disabled, credential secrets must stay device-local too.
@@ -107,7 +113,8 @@ final class KeychainStore: @unchecked Sendable {
         }
     }
 
-    nonisolated func migrateAllItems(toICloudSync iCloudSync: Bool) throws {
+    @discardableResult
+    nonisolated func migrateAllItems(toICloudSync iCloudSync: Bool) throws -> [KeychainMigratedItem] {
         let sourceICloudSync = !iCloudSync
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -120,7 +127,7 @@ final class KeychainStore: @unchecked Sendable {
 
         let (status, item) = secItemClient.copyMatching(query)
         guard status != errSecItemNotFound else {
-            return
+            return []
         }
         guard status == errSecSuccess else {
             throw KeychainError.unhandled(status)
@@ -135,12 +142,31 @@ final class KeychainStore: @unchecked Sendable {
             throw KeychainError.decodingFailed
         }
 
-        for item in items {
-            guard let key = item[kSecAttrAccount as String] as? String,
-                  let data = item[kSecValueData as String] as? Data else {
-                throw KeychainError.decodingFailed
+        var migratedItems: [KeychainMigratedItem] = []
+        do {
+            for item in items {
+                guard let key = item[kSecAttrAccount as String] as? String,
+                      let data = item[kSecValueData as String] as? Data else {
+                    throw KeychainError.decodingFailed
+                }
+                try set(data, forKey: key, iCloudSync: iCloudSync)
+                migratedItems.append(KeychainMigratedItem(
+                    key: key,
+                    data: data,
+                    sourceICloudSync: sourceICloudSync
+                ))
             }
-            try set(data, forKey: key, iCloudSync: iCloudSync)
+        } catch {
+            try? restoreMigratedItems(migratedItems)
+            throw error
+        }
+
+        return migratedItems
+    }
+
+    nonisolated func restoreMigratedItems(_ items: [KeychainMigratedItem]) throws {
+        for item in items.reversed() {
+            try set(item.data, forKey: item.key, iCloudSync: item.sourceICloudSync)
         }
     }
 

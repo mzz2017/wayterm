@@ -204,6 +204,27 @@ struct AppSyncCoordinatorTests {
     }
 
     @Test
+    func credentialSecretMigratorReenablesICloudSyncForKnownServices() throws {
+        // Given sync was disabled earlier and VVTerm's credential services now
+        // contain device-local secrets.
+        let recorder = CredentialSecretMigrationRecorder()
+        let migrator = AppSyncCredentialSecretMigrator { service in
+            recorder.store(for: service)
+        }
+
+        // When sync is re-enabled.
+        try migrator.migrate(toICloudSync: true)
+
+        // Then every app-owned credential service is migrated back to the
+        // synchronizable Keychain class so existing credentials resume
+        // cross-device behavior with server metadata.
+        #expect(recorder.migrations == [
+            "app.vivy.vvterm:true",
+            "app.vivy.vvterm.cloudflare.tokens:true"
+        ])
+    }
+
+    @Test
     func syncSettingsDisableReportsFailureWhenCredentialMigrationFails() async {
         // Given disabling sync reaches credential migration, but Keychain
         // migration fails before secrets can be made device-local.
@@ -236,6 +257,93 @@ struct AppSyncCoordinatorTests {
             await probe.events() == ["toggle:false", "migrate:false"],
             "Failed credential migration should stop the disable workflow before enabled-only refresh work."
         )
+    }
+
+    @Test
+    func syncSettingsEnableFailureMigratesSecretsBackToDeviceLocalBeforeRollback() async {
+        // Given enabling sync starts moving credential secrets into iCloud
+        // Keychain, but migration fails before every service completes.
+        let probe = AppSyncProbe()
+        let coordinator = AppSyncCoordinator.makeForTesting(
+            applySyncToggle: { enabled in
+                await probe.record("toggle:\(enabled)")
+            },
+            migrateCredentialSecrets: { enabled in
+                await probe.record("migrate:\(enabled)")
+                if enabled {
+                    throw AppSyncTestError.migrationFailed
+                }
+            },
+            reloadServerData: {
+                await probe.record("reload")
+            },
+            refreshTerminalAccessories: {
+                await probe.record("accessories")
+            }
+        )
+
+        // When settings sends enable intent and credential migration fails.
+        let task = coordinator.handleSyncSettingsChanged(true)
+        let didApply = await task.value
+
+        // Then any partially migrated secrets are moved back to device-local
+        // storage before SettingsStore rolls the visible sync setting back to
+        // disabled.
+        #expect(!didApply)
+        #expect(
+            await probe.events() == ["toggle:true", "migrate:true"],
+            "Failed sync-enable credential migration should stop before enabled-only refresh work."
+        )
+    }
+
+    @Test
+    func credentialSecretMigratorRestoresOnlyItemsMovedByFailedMigration() throws {
+        // Given one credential service has already migrated its current local
+        // secret to iCloud, and the next service fails while stale iCloud-only
+        // residue still exists from an earlier bug.
+        let completedStore = RecordingCredentialSecretStore(
+            migratedItems: [
+                KeychainMigratedItem(
+                    key: "server.password",
+                    data: Data("current-local".utf8),
+                    sourceICloudSync: false
+                )
+            ]
+        )
+        let failingStore = RecordingCredentialSecretStore(
+            migratedItems: [],
+            migrationError: AppSyncTestError.migrationFailed
+        )
+        let staleOnlyStore = RecordingCredentialSecretStore(
+            migratedItems: [
+                KeychainMigratedItem(
+                    key: "stale.oauth",
+                    data: Data("stale".utf8),
+                    sourceICloudSync: false
+                )
+            ]
+        )
+        let stores = [
+            "servers": completedStore,
+            "tokens": failingStore,
+            "stale": staleOnlyStore
+        ]
+        let migrator = AppSyncCredentialSecretMigrator(
+            services: ["servers", "tokens"],
+            makeStore: { service in stores[service]! }
+        )
+
+        // When migration fails after one service has completed.
+        #expect(throws: AppSyncTestError.migrationFailed) {
+            try migrator.migrate(toICloudSync: true)
+        }
+
+        // Then rollback restores only the keys that were actually moved by
+        // this migration attempt and never performs a broad opposite-class
+        // service migration that could copy stale secrets over current ones.
+        #expect(completedStore.restoredItems.map(\.key) == ["server.password"])
+        #expect(failingStore.restoredItems.isEmpty)
+        #expect(staleOnlyStore.restoredItems.isEmpty)
     }
 
     @Test
@@ -504,6 +612,56 @@ private actor AppSyncProbe {
 
 private enum AppSyncTestError: Error {
     case migrationFailed
+}
+
+private final class CredentialSecretMigrationRecorder: @unchecked Sendable {
+    private(set) var migrations: [String] = []
+
+    func store(for service: String) -> any AppSyncCredentialSecretStore {
+        RecordingCredentialSecretStore(
+            service: service,
+            migratedItems: [],
+            onMigrate: { [weak self] enabled in
+                self?.record(service: service, iCloudSync: enabled)
+            }
+        )
+    }
+
+    private func record(service: String, iCloudSync: Bool) {
+        migrations.append("\(service):\(iCloudSync)")
+    }
+}
+
+private final class RecordingCredentialSecretStore: AppSyncCredentialSecretStore, @unchecked Sendable {
+    let service: String
+    let migratedItems: [KeychainMigratedItem]
+    let migrationError: Error?
+    let onMigrate: (@Sendable (Bool) -> Void)?
+    private(set) var restoredItems: [KeychainMigratedItem] = []
+
+    init(
+        service: String = "test",
+        migratedItems: [KeychainMigratedItem],
+        migrationError: Error? = nil,
+        onMigrate: (@Sendable (Bool) -> Void)? = nil
+    ) {
+        self.service = service
+        self.migratedItems = migratedItems
+        self.migrationError = migrationError
+        self.onMigrate = onMigrate
+    }
+
+    func migrateAllItems(toICloudSync iCloudSync: Bool) throws -> [KeychainMigratedItem] {
+        onMigrate?(iCloudSync)
+        if let migrationError {
+            throw migrationError
+        }
+        return migratedItems
+    }
+
+    func restoreMigratedItems(_ items: [KeychainMigratedItem]) throws {
+        restoredItems.append(contentsOf: items)
+    }
 }
 
 private actor AsyncGate {

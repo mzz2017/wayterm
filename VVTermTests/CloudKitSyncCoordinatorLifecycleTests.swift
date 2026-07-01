@@ -404,8 +404,49 @@ struct CloudKitSyncCoordinatorLifecycleTests {
             "CloudKit pending drain must re-check SyncSettings before each mutation so disabling sync stops later uploads."
         )
         #expect(
-            coordinator.snapshot().map(\.entityKey) == [secondServer.id.uuidString],
-            "Mutations not sent because sync was disabled should remain queued for a later explicit sync-enable drain."
+            coordinator.snapshot().map(\.entityKey) == [
+                firstServer.id.uuidString,
+                secondServer.id.uuidString
+            ],
+            "Mutations active or unsent while sync was disabled should remain queued for a later explicit sync-enable drain."
+        )
+    }
+
+    @Test
+    func pendingDrainKeepsActiveMutationQueuedWhenSyncIsDisabledDuringSend() async throws {
+        let syncSettingsRestore = SyncSettingsRestore()
+        syncSettingsRestore.setEnabled(true)
+        defer { syncSettingsRestore.restore() }
+
+        let probe = CloudKitDrainProbe()
+        let coordinator = CloudKitSyncCoordinator.makeForTesting(
+            storageKey: "CloudKitSyncCoordinatorLifecycleTests.\(UUID().uuidString)",
+            syncPendingMutation: { mutation in
+                await probe.record("sync:\(mutation.entityKey)")
+                syncSettingsRestore.setEnabled(false)
+            }
+        )
+        let server = Server(
+            workspaceId: UUID(),
+            name: "Active Pending",
+            host: "active.example.test",
+            username: "user"
+        )
+
+        // Given a metadata mutation is already selected for retry while sync is
+        // enabled.
+        coordinator.enqueueServerUpsert(server)
+
+        // When sync is disabled while that active mutation is being sent.
+        await coordinator.drainPendingMutations()
+
+        // Then the coordinator must not mark the mutation successfully drained,
+        // because the user-visible sync setting no longer allows metadata
+        // upload completion to advance local pending state.
+        #expect(await probe.events() == ["sync:\(server.id.uuidString)"])
+        #expect(
+            coordinator.snapshot().map(\.entityKey) == [server.id.uuidString],
+            "A mutation active during sync-disable must stay queued for a later explicit sync-enable drain."
         )
     }
 }

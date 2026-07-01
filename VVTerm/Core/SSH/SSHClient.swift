@@ -452,6 +452,13 @@ nonisolated actor SSHClient {
         try await session.renameItem(at: sourcePath, to: destinationPath)
     }
 
+    func renameItemIfDestinationMissing(at sourcePath: String, to destinationPath: String) async throws {
+        guard !abortState.isAborted, let session = session else {
+            throw SSHFileTransferError.disconnected
+        }
+        try await session.renameItemIfDestinationMissing(at: sourcePath, to: destinationPath)
+    }
+
     func deleteFile(at path: String) async throws {
         guard !abortState.isAborted, let session = session else {
             throw SSHFileTransferError.disconnected

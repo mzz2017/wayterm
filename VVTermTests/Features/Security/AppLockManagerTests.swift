@@ -581,6 +581,35 @@ final class AppLockManagerTests: XCTestCase {
         await cleanupTask.value
         await manager.waitForAppLockRequest(requestID)
     }
+
+    func testCancelAllAndWaitPreventsQueuedAuthPromptFromStarting() async {
+        // Given app unlock intent has been queued, but its MainActor task has
+        // not yet reached biometric authentication.
+        let defaults = makeDefaults()
+        defaults.set(true, forKey: "security.fullAppLockEnabled")
+        let authService = StubBiometricAuthService(
+            availabilityResult: .available(.faceID)
+        )
+        let manager = AppLockManager(defaults: defaults, authService: authService)
+
+        let requestID = manager.requestAppUnlock()
+
+        // When app-level teardown cancels auth work before the queued request
+        // starts executing.
+        await manager.cancelAllAndWait()
+        await manager.waitForAppLockRequest(requestID)
+
+        // Then a canceled queued task must not create a new LocalAuth prompt
+        // after cleanup has already attempted to cancel the active context.
+        XCTAssertTrue(
+            authService.authenticateReasons.isEmpty,
+            "Canceling queued app-lock work must prevent a later biometric prompt from starting."
+        )
+        XCTAssertTrue(
+            manager.isAppLocked,
+            "Canceling queued unlock work must not unlock the app after teardown."
+        )
+    }
 }
 
 private actor AuthCleanupProbe {

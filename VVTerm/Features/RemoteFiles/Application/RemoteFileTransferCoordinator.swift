@@ -375,21 +375,28 @@ extension RemoteFileBrowserStore {
                 var reservedNames: Set<String> = []
                 for entry in uniqueEntries {
                     try Task.checkCancellation()
-                    let resolution = try await self.conflictResolver.resolveName(
-                        for: entry.name,
-                        in: destinationDirectory,
-                        policy: .keepBoth,
-                        using: destinationService,
-                        reservedNames: &reservedNames
-                    )
-                    try await self.copyRemoteEntry(
-                        entry,
-                        to: destinationDirectory,
-                        remoteName: resolution.resolvedName,
-                        sourceService: sourceService,
-                        destinationService: destinationService,
-                        progressTracker: progressTracker
-                    )
+                    while true {
+                        let resolution = try await self.conflictResolver.resolveName(
+                            for: entry.name,
+                            in: destinationDirectory,
+                            policy: .keepBoth,
+                            using: destinationService,
+                            reservedNames: &reservedNames
+                        )
+                        do {
+                            try await self.copyRemoteEntry(
+                                entry,
+                                to: destinationDirectory,
+                                remoteName: resolution.resolvedName,
+                                sourceService: sourceService,
+                                destinationService: destinationService,
+                                progressTracker: progressTracker
+                            )
+                            break
+                        } catch RemoteFilePublishError.destinationExists(_) {
+                            continue
+                        }
+                    }
                 }
             }
         }
@@ -592,7 +599,6 @@ extension RemoteFileBrowserStore {
                     at: temporaryRemotePath,
                     permissions: Int32(effectiveEntry.permissions ?? 0o755)
                 )
-                progressTracker?.advance(currentItemName: targetName)
                 let children = try await sourceService.listDirectory(at: entry.path, maxEntries: nil)
                 for child in children {
                     try Task.checkCancellation()
@@ -605,7 +611,13 @@ extension RemoteFileBrowserStore {
                     )
                 }
                 try Task.checkCancellation()
-                try await destinationService.renameItem(at: temporaryRemotePath, to: remotePath)
+                try await publishAtomicRemoteItem(
+                    at: temporaryRemotePath,
+                    to: remotePath,
+                    publishMode: .failIfDestinationExists,
+                    using: destinationService
+                )
+                progressTracker?.advance(currentItemName: targetName)
             } catch {
                 await removeAtomicRemoteDirectory(temporaryRemotePath, using: destinationService)
                 throw error
@@ -624,6 +636,7 @@ extension RemoteFileBrowserStore {
             to: remotePath,
             permissions: Int32(effectiveEntry.permissions ?? 0o644),
             strategy: .automatic,
+            publishMode: .failIfDestinationExists,
             using: destinationService
         )
         progressTracker?.advance(currentItemName: targetName)

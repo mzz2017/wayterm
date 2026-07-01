@@ -398,6 +398,43 @@ extension SSHSession {
         throw lastError ?? SSHFileTransferError.failed(operation: "rename", path: normalizedSource)
     }
 
+    func renameItemIfDestinationMissing(at sourcePath: String, to destinationPath: String) async throws {
+        let sftp = try await ensureSFTPSession()
+        let normalizedSource = Self.normalizeRemotePath(sourcePath)
+        let normalizedDestination = Self.normalizeRemotePath(destinationPath)
+        let renameFlagCandidates: [Int] = [
+            Int(LIBSSH2_SFTP_RENAME_ATOMIC) |
+                Int(LIBSSH2_SFTP_RENAME_NATIVE),
+            Int(LIBSSH2_SFTP_RENAME_NATIVE),
+            0
+        ]
+
+        var lastError: Error?
+
+        for flags in renameFlagCandidates {
+            do {
+                try await performSFTPMutation(
+                    at: normalizedSource,
+                    sftp: sftp,
+                    operation: "rename",
+                    rawOperation: .sftpRename
+                ) { sftpHandle, sourcePath in
+                    driver.renameSFTPPath(
+                        sftp: sftpHandle,
+                        sourcePath: sourcePath,
+                        destinationPath: normalizedDestination,
+                        flags: flags
+                    )
+                }
+                return
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? SSHFileTransferError.failed(operation: "rename", path: normalizedSource)
+    }
+
     func deleteFile(at path: String) async throws {
         let sftp = try await ensureSFTPSession()
         let normalizedPath = Self.normalizeRemotePath(path)

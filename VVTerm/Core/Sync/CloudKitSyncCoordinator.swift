@@ -115,6 +115,7 @@ final class CloudKitSyncCoordinator {
 
                 do {
                     try await syncPendingMutation(mutation)
+                    guard SyncSettings.isEnabled else { return }
                     queue.remove(mutation.id)
                     didProgress = true
                 } catch {

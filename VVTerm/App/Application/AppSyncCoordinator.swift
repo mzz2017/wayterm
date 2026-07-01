@@ -1,6 +1,49 @@
 import Foundation
 import os.log
 
+protocol AppSyncCredentialSecretStore: Sendable {
+    func migrateAllItems(toICloudSync iCloudSync: Bool) throws -> [KeychainMigratedItem]
+    func restoreMigratedItems(_ items: [KeychainMigratedItem]) throws
+}
+
+extension KeychainStore: AppSyncCredentialSecretStore {}
+
+nonisolated struct AppSyncCredentialSecretMigrator: Sendable {
+    private static let defaultServices = [
+        "app.vivy.vvterm",
+        "app.vivy.vvterm.cloudflare.tokens"
+    ]
+
+    private let services: [String]
+    private let makeStore: @Sendable (String) -> any AppSyncCredentialSecretStore
+
+    init(
+        services: [String] = Self.defaultServices,
+        makeStore: @escaping @Sendable (String) -> any AppSyncCredentialSecretStore = {
+            KeychainStore(service: $0)
+        }
+    ) {
+        self.services = services
+        self.makeStore = makeStore
+    }
+
+    func migrate(toICloudSync iCloudSync: Bool) throws {
+        var migratedStores: [(store: any AppSyncCredentialSecretStore, items: [KeychainMigratedItem])] = []
+        do {
+            for service in services {
+                let store = makeStore(service)
+                let items = try store.migrateAllItems(toICloudSync: iCloudSync)
+                migratedStores.append((store, items))
+            }
+        } catch {
+            for migratedStore in migratedStores.reversed() {
+                try? migratedStore.store.restoreMigratedItems(migratedStore.items)
+            }
+            throw error
+        }
+    }
+}
+
 @MainActor
 final class AppSyncCoordinator {
     enum ServerRefreshReason {
@@ -36,11 +79,7 @@ final class AppSyncCoordinator {
             await CloudKitManager.shared.handleSyncToggle(enabled)
         },
         migrateCredentialSecrets: @escaping CredentialSecretMigrationAction = { enabled in
-            guard !enabled else { return }
-            try KeychainStore(service: "app.vivy.vvterm")
-                .migrateAllItems(toICloudSync: false)
-            try KeychainStore(service: "app.vivy.vvterm.cloudflare.tokens")
-                .migrateAllItems(toICloudSync: false)
+            try AppSyncCredentialSecretMigrator().migrate(toICloudSync: enabled)
         },
         subscribeToChanges: @escaping ChangeSubscriptionAction = {
             await CloudKitManager.shared.subscribeToChanges()

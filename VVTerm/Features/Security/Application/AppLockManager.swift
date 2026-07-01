@@ -313,6 +313,7 @@ final class AppLockManager: ObservableObject {
                 appLockRequestTasks.removeValue(forKey: requestID)
             }
 
+            guard !Task.isCancelled else { return }
             await operation(self)
         }
         appLockRequestTasks[requestID] = task
@@ -320,6 +321,7 @@ final class AppLockManager: ObservableObject {
     }
 
     private func authenticate(reason: String) async -> Bool {
+        guard !Task.isCancelled else { return false }
         guard !isAuthenticating else { return false }
 
         isAuthenticating = true

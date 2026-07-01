@@ -391,6 +391,73 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func copyEntriesRetriesKeepBothNameWhenPublishDestinationAppearsDuringAtomicRename() async throws {
+        let sourceServer = Server(
+            workspaceId: UUID(),
+            name: "Source",
+            host: "source.example.com",
+            username: "root"
+        )
+        let destinationServer = Server(
+            workspaceId: UUID(),
+            name: "Destination",
+            host: "destination.example.com",
+            username: "root"
+        )
+        let sourceEntry = makeEntry(name: "folder", path: "/source/folder", type: .directory)
+        let sourceService = RecordingRemoteFileService(
+            directoryContents: [
+                "/source/folder": []
+            ]
+        )
+        let destinationService = RecordingRemoteFileService(
+            directoryContents: [:],
+            existingEntries: [
+                "/destination/folder": makeEntry(name: "folder", path: "/destination/folder", type: .directory)
+            ],
+            publishConflictDestinations: ["/destination/folder 2"]
+        )
+        let services = ServerScopedRemoteFileServiceAccess(services: [
+            sourceServer.id: sourceService,
+            destinationServer.id: destinationService
+        ])
+        let store = RemoteFileBrowserStore(
+            persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
+            remoteFileServiceAccess: services,
+            serverProvider: { id in
+                if id == sourceServer.id { return sourceServer }
+                if id == destinationServer.id { return destinationServer }
+                return nil
+            }
+        )
+        let tab = RemoteFileTab(serverId: destinationServer.id, seedPath: "/destination")
+
+        // Given the originally resolved keep-both destination is created by
+        // another client before the staged copy is atomically published.
+        try await store.copyEntries(
+            [sourceEntry],
+            from: sourceServer.id,
+            to: "/destination",
+            destinationTab: tab,
+            destinationServer: destinationServer
+        )
+
+        // Then copy retries conflict resolution instead of overwriting the
+        // newly created destination.
+        let operations = destinationService.operations
+        let renameOperations = operations.compactMap { operation -> (source: String, destination: String)? in
+            guard case .renameItem(let source, let destination) = operation else { return nil }
+            return (source, destination)
+        }
+        #expect(renameOperations.map(\.destination) == [
+            "/destination/folder 2",
+            "/destination/folder 3"
+        ])
+        let failedStagingPath = try #require(renameOperations.first?.source)
+        #expect(operations.contains(.deleteDirectory(failedStagingPath)))
+    }
+
+    @Test
     func downloadFileUsesSecurityScopedAccessForDestination() async throws {
         let server = Server(
             workspaceId: UUID(),
@@ -647,11 +714,13 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
     let downloadData: Data?
     let renameBlocker: RemoteFileRenameBlocker?
     let deleteBlocker: RemoteFileDeleteBlocker?
-    let existingEntries: [String: RemoteFileEntry]
     let downloadAccessProbe: (@Sendable () async -> Bool)?
     private let lock = NSLock()
     private var operationStorage: [Operation] = []
     private var downloadObservedSecurityScopeStorage: Bool?
+    private var existingEntryStorage: [String: RemoteFileEntry]
+    private let publishConflictDestinations: Set<String>
+    private var triggeredPublishConflictDestinations: Set<String> = []
 
     var operations: [Operation] {
         lock.lock()
@@ -674,6 +743,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         renameBlocker: RemoteFileRenameBlocker? = nil,
         deleteBlocker: RemoteFileDeleteBlocker? = nil,
         existingEntries: [String: RemoteFileEntry] = [:],
+        publishConflictDestinations: Set<String> = [],
         downloadAccessProbe: (@Sendable () async -> Bool)? = nil
     ) {
         self.directoryContents = directoryContents
@@ -683,7 +753,8 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         self.downloadData = downloadData
         self.renameBlocker = renameBlocker
         self.deleteBlocker = deleteBlocker
-        self.existingEntries = existingEntries
+        self.existingEntryStorage = existingEntries
+        self.publishConflictDestinations = publishConflictDestinations
         self.downloadAccessProbe = downloadAccessProbe
     }
 
@@ -699,7 +770,7 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
 
     func lstat(at path: String) async throws -> RemoteFileEntry {
         let normalizedPath = RemoteFilePath.normalize(path)
-        guard let entry = existingEntries[normalizedPath] else {
+        guard let entry = lock.withLock({ existingEntryStorage[normalizedPath] }) else {
             throw RemoteFileBrowserError.pathNotFound
         }
         return entry
@@ -744,6 +815,26 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         let normalizedDestination = RemoteFilePath.normalize(destinationPath)
         record(.renameItem(source: normalizedSource, destination: normalizedDestination))
         await renameBlocker?.waitIfNeeded(sourcePath: normalizedSource)
+        if shouldCreatePublishConflict(at: normalizedDestination) {
+            throw RemoteFileBrowserError.failed("Destination already exists.")
+        }
+    }
+
+    func renameItemIfDestinationMissing(at sourcePath: String, to destinationPath: String) async throws {
+        let normalizedDestination = RemoteFilePath.normalize(destinationPath)
+        do {
+            _ = try await lstat(at: normalizedDestination)
+            throw RemoteFilePublishError.destinationExists(normalizedDestination)
+        } catch let error as RemoteFileBrowserError where error == .pathNotFound {
+            do {
+                try await renameItem(at: sourcePath, to: normalizedDestination)
+            } catch {
+                if (try? await lstat(at: normalizedDestination)) != nil {
+                    throw RemoteFilePublishError.destinationExists(normalizedDestination)
+                }
+                throw error
+            }
+        }
     }
 
     func deleteFile(at path: String) async throws {
@@ -771,6 +862,26 @@ private final class RecordingRemoteFileService: RemoteFileService, @unchecked Se
         lock.lock()
         operationStorage.append(operation)
         lock.unlock()
+    }
+
+    private func shouldCreatePublishConflict(at destinationPath: String) -> Bool {
+        lock.withLock {
+            guard publishConflictDestinations.contains(destinationPath),
+                  !triggeredPublishConflictDestinations.contains(destinationPath)
+            else { return false }
+
+            triggeredPublishConflictDestinations.insert(destinationPath)
+            existingEntryStorage[destinationPath] = RemoteFileEntry(
+                name: URL(fileURLWithPath: destinationPath).lastPathComponent,
+                path: destinationPath,
+                type: .directory,
+                size: nil,
+                modifiedAt: nil,
+                permissions: nil,
+                symlinkTarget: nil
+            )
+            return true
+        }
     }
 
     private func recordDownloadObservedSecurityScope(_ isAccessing: Bool) {

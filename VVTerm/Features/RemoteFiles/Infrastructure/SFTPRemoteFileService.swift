@@ -63,6 +63,22 @@ struct SFTPRemoteFileService: RemoteFileService {
         }
     }
 
+    func renameItemIfDestinationMissing(at sourcePath: String, to destinationPath: String) async throws {
+        do {
+            try await mapSSHFileTransferError {
+                try await client.renameItemIfDestinationMissing(
+                    at: sourcePath,
+                    to: destinationPath
+                )
+            }
+        } catch {
+            if (try? await lstat(at: destinationPath)) != nil {
+                throw RemoteFilePublishError.destinationExists(RemoteFilePath.normalize(destinationPath))
+            }
+            throw error
+        }
+    }
+
     func deleteFile(at path: String) async throws {
         try await mapSSHFileTransferError {
             try await client.deleteFile(at: path)
