@@ -1,6 +1,6 @@
 import Foundation
 
-struct SSHAuthenticationWaiter: Sendable {
+nonisolated struct SSHAuthenticationWaiter: Sendable {
     enum Resolution: Sendable {
         case acquired
         case canceled
@@ -23,7 +23,7 @@ struct SSHAuthenticationWaiter: Sendable {
     }
 }
 
-struct SSHAuthenticationWaiterQueues {
+nonisolated struct SSHAuthenticationWaiterQueues {
     private var waitersByKey: [String: [SSHAuthenticationWaiter]] = [:]
 
     mutating func enqueue(_ waiter: SSHAuthenticationWaiter, for key: String) {

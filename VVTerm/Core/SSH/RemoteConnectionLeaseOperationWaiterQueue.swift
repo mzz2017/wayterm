@@ -1,6 +1,6 @@
 import Foundation
 
-struct RemoteConnectionLeaseOperationWaiter: Sendable {
+nonisolated struct RemoteConnectionLeaseOperationWaiter: Sendable {
     enum Resolution: Sendable {
         case acquired
         case canceled
@@ -23,7 +23,7 @@ struct RemoteConnectionLeaseOperationWaiter: Sendable {
     }
 }
 
-struct RemoteConnectionLeaseOperationWaiterQueue {
+nonisolated struct RemoteConnectionLeaseOperationWaiterQueue {
     private var waiters: [RemoteConnectionLeaseOperationWaiter] = []
 
     var isEmpty: Bool {
