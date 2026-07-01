@@ -143,6 +143,49 @@ struct SSHClientSupportOwnerTests {
     }
 
     @Test
+    func keepAliveCoordinatorIgnoresSupersededLoopAndClearsOnCancel() async {
+        let sleepSequence = KeepAliveSleepSequence()
+        let coordinator = SSHKeepAliveCoordinator { _ in
+            await sleepSequence.sleep()
+        }
+        let recorder = KeepAliveRecorder()
+
+        // Given a keepalive loop is sleeping when a newer loop replaces it.
+        let firstRequestID = await coordinator.start(interval: 30) {
+            await recorder.record("first")
+        }
+        await sleepSequence.waitForFirstStart()
+
+        let secondRequestID = await coordinator.start(interval: 30) {
+            await recorder.record("second")
+        }
+        await sleepSequence.waitForSecondStart()
+
+        // Then only the latest loop remains owned.
+        #expect(firstRequestID != secondRequestID)
+        #expect(await coordinator.pendingRequestIDs == [secondRequestID])
+
+        // When the superseded sleep completes late.
+        await sleepSequence.releaseFirst()
+        await Task.yield()
+
+        // Then stale keepalive work must not run.
+        #expect(await recorder.values == [])
+        #expect(await coordinator.pendingRequestIDs == [secondRequestID])
+
+        await sleepSequence.releaseSecond()
+        for _ in 0..<20 where await recorder.values.isEmpty {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        await coordinator.cancelAllAndWait()
+        let recordedValues = await recorder.values
+        #expect(recordedValues.contains("second"))
+        #expect(!recordedValues.contains("first"))
+        #expect(await coordinator.pendingRequestIDs.isEmpty)
+    }
+
+    @Test
     func moshShellStreamTerminationIsOwnedByClientTeardownRegistry() throws {
         let source = try source(at: sourceRoot().appendingPathComponent("VVTerm/Core/SSH/SSHClient.swift"))
         let moshShellSource = try slice(
@@ -220,6 +263,51 @@ private actor TaskCancellationRecorder {
             try? await Task.sleep(for: .milliseconds(10))
         }
         didCancel = true
+    }
+}
+
+private actor KeepAliveSleepSequence {
+    private let firstGate = TeardownGate()
+    private let secondGate = TeardownGate()
+    private var sleepCount = 0
+
+    func sleep() async {
+        sleepCount += 1
+        if sleepCount == 1 {
+            await firstGate.wait()
+        } else {
+            await secondGate.wait()
+        }
+    }
+
+    func waitForFirstStart() async {
+        await waitForStart(count: 1)
+    }
+
+    func waitForSecondStart() async {
+        await waitForStart(count: 2)
+    }
+
+    func releaseFirst() async {
+        await firstGate.open()
+    }
+
+    func releaseSecond() async {
+        await secondGate.open()
+    }
+
+    private func waitForStart(count expectedCount: Int) async {
+        for _ in 0..<20 where sleepCount < expectedCount {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+}
+
+private actor KeepAliveRecorder {
+    private(set) var values: [String] = []
+
+    func record(_ value: String) {
+        values.append(value)
     }
 }
 

@@ -8,7 +8,7 @@ import MoshBootstrap
 nonisolated actor SSHClient {
     private var session: SSHSession?
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "VVTerm", category: "SSH")
-    private var keepAliveTask: Task<Void, Never>?
+    private let keepAliveCoordinator = SSHKeepAliveCoordinator()
     private let pendingConnect = SSHPendingConnectCoordinator()
     private var connectionKey: String?
     private var connectedTarget: SSHConnectionTarget?
@@ -174,7 +174,7 @@ nonisolated actor SSHClient {
             self.connectedTarget = target
             self.resolvedRemoteEnvironment = nil
             self.resolvedRemoteTerminalType = nil
-            startKeepAlive()
+            await startKeepAlive()
             pendingConnect.clearAll()
             clearConnectRequestIfCurrent(requestID)
             logger.info("Connected to \(target.host)")
@@ -217,8 +217,7 @@ nonisolated actor SSHClient {
         }
         await waitForMoshTeardownTasks()
 
-        keepAliveTask?.cancel()
-        keepAliveTask = nil
+        await keepAliveCoordinator.cancelAllAndWait()
 
         let pendingConnectSnapshot = pendingConnect.cancelForDisconnect()
         connectionKey = nil
@@ -553,8 +552,7 @@ nonisolated actor SSHClient {
         if let activeSession = session,
            ObjectIdentifier(activeSession) == ObjectIdentifier(timedOutSession) {
             shouldDisconnectCloudflareTransport = connectedTarget?.connectionMode == .cloudflare
-            keepAliveTask?.cancel()
-            keepAliveTask = nil
+            await keepAliveCoordinator.cancelAllAndWait()
             session = nil
             abortState.setSessionForAbort(nil)
             connectionKey = nil
@@ -620,14 +618,14 @@ nonisolated actor SSHClient {
 
     // MARK: - Keep Alive
 
-    private func startKeepAlive(interval: TimeInterval = 30) {
-        keepAliveTask = Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(interval))
-                guard !Task.isCancelled else { break }
-                await session?.sendKeepAlive()
-            }
+    private func startKeepAlive(interval: TimeInterval = 30) async {
+        await keepAliveCoordinator.start(interval: interval) { [weak self] in
+            await self?.sendKeepAliveForCurrentSession()
         }
+    }
+
+    private func sendKeepAliveForCurrentSession() async {
+        await session?.sendKeepAlive()
     }
 
     private func isCurrentPendingConnectSession(_ pendingSession: SSHSession) -> Bool {
