@@ -44,6 +44,10 @@ extension RemoteFileBrowserStore {
         RemoteFileCopyEntriesCoordinator(conflictResolver: conflictResolver)
     }
 
+    private var uploadFilesCoordinator: RemoteFileUploadFilesCoordinator {
+        RemoteFileUploadFilesCoordinator()
+    }
+
     func upload(
         data: Data,
         to remotePath: String,
@@ -284,24 +288,26 @@ extension RemoteFileBrowserStore {
             throw RemoteFileBrowserError.disconnected
         }
 
-        let destinationDirectory = RemoteFilePath.normalize(directoryPath)
         let urls = plans.map(\.sourceURL)
         try await localFileService.withSecurityScopedAccess(to: urls) {
-            let progressTracker = TransferProgressTracker(
-                totalUnitCount: try await countLocalTransferUnits(at: urls),
-                onProgress: onProgress
-            )
             try await withRemoteFileService(for: server) { [self] service in
-                for plan in plans {
-                    try Task.checkCancellation()
-                    try await self.uploadItem(
-                        at: plan.sourceURL,
-                        to: destinationDirectory,
-                        remoteName: plan.remoteName,
-                        using: service,
-                        progressTracker: progressTracker
-                    )
-                }
+                try await uploadFilesCoordinator.uploadFiles(
+                    plans: plans,
+                    to: directoryPath,
+                    onProgress: onProgress,
+                    countTransferUnits: { urls in
+                        try await self.countLocalTransferUnits(at: urls)
+                    },
+                    uploadItem: { plan, destinationDirectory, progressTracker in
+                        try await self.uploadItem(
+                            at: plan.sourceURL,
+                            to: destinationDirectory,
+                            remoteName: plan.remoteName,
+                            using: service,
+                            progressTracker: progressTracker
+                        )
+                    }
+                )
             }
         }
 

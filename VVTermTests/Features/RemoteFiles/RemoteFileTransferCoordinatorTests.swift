@@ -647,6 +647,58 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func uploadFilesCoordinatorCancellationStopsBeforeNextPlan() async throws {
+        let coordinator = RemoteFileUploadFilesCoordinator()
+        let uploadBlocker = RemoteFileUploadBlocker()
+        let recorder = UploadPlanRecorder()
+        let firstURL = URL(fileURLWithPath: "/local/first.txt")
+        let secondURL = URL(fileURLWithPath: "/local/second.txt")
+        let plans = [
+            RemoteFileLocalUploadPlanItem(sourceURL: firstURL, remoteName: "first.txt"),
+            RemoteFileLocalUploadPlanItem(sourceURL: secondURL, remoteName: "second.txt")
+        ]
+
+        // Given the upload batch owner is blocked inside the first selected
+        // local item after the item upload has started.
+        let task = Task {
+            try await coordinator.uploadFiles(
+                plans: plans,
+                to: "/remote",
+                onProgress: nil,
+                countTransferUnits: { urls in
+                    #expect(urls == [firstURL, secondURL])
+                    return urls.count
+                },
+                uploadItem: { plan, destinationDirectory, progressTracker in
+                    await recorder.record("\(plan.remoteName)->\(destinationDirectory)")
+                    if plan.remoteName == "first.txt" {
+                        await uploadBlocker.waitIfNeeded(path: destinationDirectory)
+                    }
+                    await progressTracker.advance(currentItemName: plan.remoteName)
+                }
+            )
+        }
+        await uploadBlocker.waitUntilStarted()
+
+        // When cancellation arrives before the first upload returns.
+        task.cancel()
+        await uploadBlocker.release()
+
+        // Then the batch owner observes cancellation before starting the next
+        // selected upload plan.
+        let result = await task.result
+        #expect(await recorder.values == ["first.txt->/remote"])
+        switch result {
+        case .success:
+            Issue.record("Expected upload batch cancellation before the second plan starts")
+        case .failure(is CancellationError):
+            break
+        case .failure(let error):
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+    }
+
+    @Test
     func deleteEntriesCancellationStopsBeforeNextSelectedItem() async throws {
         let server = Server(
             workspaceId: UUID(),
@@ -1309,6 +1361,18 @@ private actor RemoteFileUploadBlocker {
     func release() {
         releaseContinuation?.resume()
         releaseContinuation = nil
+    }
+}
+
+private actor UploadPlanRecorder {
+    private var storage: [String] = []
+
+    var values: [String] {
+        storage
+    }
+
+    func record(_ value: String) {
+        storage.append(value)
     }
 }
 
