@@ -28,6 +28,10 @@ extension RemoteFileBrowserStore {
         }
     }
 
+    private var deletionCoordinator: RemoteFileDeletionCoordinator {
+        RemoteFileDeletionCoordinator()
+    }
+
     func upload(
         data: Data,
         to remotePath: String,
@@ -164,11 +168,12 @@ extension RemoteFileBrowserStore {
         server: Server,
         type: RemoteFileType? = nil
     ) async throws {
-        switch type {
-        case .directory:
-            try await deleteDirectory(at: remotePath, in: tab, server: server)
-        case .file, .symlink, .other, nil:
-            try await deleteFile(at: remotePath, in: tab, server: server)
+        try await performMutation(in: tab, server: server) { [self] service in
+            try await deletionCoordinator.deleteItem(
+                at: remotePath,
+                type: type,
+                using: service
+            )
         }
     }
 
@@ -189,12 +194,7 @@ extension RemoteFileBrowserStore {
             for entry in uniqueEntries {
                 try Task.checkCancellation()
                 try await withRemoteFileService(for: server) { [self] service in
-                    switch entry.type {
-                    case .directory:
-                        try await deleteDirectoryRecursively(at: entry.path, using: service)
-                    case .file, .symlink, .other:
-                        try await service.deleteFile(at: entry.path)
-                    }
+                    try await deletionCoordinator.deleteEntry(entry, using: service)
                 }
                 didMutate = true
             }
@@ -461,22 +461,7 @@ extension RemoteFileBrowserStore {
         at remotePath: String,
         using service: any RemoteFileService
     ) async throws {
-        let normalizedPath = RemoteFilePath.normalize(remotePath)
-        let entries = try await service.listDirectory(at: normalizedPath, maxEntries: nil)
-
-        for entry in entries {
-            try Task.checkCancellation()
-
-            switch entry.type {
-            case .directory:
-                try await deleteDirectoryRecursively(at: entry.path, using: service)
-            case .file, .symlink, .other:
-                try await service.deleteFile(at: entry.path)
-            }
-        }
-
-        try Task.checkCancellation()
-        try await service.deleteDirectory(at: normalizedPath)
+        try await deletionCoordinator.deleteDirectoryRecursively(at: remotePath, using: service)
     }
 
     private var recursiveTransferCoordinator: RemoteFileRecursiveTransferCoordinator {

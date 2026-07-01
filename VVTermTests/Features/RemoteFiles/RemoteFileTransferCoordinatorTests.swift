@@ -51,6 +51,37 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func deletionCoordinatorRemovesNestedContentsBeforeParent() async throws {
+        let coordinator = RemoteFileDeletionCoordinator()
+        let service = RecordingRemoteFileService(
+            directoryContents: [
+                "/root/.vivyterm": [
+                    makeEntry(name: "cache", path: "/root/.vivyterm/cache", type: .directory),
+                    makeEntry(name: "config.json", path: "/root/.vivyterm/config.json", type: .file),
+                    makeEntry(name: "current", path: "/root/.vivyterm/current", type: .symlink)
+                ],
+                "/root/.vivyterm/cache": [
+                    makeEntry(name: "index.db", path: "/root/.vivyterm/cache/index.db", type: .file)
+                ]
+            ]
+        )
+
+        // When a directory tree is deleted through the dedicated deletion owner.
+        try await coordinator.deleteDirectoryRecursively(at: "/root/.vivyterm", using: service)
+
+        // Then child files and directories are removed before the parent
+        // directory, so partially deleted remote trees are not left with
+        // undeleted descendants.
+        #expect(service.operations == [
+            .deleteFile("/root/.vivyterm/cache/index.db"),
+            .deleteDirectory("/root/.vivyterm/cache"),
+            .deleteFile("/root/.vivyterm/config.json"),
+            .deleteFile("/root/.vivyterm/current"),
+            .deleteDirectory("/root/.vivyterm")
+        ])
+    }
+
+    @Test
     func deleteDirectoryCancellationStopsAfterDirectoryListingBeforeParentDelete() async throws {
         let store = RemoteFileBrowserStore(
             persistedStateStore: RemoteFileBrowserPersistedStateStore(userDefaults: makeDefaults()),
