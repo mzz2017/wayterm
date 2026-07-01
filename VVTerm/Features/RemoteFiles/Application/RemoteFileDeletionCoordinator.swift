@@ -3,13 +3,15 @@ import Foundation
 nonisolated struct RemoteFileDeletionCoordinator: Sendable {
     func deleteEntry(
         _ entry: RemoteFileEntry,
-        using service: any RemoteFileService
+        using service: any RemoteFileService,
+        didMutate: () async -> Void = {}
     ) async throws {
         switch entry.type {
         case .directory:
-            try await deleteDirectoryRecursively(at: entry.path, using: service)
+            try await deleteDirectoryRecursively(at: entry.path, using: service, didMutate: didMutate)
         case .file, .symlink, .other:
             try await service.deleteFile(at: entry.path)
+            await didMutate()
         }
     }
 
@@ -28,17 +30,19 @@ nonisolated struct RemoteFileDeletionCoordinator: Sendable {
 
     func deleteDirectoryRecursively(
         at remotePath: String,
-        using service: any RemoteFileService
+        using service: any RemoteFileService,
+        didMutate: () async -> Void = {}
     ) async throws {
         let normalizedPath = RemoteFilePath.normalize(remotePath)
         let entries = try await service.listDirectory(at: normalizedPath, maxEntries: nil)
 
         for entry in entries {
             try Task.checkCancellation()
-            try await deleteEntry(entry, using: service)
+            try await deleteEntry(entry, using: service, didMutate: didMutate)
         }
 
         try Task.checkCancellation()
         try await service.deleteDirectory(at: normalizedPath)
+        await didMutate()
     }
 }

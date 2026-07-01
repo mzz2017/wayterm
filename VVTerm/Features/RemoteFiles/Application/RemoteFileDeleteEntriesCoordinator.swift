@@ -23,8 +23,9 @@ nonisolated struct RemoteFileDeleteEntriesCoordinator {
         do {
             for entry in entries {
                 try Task.checkCancellation()
-                try await deletionCoordinator.deleteEntry(entry, using: service)
-                didMutate = true
+                try await deletionCoordinator.deleteEntry(entry, using: service) {
+                    didMutate = true
+                }
             }
         } catch {
             if didMutate {

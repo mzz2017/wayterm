@@ -1014,6 +1014,51 @@ struct RemoteFileTransferCoordinatorTests {
     }
 
     @Test
+    func deleteEntriesCoordinatorReportsRecursiveDirectoryPartialMutationOnCancellation() async throws {
+        let coordinator = RemoteFileDeleteEntriesCoordinator()
+        let deleteBlocker = RemoteFileDeleteBlocker(blockedPath: "/remote/folder/child.txt")
+        let service = RecordingRemoteFileService(
+            directoryContents: [
+                "/remote/folder": [
+                    makeEntry(name: "child.txt", path: "/remote/folder/child.txt", type: .file)
+                ]
+            ],
+            deleteBlocker: deleteBlocker
+        )
+        let entries = [
+            makeEntry(name: "folder", path: "/remote/folder", type: .directory)
+        ]
+
+        // Given recursive directory deletion is blocked after SFTP has
+        // accepted deletion of a child item, but before the parent directory is
+        // removed.
+        let task = Task {
+            try await coordinator.deleteEntries(entries, using: service)
+        }
+        await deleteBlocker.waitUntilStarted()
+
+        // When the batch delete is canceled before the recursive owner can
+        // remove the parent directory.
+        task.cancel()
+        await deleteBlocker.release()
+
+        // Then the batch owner still reports partial mutation so callers can
+        // refresh visible remote state after preserving the cancellation.
+        let result = await task.result
+        #expect(service.operations == [
+            .deleteFile("/remote/folder/child.txt")
+        ])
+        switch result {
+        case .success:
+            Issue.record("Expected recursive delete owner to report partial mutation after cancellation")
+        case .failure(let error):
+            let failure = try #require(error as? RemoteFileDeleteEntriesCoordinator.Failure)
+            #expect(failure.didMutate)
+            #expect(failure.underlyingError is CancellationError)
+        }
+    }
+
+    @Test
     func moveEntriesCancellationStopsBeforeNextRename() async throws {
         let server = Server(
             workspaceId: UUID(),
