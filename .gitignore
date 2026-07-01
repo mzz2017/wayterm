@@ -38,6 +38,9 @@ fastlane/test_output
 # Code Injection
 iOSInjectionProject/
 
+# Python
+__pycache__/
+
 # Agent
 docs/superpowers/
 .codex/state/
