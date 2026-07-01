@@ -283,7 +283,9 @@ IOS_TEST_RAMDISK_MB=8192 rtk ./scripts/test-ios.sh \
 
 - When filtered output is not enough for diagnosis, preserve the wrapper's raw
   xcodebuild logs with `IOS_TEST_LOG_DIR`, then run `rg` against the printed log
-  path after the test finishes. Remove the diagnostic log directory when done:
+  path after the test finishes. If using a shared log directory, remove only the
+  specific log/metadata files printed by this run; other agents may be writing
+  to the same directory:
 
 ```bash
 IOS_TEST_LOG_DIR=/tmp/vvterm-ios-logs IOS_TEST_RAMDISK_MB=8192 \
@@ -291,7 +293,8 @@ IOS_TEST_LOG_DIR=/tmp/vvterm-ios-logs IOS_TEST_RAMDISK_MB=8192 \
 
 rtk rg -n "warning:|error:|Testing failed|BUILD FAILED|TEST FAILED|Test run with|Executed test count|<TestClass>" \
   /tmp/vvterm-ios-logs/xcodebuild-test-attempt-*-*.log
-rtk rm -rf /tmp/vvterm-ios-logs
+rtk rm -f /tmp/vvterm-ios-logs/xcodebuild-test-attempt-1-passed.log \
+  /tmp/vvterm-ios-logs/xcodebuild-test-attempt-1-metadata.txt
 ```
 
 - For local agent-run iOS wrapper invocations, default to `IOS_TEST_RAMDISK_MB=8192` so auto-managed DerivedData lives on a RAM disk while the default Swift package checkout cache stays in the ignored repo-local `.build/vvterm-ios-source-packages` cache for warm focused runs. The wrapper also favors lower simulator churn by reusing an already booted simulator and disabling extra XCTest diagnostics by default; use `IOS_TEST_REUSE_BOOTED_SIMULATOR=0` or `IOS_TEST_COLLECT_DIAGNOSTICS=on-failure` when debugging simulator boot/install state or failure diagnostics, and avoid RAM disk mode when memory pressure is high.
