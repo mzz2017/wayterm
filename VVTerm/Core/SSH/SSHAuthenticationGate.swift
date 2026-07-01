@@ -17,13 +17,8 @@ nonisolated struct SSHAuthenticationLease: Sendable {
 actor SSHAuthenticationGate {
     static let shared = SSHAuthenticationGate()
 
-    private struct Waiter {
-        let id: UUID
-        let continuation: CheckedContinuation<Void, Error>
-    }
-
     private var activeKeys: Set<String> = []
-    private var waitersByKey: [String: [Waiter]] = [:]
+    private var waiterQueues = SSHAuthenticationWaiterQueues()
 
     func acquireLease(for key: String) async throws -> SSHAuthenticationLease {
         try await acquire(key)
@@ -58,8 +53,16 @@ actor SSHAuthenticationGate {
         let waiterId = UUID()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                waitersByKey[key, default: []].append(
-                    Waiter(id: waiterId, continuation: continuation)
+                waiterQueues.enqueue(
+                    SSHAuthenticationWaiter(id: waiterId) { resolution in
+                        switch resolution {
+                        case .acquired:
+                            continuation.resume()
+                        case .canceled:
+                            continuation.resume(throwing: CancellationError())
+                        }
+                    },
+                    for: key
                 )
             }
         } onCancel: {
@@ -70,32 +73,15 @@ actor SSHAuthenticationGate {
     }
 
     private func cancelWaiter(_ waiterId: UUID, for key: String) {
-        guard var waiters = waitersByKey[key],
-              let index = waiters.firstIndex(where: { $0.id == waiterId }) else {
-            return
-        }
-
-        let waiter = waiters.remove(at: index)
-        if waiters.isEmpty {
-            waitersByKey.removeValue(forKey: key)
-        } else {
-            waitersByKey[key] = waiters
-        }
-        waiter.continuation.resume(throwing: CancellationError())
+        waiterQueues.remove(id: waiterId, for: key)?.cancel()
     }
 
     private func release(_ key: String) {
-        guard var waiters = waitersByKey[key], !waiters.isEmpty else {
+        guard let next = waiterQueues.popFirst(for: key) else {
             activeKeys.remove(key)
             return
         }
 
-        let next = waiters.removeFirst()
-        if waiters.isEmpty {
-            waitersByKey.removeValue(forKey: key)
-        } else {
-            waitersByKey[key] = waiters
-        }
-        next.continuation.resume()
+        next.resume()
     }
 }
