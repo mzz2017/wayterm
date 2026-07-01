@@ -9,6 +9,7 @@ final class StoreReviewModeExpiryCoordinator {
     private let sleepAction: StoreReviewModeExpirySleepAction
     private var expiryTask: Task<Void, Never>?
     private var requestID: UUID?
+    private var supersededExpiryTasks: [UUID: Task<Void, Never>] = [:]
 
     init(
         sleepAction: @escaping StoreReviewModeExpirySleepAction = { duration in
@@ -28,6 +29,10 @@ final class StoreReviewModeExpiryCoordinator {
         at expirationDate: Date,
         operation: @escaping StoreReviewModeExpiryAction
     ) -> UUID {
+        if let supersededRequestID = requestID,
+           let supersededTask = expiryTask {
+            supersededExpiryTasks[supersededRequestID] = supersededTask
+        }
         cancellationBox.cancel()
 
         let requestID = UUID()
@@ -43,6 +48,7 @@ final class StoreReviewModeExpiryCoordinator {
                     self.expiryTask = nil
                     self.cancellationBox.clear()
                 }
+                self.supersededExpiryTasks[requestID] = nil
             }
 
             await self.sleepAction(.nanoseconds(delayNanoseconds))
@@ -60,8 +66,12 @@ final class StoreReviewModeExpiryCoordinator {
     }
 
     func waitForExpiry(_ requestID: UUID) async {
-        guard self.requestID == requestID else { return }
-        await expiryTask?.value
+        if self.requestID == requestID {
+            await expiryTask?.value
+            return
+        }
+
+        await supersededExpiryTasks[requestID]?.value
     }
 
     func cancelAll() {
@@ -73,11 +83,14 @@ final class StoreReviewModeExpiryCoordinator {
     }
 
     func cancelAllAndWait() async {
-        let task = expiryTask
+        let tasks = [expiryTask].compactMap { $0 } + Array(supersededExpiryTasks.values)
         cancellationBox.cancel()
-        await task?.value
+        for task in tasks {
+            await task.value
+        }
         expiryTask = nil
         requestID = nil
+        supersededExpiryTasks.removeAll()
         cancellationBox.clear()
     }
 }

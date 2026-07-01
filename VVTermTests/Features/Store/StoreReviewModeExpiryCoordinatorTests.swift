@@ -85,6 +85,53 @@ struct StoreReviewModeExpiryCoordinatorTests {
         #expect(expiries == ["second"])
         #expect(coordinator.pendingRequestIDs.isEmpty)
     }
+
+    @Test
+    func waitForSupersededExpiryAwaitsCanceledDelayCleanup() async {
+        let sleepSequence = ReviewModeExpiryCleanupSleepSequence()
+        let expiryGate = ReviewModeExpiryGate()
+        let coordinator = StoreReviewModeExpiryCoordinator { _ in
+            await sleepSequence.sleep()
+        }
+
+        // Given a review-mode expiry is waiting on its delay and performs async
+        // cancellation cleanup before the old lifecycle is finished.
+        let firstID = coordinator.scheduleExpiry(at: Date().addingTimeInterval(60)) {}
+        await sleepSequence.waitForFirstStart()
+
+        // When a newer expiry replaces it.
+        let secondID = coordinator.scheduleExpiry(at: Date().addingTimeInterval(120)) {
+            await expiryGate.waitForRelease()
+        }
+        await sleepSequence.waitForSecondStart()
+
+        // Then waiting for the superseded request remains tied to the old task
+        // instead of returning only because the visible request ID changed.
+        var didFinishWaitingForFirst = false
+        let waiter = Task { @MainActor in
+            await coordinator.waitForExpiry(firstID)
+            didFinishWaitingForFirst = true
+        }
+        await Task.yield()
+
+        #expect(
+            !didFinishWaitingForFirst,
+            "Waiting for a superseded review-mode expiry should wait for the canceled delay task to exit."
+        )
+
+        await sleepSequence.releaseFirstCleanup()
+        await waiter.value
+
+        #expect(didFinishWaitingForFirst)
+        #expect(coordinator.pendingRequestIDs == [secondID])
+
+        await sleepSequence.releaseSecond()
+        await expiryGate.waitForOperationStart()
+        await expiryGate.release()
+        await coordinator.waitForExpiry(secondID)
+
+        #expect(coordinator.pendingRequestIDs.isEmpty)
+    }
 }
 
 private actor ReviewModeExpiryGate {
@@ -154,5 +201,50 @@ private actor ReviewModeExpirySleepSequence {
 
     func releaseSecond() async {
         await second.release()
+    }
+}
+
+private actor ReviewModeExpiryCleanupSleepSequence {
+    private let first = ReviewModeExpiryGate()
+    private let firstCleanup = ReviewModeExpiryGate()
+    private let second = ReviewModeExpiryGate()
+    private var sleepCount = 0
+
+    func sleep() async {
+        sleepCount += 1
+        if sleepCount == 1 {
+            await withTaskCancellationHandler {
+                await first.waitForRelease()
+                if Task.isCancelled {
+                    await firstCleanup.waitForRelease()
+                }
+            } onCancel: {
+                Task {
+                    await self.releaseFirstDelay()
+                }
+            }
+        } else {
+            await second.waitForRelease()
+        }
+    }
+
+    func waitForFirstStart() async {
+        await first.waitForOperationStart()
+    }
+
+    func waitForSecondStart() async {
+        await second.waitForOperationStart()
+    }
+
+    func releaseFirstCleanup() async {
+        await firstCleanup.release()
+    }
+
+    func releaseSecond() async {
+        await second.release()
+    }
+
+    private func releaseFirstDelay() async {
+        await first.release()
     }
 }
