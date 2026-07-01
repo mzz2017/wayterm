@@ -799,9 +799,9 @@ struct StoreManagerLifecycleTests {
             in: source
         )
 
-        // Given StoreManager owns StoreKit listeners, request tasks, startup
+        // Given StoreManager owns StoreKit listener, request tasks, startup
         // refresh, and the review-mode expiry owner.
-        #expect(deinitSource.contains("updateListenerTask?.cancel()"))
+        #expect(deinitSource.contains("transactionListenerCoordinator.cancelAllFromAnyContext()"))
         #expect(deinitSource.contains("startupRefreshTask?.cancel()"))
         #expect(deinitSource.contains("reviewModeRefreshTask?.cancel()"))
         #expect(deinitSource.contains("productLoadCoordinator.cancelAllFromAnyContext()"))

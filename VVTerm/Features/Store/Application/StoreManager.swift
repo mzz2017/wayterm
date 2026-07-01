@@ -36,6 +36,7 @@ final class StoreManager: ObservableObject {
     private let productLoadCoordinator = StoreProductLoadCoordinator()
     private let subscriptionExpirationRefreshCoordinator: StoreSubscriptionExpirationRefreshCoordinator
     private let reviewModeExpiryCoordinator: StoreReviewModeExpiryCoordinator
+    private let transactionListenerCoordinator = StoreTransactionListenerCoordinator()
     var lastPurchaseRequestFailure: Error? { purchaseRequestCoordinator.lastRequestFailure }
     var lastRestoreRequestFailure: Error? { restoreRequestCoordinator.lastRequestFailure }
     var pendingPurchaseRequestIDs: Set<UUID> { purchaseRequestCoordinator.pendingRequestIDs }
@@ -51,8 +52,6 @@ final class StoreManager: ObservableObject {
     private var startupRefreshTaskID: UUID?
     private var reviewModeRefreshTask: Task<Void, Never>?
     private var reviewModeRefreshTaskID: UUID?
-    private var updateListenerTask: Task<Void, Never>?
-    private var updateListenerTaskID: UUID?
     private var reviewModeExpiresAt: Date?
     private var entitlementRefreshGeneration = 0
     private let loadProductsAction: StoreLifecycleAction
@@ -111,13 +110,13 @@ final class StoreManager: ObservableObject {
         self.telemetry = telemetry ?? LiveStoreTelemetry.shared
 
         if startBackgroundTasks {
-            updateListenerTask = listenForTransactions()
+            startTransactionListener()
             startStartupRefresh()
         }
     }
 
     deinit {
-        updateListenerTask?.cancel()
+        transactionListenerCoordinator.cancelAllFromAnyContext()
         startupRefreshTask?.cancel()
         reviewModeRefreshTask?.cancel()
         entitlementRefreshCoordinator.cancelAllFromAnyContext()
@@ -130,7 +129,6 @@ final class StoreManager: ObservableObject {
 
     func cancelAllAndWait() async {
         let trackedTasks = [
-            updateListenerTask,
             startupRefreshTask,
             reviewModeRefreshTask
         ].compactMap { $0 }
@@ -142,12 +140,11 @@ final class StoreManager: ObservableObject {
         await entitlementRefreshCoordinator.cancelAllAndWait()
         await subscriptionExpirationRefreshCoordinator.cancelAllAndWait()
         await reviewModeExpiryCoordinator.cancelAllAndWait()
+        await transactionListenerCoordinator.cancelAllAndWait()
         for task in trackedTasks {
             await task.value
         }
 
-        updateListenerTask = nil
-        updateListenerTaskID = nil
         startupRefreshTask = nil
         startupRefreshTaskID = nil
         reviewModeRefreshTask = nil
@@ -381,17 +378,9 @@ final class StoreManager: ObservableObject {
 
     // MARK: - Transaction Listener
 
-    private func listenForTransactions() -> Task<Void, Never> {
-        let taskID = UUID()
-        updateListenerTaskID = taskID
-        return Task { @MainActor [weak self] in
+    private func startTransactionListener() {
+        transactionListenerCoordinator.startListening { [weak self] in
             guard let self else { return }
-            defer {
-                if self.updateListenerTaskID == taskID {
-                    self.updateListenerTaskID = nil
-                    self.updateListenerTask = nil
-                }
-            }
             await self.transactionListenerAction(self)
         }
     }
@@ -664,15 +653,16 @@ extension StoreManager {
     }
 
     var hasPendingTransactionListenerForTesting: Bool {
-        updateListenerTask != nil
+        !transactionListenerCoordinator.pendingRequestIDs.isEmpty
     }
 
     func waitForTransactionListenerForTesting() async {
-        await updateListenerTask?.value
+        guard let requestID = transactionListenerCoordinator.pendingRequestIDs.first else { return }
+        await transactionListenerCoordinator.waitForListener(requestID)
     }
 
     func cancelTransactionListenerForTesting() {
-        updateListenerTask?.cancel()
+        transactionListenerCoordinator.cancelAll()
     }
 
     func cancelProductLoadRequestForTesting(_ requestID: UUID) {
