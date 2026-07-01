@@ -87,6 +87,56 @@ struct RemoteFileBrowserNavigationLifecycleTests {
     }
 
     @Test
+    func completionTriggeredMoveDestinationLoadStartsFreshRequest() async throws {
+        let server = makeRemoteFileBrowserServer()
+        let client = await BlockingNavigationRemoteFileClient(
+            listResponses: [
+                "/srv": [
+                    makeRemoteFileBrowserEntry(name: "alpha", path: "/srv/alpha", type: .directory)
+                ]
+            ],
+            blockedListPaths: ["/srv"]
+        )
+        let store = makeRemoteFileBrowserStore(server: server, client: client)
+        var callbackOrder: [String] = []
+        var restartedID: UUID?
+
+        // Given a move destination load completion synchronously starts a
+        // fresh same-server/same-path load, as a sheet can do while refreshing
+        // after applying a destination change.
+        let firstID = store.requestMoveDestinationLoad(path: "/srv", server: server) { result in
+            if case .success = result {
+                callbackOrder.append("first")
+            }
+            restartedID = store.requestMoveDestinationLoad(path: "/srv", server: server) { result in
+                if case .success = result {
+                    callbackOrder.append("restarted")
+                }
+            }
+        }
+        await client.waitUntilListCount(path: "/srv", count: 1)
+
+        // When the first remote listing completes.
+        await client.releaseList(path: "/srv")
+        await store.waitForMoveDestinationLoadRequest(firstID)
+
+        // Then the callback-triggered intent starts a fresh owner request
+        // instead of being appended to the completing request and cleared.
+        let freshID = try #require(restartedID)
+        try #require(
+            freshID != firstID,
+            "Callback-triggered move destination loads must not join the completing request."
+        )
+        await client.waitUntilListCount(path: "/srv", count: 2)
+        await store.waitForMoveDestinationLoadRequest(freshID)
+
+        #expect(await client.listCount(path: "/srv") == 2)
+        #expect(callbackOrder == ["first", "restarted"])
+        #expect(!store.pendingMoveDestinationLoadRequestIDs.contains(firstID))
+        #expect(!store.pendingMoveDestinationLoadRequestIDs.contains(freshID))
+    }
+
+    @Test
     func moveDestinationLoadCancellationRemainsAwaitableUntilListingExits() async throws {
         let server = makeRemoteFileBrowserServer()
         let client = await BlockingNavigationRemoteFileClient(

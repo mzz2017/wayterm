@@ -67,6 +67,10 @@ final class RemoteFileMoveDestinationLoadCoordinator {
             guard requestByKey[key] == requestID else { return }
 
             let callbacks = requests[requestID]?.onCompleted ?? []
+            if requestByKey[key] == requestID {
+                requestByKey.removeValue(forKey: key)
+            }
+            requests[requestID]?.onCompleted = []
             callbacks.forEach { $0(result) }
         }
 
