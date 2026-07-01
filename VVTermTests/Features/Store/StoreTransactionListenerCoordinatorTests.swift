@@ -73,6 +73,61 @@ struct StoreTransactionListenerCoordinatorTests {
 
         #expect(coordinator.pendingRequestIDs.isEmpty)
     }
+
+    @Test
+    func waitForSupersededListenerAwaitsCanceledListenerCleanup() async {
+        let firstGate = TransactionListenerGate()
+        let cleanupGate = TransactionListenerGate()
+        let secondGate = TransactionListenerGate()
+        let coordinator = StoreTransactionListenerCoordinator()
+
+        // Given a transaction listener is active and performs async cleanup
+        // after cancellation before its lifecycle is truly finished.
+        let firstID = coordinator.startListening {
+            await withTaskCancellationHandler {
+                await firstGate.waitForRelease()
+                if Task.isCancelled {
+                    await cleanupGate.waitForRelease()
+                }
+            } onCancel: {
+                Task {
+                    await firstGate.release()
+                }
+            }
+        }
+        await firstGate.waitForOperationStart()
+
+        // When a newer listener replaces it.
+        let secondID = coordinator.startListening {
+            await secondGate.waitForRelease()
+        }
+        await secondGate.waitForOperationStart()
+
+        // Then waiting for the superseded listener must remain tied to the old
+        // task rather than returning only because the visible request ID changed.
+        var didFinishWaitingForFirst = false
+        let waiter = Task { @MainActor in
+            await coordinator.waitForListener(firstID)
+            didFinishWaitingForFirst = true
+        }
+        await Task.yield()
+
+        #expect(
+            !didFinishWaitingForFirst,
+            "Waiting for a superseded transaction listener should wait for the canceled listener task to exit."
+        )
+
+        await cleanupGate.release()
+        await waiter.value
+
+        #expect(didFinishWaitingForFirst)
+        #expect(coordinator.pendingRequestIDs == [secondID])
+
+        await secondGate.release()
+        await coordinator.waitForListener(secondID)
+
+        #expect(coordinator.pendingRequestIDs.isEmpty)
+    }
 }
 
 private actor TransactionListenerGate {

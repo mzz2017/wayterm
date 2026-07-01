@@ -7,6 +7,7 @@ final class StoreTransactionListenerCoordinator {
     nonisolated private let cancellationBox = StoreTaskCancellationBox()
     private var listenerTask: Task<Void, Never>?
     private var requestID: UUID?
+    private var supersededListenerTasks: [UUID: Task<Void, Never>] = [:]
 
     var pendingRequestIDs: Set<UUID> {
         guard let requestID else { return [] }
@@ -15,6 +16,10 @@ final class StoreTransactionListenerCoordinator {
 
     @discardableResult
     func startListening(operation: @escaping StoreTransactionListenerAction) -> UUID {
+        if let supersededRequestID = requestID,
+           let supersededTask = listenerTask {
+            supersededListenerTasks[supersededRequestID] = supersededTask
+        }
         cancellationBox.cancel()
 
         let requestID = UUID()
@@ -28,6 +33,7 @@ final class StoreTransactionListenerCoordinator {
                     self.listenerTask = nil
                     self.cancellationBox.clear()
                 }
+                self.supersededListenerTasks[requestID] = nil
             }
 
             guard !Task.isCancelled else { return }
@@ -42,8 +48,12 @@ final class StoreTransactionListenerCoordinator {
     }
 
     func waitForListener(_ requestID: UUID) async {
-        guard self.requestID == requestID else { return }
-        await listenerTask?.value
+        if self.requestID == requestID {
+            await listenerTask?.value
+            return
+        }
+
+        await supersededListenerTasks[requestID]?.value
     }
 
     func cancelAll() {
@@ -55,11 +65,14 @@ final class StoreTransactionListenerCoordinator {
     }
 
     func cancelAllAndWait() async {
-        let task = listenerTask
+        let tasks = [listenerTask].compactMap { $0 } + Array(supersededListenerTasks.values)
         cancellationBox.cancel()
-        await task?.value
+        for task in tasks {
+            await task.value
+        }
         listenerTask = nil
         requestID = nil
+        supersededListenerTasks.removeAll()
         cancellationBox.clear()
     }
 }
