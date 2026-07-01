@@ -77,6 +77,18 @@ def tool_use_marks_best_practices_read(payload: object) -> bool:
     if not isinstance(tool_input, dict):
         return False
 
+    nested_tool_uses = tool_input.get("tool_uses")
+    if isinstance(nested_tool_uses, list):
+        for nested in nested_tool_uses:
+            if not isinstance(nested, dict):
+                continue
+            nested_payload = {
+                "tool_name": nested.get("recipient_name") or nested.get("tool_name") or "",
+                "tool_input": nested.get("parameters") or nested.get("tool_input") or {},
+            }
+            if tool_use_marks_best_practices_read(nested_payload):
+                return True
+
     if re.search(r"(^|\.)Read$", tool_name):
         file_path = str(
             tool_input.get("file_path")

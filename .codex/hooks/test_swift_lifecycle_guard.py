@@ -104,6 +104,30 @@ class SwiftLifecycleGuardTests(unittest.TestCase):
                 self.assertEqual(exit_code, 0)
                 self.assertTrue(self.guard.best_practices_marker_path().exists())
 
+    def test_parallel_exec_command_read_marks_best_practices_as_read(self) -> None:
+        payload = """{
+  "tool_name": "multi_tool_use.parallel",
+  "tool_input": {
+    "tool_uses": [
+      {
+        "recipient_name": "functions.exec_command",
+        "parameters": {
+          "cmd": "rtk read docs/engineering/swift-best-practices.md"
+        }
+      }
+    ]
+  }
+}
+"""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = pathlib.Path(tmpdir)
+            with mock.patch.object(self.guard, "STATE_DIR", state_dir), \
+                mock.patch.object(sys, "stdin", io.StringIO(payload)):
+                exit_code = self.guard.main(["--mark-best-practices-read-from-tool-use"])
+                self.assertEqual(exit_code, 0)
+                self.assertTrue(self.guard.best_practices_marker_path().exists())
+
     def test_unrelated_read_does_not_mark_best_practices_as_read(self) -> None:
         payload = """{
   "tool_name": "Read",

@@ -15,7 +15,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Read|functions.exec_command|exec_command",
+        "matcher": "Read|functions.exec_command|exec_command|multi_tool_use.parallel",
         "hooks": [
           {
             "type": "command",
