@@ -64,6 +64,12 @@ extension ConnectionSessionManager {
         }
     }
 
+    func flushPendingSnapshotPersistence() {
+        persistTask?.cancel()
+        persistTask = nil
+        persistSnapshot()
+    }
+
     func restoreSnapshot() {
         do {
             guard let snapshot = try snapshotStore.load() else { return }

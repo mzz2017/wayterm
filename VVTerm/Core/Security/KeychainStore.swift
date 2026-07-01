@@ -15,56 +15,59 @@ protocol KeychainStoring: Sendable {
 }
 
 nonisolated enum KeychainSyncPolicy {
-    // CloudKit sync controls metadata records only. Credential secrets may use
-    // iCloud Keychain without being serialized into CloudKit.
-    static let usesICloudKeychainSync = true
+    // VVTerm's sync setting is the cross-device total control: when CloudKit
+    // sync is disabled, credential secrets must stay device-local too.
+    static var usesICloudKeychainSync: Bool { SyncSettings.isEnabled }
 }
 
 final class KeychainStore: @unchecked Sendable {
     private let service: String
+    private let secItemClient: any SecItemClienting
 
     nonisolated init(service: String) {
         self.service = service
+        self.secItemClient = SecuritySecItemClient()
+    }
+
+    nonisolated init(service: String, secItemClient: any SecItemClienting) {
+        self.service = service
+        self.secItemClient = secItemClient
     }
 
     // MARK: - Data Operations
 
     nonisolated func set(_ data: Data, forKey key: String, iCloudSync: Bool = false) throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key
-        ]
-
-        var attributes = query
+        let desiredQuery = synchronizableQuery(forKey: key, iCloudSync: iCloudSync)
+        var attributes = desiredQuery
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] = iCloudSync
             ? kSecAttrAccessibleAfterFirstUnlock
             : kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-
-        if iCloudSync {
-            attributes[kSecAttrSynchronizable as String] = kCFBooleanTrue
-        }
-
-        var updateQuery = query
-        updateQuery[kSecAttrSynchronizable as String] = kSecAttrSynchronizableAny
         var updateAttributes = attributes
         updateAttributes.removeValue(forKey: kSecClass as String)
         updateAttributes.removeValue(forKey: kSecAttrService as String)
         updateAttributes.removeValue(forKey: kSecAttrAccount as String)
+        updateAttributes.removeValue(forKey: kSecAttrSynchronizable as String)
 
-        let updateStatus = SecItemUpdate(updateQuery as CFDictionary, updateAttributes as CFDictionary)
+        let updateStatus = secItemClient.update(desiredQuery, attributes: updateAttributes)
         if updateStatus == errSecSuccess {
+            try deleteSynchronizableVariant(forKey: key, iCloudSync: !iCloudSync)
             return
         }
         guard updateStatus == errSecItemNotFound else {
             throw KeychainError.unhandled(updateStatus)
         }
 
-        let addStatus = SecItemAdd(attributes as CFDictionary, nil)
-        guard addStatus == errSecSuccess else {
+        let addStatus = secItemClient.add(attributes)
+        if addStatus == errSecDuplicateItem {
+            let retryStatus = secItemClient.update(desiredQuery, attributes: updateAttributes)
+            guard retryStatus == errSecSuccess else {
+                throw KeychainError.unhandled(retryStatus)
+            }
+        } else if addStatus != errSecSuccess {
             throw KeychainError.unhandled(addStatus)
         }
+        try deleteSynchronizableVariant(forKey: key, iCloudSync: !iCloudSync)
     }
 
     nonisolated func get(_ key: String) throws -> Data? {
@@ -78,8 +81,7 @@ final class KeychainStore: @unchecked Sendable {
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny  // Search both synced and non-synced
         ]
 
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        let (status, item) = secItemClient.copyMatching(query)
 
         guard status != errSecItemNotFound else {
             return nil
@@ -99,7 +101,28 @@ final class KeychainStore: @unchecked Sendable {
             kSecAttrAccount as String: key,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny  // Delete both synced and non-synced
         ]
-        let status = SecItemDelete(query as CFDictionary)
+        let status = secItemClient.delete(query)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw KeychainError.unhandled(status)
+        }
+    }
+
+    private nonisolated func baseQuery(forKey key: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key
+        ]
+    }
+
+    private nonisolated func synchronizableQuery(forKey key: String, iCloudSync: Bool) -> [String: Any] {
+        var query = baseQuery(forKey: key)
+        query[kSecAttrSynchronizable as String] = (iCloudSync ? kCFBooleanTrue : kCFBooleanFalse) as Any
+        return query
+    }
+
+    private nonisolated func deleteSynchronizableVariant(forKey key: String, iCloudSync: Bool) throws {
+        let status = secItemClient.delete(synchronizableQuery(forKey: key, iCloudSync: iCloudSync))
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw KeychainError.unhandled(status)
         }
@@ -126,6 +149,33 @@ final class KeychainStore: @unchecked Sendable {
 }
 
 extension KeychainStore: KeychainStoring {}
+
+protocol SecItemClienting {
+    func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus
+    func add(_ attributes: [String: Any]) -> OSStatus
+    func copyMatching(_ query: [String: Any]) -> (OSStatus, CFTypeRef?)
+    func delete(_ query: [String: Any]) -> OSStatus
+}
+
+private struct SecuritySecItemClient: SecItemClienting {
+    func update(_ query: [String: Any], attributes: [String: Any]) -> OSStatus {
+        SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+    }
+
+    func add(_ attributes: [String: Any]) -> OSStatus {
+        SecItemAdd(attributes as CFDictionary, nil)
+    }
+
+    func copyMatching(_ query: [String: Any]) -> (OSStatus, CFTypeRef?) {
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        return (status, item)
+    }
+
+    func delete(_ query: [String: Any]) -> OSStatus {
+        SecItemDelete(query as CFDictionary)
+    }
+}
 
 // MARK: - Keychain Error
 

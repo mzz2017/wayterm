@@ -24,7 +24,7 @@ nonisolated enum TerminalTabsSnapshotRestorePlanner {
         var restoredSelectedViews: [UUID: String] = [:]
         var snapshotsByTabId: [UUID: TerminalTabsSnapshot.TabSnapshot] = [:]
 
-        for server in snapshot.servers {
+        for server in snapshot.servers where !server.tabs.isEmpty {
             for tabSnapshot in server.tabs {
                 snapshotsByTabId[tabSnapshot.id] = tabSnapshot
             }

@@ -6,8 +6,12 @@ import Testing
 // These tests protect destructive Keychain deletion behavior. The fake store
 // models Security.framework failures and credential replacement so server and
 // reusable-key metadata cannot report success while private credential bytes
-// remain in Keychain. Update these tests only when KeychainManager intentionally
-// changes whether omitted credential parts are retained or removed.
+// remain in Keychain. They also protect VVTerm's sync setting as the
+// cross-device total control for credential writes: disabling CloudKit sync must
+// keep secrets device-local. Update these tests only when KeychainManager
+// intentionally changes whether omitted credential parts are retained or
+// removed, or VVTerm intentionally splits credential sync from the app-wide sync
+// toggle.
 @Suite(.serialized)
 @MainActor
 struct KeychainManagerDeletionTests {
@@ -136,23 +140,12 @@ struct KeychainManagerDeletionTests {
     }
 
     @Test
-    func serverCredentialWritesUseICloudKeychainIndependentlyOfCloudKitSyncSetting() throws {
-        let previousSyncSetting = UserDefaults.standard.object(forKey: SyncSettings.enabledKey)
-        UserDefaults.standard.set(false, forKey: SyncSettings.enabledKey)
-        defer {
-            if let previousSyncSetting {
-                UserDefaults.standard.set(previousSyncSetting, forKey: SyncSettings.enabledKey)
-            } else {
-                UserDefaults.standard.removeObject(forKey: SyncSettings.enabledKey)
-            }
-        }
-
+    func serverCredentialWritesStayDeviceLocalWhenSyncPolicyIsDisabled() throws {
         let serverId = UUID(uuidString: "00000000-0000-0000-0000-00000000D004")!
         let store = RecordingKeychainStore()
-        let manager = KeychainManager(store: store)
+        let manager = KeychainManager(store: store, usesICloudKeychainSync: { false })
 
-        // Given CloudKit metadata sync is disabled for the app.
-        #expect(SyncSettings.isEnabled == false)
+        // Given VVTerm's cross-device sync policy is disabled.
 
         // When server credential secrets are written.
         try manager.storePassword(for: serverId, password: "secret-password")
@@ -168,16 +161,52 @@ struct KeychainManagerDeletionTests {
             clientSecret: "client-secret"
         )
 
-        // Then the Keychain write policy is still iCloud Keychain capable; the
-        // CloudKit toggle must not silently downgrade secret storage to
-        // device-only or conflate credentials with CloudKit record sync.
+        // Then each credential write stays device-local because the CloudKit
+        // sync setting is the cross-device total control.
         let credentialWrites = store.setCalls.filter { call in
             call.key.hasPrefix("server.\(serverId.uuidString).")
         }
         #expect(!credentialWrites.isEmpty)
         #expect(
-            credentialWrites.filter { !$0.iCloudSync }.isEmpty,
-            "Server credential secrets may sync via iCloud Keychain even when CloudKit metadata sync is disabled."
+            credentialWrites.filter(\.iCloudSync).isEmpty,
+            "Server credential secrets must not use iCloud Keychain when CloudKit sync is disabled."
+        )
+    }
+
+    @Test
+    func serverCredentialWritesUseICloudKeychainWhenSyncPolicyIsEnabled() throws {
+        let serverId = UUID(uuidString: "00000000-0000-0000-0000-00000000D005")!
+        let store = RecordingKeychainStore()
+        let manager = KeychainManager(store: store, usesICloudKeychainSync: { true })
+
+        // Given VVTerm's cross-device sync policy is enabled.
+
+        // When server credential secrets are written.
+        try manager.storePassword(for: serverId, password: "secret-password")
+        try manager.storeSSHKey(
+            for: serverId,
+            privateKey: Data("private-key".utf8),
+            passphrase: "key-passphrase",
+            publicKey: Data("public-key".utf8)
+        )
+        try manager.storeCloudflareServiceToken(
+            for: serverId,
+            clientID: "client-id",
+            clientSecret: "client-secret"
+        )
+        _ = try manager.storeSSHKeyEntry(
+            name: "Reusable",
+            privateKey: Data("reusable-private-key".utf8),
+            passphrase: "reusable-passphrase",
+            publicKey: "ssh-ed25519 AAAA"
+        )
+
+        // Then every credential and reusable-key write remains iCloud
+        // Keychain-capable.
+        #expect(!store.setCalls.isEmpty)
+        #expect(
+            !store.setCalls.contains { !$0.iCloudSync },
+            "Credential secrets should use iCloud Keychain when sync is enabled."
         )
     }
 }

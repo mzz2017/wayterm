@@ -4,47 +4,65 @@ import Testing
 
 // Test Context:
 // These tests protect Cloudflare OAuth token persistence. OAuth tokens are
-// credential secrets: they may use iCloud Keychain sync, but must not be
-// governed by the CloudKit metadata sync toggle. Update these tests only if
-// VVTerm intentionally changes the credential storage policy or token key
+// credential secrets governed by VVTerm's sync setting. When the user disables
+// CloudKit sync, token writes must stay device-local instead of uploading to
+// iCloud Keychain. Update these tests only if VVTerm intentionally splits
+// credential sync from the app-wide sync toggle or changes the token key
 // namespace.
 @Suite(.serialized)
 struct CloudflareTokenStoreAdapterTests {
     @Test
-    func writesOAuthTokensWithICloudKeychainPolicyWhenCloudKitSyncIsDisabled() async throws {
-        let previousSyncSetting = UserDefaults.standard.object(forKey: SyncSettings.enabledKey)
-        UserDefaults.standard.set(false, forKey: SyncSettings.enabledKey)
-        defer {
-            if let previousSyncSetting {
-                UserDefaults.standard.set(previousSyncSetting, forKey: SyncSettings.enabledKey)
-            } else {
-                UserDefaults.standard.removeObject(forKey: SyncSettings.enabledKey)
-            }
-        }
-
+    func writesOAuthTokensDeviceLocalWhenSyncPolicyIsDisabled() async throws {
         let store = RecordingCloudflareTokenKeychainStore()
         let adapter = CloudflareTokenStoreAdapter(
             readStoredToken: { try store.getString($0) },
             writeStoredToken: { token, key, iCloudSync in
                 try store.setString(token, forKey: key, iCloudSync: iCloudSync)
             },
-            removeStoredToken: { try store.delete($0) }
+            removeStoredToken: { try store.delete($0) },
+            usesICloudKeychainSync: { false }
         )
 
-        // Given CloudKit metadata sync is disabled.
-        #expect(SyncSettings.isEnabled == false)
+        // Given VVTerm's cross-device sync policy is disabled.
 
         // When an OAuth token is written.
         try await adapter.writeToken("oauth-secret", for: "team.example.com")
 
-        // Then the token is stored under the OAuth namespace and still uses
-        // the credential Keychain sync policy, independent of CloudKit.
+        // Then the token is stored under the OAuth namespace and remains
+        // device-local because the sync setting is the cross-device total
+        // control.
         let write = try #require(store.setCalls.first)
         #expect(write.key == "oauth.team.example.com")
         #expect(write.data == Data("oauth-secret".utf8))
         #expect(
+            write.iCloudSync == false,
+            "Cloudflare OAuth token writes must not use iCloud Keychain when CloudKit sync is disabled."
+        )
+    }
+
+    @Test
+    func writesOAuthTokensWithICloudKeychainWhenSyncPolicyIsEnabled() async throws {
+        let store = RecordingCloudflareTokenKeychainStore()
+        let adapter = CloudflareTokenStoreAdapter(
+            readStoredToken: { try store.getString($0) },
+            writeStoredToken: { token, key, iCloudSync in
+                try store.setString(token, forKey: key, iCloudSync: iCloudSync)
+            },
+            removeStoredToken: { try store.delete($0) },
+            usesICloudKeychainSync: { true }
+        )
+
+        // Given VVTerm's cross-device sync policy is enabled.
+
+        // When an OAuth token is written.
+        try await adapter.writeToken("oauth-secret", for: "team.example.com")
+
+        // Then the token write remains iCloud Keychain-capable.
+        let write = try #require(store.setCalls.first)
+        #expect(write.key == "oauth.team.example.com")
+        #expect(
             write.iCloudSync,
-            "Cloudflare OAuth token writes must remain iCloud Keychain-capable when CloudKit metadata sync is disabled."
+            "Cloudflare OAuth token writes should use iCloud Keychain when sync is enabled."
         )
     }
 }

@@ -104,4 +104,30 @@ struct TerminalTabsSnapshotRestorePlannerTests {
         #expect(plan.selectedTabByServer[serverId] == nil)
         #expect(plan.selectedViewByServer[serverId] == nil)
     }
+
+    @Test
+    func planIgnoresPersistedServersWithNoTabs() throws {
+        // Given an older persisted snapshot contains an empty server bucket.
+        let emptyServerId = UUID()
+        let snapshot = TerminalTabsSnapshot(servers: [
+            .init(
+                serverId: emptyServerId,
+                tabs: [],
+                selectedTabId: nil,
+                selectedView: "terminal"
+            )
+        ])
+
+        // When the snapshot is planned for restoration.
+        let plan = TerminalTabsSnapshotRestorePlanner.plan(
+            from: snapshot,
+            isTmuxEnabled: { _ in true }
+        )
+
+        // Then the server is not restored as open without any terminal tabs.
+        #expect(plan.tabsByServer.isEmpty)
+        #expect(plan.selectedTabByServer.isEmpty)
+        #expect(plan.selectedViewByServer.isEmpty)
+        #expect(plan.paneStates.isEmpty)
+    }
 }

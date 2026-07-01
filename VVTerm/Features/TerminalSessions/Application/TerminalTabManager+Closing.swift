@@ -32,10 +32,14 @@ extension TerminalTabManager {
 
         if var serverTabs = tabsByServer[currentTab.serverId] {
             serverTabs.removeAll { $0.id == currentTab.id }
-            tabsByServer[currentTab.serverId] = serverTabs
-
-            if selectedTabByServer[currentTab.serverId] == currentTab.id {
-                selectedTabByServer[currentTab.serverId] = serverTabs.first?.id
+            if serverTabs.isEmpty {
+                tabsByServer.removeValue(forKey: currentTab.serverId)
+                selectedTabByServer.removeValue(forKey: currentTab.serverId)
+            } else {
+                tabsByServer[currentTab.serverId] = serverTabs
+                if selectedTabByServer[currentTab.serverId] == currentTab.id {
+                    selectedTabByServer[currentTab.serverId] = serverTabs.first?.id
+                }
             }
         }
 
@@ -63,6 +67,7 @@ extension TerminalTabManager {
             await disconnectServerAndWait(serverId)
         }
         await waitForAllServerTeardownTasks()
+        flushPendingSnapshotPersistence()
     }
 
     /// Disconnect all tabs for a server and wait for SSH teardown to finish.

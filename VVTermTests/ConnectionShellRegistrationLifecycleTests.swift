@@ -17,7 +17,8 @@ struct ConnectionShellRegistrationLifecycleTests {
         id: UUID = UUID(),
         workspaceId: UUID = UUID(),
         name: String = "Test",
-        connectionMode: SSHConnectionMode = .cloudflare
+        connectionMode: SSHConnectionMode = .cloudflare,
+        multiplexerOverride: TerminalMultiplexer? = nil
     ) -> Server {
         Server(
             id: id,
@@ -25,7 +26,8 @@ struct ConnectionShellRegistrationLifecycleTests {
             name: name,
             host: "ssh.example.com",
             username: "root",
-            connectionMode: connectionMode
+            connectionMode: connectionMode,
+            multiplexerOverride: multiplexerOverride
         )
     }
 
@@ -153,6 +155,53 @@ struct ConnectionShellRegistrationLifecycleTests {
     }
 
     @Test
+    func connectionManagerCloseSessionAndWaitKillsManagedZmxSessionWithServerMultiplexer() async throws {
+        try await withCleanConnectionManager { manager in
+            let server = makeServer(
+                name: "ZMX Host",
+                connectionMode: .standard,
+                multiplexerOverride: .zmx
+            )
+            let session = ConnectionSession(
+                serverId: server.id,
+                title: server.name,
+                connectionState: .connected,
+                tmuxStatus: .foreground
+            )
+            let tmuxService = RecordingTerminalTmuxService()
+            let managedSessionName = "vvterm_zmx_managed"
+            manager.sessions = [session]
+            manager.selectedSessionId = session.id
+            manager.setServerProviderForTesting { requestedId in
+                requestedId == server.id ? server : nil
+            }
+            manager.setTmuxServiceForTesting(tmuxService)
+            manager.tmuxResolver.sessionNames[session.id] = managedSessionName
+            manager.tmuxResolver.sessionOwnership[session.id] = .managed
+            manager.registerSSHClient(
+                SSHClient(),
+                shellId: UUID(),
+                for: session.id,
+                serverId: server.id,
+                skipTmuxLifecycle: true
+            )
+
+            // When a managed zmx-backed session is closed, closeSessionUI removes
+            // it from manager.sessions before SSH teardown runs.
+            await manager.closeSessionAndWait(session, notingSessionEnd: false)
+
+            // Then teardown still uses the server's zmx multiplexer instead of
+            // falling back to tmux after the session disappears from the UI list.
+            let killCall = try #require(await tmuxService.killCalls.first)
+            #expect(killCall.sessionName == managedSessionName)
+            #expect(
+                killCall.preferred == .zmx,
+                "Closing a managed zmx session must send the zmx backend to remote cleanup after the session row is removed."
+            )
+        }
+    }
+
+    @Test
     func connectionManagerDisconnectAllAndWaitWaitsForEverySessionTeardown() async {
         await withCleanConnectionManager { manager in
             let serverId = UUID()
@@ -196,6 +245,43 @@ struct ConnectionShellRegistrationLifecycleTests {
             #expect(manager.sessions.isEmpty)
             #expect(manager.shellId(for: first.id) == nil)
             #expect(manager.shellId(for: second.id) == nil)
+        }
+    }
+
+    @Test
+    func connectionManagerDisconnectAllAndWaitPersistsClearedSnapshotBeforeReturning() async throws {
+        try await withCleanConnectionManager { manager in
+            let session = ConnectionSession(
+                serverId: UUID(),
+                title: "Restored Session",
+                connectionState: .connected
+            )
+            manager.sessions = [session]
+            manager.selectedSessionId = session.id
+            try manager.snapshotStore.save(
+                ConnectionSessionsSnapshot(
+                    sessions: [.init(from: session)],
+                    selectedSessionId: session.id,
+                    serverSelections: [
+                        .init(serverId: session.serverId, selectedSessionId: session.id, selectedView: "terminal")
+                    ]
+                )
+            )
+
+            // When app-termination teardown closes every session and returns.
+            await manager.disconnectAllAndWait()
+
+            // Then relaunch restore must not see the stale pre-teardown session.
+            let snapshot = try #require(try manager.snapshotStore.load())
+            #expect(
+                snapshot.sessions.isEmpty,
+                "disconnectAllAndWait must flush the cleared session snapshot before app termination can continue."
+            )
+            #expect(snapshot.selectedSessionId == nil)
+            #expect(
+                manager.persistTask == nil,
+                "disconnectAllAndWait must cancel the debounced session persistence task after flushing."
+            )
         }
     }
 
@@ -441,6 +527,47 @@ struct ConnectionShellRegistrationLifecycleTests {
     }
 
     @Test
+    func tabManagerDisconnectAllAndWaitPersistsClearedSnapshotBeforeReturning() async throws {
+        try await withCleanTabManager { manager in
+            let serverId = UUID()
+            let tab = TerminalTab(serverId: serverId, title: "Restored Tab")
+            manager.tabsByServer[serverId] = [tab]
+            manager.selectedTabByServer[serverId] = tab.id
+            manager.paneStates[tab.rootPaneId] = TerminalPaneState(
+                paneId: tab.rootPaneId,
+                tabId: tab.id,
+                serverId: serverId
+            )
+            try manager.snapshotStore.save(
+                TerminalTabsSnapshot(
+                    servers: [
+                        .init(
+                            serverId: serverId,
+                            tabs: [.init(from: tab, paneStates: manager.paneStates)],
+                            selectedTabId: tab.id,
+                            selectedView: "terminal"
+                        )
+                    ]
+                )
+            )
+
+            // When app-termination teardown closes every tab and returns.
+            await manager.disconnectAllAndWait()
+
+            // Then relaunch restore must not see the stale pre-teardown tab.
+            let snapshot = try #require(try manager.snapshotStore.load())
+            #expect(
+                snapshot.servers.isEmpty,
+                "disconnectAllAndWait must flush the cleared tab snapshot before app termination can continue."
+            )
+            #expect(
+                manager.persistTask == nil,
+                "disconnectAllAndWait must cancel the debounced tab persistence task after flushing."
+            )
+        }
+    }
+
+    @Test
     func tabManagerTryBeginShellStartFailsWhenPaneIsMissing() async {
         await withCleanTabManager { manager in
             let missingPaneId = UUID()
@@ -468,5 +595,121 @@ struct ConnectionShellRegistrationLifecycleTests {
             #expect(!accepted)
             #expect(manager.shellId(for: missingPaneId) == nil)
         }
+    }
+}
+
+private final class RecordingTerminalTmuxService: TerminalTmuxServicing, @unchecked Sendable {
+    private let recorder = RecordingTerminalTmuxServiceRecorder()
+
+    var killCalls: [KillCall] {
+        get async { await recorder.killCalls }
+    }
+
+    func tmuxBackend(
+        using client: SSHClient,
+        preferred: TerminalMultiplexer
+    ) async -> RemoteTmuxBackend? {
+        .unixTmux
+    }
+
+    func tmuxInstallBackend(
+        using executor: any RemoteCommandExecuting,
+        preferred: TerminalMultiplexer
+    ) async -> RemoteTmuxBackend? {
+        .unixTmux
+    }
+
+    func isTmuxAvailable(
+        using executor: any RemoteCommandExecuting,
+        preferred: TerminalMultiplexer
+    ) async -> Bool {
+        true
+    }
+
+    func listSessions(
+        using executor: any RemoteCommandExecuting,
+        backend: RemoteTmuxBackend
+    ) async -> [RemoteTmuxSession] {
+        []
+    }
+
+    func prepareConfig(
+        using executor: any RemoteCommandExecuting,
+        terminalType: RemoteTerminalType,
+        backend: RemoteTmuxBackend
+    ) async {}
+
+    func sendScript(_ script: String, using client: SSHClient, shellId: UUID) async {}
+
+    func killSession(
+        named sessionName: String,
+        using executor: any RemoteCommandExecuting,
+        preferred: TerminalMultiplexer
+    ) async {
+        await recorder.recordKill(sessionName: sessionName, preferred: preferred)
+    }
+
+    func cleanupLegacySessions(using executor: any RemoteCommandExecuting) async {}
+
+    func cleanupDetachedSessions(
+        deviceId: String,
+        keeping sessionNames: Set<String>,
+        using executor: any RemoteCommandExecuting,
+        preferred: TerminalMultiplexer
+    ) async {}
+
+    func currentPath(sessionName: String, using executor: any RemoteCommandExecuting) async -> String? {
+        nil
+    }
+
+    func startupAttachCommand(
+        sessionName: String,
+        workingDirectory: String,
+        backend: RemoteTmuxBackend
+    ) -> String {
+        ""
+    }
+
+    func startupAttachExistingCommand(sessionName: String, backend: RemoteTmuxBackend) -> String {
+        ""
+    }
+
+    func interactiveAttachCommand(
+        sessionName: String,
+        workingDirectory: String,
+        backend: RemoteTmuxBackend
+    ) -> String {
+        ""
+    }
+
+    func interactiveAttachExistingCommand(sessionName: String, backend: RemoteTmuxBackend) -> String {
+        ""
+    }
+
+    func installAndAttachScript(
+        sessionName: String,
+        workingDirectory: String,
+        terminalType: RemoteTerminalType,
+        backend: RemoteTmuxBackend
+    ) -> String {
+        ""
+    }
+
+    struct KillCall: Equatable, Sendable {
+        let sessionName: String
+        let preferred: TerminalMultiplexer
+    }
+}
+
+private actor RecordingTerminalTmuxServiceRecorder {
+    private(set) var killCalls: [RecordingTerminalTmuxService.KillCall] = []
+
+    func recordKill(sessionName: String, preferred: TerminalMultiplexer) {
+        killCalls.append(
+            RecordingTerminalTmuxService.KillCall(
+                sessionName: sessionName,
+                preferred: preferred
+            )
+        )
     }
 }

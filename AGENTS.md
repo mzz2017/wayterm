@@ -330,9 +330,12 @@ struct Server: Identifiable, Codable {
 }
 ```
 
-Credential material may live in local Keychain or sync through iCloud Keychain,
-but credential secrets must never be serialized into CloudKit `Server` records.
-CloudKit may carry only non-secret server metadata.
+Credential material may live in local Keychain or, when sync is enabled, sync
+through iCloud Keychain. `SyncSettings` / CloudKit sync is the app-wide
+cross-device sync control: when it is disabled, server credentials, Cloudflare
+OAuth tokens, and Cloudflare service tokens must stay device-local. Credential
+secrets must never be serialized into CloudKit `Server` records. CloudKit may
+carry only non-secret server metadata.
 
 ### Workspace
 ```swift
@@ -376,9 +379,18 @@ struct ConnectionSession: Identifiable {
 
 ## Important Notes
 
-1. **Never apply glass to terminal content** - only navigation/toolbars
-2. **Deduplicate by ID** when syncing from CloudKit
-3. **Pro limits enforced in**: `ServerManager.canAddServer`, `canAddWorkspace`, `ConnectionSessionManager.canOpenNewTab`
-4. **Keychain credentials** may sync via iCloud Keychain, but credential secrets must never be stored in CloudKit; CloudKit syncs server metadata only
-5. **iOS keyboard toolbar** provides Esc, Tab, Ctrl, arrows, function keys
-6. **Voice-to-command** uses MLX Whisper/Parakeet on-device or Apple Speech fallback
+1. **Current product work targets the iOS app**. Do not use macOS UI behavior,
+   macOS gating, or macOS-only flows as the primary reason for a product fix
+   unless the user explicitly asks for macOS support.
+2. **Never apply glass to terminal content** - only navigation/toolbars
+3. **Deduplicate by ID** when syncing from CloudKit
+4. **Pro limits enforced in**: `ServerManager.canAddServer`, `canAddWorkspace`, `ConnectionSessionManager.canOpenNewTab`
+5. **Keychain credentials** are governed by `SyncSettings`: when CloudKit sync
+   is disabled, credentials and Cloudflare tokens must remain device-local.
+   When moving a Keychain item between synced and device-local storage, do not
+   update with `kSecAttrSynchronizableAny`; write the target synchronizable
+   class and remove the opposite class.
+6. **Terminal tab snapshots** must not persist or restore empty server buckets
+   as open servers; iOS open-server state must come from real tabs/sessions.
+7. **iOS keyboard toolbar** provides Esc, Tab, Ctrl, arrows, function keys
+8. **Voice-to-command** uses MLX Whisper/Parakeet on-device or Apple Speech fallback

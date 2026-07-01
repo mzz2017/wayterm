@@ -14,7 +14,8 @@ extension ConnectionSessionManager {
             await self.runShellTeardown(closeResult.shellTeardownRequest)
             await self.unregisterSSHClient(
                 for: closeResult.sessionId,
-                killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
+                killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill,
+                preferredMultiplexer: closeResult.tmuxSessionMultiplexerToKill
             )
         }
         trackServerTeardownTask(teardownTask, for: closeResult.serverId)
@@ -31,7 +32,8 @@ extension ConnectionSessionManager {
         await runShellTeardown(closeResult.shellTeardownRequest)
         await unregisterSSHClient(
             for: closeResult.sessionId,
-            killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
+            killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill,
+            preferredMultiplexer: closeResult.tmuxSessionMultiplexerToKill
         )
     }
 
@@ -54,6 +56,7 @@ extension ConnectionSessionManager {
             await closeSessionAndWait(session, notingSessionEnd: false)
         }
         await waitForAllServerTeardownTasks()
+        flushPendingSnapshotPersistence()
         logger.info("Disconnected all sessions after awaiting teardown")
     }
 
@@ -341,6 +344,9 @@ extension ConnectionSessionManager {
         let voiceCancelTask = voiceInputCanceller(.session(sessionId))
 
         let tmuxSessionToKill = managedTmuxSessionNameToKill(for: sessionId, status: session.tmuxStatus)
+        let tmuxMultiplexerToKill = tmuxSessionToKill.map { _ in
+            tmuxResolver.multiplexer(for: session.serverId)
+        }
 
         let replacementSessionId = replacementSessionIDAfterClosing(
             sessionId: sessionId,
@@ -383,6 +389,7 @@ extension ConnectionSessionManager {
             sessionId: sessionId,
             serverId: session.serverId,
             tmuxSessionNameToKill: tmuxSessionToKill,
+            tmuxSessionMultiplexerToKill: tmuxMultiplexerToKill,
             voiceCancelTask: voiceCancelTask,
             richPasteUploadTasks: runtimeTeardown.richPasteUploadTasks,
             shellTeardownRequest: runtimeTeardown.shellTeardownRequest
@@ -538,7 +545,8 @@ extension ConnectionSessionManager {
             await runShellTeardown(closeResult.shellTeardownRequest)
             await unregisterSSHClient(
                 for: closeResult.sessionId,
-                killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill
+                killingManagedTmuxSessionNamed: closeResult.tmuxSessionNameToKill,
+                preferredMultiplexer: closeResult.tmuxSessionMultiplexerToKill
             )
         }
 
@@ -575,13 +583,16 @@ extension ConnectionSessionManager {
 
     private func unregisterSSHClient(
         for sessionId: UUID,
-        killingManagedTmuxSessionNamed tmuxSessionName: String?
+        killingManagedTmuxSessionNamed tmuxSessionName: String?,
+        preferredMultiplexer: TerminalMultiplexer? = nil
     ) async {
         let unregisterResult = takeSSHClientRegistration(for: sessionId)
         if let tmuxSessionName,
            let client = unregisterResult.shellToClose?.client {
-            let preferred = sessions.first(where: { $0.id == sessionId })
-                .map { tmuxResolver.multiplexer(for: $0.serverId) } ?? .tmux
+            let preferred = preferredMultiplexer
+                ?? sessions.first(where: { $0.id == sessionId })
+                    .map { tmuxResolver.multiplexer(for: $0.serverId) }
+                ?? .tmux
             await tmuxService.killSession(named: tmuxSessionName, using: client, preferred: preferred)
         }
         await Self.finishSSHCleanup(for: unregisterResult)
