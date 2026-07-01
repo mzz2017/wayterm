@@ -628,7 +628,7 @@ executed_test_count() {
         awk '/Test .+ passed after [0-9.]+ seconds\./ { total += 1 } END { print total + 0 }' "$log_path"
     )"
     xctest_count="$(
-        sed -n 's/.*Executed \([0-9][0-9]*\) tests,.*/\1/p' "$log_path" |
+        sed -n 's/.*Executed \([0-9][0-9]*\) test[s]*,.*/\1/p' "$log_path" |
             awk '{ total += $1 } END { print total + 0 }'
     )"
 
