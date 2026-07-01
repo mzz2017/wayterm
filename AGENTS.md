@@ -272,13 +272,26 @@ IOS_TEST_RAMDISK_MB=8192 ./scripts/test-ios.sh \
 ```
 
 - For long test runs, inspect/report results through `rg` filters so build
-  noise does not flood context. Prefer failure/success-focused patterns and
-  rerun unfiltered only when the filtered output is missing needed detail:
+  noise does not flood context. Use patterns broad enough to retain warning/error
+  lines, test names, suite summaries, executed counts, and failure markers:
 
 ```bash
 IOS_TEST_RAMDISK_MB=8192 rtk ./scripts/test-ios.sh \
   -only-testing:VVTermTests/<TestClass> 2>&1 \
-  | rtk rg -n "failed|Failure|error:|XCTAssert|Test Case|TEST SUCCEEDED|TEST FAILED"
+  | rtk rg -n "warning:|error:|Testing failed|BUILD FAILED|TEST FAILED|Test Suite|Test run with|Executed test count|Issue|<TestClass>"
+```
+
+- When filtered output is not enough for diagnosis, preserve the wrapper's raw
+  xcodebuild logs with `IOS_TEST_LOG_DIR`, then run `rg` against the printed log
+  path after the test finishes. Remove the diagnostic log directory when done:
+
+```bash
+IOS_TEST_LOG_DIR=/tmp/vvterm-ios-logs IOS_TEST_RAMDISK_MB=8192 \
+  rtk ./scripts/test-ios.sh -only-testing:VVTermTests/<TestClass>
+
+rtk rg -n "warning:|error:|Testing failed|BUILD FAILED|TEST FAILED|Test run with|Executed test count|<TestClass>" \
+  /tmp/vvterm-ios-logs/xcodebuild-test-attempt-*-*.log
+rtk rm -rf /tmp/vvterm-ios-logs
 ```
 
 - For local agent-run iOS wrapper invocations, default to `IOS_TEST_RAMDISK_MB=8192` so auto-managed DerivedData lives on a RAM disk while the default Swift package checkout cache stays in the ignored repo-local `.build/vvterm-ios-source-packages` cache for warm focused runs. The wrapper also favors lower simulator churn by reusing an already booted simulator and disabling extra XCTest diagnostics by default; use `IOS_TEST_REUSE_BOOTED_SIMULATOR=0` or `IOS_TEST_COLLECT_DIAGNOSTICS=on-failure` when debugging simulator boot/install state or failure diagnostics, and avoid RAM disk mode when memory pressure is high.
