@@ -33,6 +33,7 @@ final class StoreManager: ObservableObject {
     private let restoreRequestCoordinator = StoreRequestLifecycleCoordinator()
     private let entitlementRefreshCoordinator = StoreEntitlementRefreshCoordinator()
     private let productLoadCoordinator = StoreProductLoadCoordinator()
+    private let subscriptionExpirationRefreshCoordinator: StoreSubscriptionExpirationRefreshCoordinator
     var lastPurchaseRequestFailure: Error? { purchaseRequestCoordinator.lastRequestFailure }
     var lastRestoreRequestFailure: Error? { restoreRequestCoordinator.lastRequestFailure }
     var pendingPurchaseRequestIDs: Set<UUID> { purchaseRequestCoordinator.pendingRequestIDs }
@@ -48,8 +49,6 @@ final class StoreManager: ObservableObject {
     private var startupRefreshTaskID: UUID?
     private var reviewModeRefreshTask: Task<Void, Never>?
     private var reviewModeRefreshTaskID: UUID?
-    private var subscriptionExpirationRefreshTask: Task<Void, Never>?
-    private var subscriptionExpirationRefreshTaskID: UUID?
     private var updateListenerTask: Task<Void, Never>?
     private var updateListenerTaskID: UUID?
     private var reviewModeExpiryTask: Task<Void, Never>?
@@ -58,7 +57,6 @@ final class StoreManager: ObservableObject {
     private let loadProductsAction: StoreLifecycleAction
     private let checkEntitlementsAction: StoreLifecycleAction
     private let transactionListenerAction: StoreTransactionListenerAction
-    private let sleepForEntitlementRefresh: StoreEntitlementRefreshSleepAction
     private let telemetry: any StoreTelemetry
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier!, category: "Store")
     private let reviewModeDuration: TimeInterval = 60 * 60 * 5
@@ -96,9 +94,12 @@ final class StoreManager: ObservableObject {
         self.transactionListenerAction = transactionListenerAction ?? { manager in
             await manager.listenForLiveTransactions()
         }
-        self.sleepForEntitlementRefresh = sleepForEntitlementRefresh ?? { duration in
+        let entitlementRefreshSleep = sleepForEntitlementRefresh ?? { duration in
             try? await Task.sleep(for: duration)
         }
+        self.subscriptionExpirationRefreshCoordinator = StoreSubscriptionExpirationRefreshCoordinator(
+            sleepAction: entitlementRefreshSleep
+        )
         self.telemetry = telemetry ?? LiveStoreTelemetry.shared
 
         if startBackgroundTasks {
@@ -112,7 +113,7 @@ final class StoreManager: ObservableObject {
         startupRefreshTask?.cancel()
         reviewModeRefreshTask?.cancel()
         entitlementRefreshCoordinator.cancelAllFromAnyContext()
-        subscriptionExpirationRefreshTask?.cancel()
+        subscriptionExpirationRefreshCoordinator.cancelAllFromAnyContext()
         reviewModeExpiryTask?.cancel()
         productLoadCoordinator.cancelAllFromAnyContext()
         purchaseRequestCoordinator.cancelAllFromAnyContext()
@@ -124,7 +125,6 @@ final class StoreManager: ObservableObject {
             updateListenerTask,
             startupRefreshTask,
             reviewModeRefreshTask,
-            subscriptionExpirationRefreshTask,
             reviewModeExpiryTask
         ].compactMap { $0 }
 
@@ -133,6 +133,7 @@ final class StoreManager: ObservableObject {
         await purchaseRequestCoordinator.cancelAllAndWait()
         await restoreRequestCoordinator.cancelAllAndWait()
         await entitlementRefreshCoordinator.cancelAllAndWait()
+        await subscriptionExpirationRefreshCoordinator.cancelAllAndWait()
         for task in trackedTasks {
             await task.value
         }
@@ -143,8 +144,6 @@ final class StoreManager: ObservableObject {
         startupRefreshTaskID = nil
         reviewModeRefreshTask = nil
         reviewModeRefreshTaskID = nil
-        subscriptionExpirationRefreshTask = nil
-        subscriptionExpirationRefreshTaskID = nil
         reviewModeExpiryTask = nil
     }
 
@@ -554,37 +553,18 @@ final class StoreManager: ObservableObject {
         hasLifetime: Bool,
         expirationDate: Date?
     ) {
-        subscriptionExpirationRefreshTask?.cancel()
-        subscriptionExpirationRefreshTask = nil
-        subscriptionExpirationRefreshTaskID = nil
+        subscriptionExpirationRefreshCoordinator.cancelAll()
 
         guard hasAccess, !hasLifetime, let expirationDate else { return }
         scheduleSubscriptionExpirationRefresh(at: expirationDate)
     }
 
     private func scheduleSubscriptionExpirationRefresh(at expirationDate: Date) {
-        subscriptionExpirationRefreshTask?.cancel()
-
-        let taskID = UUID()
-        subscriptionExpirationRefreshTaskID = taskID
-        let sleepForEntitlementRefresh = sleepForEntitlementRefresh
-        let delay = max(0, expirationDate.timeIntervalSinceNow)
-        let delayNanoseconds = Int64(delay * 1_000_000_000)
-        let task = Task { @MainActor [weak self] in
-            await sleepForEntitlementRefresh(.nanoseconds(delayNanoseconds))
-            guard !Task.isCancelled else { return }
-            guard let self, self.subscriptionExpirationRefreshTaskID == taskID else { return }
-
+        subscriptionExpirationRefreshCoordinator.scheduleRefresh(at: expirationDate) { [weak self] in
+            guard let self else { return }
             let requestID = self.requestEntitlementRefresh(reason: .subscriptionExpiration)
             await self.waitForEntitlementRefreshRequest(requestID)
-
-            if self.subscriptionExpirationRefreshTaskID == taskID {
-                self.subscriptionExpirationRefreshTaskID = nil
-                self.subscriptionExpirationRefreshTask = nil
-            }
         }
-
-        subscriptionExpirationRefreshTask = task
     }
 
     private func subscriptionExpirationDate(from status: Product.SubscriptionInfo.Status?) -> Date? {
@@ -711,11 +691,12 @@ extension StoreManager {
     }
 
     var hasPendingSubscriptionExpirationRefreshForTesting: Bool {
-        subscriptionExpirationRefreshTask != nil
+        !subscriptionExpirationRefreshCoordinator.pendingRequestIDs.isEmpty
     }
 
     func waitForSubscriptionExpirationRefreshForTesting() async {
-        await subscriptionExpirationRefreshTask?.value
+        guard let requestID = subscriptionExpirationRefreshCoordinator.pendingRequestIDs.first else { return }
+        await subscriptionExpirationRefreshCoordinator.waitForRefresh(requestID)
     }
 
     func scheduleSubscriptionExpirationRefreshForTesting(at expirationDate: Date) {
