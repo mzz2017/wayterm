@@ -4,9 +4,9 @@ import Testing
 // Test Context:
 // These source-boundary tests protect RemoteFiles request lifecycle ownership.
 // RemoteFileBrowserStore exposes mutation/transfer intent APIs for UI and
-// feature coordinators, but the tracked Task dictionaries and cancellation
-// state should live in an Application coordinator. Update only when that owner
-// intentionally changes.
+// feature coordinators, but tracked Task dictionaries and cancellation state
+// should live in Application lifecycle coordinators. Update only when those
+// owners intentionally change.
 
 struct RemoteFileRequestLifecycleBoundaryTests {
     @Test
@@ -18,6 +18,9 @@ struct RemoteFileRequestLifecycleBoundaryTests {
         let coordinatorSource = try source(
             at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFileRequestLifecycleCoordinator.swift")
         )
+        let transferCoordinatorSource = try source(
+            at: root.appendingPathComponent("VVTerm/Features/RemoteFiles/Application/RemoteFileTransferRequestLifecycleCoordinator.swift")
+        )
 
         // Given mutation and transfer work may outlive the initiating UI event.
         #expect(!storeSource.contains("private var mutationRequests"))
@@ -27,14 +30,17 @@ struct RemoteFileRequestLifecycleBoundaryTests {
         #expect(!storeSource.contains("func isMutationRequestCancelled"))
         #expect(!storeSource.contains("func isTransferRequestCancelled"))
 
-        // Then one Application coordinator owns tracked tasks and cancellation.
+        // Then Application coordinators own tracked tasks and cancellation.
         #expect(coordinatorSource.contains("final class RemoteFileRequestLifecycleCoordinator"))
         #expect(coordinatorSource.contains("private var mutationRequests"))
-        #expect(coordinatorSource.contains("private var transferRequests"))
+        #expect(!coordinatorSource.contains("private var transferRequests"))
+        #expect(coordinatorSource.contains("private let transferCoordinator"))
         #expect(coordinatorSource.contains("func requestMutation"))
         #expect(coordinatorSource.contains("func requestTransfer"))
         #expect(coordinatorSource.contains("func cancelMutationRequests(for serverId: UUID) -> [Task<Void, Never>]"))
         #expect(coordinatorSource.contains("func cancelTransferRequests(for serverId: UUID) -> [Task<Void, Never>]"))
+        #expect(transferCoordinatorSource.contains("final class RemoteFileTransferRequestLifecycleCoordinator"))
+        #expect(transferCoordinatorSource.contains("private var transferRequests"))
     }
 
     private func source(at url: URL) throws -> String {
